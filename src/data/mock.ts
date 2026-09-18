@@ -1,4 +1,13 @@
-import type { Member, QuizQuestion, RandomTool, Role, Team } from "@/lib/types";
+import type {
+  BusyBlock,
+  BusyKind,
+  Member,
+  MeetingSlot,
+  QuizQuestion,
+  RandomTool,
+  Role,
+  Team,
+} from "@/lib/types";
 
 /**
  * 데모 데이터.
@@ -36,6 +45,49 @@ export const MOCK_ROSTER: Member[] = [
   { id: "m2", name: "이서연", isMe: false, mbti: "ENFP", want: "deck", veto: "manage" },
   { id: "m3", name: "박지호", isMe: false, mbti: "ISTJ", want: "manage", veto: "present" },
   { id: "m4", name: "최유나", isMe: false, mbti: null, want: "research", veto: null },
+];
+
+/* ── 08 내 가능한 시간 ─────────────────────────────────────── */
+
+/** 시간표를 막는 사유 — 기획안에 적힌 세 종류. */
+export const BUSY_KINDS: BusyKind[] = [
+  { key: "class", name: "수업", color: "var(--busy-class)" },
+  { key: "work", name: "아르바이트", color: "var(--busy-work)" },
+  { key: "exam", name: "시험 기간", color: "var(--busy-exam)" },
+];
+
+/** 주중만 다룬다. 주말 회의는 기획안에 없다. */
+export const SCHEDULE_DAYS = ["월", "화", "수", "목", "금"];
+
+/** 9시~18시. 09시 시작, 마지막 칸은 18~19시. */
+export const SCHEDULE_HOURS = ["9", "10", "11", "12", "13", "14", "15", "16", "17", "18"];
+
+/** 내 시간표 초기값(데모). 서버가 붙으면 내가 저장해 둔 값을 읽어 온다. */
+export const MY_BUSY_BLOCKS: BusyBlock[] = [
+  { id: "b1", day: 0, startHour: 1, hours: 3, kind: "class" },
+  { id: "b2", day: 0, startHour: 6, hours: 2, kind: "work" },
+  { id: "b3", day: 1, startHour: 0, hours: 2, kind: "class" },
+  { id: "b4", day: 2, startHour: 3, hours: 2, kind: "class" },
+  { id: "b5", day: 2, startHour: 7, hours: 3, kind: "work" },
+  { id: "b6", day: 3, startHour: 1, hours: 2, kind: "class" },
+  { id: "b7", day: 4, startHour: 2, hours: 2, kind: "class" },
+  { id: "b8", day: 4, startHour: 6, hours: 2, kind: "work" },
+];
+
+/* ── 09 / 10 회의 시간 ─────────────────────────────────────── */
+
+/** 전원 가능한 후보가 있는 보통의 주. */
+export const MEETING_SLOTS: MeetingSlot[] = [
+  { id: "s1", day: "수", time: "16:00 – 18:00", available: 4, total: 4, blockedBy: null },
+  { id: "s2", day: "화", time: "13:00 – 15:00", available: 4, total: 4, blockedBy: null },
+  { id: "s3", day: "목", time: "15:00 – 17:00", available: 3, total: 4, blockedBy: "박지호 · 아르바이트" },
+  { id: "s4", day: "월", time: "14:00 – 16:00", available: 3, total: 4, blockedBy: "이서연 · 수업" },
+];
+
+/** 전원 가능한 시간이 없는 주 — 최다 인원 후보만 남는다. */
+export const MEETING_SLOTS_PARTIAL: MeetingSlot[] = [
+  { id: "p1", day: "금", time: "17:00 – 19:00", available: 3, total: 4, blockedBy: "최유나 · 시험 기간" },
+  { id: "p2", day: "토", time: "11:00 – 13:00", available: 3, total: 4, blockedBy: "박지호 · 아르바이트" },
 ];
 
 /** 추첨 도구 4종. 29번 "메뉴 룰렛" 화면도 같은 목록을 재사용한다. */

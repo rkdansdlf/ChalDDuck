@@ -104,7 +104,7 @@ export function RosterScreen({
   return (
     <>
       <AppBar title="역할 조율" sub={team.name} action="user-plus" actionLabel="팀원 초대하기" />
-      <Body dense pad={104}>
+      <Body dense>
         <SecTitle note="희망자 수와 조율 상태입니다">역할별 현황</SecTitle>
 
         <div className="mb-5 flex flex-col gap-2">

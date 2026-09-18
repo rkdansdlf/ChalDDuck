@@ -19,8 +19,7 @@ export function ComingSoon({
   return (
     <>
       <AppBar title={title} sub={sub} />
-      {/* 탭바가 본문 위에 떠 있으므로 마지막 항목이 가려지지 않도록 아래를 비워 둔다 */}
-      <Body pad={104}>
+      <Body>
         <Note tone="info" icon="info" title="아직 만들지 않은 화면입니다">
           지금 저장소에는 온보딩(00~06)과 공통 컴포넌트·디자인 토큰만 구현되어 있습니다. 아래는 이 탭에 들어올
           화면 목록입니다.

@@ -36,7 +36,9 @@ export function TabBar({ pending = {} }: { pending?: TabPending }) {
   return (
     <nav
       aria-label="주요 메뉴"
-      className="absolute inset-x-0 bottom-0 border-t border-line backdrop-blur-md"
+      // `Dock` 과 마찬가지로 흐름 안에 둔다 — 띄워 두면 본문 마지막 항목이나
+      // Dock 이 탭바 뒤로 들어가고, 화면마다 여백 숫자를 맞춰야 한다.
+      className="flex-none border-t border-line backdrop-blur-md"
       style={{
         background: "rgba(255,253,249,.96)",
         paddingBottom: "calc(16px + env(safe-area-inset-bottom))",

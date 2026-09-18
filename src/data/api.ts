@@ -1,5 +1,27 @@
-import type { Member, OnboardingDraft, QuizQuestion, RandomTool, Role, Team } from "@/lib/types";
-import { MOCK_ROSTER, MOCK_TEAM, QUIZ, RANDOM_TOOLS, ROLES } from "./mock";
+import type {
+  BusyBlock,
+  BusyKind,
+  Member,
+  MeetingWeek,
+  OnboardingDraft,
+  QuizQuestion,
+  RandomTool,
+  Role,
+  Team,
+} from "@/lib/types";
+import {
+  BUSY_KINDS,
+  MEETING_SLOTS,
+  MEETING_SLOTS_PARTIAL,
+  MOCK_ROSTER,
+  MOCK_TEAM,
+  MY_BUSY_BLOCKS,
+  QUIZ,
+  RANDOM_TOOLS,
+  ROLES,
+  SCHEDULE_DAYS,
+  SCHEDULE_HOURS,
+} from "./mock";
 
 /**
  * 데이터 접근 계층.
@@ -72,4 +94,52 @@ export async function submitOnboarding(
   _draft: OnboardingDraft,
 ): Promise<{ ok: true }> {
   return { ok: true };
+}
+
+/* ── 08 내 가능한 시간 ─────────────────────────────────────── */
+
+/** 시간표 화면이 필요한 고정 값들 — 사유 종류·요일·시간대. */
+export async function getScheduleOptions(): Promise<{
+  kinds: BusyKind[];
+  days: string[];
+  hours: string[];
+}> {
+  return { kinds: BUSY_KINDS, days: SCHEDULE_DAYS, hours: SCHEDULE_HOURS };
+}
+
+export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
+  return MY_BUSY_BLOCKS;
+}
+
+/**
+ * 내 시간표를 저장한다.
+ *
+ * TODO(서버): 실제로는 저장 후 팀의 회의 시간 후보가 다시 계산된다.
+ * 지금은 아무것도 저장하지 않고 성공만 돌려준다.
+ */
+export async function saveMyBusyBlocks(_teamId: string, _blocks: BusyBlock[]): Promise<{ ok: true }> {
+  return { ok: true };
+}
+
+/* ── 09 / 10 회의 시간 ─────────────────────────────────────── */
+
+/**
+ * 이번 주 회의 시간 후보.
+ *
+ * 전원 가능한 후보가 없으면 `hasFullAvailability` 가 false 가 되고,
+ * 화면은 10번(전원 불가한 주) 흐름으로 바뀐다.
+ *
+ * `preview` 는 **데모 전용**이다. 서버가 붙으면 실제 시간표로만 판단하므로 없앤다.
+ */
+export async function getMeetingWeek(
+  _teamId: string,
+  preview?: "none",
+): Promise<MeetingWeek> {
+  const slots = preview === "none" ? MEETING_SLOTS_PARTIAL : MEETING_SLOTS;
+  return {
+    slots,
+    hasFullAvailability: slots.some((s) => s.available === s.total),
+    submitted: MOCK_ROSTER.length,
+    total: MOCK_ROSTER.length,
+  };
 }

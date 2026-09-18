@@ -40,6 +40,58 @@ export type Member = {
   veto: RoleKey | null;
 };
 
+/** 시간표를 막는 사유. 기획안에 적힌 세 종류뿐이다. */
+export type BusyKindKey = "class" | "work" | "exam";
+
+export type BusyKind = {
+  key: BusyKindKey;
+  name: string;
+  /** CSS 변수 참조(`var(--busy-class)`). 화면 코드에 hex 를 적지 않기 위한 것. */
+  color: string;
+};
+
+/**
+ * 안 되는 시간 한 칸.
+ *
+ * 기획안의 시간표는 "안 되는 시간만 표시"한다 — 표시하지 않은 시간은 가능한 시간이다.
+ * 사유(`kind`)는 본인에게만 보이고, 팀원에게는 가능/불가만 공유된다.
+ */
+export type BusyBlock = {
+  id: string;
+  /** `SCHEDULE_DAYS` 의 인덱스(0 = 월). */
+  day: number;
+  /** `SCHEDULE_HOURS` 의 인덱스. */
+  startHour: number;
+  /** 몇 시간짜리인지. */
+  hours: number;
+  kind: BusyKindKey;
+};
+
+/** 회의 시간 후보. 적합도 점수는 만들지 않는다 — 몇 명이 되는지와 사유만 보여 준다. */
+export type MeetingSlot = {
+  id: string;
+  /** 요일 한 글자("수"). */
+  day: string;
+  /** "16:00 – 18:00" */
+  time: string;
+  /** 참석 가능 인원. */
+  available: number;
+  /** 팀 전체 인원. */
+  total: number;
+  /** 못 오는 사람과 사유("박지호 · 아르바이트"). 전원 가능하면 `null`. */
+  blockedBy: string | null;
+};
+
+/** 한 주의 회의 시간 후보와 그 주의 상황. */
+export type MeetingWeek = {
+  slots: MeetingSlot[];
+  /** 전원이 가능한 후보가 하나라도 있는지. false 면 10번 화면 흐름으로 간다. */
+  hasFullAvailability: boolean;
+  /** 시간표를 낸 인원. */
+  submitted: number;
+  total: number;
+};
+
 /**
  * 추첨 도구 — 협의가 안 될 때 역할을 뽑는 방법.
  * 결과가 달라 보일 뿐 다 같은 무작위 추첨이다. 고르는 재미를 위한 표시.
