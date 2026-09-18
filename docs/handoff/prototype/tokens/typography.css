@@ -1,0 +1,44 @@
+:root{
+  --font-sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  /* 숫자·명식 표에서만 쓰는 시스템 모노 (별도 서체 도입 없음) */
+  --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+
+  --w-regular:400; /* @kind font */
+  --w-medium:500; /* @kind font */
+  --w-semibold:600; /* @kind font */
+  --w-bold:700; /* @kind font */
+  --w-extrabold:800; /* @kind font */
+
+  --fs-display:34px;
+  --lh-display:1.22; /* @kind font */
+  --ls-display:-.024em; /* @kind font */
+  --fs-h1:26px;
+  --lh-h1:1.28; /* @kind font */
+  --fs-h2:21px;
+  --lh-h2:1.34; /* @kind font */
+  --fs-h3:18px;
+  --lh-h3:1.4; /* @kind font */
+  --ls-heading:-.018em; /* @kind font */
+  --fs-body-lg:17px;
+  --lh-body-lg:1.62; /* @kind font */
+  --fs-body:15px;
+  --lh-body:1.62; /* @kind font */
+  --ls-body:-.008em; /* @kind font */
+  --fs-body-sm:14px;
+  --lh-body-sm:1.58; /* @kind font */
+  --fs-caption:13px;
+  --lh-caption:1.5; /* @kind font */
+  --fs-micro:11px;
+  --lh-micro:1.36; /* @kind font */
+  --ls-micro:.02em; /* @kind font */
+
+  /* 합성 타이포 토큰 */
+  --type-display:var(--w-extrabold) var(--fs-display)/var(--lh-display) var(--font-sans);
+  --type-h1:var(--w-bold) var(--fs-h1)/var(--lh-h1) var(--font-sans);
+  --type-h2:var(--w-bold) var(--fs-h2)/var(--lh-h2) var(--font-sans);
+  --type-h3:var(--w-semibold) var(--fs-h3)/var(--lh-h3) var(--font-sans);
+  --type-body:var(--w-regular) var(--fs-body)/var(--lh-body) var(--font-sans);
+  --type-body-strong:var(--w-semibold) var(--fs-body)/var(--lh-body) var(--font-sans);
+  --type-caption:var(--w-medium) var(--fs-caption)/var(--lh-caption) var(--font-sans);
+  --type-micro:var(--w-semibold) var(--fs-micro)/var(--lh-micro) var(--font-sans);
+}

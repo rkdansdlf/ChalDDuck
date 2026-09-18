@@ -1,0 +1,226 @@
+@import "tailwindcss";
+
+@import "../styles/tokens/brand-warm.css";
+@import "../styles/tokens/typography.css";
+
+/* ──────────────────────────────────────────────────────────────
+   Tailwind 테마 — 디자인 토큰을 유틸리티로 노출한다.
+   색은 전부 `brand-warm.css` 의 CSS 변수를 그대로 참조하므로
+   값의 단일 출처는 언제나 토큰 파일이다.
+   ────────────────────────────────────────────────────────────── */
+@theme inline {
+  --font-sans: var(--font-pretendard), "Pretendard Variable", Pretendard, -apple-system,
+    BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* 옐로 — 토큰 변수는 `--y-*`, 유틸리티 이름은 `yellow-*`.
+     ⚠️ 이름을 `y-*` 로 두면 안 된다: `border-y-600` 이 Tailwind 의 **세로축
+     border-width** 유틸리티로 먼저 해석돼 600px 테두리가 그려진다.
+     같은 이유로 `x-*` 도 금지. 색 이름은 항상 두 글자를 넘겨서 짓는다. */
+  --color-yellow-50: var(--y-50);
+  --color-yellow-100: var(--y-100);
+  --color-yellow-200: var(--y-200);
+  --color-yellow-300: var(--y-300);
+  --color-yellow-400: var(--y-400);
+  --color-yellow-500: var(--y-500);
+  --color-yellow-600: var(--y-600);
+  --color-yellow-700: var(--y-700);
+
+  /* 코랄 */
+  --color-coral-100: var(--c-100);
+  --color-coral-200: var(--c-200);
+  --color-coral-300: var(--c-300);
+  --color-coral-400: var(--c-400);
+  --color-coral-600: var(--c-600);
+  --color-coral-700: var(--c-700);
+
+  /* 잉크 */
+  --color-ink-900: var(--ink-900);
+  --color-ink-800: var(--ink-800);
+  --color-ink-700: var(--ink-700);
+  --color-ink-600: var(--ink-600);
+  --color-ink-500: var(--ink-500);
+  --color-ink-400: var(--ink-400);
+  --color-ink-300: var(--ink-300);
+
+  /* 크림 뉴트럴 */
+  --color-cr-0: var(--cr-0);
+  --color-cr-25: var(--cr-25);
+  --color-cr-50: var(--cr-50);
+  --color-cr-100: var(--cr-100);
+  --color-cr-200: var(--cr-200);
+  --color-cr-300: var(--cr-300);
+  --color-cr-400: var(--cr-400);
+
+  /* 표면·경계·행동 */
+  --color-page: var(--page);
+  --color-card: var(--card);
+  --color-fill: var(--fill);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-input-border: var(--input-border);
+  --color-action: var(--action);
+  --color-on-action: var(--on-action);
+  --color-txt: var(--txt);
+  --color-txt-strong: var(--txt-strong);
+  --color-txt-muted: var(--txt-muted);
+  --color-txt-faint: var(--txt-faint);
+  --color-txt-disabled: var(--txt-disabled);
+  --color-link: var(--link);
+  --color-link-hover: var(--link-hover);
+
+  /* 의미 색 */
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-err: var(--err);
+  --color-err-bg: var(--err-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-focus: var(--focus);
+
+  /* 역할 배정 상태 */
+  --color-want: var(--want);
+  --color-veto: var(--veto);
+  --color-open: var(--open);
+
+  /* 반경 */
+  --radius-card: var(--r-card);
+  --radius-control: var(--r-control);
+  --radius-sheet: var(--r-sheet);
+  --radius-phone: var(--r-phone);
+
+  /* 그림자 */
+  --shadow-sm: var(--sh-sm);
+  --shadow-md: var(--sh-md);
+  --shadow-lg: var(--sh-lg);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   타이포 유틸리티 — 프로토타입 화면 실측값.
+   폰트 shorthand 를 한 클래스로 묶어 화면 코드에서 크기·행간·자간이
+   흩어지지 않게 한다. 새 값이 필요하면 여기에 이름을 붙여 추가할 것.
+   ────────────────────────────────────────────────────────────── */
+@utility t-display {
+  font: var(--w-extrabold) 30px / 1.2 var(--font-sans);
+  letter-spacing: -0.045em;
+}
+@utility t-h1 {
+  font: var(--w-extrabold) 26px / 1.3 var(--font-sans);
+  letter-spacing: -0.035em;
+}
+@utility t-h1-sm {
+  font: var(--w-extrabold) 24px / 1.3 var(--font-sans);
+  letter-spacing: -0.035em;
+}
+@utility t-h2 {
+  font: var(--w-bold) 19px / 1.35 var(--font-sans);
+  letter-spacing: -0.02em;
+}
+/* 상단 앱바 제목 */
+@utility t-bar {
+  font: var(--w-semibold) 15px / 1.35 var(--font-sans);
+  letter-spacing: -0.012em;
+}
+/* 섹션 제목 */
+@utility t-sec {
+  font: var(--w-bold) 15px / 1.4 var(--font-sans);
+  letter-spacing: -0.012em;
+}
+@utility t-body {
+  font: var(--w-regular) 15px / 1.62 var(--font-sans);
+}
+@utility t-body-strong {
+  font: var(--w-semibold) 15px / 1.4 var(--font-sans);
+}
+/* 본문보다 살짝 작은, 카드 안 설명 */
+@utility t-note {
+  font: var(--w-regular) 14px / 1.6 var(--font-sans);
+}
+@utility t-note-title {
+  font: var(--w-bold) 14px / 1.45 var(--font-sans);
+}
+/* 입력 라벨 */
+@utility t-label {
+  font: var(--w-bold) 14px / 1.4 var(--font-sans);
+}
+@utility t-cap {
+  font: var(--w-regular) 13px / 1.55 var(--font-sans);
+}
+@utility t-cap-medium {
+  font: var(--w-medium) 13px / 1.45 var(--font-sans);
+}
+@utility t-cap-strong {
+  font: var(--w-semibold) 13px / 1.4 var(--font-sans);
+}
+@utility t-chip {
+  font: var(--w-semibold) 13px / 1.4 var(--font-sans);
+}
+@utility t-btn {
+  font: var(--w-bold) 15px / 1.3 var(--font-sans);
+}
+@utility t-btn-sm {
+  font: var(--w-bold) 13px / 1.3 var(--font-sans);
+}
+@utility t-tab {
+  font: var(--w-medium) 11px / 1.2 var(--font-sans);
+}
+@utility t-tab-on {
+  font: var(--w-bold) 11px / 1.2 var(--font-sans);
+}
+/* 입력창 — 16px 미만이면 iOS 사파리가 포커스 시 확대한다 */
+@utility t-input {
+  font: var(--w-regular) 16px / 1 var(--font-sans);
+}
+
+/* 한국어 줄바꿈 — 단어 중간에서 끊지 않는다 */
+@utility keep-all {
+  word-break: keep-all;
+}
+@utility text-pretty-keep {
+  word-break: keep-all;
+  text-wrap: pretty;
+}
+
+/* ────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    background: var(--page);
+  }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--txt);
+    font-family: var(--font-sans);
+    word-break: keep-all;
+    -webkit-font-smoothing: antialiased;
+  }
+  button {
+    font-family: var(--font-sans);
+  }
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--txt-faint);
+  }
+  img {
+    -webkit-user-drag: none;
+  }
+}
+
+/* 기기 프레임 안쪽 스크롤바는 숨긴다 — 실제 모바일에는 없는 요소라
+   데스크톱 미리보기에서만 보이면 레이아웃 판단을 흐린다 */
+.cd-frame ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.cd-frame * {
+  scrollbar-width: none;
+}

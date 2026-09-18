@@ -1,0 +1,191 @@
+<!-- @dsCard group="찰떡 앱" viewport="1200x900" name="v3 · 기존 기획 대조 리포트" subtitle="PDF 18화면 대조 + 5주차 디자인 고도화 반영 기록" -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>찰떡 v3 · 기존 기획 대조 리포트</title>
+<link rel="stylesheet" href="tokens/fonts.css">
+<link rel="stylesheet" href="tokens/typography.css">
+<link rel="stylesheet" href="tokens/brand-warm.css">
+<style>
+html,body{margin:0}
+body{background:var(--page);font-family:var(--font-sans);color:var(--txt);word-break:keep-all}
+*{box-sizing:border-box}
+main{max-width:1080px;margin:0 auto;padding:48px 24px 100px}
+header{margin-bottom:40px}
+.kicker{display:inline-flex;align-items:center;gap:8px;font:600 12.5px/1 var(--font-sans);letter-spacing:.04em;color:var(--link);margin-bottom:14px}
+h1{font:800 clamp(24px,3.6vw,32px)/1.28 var(--font-sans);letter-spacing:-.03em;color:var(--txt-strong);margin:0 0 12px}
+.lede{font:400 16px/1.68 var(--font-sans);color:var(--txt);max-width:70ch;margin:0;text-wrap:pretty}
+section{margin-bottom:48px}
+.sec-h{display:flex;align-items:baseline;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line-strong);margin-bottom:8px}
+.num{font:700 13px/1 var(--font-mono);color:var(--link);letter-spacing:.04em}
+h2{font:700 clamp(18px,2.2vw,21px)/1.34 var(--font-sans);letter-spacing:-.02em;color:var(--txt-strong);margin:0}
+.badge{font:700 11.5px/1 var(--font-sans);letter-spacing:.02em;padding:5px 9px;border-radius:999px;flex:0 0 auto}
+.b-miss{background:var(--err-bg);color:var(--err)}
+.b-open{background:var(--warn-bg);color:var(--warn)}
+.b-flow{background:var(--fill);color:var(--ink-600)}
+.b-gap{background:var(--c-100);color:var(--c-700)}
+.sec-note{font:400 14.5px/1.65 var(--font-sans);color:var(--txt-muted);margin:0 0 16px;text-wrap:pretty}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+th{text-align:left;font:700 11.5px/1.4 var(--font-sans);letter-spacing:.05em;text-transform:uppercase;color:var(--txt-faint);padding:12px 16px;border-bottom:1px solid var(--line-strong);background:var(--fill)}
+td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top;font:400 14.5px/1.65 var(--font-sans);color:var(--txt)}
+tr:last-child td{border-bottom:none}
+td:first-child{font-weight:700;color:var(--txt-strong);white-space:nowrap}
+td.loc{font:500 12.5px/1.5 var(--font-mono);color:var(--txt-muted);white-space:nowrap}
+.callout{margin-top:14px;padding:12px 16px;border-radius:12px;background:repeating-linear-gradient(135deg,var(--cr-100) 0 6px,var(--cr-25) 6px 12px);border:1px dashed var(--line-strong);font:500 13.5px/1.6 var(--font-sans);color:var(--ink-500)}
+.prio{margin-bottom:30px}
+.prio:last-child{margin-bottom:0}
+.prio h3{display:flex;align-items:center;gap:10px;font:700 15px/1.3 var(--font-sans);color:var(--txt-strong);margin:0 0 6px}
+.prio-desc{font:400 13.5px/1.6 var(--font-sans);color:var(--txt-muted);margin:0 0 12px}
+.src-tag{font:700 11px/1 var(--font-mono);padding:4px 7px;border-radius:6px;text-decoration:none;white-space:nowrap}
+td.dod{color:var(--txt)}
+.resolved{margin-top:14px;padding:12px 16px;border-radius:12px;background:var(--ok-bg);border:1px solid var(--line);font:500 13.5px/1.6 var(--font-sans);color:var(--ok)}
+.resolved code{font:600 12.5px/1.4 var(--font-mono)}
+.propose{background:var(--y-100);border:1px solid var(--y-300, var(--line));border-radius:16px;padding:16px 18px;margin-bottom:12px}
+.propose h4{font:700 14.5px/1.35 var(--font-sans);color:var(--ink-800, var(--txt-strong));margin:0 0 6px}
+.propose p{font:400 14px/1.62 var(--font-sans);color:var(--txt);margin:0 0 8px;text-wrap:pretty}
+.propose .confirm{font:500 12.5px/1.5 var(--font-sans);color:var(--txt-muted);margin:0;padding-top:8px;border-top:1px dashed var(--line-strong)}
+.propose .confirm b{color:var(--ink-600, var(--txt-strong));font-weight:700}
+a{color:var(--link)}a:hover{color:var(--link-hover)}
+</style></head>
+<body><main>
+
+<header>
+<span class="kicker">찰떡 · v3 프론트 설계 — 대조 리포트</span>
+<h1>PDF 18화면과 기존 기획의 차이</h1>
+<p class="lede">18화면 PDF(<a href="index-print.html">index-print.html</a>)에 실제로 무엇이 있고, 무엇이 없는지를 네 가지로 나눠 정리합니다. “화면이 없다”가 곧 “개발되지 않았다”는 뜻은 아닙니다 — 각 항목마다 근거 화면과 남은 범위를 구분해 적었습니다. 01~06번 섹션은 기획안 대조 기록이고, 07번 섹션은 그 이후 진행한 <b>5주차 프론트 디자인 고도화</b>(토큰·탭 재설계·공통화 등) 기록입니다.</p>
+</header>
+
+<section id="sec-01">
+<div class="sec-h"><span class="num">01</span><h2>PDF에서 명시적으로 미제공·준비 중인 항목</h2><span class="badge b-miss">미제공</span></div>
+<p class="sec-note">화면 안에 "미제공" 또는 "준비 중"이라고 직접 쓰여 있는 항목입니다.</p>
+<table><thead><tr><th style="width:22%">기능</th><th>현재 상태와 남은 부분</th><th style="width:16%">위치</th></tr></thead><tbody>
+<tr><td>재입장·기기 변경 시 기록 복구</td><td>활동 기록이 현재 기기에 연결된다는 안내만 있습니다. 재입장 확인 방식, 기기 변경 시 기록 이전, 복구 수단은 제공하지 않는다고 명시되어 있습니다.</td><td class="loc">1쪽 · 02 이름 입력</td></tr>
+</tbody></table>
+<div class="resolved">16종 캐릭터 이미지를 전달받아 <code>assets/characters/</code>에 반영했습니다 — 캐릭터 발급 화면과 팀원 아바타에 적용. AI 리서처(25)·발표 지원(26)도 실제 입력·결과 화면을 새로 만들었습니다. 캐릭터 고유 이름은 여전히 없어 MBTI 유형명으로 대체합니다. 아래 05 우선순위 표에서도 모두 제외했습니다.</div>
+</section>
+
+<section id="sec-02">
+<div class="sec-h"><span class="num">02</span><h2>화면은 있지만, 규칙이 정해지지 않은 항목</h2><span class="badge b-open">규칙 미정</span></div>
+<p class="sec-note">PDF의 점선 안내 상자에 '기획안에 규칙 없음 · 확인 필요'라고 표시되어 있습니다. 개발 착수 전에 먼저 동작 기준을 확정해야 하는 항목입니다.</p>
+<table><thead><tr><th style="width:22%">영역</th><th>아직 정해지지 않은 내용</th><th style="width:16%">위치</th></tr></thead><tbody>
+<tr><td>회의 시간 추천·확정</td><td>회의 길이, 최소 참석 인원, 추천 후 최종 확정 권한. 현재는 2시간 구간을 예시로 제시합니다.</td><td class="loc">2쪽 · 09 회의 시간 추천</td></tr>
+<tr><td>전원 가능한 시간이 없을 때</td><td>일부 인원만 참석할지, 비대면으로 보완할지, 다음 주로 넘길지 등의 처리 방식. 현재는 3명 가능한 후보를 보여주는 수준입니다.</td><td class="loc">2쪽 · 10 전원 불가한 주</td></tr>
+<tr><td>드라이브 이용 제한</td><td>저장 용량 한도, 허용 파일 형식, 제출함을 잠그는 시점, 마감 후 업로드 허용 여부.</td><td class="loc">3쪽 · 12 드라이브</td></tr>
+<tr><td>AI 이용·보관 정책</td><td>AI 사용량 한도, 대화 내용 보관 기간, 학과·수업 정책상 허용 범위.</td><td class="loc">4쪽 · 14 AI 도구</td></tr>
+<tr><td>쿠션 번역기의 말투 구성</td><td>말투 종류의 개수와 이름을 확정하지 않아 '부드럽게 · 담담하게 · 분명하게' 세 가지를 임시로 제시했습니다. MBTI에 따른 기본 말투 적용 여부도 미정입니다.</td><td class="loc">4쪽 · 15 쿠션 번역기</td></tr>
+</tbody></table>
+<div class="callout">'3명 가능한 회의 후보가 보인다'는 후보 표시가 됐다는 뜻이고, '3명만으로 일정을 확정하는 기능이 완성됐다'는 뜻이 아닙니다. 후보 표시와 확정 규칙은 분리되어 있습니다.</div>
+</section>
+
+<section id="sec-03">
+<div class="sec-h"><span class="num">03</span><h2>일부 화면·버튼은 있지만, 후속 흐름이 확인되지 않는 기능</h2><span class="badge b-flow">흐름 미확인</span></div>
+<p class="sec-note">미구현이라고 직접 쓰여 있지는 않지만, 이번 18화면만으로는 완성된 사용 흐름을 확인할 수 없는 부분입니다.</p>
+<table><thead><tr><th style="width:20%">기능</th><th style="width:36%">PDF에서 확인되는 부분</th><th>확인되지 않는 후속 흐름</th></tr></thead><tbody>
+<tr><td>역할 협의·최종 확정</td><td>희망 역할·Veto 선택, 팀원별 선호, 남은 역할 표시</td><td>희망·비희망·무작위 우선순위, 추첨 참가 동의, 비희망 역할의 추첨 제외, 당사자 수락, 최종 확정 권한과 절차. 현재는 선호를 모아 보여주는 화면까지입니다.</td></tr>
+<tr><td>파일 열람·버전 복원</td><td>역할별 제출함, 업로드 아이콘, 버전 목록, 이전 버전 다운로드 아이콘</td><td>파일을 여는 뷰어 화면과 이전 버전을 현재 버전으로 복원하는 절차. 이전 버전 다운로드와 복원은 구분해서 봐야 합니다.</td></tr>
+<tr><td>기여 기록 추가·정정</td><td>본인 확인, 누락 항목 추가 가능 안내, 팀원 확인, 의견 차이 표시</td><td>누락 기록 입력 양식, 근거 첨부, 정정 요청·응답, 의견 차이의 처리 과정. 확인 상태를 보여주는 화면은 있지만 수정 과정을 설명하는 상세 화면은 없습니다.</td></tr>
+</tbody></table>
+<div class="resolved">AI 서기 상세·할 일·체크리스트·팀플 단톡방 3개 화면을 새로 만들어 반영했습니다(20·21·19번 화면). 아래 05번 우선순위 표에서도 제외했습니다.</div>
+</section>
+
+<section id="sec-04">
+<div class="sec-h"><span class="num">04</span><h2>기존 기획에는 있지만 이번 PDF에 화면이 없는 기능</h2><span class="badge b-gap">기획 대비 누락</span></div>
+<p class="sec-note">기존 기획과의 대조 결과입니다. '개발되지 않았다'가 아니라 '이번 시안에 반영된 화면을 확인할 수 없다'는 의미입니다.</p>
+<table><thead><tr><th style="width:26%">기존 기획 기능</th><th>이번 PDF에서 빠진 내용</th></tr></thead><tbody>
+<tr><td>역할 조율용 무작위 도구</td><td>룰렛·주사위·제비뽑기·사다리타기 실행 화면. 원안에는 있지만 역할 조율 화면에는 없습니다.</td></tr>
+<tr><td>아이스브레이킹 미니게임</td><td>사과게임 공유 링크, 라이어 게임, 갈틱폰으로 연결되는 화면.</td></tr>
+<tr><td>익명 찰떡 콕 찌르기</td><td>대상 업무·팀원 선택, 익명 알림 발송, 수신 화면. 기여 기록에 '마감 알림'이라는 예시는 있지만 익명 알림 기능의 동작 화면은 없습니다.</td></tr>
+<tr><td>상황별 문장 변환 모드</td><td>원안의 '핵심 요약 모드'와 '교수님 질문 메일 모드'가 별도 기능으로 확인되지 않습니다. PDF의 세 가지 말투 선택과 동일한 기능이라고 볼 근거도 없습니다.</td></tr>
+<tr><td>친목·캐릭터 보상 기능</td><td>메뉴 룰렛, 팀플 장소 태그·외부 지도 연결, 밥약 사진 인증, 찰떡 지수, 치장 아이템 해제 화면.</td></tr>
+</tbody></table>
+</section>
+
+<section id="sec-05">
+<div class="sec-h"><span class="num">05</span><h2>구현 계획 — 우선순위 3단계</h2></div>
+<p class="sec-note">위 20개 항목을 날짜 없이 우선순위로만 재배열했습니다. 각 항목은 완료 기준(무엇이 되면 끝난 것으로 볼지)으로 판단합니다. "출처" 열은 위 01~04번 항목으로 연결됩니다.</p>
+
+<div class="prio">
+<h3><span class="badge b-miss">P0 · 결정 우선</span>지금 결정하지 않으면 개발을 시작할 수 없는 항목</h3>
+<p class="prio-desc">화면을 만들기 전에 규칙·정책을 먼저 확정해야 하는 7개 항목입니다. 결정 주체는 알이즈웰 팀이며, 결정 결과는 화면 문구·데모 데이터에 반영합니다.</p>
+<table><thead><tr><th style="width:22%">항목</th><th style="width:10%">출처</th><th>완료 기준</th></tr></thead><tbody>
+<tr><td>재입장·기기 변경 시 기록 복구</td><td><a class="src-tag b-miss" href="#sec-01">01</a></td><td class="dod">재인증 방식과 기기 변경 시 기록 이전 규칙이 정해지고, 온보딩 문구에 반영된다.</td></tr>
+<tr><td>회의 시간 추천·확정 규칙</td><td><a class="src-tag b-open" href="#sec-02">02</a></td><td class="dod">회의 길이 기본값, 최소 참석 인원, 추천 후 확정 권한이 정해지고 화면 문구에 반영된다.</td></tr>
+<tr><td>전원 가능한 시간이 없을 때 처리 방식</td><td><a class="src-tag b-open" href="#sec-02">02</a></td><td class="dod">부분 참석·비대면 보완·다음 주 이월 중 처리 순서가 정해지고, 후보 화면에 대안이 표시된다.</td></tr>
+<tr><td>드라이브 이용 제한</td><td><a class="src-tag b-open" href="#sec-02">02</a></td><td class="dod">저장 용량, 허용 파일 형식, 제출함 잠금 시점, 마감 후 업로드 허용 여부가 정해지고 제출함 화면에 안내로 반영된다.</td></tr>
+<tr><td>AI 이용·보관 정책</td><td><a class="src-tag b-open" href="#sec-02">02</a></td><td class="dod">사용량 한도, 대화 보관 기간, 학과 정책 허용 범위가 정해지고 AI 도구 화면 고지문에 반영된다.</td></tr>
+<tr><td>쿠션 번역기 말투 구성</td><td><a class="src-tag b-open" href="#sec-02">02</a></td><td class="dod">말투 종류·이름이 최종 확정되고, MBTI 기본값 적용 여부가 결정되어 데모 데이터에 반영된다.</td></tr>
+<tr><td>역할 협의·최종 확정 규칙</td><td><a class="src-tag b-flow" href="#sec-03">03</a></td><td class="dod">희망·비희망·무작위 우선순위, 추첨 참가 동의, 최종 확정 권한이 정해지고 역할 후보 화면에 확정 절차가 추가된다.</td></tr>
+</tbody></table>
+</div>
+
+<div class="prio">
+<h3><span class="badge b-open">P1 · 핵심 화면</span>결정은 필요 없거나 끝났고, 화면·흐름을 만들어야 완성되는 항목</h3>
+<p class="prio-desc">중간발표 데모의 완성도를 좌우하는 2개 항목을 모두 화면으로 만들어 반영했습니다.</p>
+<table><thead><tr><th style="width:22%">항목</th><th style="width:10%">출처</th><th>완료 기준</th></tr></thead><tbody>
+<tr><td>파일 열람·버전 복원</td><td><a class="src-tag b-flow" href="#sec-03">03</a></td><td class="dod">파일 뷰어 화면과, 이전 버전을 현재 버전으로 복원하는 확인 절차가 만들어진다.</td></tr>
+<tr><td>기여 기록 추가·정정</td><td><a class="src-tag b-flow" href="#sec-03">03</a></td><td class="dod">누락 기록 입력, 근거 첨부, 정정 요청·응답 화면이 만들어져 의견 차이 처리 과정을 확인할 수 있다.</td></tr>
+</tbody></table>
+<div class="resolved">둘 다 화면을 만들어 반영했습니다(22·23번 화면). P1은 모든 항목이 해결됐습니다.</div>
+</div>
+
+<div class="prio">
+<h3><span class="badge b-flow">P2 · 확장</span>다음 단계로 미뤄도 되는 기능</h3>
+<p class="prio-desc">MVP 데모 이후에 붙여도 되는 7개 항목이었습니다.</p>
+<div class="resolved">7개 전부 화면을 만들어 반영했습니다 — AI 리서처(25)·발표 지원(26)·상황별 문장 변환(27)·아이스브레이킹(28, 사과게임만 실행 연결)·친목 메뉴 룰렛(29)·익명 콕 찌르기(24). 역할 조율용 무작위 도구는 07번 화면에 이미 있어 따로 만들 필요가 없었습니다. P0·P1·P2 모두 화면이 만들어진 상태이며, 남은 것은 P0 제안안의 팀 확정뿐입니다.</div>
+</div>
+</section>
+
+<section id="sec-06">
+<div class="sec-h"><span class="num">06</span><h2>P0 규칙 제안안</h2><span class="badge b-miss">팀 확정 필요</span></div>
+<p class="sec-note">05번 P0 7개 항목에 대해 제가 제안하는 안입니다. 기획안에 없는 규칙을 임의로 확정하지 않는다는 원칙과, 찰떡의 제품 원칙(판정 없음 · 사람이 최종 확정)을 따랐습니다.</p>
+<div class="resolved">7개 제안안 모두 화면·로직에 반영했습니다 — 재입장 동일인물 확인(02), 회의 제안→24시간 대기→자동확정/반대(09·10), 이월 확정 버튼(10), 드라이브 2GB·형식·마감후제출 라벨(12), AI 90일 보관·사용내역 내려받기(14), 쿠션 번역기 3종 확정(15), 역할 거절 시 남은 후보만 재추첨(07). 아래는 각 제안의 상세이며, <b>실제 서버 정책 적용이 아니라 화면·데모 데이터 반영</b>이라는 점은 07번 섹션에서 다시 밝힙니다. 팀 검토·수정은 여전히 필요합니다.</div>
+
+<div class="propose">
+<h4>1. 재입장·기기 변경 시 기록 복구 <a class="src-tag b-miss" href="#sec-01">01</a></h4>
+<p>기록을 기기가 아니라 <b>이름 + 초대 코드</b>에 묶습니다. 같은 초대 코드로 다시 입장해 같은 이름을 적으면 자동으로 이전 기록에 연결됩니다(별도 로그인 없음). 동명이인이 있을 수 있으니, 초대 코드와 이름이 같을 때는 "이 사람이 맞는지" 팀원에게 확인하는 화면을 한 번 넣습니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 동일 인물 확인 단계가 번거롭지 않은지, 더 나은 방법이 있는지.</p>
+</div>
+<div class="propose">
+<h4>2. 회의 시간 추천·확정 규칙 <a class="src-tag b-open" href="#sec-02">02</a></h4>
+<p>기본 회의 시간은 <b>1시간</b>, 자동 추천은 <b>전원 가능한 시간만</b> 후보로 올립니다. 누구나 후보 중 하나에 "이 시간으로 제안"을 누르고, 24시간 안에 반대가 없으면 자동 확정되며, 누구나 반대하면 확정되지 않습니다. 특정 사람에게 단독 확정 권한을 주지 않습니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 1시간이 적당한지(중간발표 준비는 더 길 수 있음), 24시간이라는 대기 시간이 맞는지.</p>
+</div>
+<div class="propose">
+<h4>3. 전원 가능한 시간이 없을 때 <a class="src-tag b-open" href="#sec-02">02</a></h4>
+<p><b>최다 인원 가능 시간</b>을 후보로 보여주고, 빠진 인원에게 "비대면으로라도 문자로 의견 주기"를 요청합니다. 다음 주로 이월할지는 팀이 버튼으로 직접 정합니다(자동 이월 없음). 09·10번 화면에 이미 반영되어 있습니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 문자로 받은 의견이 회의 기록에 어떻게 남는지(관련: 기여도 기록 05번).</p>
+</div>
+<div class="propose">
+<h4>4. 드라이브 이용 제한 <a class="src-tag b-open" href="#sec-02">02</a></h4>
+<p>팀당 저장 용량 <b>2GB</b>, 파일 형식은 문서·이미지·PPT·PDF로 제한합니다. 마감 후에도 제출함은 잠그지 않고, 대신 마감을 지난 파일에는 "마감 후 제출" 라벨을 자동으로 붙입니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 2GB가 한 학기 문서·발표 파일에 충분한지, 제출함을 잠그지 않는 방식이 실제로 괜찮은지.</p>
+</div>
+<div class="propose">
+<h4>5. AI 이용·보관 정책 <a class="src-tag b-open" href="#sec-02">02</a></h4>
+<p>대화 내용은 <b>90일</b> 보관 후 자동 삭제합니다. 사용량 한도는 두지 않되(학생 팀플 규모 기준), 학과에서 AI 사용 내역을 요구하는 경우에 대비해 "AI 사용 내역 내보내기" 기능을 예비로 남겨둡니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 90일이 적당한지, 수업에서 AI 사용을 기록해 제출해야 하는지 확인.</p>
+</div>
+<div class="propose">
+<h4>6. 쿠션 번역기 말투 구성 <a class="src-tag b-open" href="#sec-02">02</a></h4>
+<p>현재 시안의 <b>부드럽게 · 담담하게 · 분명하게</b> 3종을 기준으로 확정하자고 제안합니다. MBTI에 따른 기본 말투 자동 적용은 두지 않습니다 — 판정하지 않는다는 원칙과 맞지 않기 때문입니다. 매번 사람이 직접 고릅니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 3종이라는 개수로 충분한지.</p>
+</div>
+<div class="propose">
+<h4>7. 역할 협의·최종 확정 규칙 <a class="src-tag b-flow" href="#sec-03">03</a></h4>
+<p>1) 희망 역할 수집 → 2) 겹치는 역할별로 1:1 협의 → 3) 안 풀리면 <b>무작위 도구로 추첨</b>(Veto한 사람은 대상에서 제외) → 4) 추첨 결과를 <b>당사자가 수락해야</b> 확정, 거절하면 남은 후보끼리만 재추첨. 특정 인물에게 확정 권한을 주지 않으며, 전원 수락이 곧 확정입니다.</p>
+<p class="confirm"><b>팀이 확인할 것</b> — 거절 시 전원 재추첨인지 남은 후보만인지.</p>
+</div>
+</section>
+
+<section id="sec-07">
+<div class="sec-h"><span class="num">07</span><h2>5주차 프론트 디자인 고도화</h2><span class="badge b-flow">반영 완료</span></div>
+<p class="sec-note">기능을 늘리는 대신, 이미 만든 30여 개 화면을 하나의 디자인 체계로 정리한 작업입니다. 5주 계획(1~5주차)을 그대로 따랐고, 전부 화면·코드에 반영했습니다. "반영"은 <b>이 프로토타입 화면·로직이 바뀌었다</b>는 뜻이며, 실제 서버·정책·인증 구현이 완료됐다는 뜻은 아닙니다.</p>
+<table><thead><tr><th style="width:12%">주차</th><th>반영 내용</th></tr></thead><tbody>
+<tr><td>1주차</td><td>색상·서체·간격 토큰 전면 교체(크림 배경·흰 작업면·파란 안내색 등). 하단 탭을 홈/채팅/일정/드라이브/팀 5개로 재구성해 AI 도구 전용 탭을 없애고 홈 바로가기로만 진입하게 함. 화면에 있던 점선 검토 박스(기획안 규칙 없음 안내)를 사용자 화면에서 기본적으로 숨기고, 상단 토글로만 켜지는 개발·검토 모드로 분리.</td></tr>
+<tr><td>2주차</td><td>역할 조율(07) 화면을 상단 '역할별 현황' / 하단 '팀원별 선호'로 재배치하고 MBTI 배지를 제거. 온보딩 00~06번 동선·토큰 적용 점검. 단톡방·DM(19·30·31)에 전송 실패 · 다시 보내기 상태 추가.</td></tr>
+<tr><td>3주차</td><td>내 시간표(08)에 '요일 선택 → 시간 선택 → 추가' 목록형 입력을 격자와 함께 제공. 드라이브·버전·할 일(12·13·21)의 상태 배지를 공통 어휘(미입력·대기·진행 중·완료·실패·준비 중)로 통일. 파일 열람(22)에서 이미지 파일은 실제로 열고, 그 외 형식은 '미지원 형식 · 복원되지 않음 · 다운로드' 안내로 구분.</td></tr>
+<tr><td>4주차</td><td>AI 도구 화면(15·20·26·27)에 원문/결과 비교 카드(CompareCard)와 'AI 초안' 배지를 공통 적용. 리서처(25) 결과에 '샘플 결과' 배지 추가. 콕 찌르기(24)에 발송 제한 이유("오늘 이미 보냈어요")를 명시. 아이스브레이킹(28)에서 미연결 게임은 '실행 준비 중' + '게임 설명 보기'로 구분.</td></tr>
+<tr><td>5주차</td><td>1024px 이상 큰 화면에서 채팅이 목록/대화/정보 3분할로 배치되는 예시 화면(33) 추가. 1~4주차에서 바뀐 수락·거절·재추첨·반대·이월·복원·정정 로직을 코드로 재검토. Chip·목록 미리보기 등 긴 텍스트가 잘리지 않고 줄바꿈·말줄임으로 처리되는지 확인.</td></tr>
+</tbody></table>
+<div class="callout">이 섹션의 작업은 위 05·06번(P0~P2, P0 제안안)과 이어집니다 — P0 제안안 7개는 이번 고도화 과정에서 실제로 화면·로직에 반영됐습니다.</div>
+</section>
+
+</main></body></html>

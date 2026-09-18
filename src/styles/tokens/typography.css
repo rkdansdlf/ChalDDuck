@@ -1,0 +1,41 @@
+/* 찰떡 타이포그래피 — Pretendard Variable 단일 서체, 위계는 웨이트로만 만든다.
+   출처: 핸드오프 v3 `tokens/typography.css` + 각 화면 실측값.
+
+   `--type-*` 는 설계 문서의 기준 스케일이고, 아래 `.t-*` 유틸리티는
+   프로토타입 화면에서 실제로 쓰인 값입니다. 핸드오프 문서가
+   "화면별 실측값을 우선"하라고 명시해서 `.t-*` 쪽을 구현 기준으로 씁니다. */
+:root {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* 숫자·코드 표기 전용 시스템 모노 (별도 서체 도입 없음) */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+  --w-bold: 700;
+  --w-extrabold: 800;
+
+  --fs-display: 34px;
+  --lh-display: 1.22;
+  --ls-display: -0.024em;
+  --fs-h1: 26px;
+  --lh-h1: 1.28;
+  --fs-h2: 21px;
+  --lh-h2: 1.34;
+  --fs-h3: 18px;
+  --lh-h3: 1.4;
+  --ls-heading: -0.018em;
+  --fs-body-lg: 17px;
+  --lh-body-lg: 1.62;
+  --fs-body: 15px;
+  --lh-body: 1.62;
+  --ls-body: -0.008em;
+  --fs-body-sm: 14px;
+  --lh-body-sm: 1.58;
+  --fs-caption: 13px;
+  --lh-caption: 1.5;
+  --fs-micro: 11px;
+  --lh-micro: 1.36;
+  --ls-micro: 0.02em;
+}

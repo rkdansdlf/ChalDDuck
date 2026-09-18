@@ -1,0 +1,89 @@
+/* 찰떡 · 웜 브랜드 팔레트
+   출처: 핸드오프 v3 `tokens/brand-warm.css` (로고 assets/logo-mochi.png 에서 추출).
+   배경은 크림, 주요 행동은 잉크(진한 갈색), 노랑은 캐릭터와 강조용.
+   ⚠️ 이 값들은 디자인 확정값입니다. 임의로 고치지 말고 디자인팀과 합의 후 바꾸세요. */
+:root {
+  /* ── 찰떡 옐로 — 캐릭터 몸 색. 면과 강조에만 쓰고 글자 색으로 쓰지 않는다 ── */
+  --y-50: #fffcf2;
+  --y-100: #fff5d8;
+  --y-200: #fdefc2;
+  --y-300: #fce79e;
+  --y-400: #ffdc6a; /* 로고 원색 */
+  --y-500: #f2cc5c;
+  --y-600: #d9ae3c;
+  --y-700: #7e6018; /* 글자용 — #A8842A 는 크림 위 3.24:1 로 미달해 내렸다 */
+
+  /* ── 코랄 — 로고 하트. 알림·팀·멘션 ── */
+  --c-100: #fde7e0;
+  --c-200: #fccfc2;
+  --c-300: #fbaf9b;
+  --c-400: #f98f78; /* 로고 원색 */
+  --c-600: #d2624a;
+  --c-700: #a64b36; /* 글자용 */
+
+  /* ── 잉크 — 캐릭터 눈·입 색. 주요 행동과 본문 ── */
+  --ink-900: #241c14;
+  --ink-800: #2e2419;
+  --ink-700: #352b20; /* 주요 행동 */
+  --ink-600: #4a3b2c;
+  --ink-500: #6f6255;
+  --ink-400: #756450; /* 보조 라벨 최소값 — #8C7C68 은 크림 위 3.88:1 로 미달 */
+  --ink-300: #b3a492; /* 면·경계 전용, 글자에 쓰지 않는다 */
+
+  /* ── 크림 뉴트럴 — 배경과 면 ── */
+  --cr-0: #ffffff;
+  --cr-25: #fffdf9;
+  --cr-50: #fbf9f5;
+  --cr-100: #f8f1e4;
+  --cr-200: #e8e1d5;
+  --cr-300: #e3d6c0;
+  --cr-400: #cfc0a8;
+  --input-border: #8c8070;
+
+  /* ── 의미 색 ── */
+  --ok: #276455;
+  --ok-bg: #eaf5f0;
+  --warn: #77530c;
+  --warn-bg: #fff3d0;
+  --err: #a73c32;
+  --err-bg: #fdede9;
+  --info: #315f8c;
+  --info-bg: #eaf2fa;
+  --focus: #316bc0;
+
+  /* ── 역할 배정 상태 ── */
+  --want: #3c7264; /* 1순위 희망 */
+  --veto: #a64536; /* 절대 피하고 싶은 역할 */
+  --open: #756450; /* 아직 정해지지 않음 */
+
+  /* ── 표면·경계·행동 ── */
+  --page: var(--cr-50);
+  --card: #ffffff;
+  --fill: var(--cr-100);
+  --line: var(--cr-200);
+  --line-strong: var(--cr-300);
+  --action: var(--ink-700);
+  --action-hover: var(--ink-800);
+  --action-press: var(--ink-900);
+  --on-action: #fffcf2;
+  --txt: var(--ink-700);
+  --txt-strong: var(--ink-900);
+  --txt-muted: var(--ink-500);
+  --txt-faint: var(--ink-400);
+  --txt-disabled: #756450; /* 버튼 비활성 */
+  --link: #a64b36;
+  --link-hover: #8a3b29;
+
+  --ring: 0 0 0 3px rgba(49, 107, 192, 0.38);
+  --sh-sm: 0 1px 2px rgba(36, 28, 20, 0.05);
+  --sh-md: 0 2px 6px rgba(36, 28, 20, 0.06), 0 10px 22px -14px rgba(36, 28, 20, 0.16);
+  --sh-lg: 0 4px 10px rgba(36, 28, 20, 0.06), 0 22px 44px -22px rgba(36, 28, 20, 0.24);
+
+  /* ── 치수 (핸드오프 "spacing/크기" 절) ── */
+  --r-card: 20px;
+  --r-control: 14px; /* 입력창·버튼 */
+  --r-sheet: 28px;
+  --r-phone: 34px;
+  --h-control: 44px; /* 버튼 기본 · 최소 히트 영역 */
+  --h-control-lg: 52px; /* 버튼 lg · 입력창 */
+}
