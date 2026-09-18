@@ -144,3 +144,59 @@ export type RecentItem = {
   /** 눌렀을 때 갈 곳. 아직 없는 화면이면 null 이고 화면이 안내만 한다. */
   href: string | null;
 };
+
+/* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
+
+/** 팀 드라이브 이용 제한. 아직 확정되지 않은 정책(2GB 가 충분한지 팀 확인 필요). */
+export type DriveLimits = {
+  capGB: number;
+  usedGB: number;
+  /** 허용 파일 형식 표시용("문서"·"이미지"·"PPT"·"PDF"). */
+  types: string[];
+};
+
+/**
+ * 역할별 제출함.
+ *
+ * 마감이 지나도 제출함을 **잠그지 않는다** — 늦게라도 내는 편이 안 내는 것보다 낫고,
+ * 대신 마감을 지난 파일에 "마감 후 제출" 라벨이 자동으로 붙는다.
+ */
+export type SubmissionBox = {
+  id: string;
+  role: RoleKey;
+  name: string;
+  /** 이 칸을 맡은 사람. */
+  owner: string;
+  /** 제출함을 열었을 때 보여 줄 대표 파일 이름. */
+  fileName: string;
+  fileCount: number;
+  /** "9/15" 같은 표시 문자열. 서버가 날짜를 주면 화면에서 계산하도록 바꿀 것. */
+  due: string;
+  /** 마감을 지나 올라온 파일이 있는지. */
+  hasLate: boolean;
+};
+
+/** 실제로 열리는 형식과 안내만 하는 형식을 구분하기 위한 종류. */
+export type FileKind = "pptx" | "docx" | "pdf" | "image";
+
+/**
+ * 파일 버전 하나.
+ *
+ * 같은 이름으로 다시 올리면 **덮어쓰지 않고 새 버전이 쌓인다** — 이전 버전을 언제든
+ * 되찾을 수 있어야 작업이 사라지지 않는다. 복원도 지우는 게 아니라 새 버전을 더한다.
+ *
+ * 최신 버전은 별도 플래그 대신 **목록의 첫 항목**으로 정한다.
+ * 플래그를 들고 다니면 복원 뒤에 두 개가 최신이 되는 일이 생긴다.
+ */
+export type FileVersion = {
+  id: string;
+  /** "v4" 처럼 화면에 그대로 보이는 이름. */
+  label: string;
+  author: string;
+  when: string;
+  note: string;
+  size: string;
+  kind: FileKind;
+  /** 실제로 열리는 형식만 미리보기 주소를 갖는다. 그 외는 다운로드 안내만. */
+  previewUrl: string | null;
+};

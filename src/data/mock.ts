@@ -2,12 +2,15 @@ import type {
   AiTool,
   BusyBlock,
   BusyKind,
+  DriveLimits,
+  FileVersion,
   Member,
   MeetingSlot,
   QuizQuestion,
   RandomTool,
   RecentItem,
   Role,
+  SubmissionBox,
   Team,
 } from "@/lib/types";
 
@@ -170,3 +173,133 @@ export const RECENT_ITEMS: RecentItem[] = [
   { id: "r1", title: "발표자료 v4", note: "어제 수정 · 이서연", icon: "file-check-2", href: "/drive" },
   { id: "r2", title: "할 일 · 체크리스트", note: "3건 남음", icon: "list-checks", href: null },
 ];
+
+/* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
+
+export const DRIVE_LIMITS: DriveLimits = {
+  capGB: 2,
+  usedGB: 1.3,
+  types: ["문서", "이미지", "PPT", "PDF"],
+};
+
+export const SUBMISSION_BOXES: SubmissionBox[] = [
+  {
+    id: "box-research",
+    role: "research",
+    name: "자료조사 제출함",
+    owner: "김민준",
+    fileName: "자료조사 정리.docx",
+    fileCount: 3,
+    due: "9/15",
+    hasLate: true,
+  },
+  {
+    id: "box-deck",
+    role: "deck",
+    name: "PPT 템플릿 제출함",
+    owner: "이서연",
+    fileName: "발표 자료.pptx",
+    fileCount: 2,
+    due: "9/20",
+    hasLate: false,
+  },
+  {
+    id: "box-script",
+    role: "script",
+    name: "발표 대본 제출함",
+    owner: "최유나",
+    fileName: "발표 대본.docx",
+    fileCount: 0,
+    due: "9/22",
+    hasLate: false,
+  },
+];
+
+/**
+ * 버전 기록 — 누가 언제 무엇을 바꿨는지. **맨 앞이 최신**이다.
+ *
+ * `img1` 은 같은 작업에서 내보낸 이미지라 형식이 다르다. 22번 화면에서
+ * "실제로 열리는 형식"과 "안내만 하는 형식"이 어떻게 다른지 보여 주는 예시이기도 하다.
+ */
+const DECK_VERSIONS: FileVersion[] = [
+  {
+    id: "v4",
+    label: "v4",
+    author: "이서연",
+    when: "어제 21:14",
+    note: "표지·간지 레이아웃 교체",
+    size: "8.4MB",
+    kind: "pptx",
+    previewUrl: null,
+  },
+  {
+    id: "v3",
+    label: "v3",
+    author: "김민준",
+    when: "9/13 16:02",
+    note: "설문 결과 그래프 3개 추가",
+    size: "7.9MB",
+    kind: "pptx",
+    previewUrl: null,
+  },
+  {
+    id: "img1",
+    label: "img1",
+    author: "김민준",
+    when: "9/13 15:40",
+    note: "설문 결과 그래프 (이미지 내보내기)",
+    size: "1.1MB",
+    kind: "image",
+    previewUrl: "/assets/logo-app-icon.png",
+  },
+  {
+    id: "v2",
+    label: "v2",
+    author: "이서연",
+    when: "9/12 23:40",
+    note: "본문 폰트 통일",
+    size: "7.1MB",
+    kind: "pptx",
+    previewUrl: null,
+  },
+  {
+    id: "v1",
+    label: "v1",
+    author: "이서연",
+    when: "9/11 14:20",
+    note: "템플릿 최초 업로드",
+    size: "6.8MB",
+    kind: "pptx",
+    previewUrl: null,
+  },
+];
+
+const RESEARCH_VERSIONS: FileVersion[] = [
+  {
+    id: "r2",
+    label: "v2",
+    author: "김민준",
+    when: "9/16 09:12",
+    note: "통계청 자료 표 추가",
+    size: "1.4MB",
+    kind: "docx",
+    previewUrl: null,
+  },
+  {
+    id: "r1",
+    label: "v1",
+    author: "김민준",
+    when: "9/14 22:05",
+    note: "논문 5편 요약 정리",
+    size: "1.1MB",
+    kind: "docx",
+    previewUrl: null,
+  },
+];
+
+/** 제출함별 버전 기록. 아직 아무것도 올라오지 않은 칸은 빈 배열이다. */
+export const BOX_VERSIONS: Record<string, FileVersion[]> = {
+  "box-deck": DECK_VERSIONS,
+  "box-research": RESEARCH_VERSIONS,
+  "box-script": [],
+};

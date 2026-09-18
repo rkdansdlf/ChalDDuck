@@ -2,6 +2,8 @@ import type {
   AiTool,
   BusyBlock,
   BusyKind,
+  DriveLimits,
+  FileVersion,
   Member,
   MeetingWeek,
   OnboardingDraft,
@@ -9,11 +11,14 @@ import type {
   RandomTool,
   RecentItem,
   Role,
+  SubmissionBox,
   Team,
 } from "@/lib/types";
 import {
   AI_TOOLS,
+  BOX_VERSIONS,
   BUSY_KINDS,
+  DRIVE_LIMITS,
   MEETING_SLOTS,
   MEETING_SLOTS_PARTIAL,
   MOCK_ROSTER,
@@ -25,6 +30,7 @@ import {
   ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
+  SUBMISSION_BOXES,
 } from "./mock";
 
 /**
@@ -156,4 +162,26 @@ export async function getAiTools(): Promise<AiTool[]> {
 
 export async function getRecentItems(_teamId: string): Promise<RecentItem[]> {
   return RECENT_ITEMS;
+}
+
+/* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
+
+export async function getDriveLimits(_teamId: string): Promise<DriveLimits> {
+  return DRIVE_LIMITS;
+}
+
+export async function getSubmissionBoxes(_teamId: string): Promise<SubmissionBox[]> {
+  return SUBMISSION_BOXES;
+}
+
+export async function getSubmissionBox(
+  _teamId: string,
+  boxId: string,
+): Promise<SubmissionBox | null> {
+  return SUBMISSION_BOXES.find((b) => b.id === boxId) ?? null;
+}
+
+/** 버전 기록. **맨 앞이 최신**이다. */
+export async function getFileVersions(_teamId: string, boxId: string): Promise<FileVersion[]> {
+  return BOX_VERSIONS[boxId] ?? [];
 }
