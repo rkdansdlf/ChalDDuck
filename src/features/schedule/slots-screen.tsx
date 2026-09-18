@@ -16,18 +16,16 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { MeetingSlot, MeetingWeek, Team } from "@/lib/types";
+import {
+  carryOverMeeting,
+  confirmMeeting,
+  objectToMeeting,
+  proposeMeeting,
+  useMeeting,
+} from "./meeting-state";
 
 /** 기본 회의 길이 — 확정되지 않은 정책(1시간이 적당한지 팀 확인 필요). */
 const DEFAULT_MINUTES = 60;
-
-/**
- * 제안의 진행 단계.
- * - `idle` 후보를 고르는 중
- * - `proposed` 제안을 보내고 응답을 기다리는 중
- * - `confirmed` 응답 마감까지 반대가 없어 확정
- * - `carried` 이번 주를 건너뛰고 다음 주로 이월(전원 불가한 주에서만)
- */
-type Stage = "idle" | "proposed" | "confirmed" | "carried";
 
 /**
  * 09 회의 시간 추천 / 10 전원 불가한 주.
@@ -50,8 +48,8 @@ export function SlotsScreen({
 }) {
   const router = useRouter();
 
+  const { stage, slot: proposed } = useMeeting();
   const [pickedId, setPickedId] = useState<string | null>(null);
-  const [stage, setStage] = useState<Stage>("idle");
   const [toast, setToast] = useState<string | null>(null);
 
   const picked = week.slots.find((s) => s.id === pickedId) ?? null;
@@ -65,7 +63,7 @@ export function SlotsScreen({
 
   const propose = () => {
     if (!picked) return;
-    setStage("proposed");
+    proposeMeeting(picked);
     flash(`팀원 ${week.total - 1}명에게 확인 요청을 보냈습니다`);
   };
 
@@ -100,17 +98,17 @@ export function SlotsScreen({
             title="다음 주로 이월했습니다"
             note="이번 주 회의는 열리지 않습니다"
           />
-        ) : stage === "confirmed" && picked ? (
+        ) : stage === "confirmed" && proposed ? (
           <ResultPanel
             icon="calendar-check"
-            title={`${picked.day} ${picked.time} · ${DEFAULT_MINUTES}분으로 확정`}
+            title={`${proposed.day} ${proposed.time} · ${DEFAULT_MINUTES}분으로 확정`}
             note="응답 마감까지 반대가 없어 동의로 자동 확정됐습니다"
           />
-        ) : stage === "proposed" && picked ? (
+        ) : stage === "proposed" && proposed ? (
           <>
             <Panel s="card" pad={16} r={18} className="mb-3">
               <div className="font-extrabold text-[18px] leading-[1.35] text-txt-strong">
-                {picked.day} {picked.time}
+                {proposed.day} {proposed.time}
               </div>
               <div className="t-cap-strong mt-[3px] text-txt-muted">
                 {DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감까지
@@ -136,7 +134,8 @@ export function SlotsScreen({
                 v="outline"
                 icon="x"
                 onClick={() => {
-                  setStage("idle");
+                  objectToMeeting();
+                  setPickedId(null);
                   flash("반대가 있어 확정되지 않았습니다");
                 }}
               >
@@ -144,7 +143,7 @@ export function SlotsScreen({
               </Btn>
               {/* 서버가 없어 다른 팀원의 응답과 마감 시각을 흉내 낼 수 없다.
                   실제로는 마감이 지나면 서버가 알아서 확정한다. */}
-              <Btn size="sm" v="ghost" icon="clock" onClick={() => setStage("confirmed")}>
+              <Btn size="sm" v="ghost" icon="clock" onClick={confirmMeeting}>
                 응답 마감 시뮬레이션 (데모)
               </Btn>
             </div>
@@ -204,7 +203,7 @@ export function SlotsScreen({
                   >
                     비대면 참여 요청 보내기
                   </Btn>
-                  <Btn v="ghost" size="sm" icon="arrow-right" onClick={() => setStage("carried")}>
+                  <Btn v="ghost" size="sm" icon="arrow-right" onClick={carryOverMeeting}>
                     다음 주로 이월 확정하기
                   </Btn>
                 </>

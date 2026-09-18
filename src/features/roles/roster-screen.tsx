@@ -26,6 +26,7 @@ import {
   setPendingCount,
   useNegotiation,
 } from "./negotiation-state";
+import { applyMyChoices, unresolvedClashes, wantersOf } from "./roster-model";
 
 /**
  * 07 팀 역할 조율.
@@ -57,30 +58,20 @@ export function RosterScreen({
 
   const roleName = (key: RoleKey | null) => roles.find((r) => r.key === key)?.name ?? "미정";
 
-  /** 서버 명단 위에 내가 방금 온보딩에서 고른 값을 덮어쓴다. */
   const members = useMemo(
     () =>
-      roster.map((m) =>
-        m.isMe
-          ? {
-              ...m,
-              name: onboarding.name.trim() || m.name,
-              mbti: onboarding.effectiveMbti ?? m.mbti,
-              want: onboarding.want ?? m.want,
-              veto: onboarding.veto ?? m.veto,
-            }
-          : m,
-      ),
+      applyMyChoices(roster, {
+        name: onboarding.name,
+        mbti: onboarding.effectiveMbti,
+        want: onboarding.want,
+        veto: onboarding.veto,
+      }),
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
-  /** 아직 확정되지 않은, 희망자가 겹친 역할 수. */
+  /** 아직 확정되지 않은, 희망자가 겹친 역할 수 — 탭바 배지가 읽어 간다. */
   const pending = useMemo(
-    () =>
-      roles.filter(
-        (r) =>
-          members.filter((m) => m.want === r.key).length > 1 && !resolutions[r.key]?.accepted,
-      ).length,
+    () => unresolvedClashes(roles, members, resolutions).length,
     [roles, members, resolutions],
   );
 
@@ -109,7 +100,7 @@ export function RosterScreen({
 
         <div className="mb-5 flex flex-col gap-2">
           {roles.map((role) => {
-            const wanters = members.filter((m) => m.want === role.key);
+            const wanters = wantersOf(members, role.key);
             const result = resolutions[role.key];
             const clash = wanters.length > 1;
             const excluded = rejected[role.key] ?? [];

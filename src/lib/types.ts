@@ -120,3 +120,27 @@ export type OnboardingDraft = {
   want: RoleKey | null;
   veto: RoleKey | null;
 };
+
+/* ── 11 홈 ─────────────────────────────────────────────────── */
+
+/** AI 도구 목록. 14번 허브와 홈의 바로가기가 같은 목록을 쓴다. */
+export type AiTool = {
+  key: string;
+  name: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+  note: string;
+  /** 아직 열지 않은 도구는 false. */
+  ready: boolean;
+};
+
+/** 홈의 "최근 자료·업무" 한 줄. */
+export type RecentItem = {
+  id: string;
+  title: string;
+  note: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+  /** 눌렀을 때 갈 곳. 아직 없는 화면이면 null 이고 화면이 안내만 한다. */
+  href: string | null;
+};

@@ -1,4 +1,5 @@
 import type {
+  AiTool,
   BusyBlock,
   BusyKind,
   Member,
@@ -6,10 +7,12 @@ import type {
   OnboardingDraft,
   QuizQuestion,
   RandomTool,
+  RecentItem,
   Role,
   Team,
 } from "@/lib/types";
 import {
+  AI_TOOLS,
   BUSY_KINDS,
   MEETING_SLOTS,
   MEETING_SLOTS_PARTIAL,
@@ -17,6 +20,7 @@ import {
   MOCK_TEAM,
   MY_BUSY_BLOCKS,
   QUIZ,
+  RECENT_ITEMS,
   RANDOM_TOOLS,
   ROLES,
   SCHEDULE_DAYS,
@@ -142,4 +146,14 @@ export async function getMeetingWeek(
     submitted: MOCK_ROSTER.length,
     total: MOCK_ROSTER.length,
   };
+}
+
+/* ── 11 홈 ─────────────────────────────────────────────────── */
+
+export async function getAiTools(): Promise<AiTool[]> {
+  return AI_TOOLS;
+}
+
+export async function getRecentItems(_teamId: string): Promise<RecentItem[]> {
+  return RECENT_ITEMS;
 }

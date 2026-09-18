@@ -1,10 +1,12 @@
 import type {
+  AiTool,
   BusyBlock,
   BusyKind,
   Member,
   MeetingSlot,
   QuizQuestion,
   RandomTool,
+  RecentItem,
   Role,
   Team,
 } from "@/lib/types";
@@ -127,4 +129,44 @@ export const QUIZ: QuizQuestion[] = [
     a: "먼저 일정을 정하고 미리 완성하기",
     b: "유연하게 진행하며 마감에 집중하기",
   },
+];
+
+/* ── 11 홈 / 14 AI 도구 ─────────────────────────────────────── */
+
+export const AI_TOOLS: AiTool[] = [
+  {
+    key: "cushion",
+    name: "쿠션 번역기",
+    icon: "message-square-heart",
+    note: "하고 싶은 말의 말투만 부드럽게 바꿔 줍니다",
+    ready: true,
+  },
+  {
+    key: "clerk",
+    name: "AI 서기",
+    icon: "notebook-pen",
+    note: "회의 내용을 할 일 카드로 정리합니다",
+    ready: true,
+  },
+  { key: "research", name: "AI 리서처", icon: "search", note: "자료 출처와 함께 찾아 줍니다", ready: true },
+  {
+    key: "present",
+    name: "발표 지원",
+    icon: "presentation",
+    note: "대본 다듬기와 예상 질문 정리",
+    ready: true,
+  },
+  {
+    key: "sentence",
+    name: "상황별 문장 변환",
+    icon: "file-output",
+    note: "핵심 요약·교수님 질문 메일 모드",
+    ready: true,
+  },
+];
+
+/** 홈의 "최근 자료·업무". 13·21번 화면이 없어 아직 갈 곳이 없는 항목은 href 가 null 이다. */
+export const RECENT_ITEMS: RecentItem[] = [
+  { id: "r1", title: "발표자료 v4", note: "어제 수정 · 이서연", icon: "file-check-2", href: "/drive" },
+  { id: "r2", title: "할 일 · 체크리스트", note: "3건 남음", icon: "list-checks", href: null },
 ];
