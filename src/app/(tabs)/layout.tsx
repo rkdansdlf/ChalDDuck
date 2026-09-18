@@ -1,4 +1,5 @@
-import { AppFrame, StatusBar, TabBar } from "@/components/ui";
+import { AppTabBar } from "@/components/app-tab-bar";
+import { AppFrame, StatusBar } from "@/components/ui";
 
 /**
  * 탭 셸.
@@ -11,7 +12,7 @@ export default function TabsLayout({ children }: LayoutProps<"/">) {
     <AppFrame>
       <StatusBar />
       {children}
-      <TabBar />
+      <AppTabBar />
     </AppFrame>
   );
 }

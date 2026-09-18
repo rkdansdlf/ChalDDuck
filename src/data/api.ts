@@ -1,5 +1,5 @@
-import type { Member, OnboardingDraft, QuizQuestion, Role, Team } from "@/lib/types";
-import { MOCK_ROSTER, MOCK_TEAM, QUIZ, ROLES } from "./mock";
+import type { Member, OnboardingDraft, QuizQuestion, RandomTool, Role, Team } from "@/lib/types";
+import { MOCK_ROSTER, MOCK_TEAM, QUIZ, RANDOM_TOOLS, ROLES } from "./mock";
 
 /**
  * 데이터 접근 계층.
@@ -27,6 +27,10 @@ export async function getRoles(): Promise<Role[]> {
 
 export async function getQuiz(): Promise<QuizQuestion[]> {
   return QUIZ;
+}
+
+export async function getRandomTools(): Promise<RandomTool[]> {
+  return RANDOM_TOOLS;
 }
 
 export async function getRoster(_teamId: string): Promise<Member[]> {

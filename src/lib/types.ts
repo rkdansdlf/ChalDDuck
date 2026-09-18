@@ -40,6 +40,17 @@ export type Member = {
   veto: RoleKey | null;
 };
 
+/**
+ * 추첨 도구 — 협의가 안 될 때 역할을 뽑는 방법.
+ * 결과가 달라 보일 뿐 다 같은 무작위 추첨이다. 고르는 재미를 위한 표시.
+ */
+export type RandomTool = {
+  key: string;
+  name: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+};
+
 /** 30초 컷 한 문항. `a` 를 고르면 축의 앞 글자, `b` 면 뒷 글자가 된다. */
 export type QuizQuestion = {
   axis: string;

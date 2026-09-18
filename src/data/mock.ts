@@ -1,4 +1,4 @@
-import type { Member, QuizQuestion, Role, Team } from "@/lib/types";
+import type { Member, QuizQuestion, RandomTool, Role, Team } from "@/lib/types";
 
 /**
  * 데모 데이터.
@@ -36,6 +36,14 @@ export const MOCK_ROSTER: Member[] = [
   { id: "m2", name: "이서연", isMe: false, mbti: "ENFP", want: "deck", veto: "manage" },
   { id: "m3", name: "박지호", isMe: false, mbti: "ISTJ", want: "manage", veto: "present" },
   { id: "m4", name: "최유나", isMe: false, mbti: null, want: "research", veto: null },
+];
+
+/** 추첨 도구 4종. 29번 "메뉴 룰렛" 화면도 같은 목록을 재사용한다. */
+export const RANDOM_TOOLS: RandomTool[] = [
+  { key: "roulette", name: "룰렛", icon: "disc-3" },
+  { key: "dice", name: "주사위", icon: "dices" },
+  { key: "draw", name: "제비뽑기", icon: "ticket" },
+  { key: "ladder", name: "사다리타기", icon: "git-fork" },
 ];
 
 /**
