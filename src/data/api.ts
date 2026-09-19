@@ -5,6 +5,7 @@ import type {
   ContribKind,
   ContribRecord,
   ContribReportBase,
+  IceGame,
   ClerkDraft,
   CushionTone,
   ChatMessage,
@@ -23,6 +24,8 @@ import type {
   Role,
   SentenceMode,
   SubmissionBox,
+  Task,
+  TaskKind,
   Team,
   TeamCheckRecord,
 } from "@/lib/types";
@@ -37,6 +40,8 @@ import {
   CONTRIB_KINDS,
   CONTRIB_REPORT_BASE,
   CUSHION_TONES,
+  ICE_GAMES,
+  MENU_OPTIONS,
   DM_MESSAGES,
   DM_THREADS,
   BUSY_KINDS,
@@ -61,6 +66,8 @@ import {
   SENTENCE_SAMPLE_OUTPUT,
   MY_CONTRIB,
   SUBMISSION_BOXES,
+  TASKS,
+  TASK_KINDS,
   TEAM_CHECK,
   TEAM_MESSAGES,
 } from "./mock";
@@ -339,4 +346,24 @@ export async function getTeamCheck(_teamId: string): Promise<TeamCheckRecord[]> 
 
 export async function getContribReportBase(_teamId: string): Promise<ContribReportBase[]> {
   return CONTRIB_REPORT_BASE;
+}
+
+/* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
+
+export async function getTaskKinds(): Promise<TaskKind[]> {
+  return TASK_KINDS;
+}
+
+export async function getTasks(_teamId: string): Promise<Task[]> {
+  return TASKS;
+}
+
+/* ── 28 / 29 팀 친목 ────────────────────────────────────────── */
+
+export async function getIceGames(): Promise<IceGame[]> {
+  return ICE_GAMES;
+}
+
+export async function getMenuOptions(_teamId: string): Promise<string[]> {
+  return MENU_OPTIONS;
 }

@@ -355,3 +355,41 @@ export type ContribReportBase = {
   role: string;
   confirmed: number;
 };
+
+/* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
+
+/** 할 일의 종류. 팀 업무와 개인 학습을 한 목록에서 구분하기 위한 것. */
+export type TaskKindKey = "team" | "study" | "check";
+
+export type TaskKind = {
+  key: TaskKindKey;
+  name: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+};
+
+/** 할 일 하나. 상태는 `STATUS` 어휘를 공유한다(할 일 → 진행 중 → 완료). */
+export type Task = {
+  id: string;
+  title: string;
+  kind: TaskKindKey;
+  /** 담당자. 아직 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다. */
+  assignee: string | null;
+  mbti: MbtiType | null;
+  due: string;
+  status: "todo" | "doing" | "done";
+  /** AI 서기가 만든 항목인지 사람이 직접 넣은 것인지. 화면에 배지로 남는다. */
+  source: "clerk" | "manual";
+};
+
+/* ── 28 / 29 팀 친목 ────────────────────────────────────────── */
+
+export type IceGame = {
+  key: string;
+  name: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+  desc: string;
+  /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
+  playable: boolean;
+};

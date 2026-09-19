@@ -16,7 +16,8 @@ import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { setPendingCount, useNegotiation } from "@/features/roles/negotiation-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
 import { useMeeting } from "@/features/schedule/meeting-state";
-import type { AiTool, Member, RecentItem, Role, Team } from "@/lib/types";
+import { useTasks } from "@/features/tasks/tasks-state";
+import type { AiTool, Member, RecentItem, Role, Task, Team } from "@/lib/types";
 
 /** 홈에 세로로 쌓이는 "확인이 필요한 일" 한 줄. */
 type Todo = {
@@ -44,17 +45,23 @@ export function HomeScreen({
   roster,
   recent,
   aiTools,
+  tasks: tasksFromServer,
 }: {
   team: Team;
   roles: Role[];
   roster: Member[];
   recent: RecentItem[];
   aiTools: AiTool[];
+  tasks: Task[];
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
   const { resolutions } = useNegotiation();
   const { stage, slot } = useMeeting();
+  const tasks = useTasks(tasksFromServer);
+
+  /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
+  const remainingTasks = tasks.filter((t) => t.status !== "done").length;
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -199,7 +206,7 @@ export function HomeScreen({
                   {item.title}
                 </span>
                 <span className="keep-all mt-0.5 block font-medium text-[13px] leading-[1.45] text-txt-muted">
-                  {item.note}
+                  {item.id === "r2" ? `${remainingTasks}건 남음` : item.note}
                 </span>
               </span>
               <span className="flex-none text-txt-muted">

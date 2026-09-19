@@ -266,6 +266,16 @@ export function RosterScreen({
         >
           내 기여 기록 확인하기
         </Btn>
+
+        <SecTitle className="mt-5" note="가볍게 분위기를 푸는 도구들">팀 친목</SecTitle>
+        <div className="flex flex-wrap gap-2">
+          <Btn v="outline" size="sm" icon="drama" onClick={() => router.push("/team/icebreak")}>
+            아이스브레이킹
+          </Btn>
+          <Btn v="outline" size="sm" icon="disc-3" onClick={() => router.push("/team/roulette")}>
+            메뉴 룰렛
+          </Btn>
+        </div>
       </Body>
 
       <Sheet open={drawingFor !== null} title="추첨 방식 고르기" onClose={() => setDrawingFor(null)}>

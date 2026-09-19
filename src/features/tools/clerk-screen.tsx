@@ -16,6 +16,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import { summarizeMeeting } from "@/data/api";
+import { addTasksFromClerk } from "@/features/tasks/tasks-state";
 import { cn } from "@/lib/cn";
 import type { ClerkDraft, Member } from "@/lib/types";
 
@@ -189,7 +190,19 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
               icon="list-checks"
               className="mt-3.5"
               disabled={acceptedCount === 0}
-              onClick={() => setStep(2)}
+              onClick={() => {
+                // 담당자는 사람이 확인한 값을 쓴다 — AI 가 추측한 값이 아니다.
+                addTasksFromClerk(
+                  candidates
+                    .filter((c) => picked[c.id])
+                    .map((c) => ({
+                      title: c.title,
+                      due: c.due,
+                      assignee: assignees[c.id] ?? null,
+                    })),
+                );
+                setStep(2);
+              }}
             >
               선택한 {acceptedCount}건 업무로 반영하기
             </Btn>
@@ -213,13 +226,15 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
               </div>
             </Panel>
 
-            {/* TODO(21 할 일·체크리스트): 그 화면이 생기면 여기서 바로 넘어간다. */}
-            <Note tone="info" icon="list-checks">
-              할 일 · 체크리스트 화면(21)은 아직 만들지 않았습니다. 반영된 업무는 그 화면이 생기면 거기서
-              볼 수 있습니다.
-            </Note>
-
-            <Btn full size="lg" v="outline" className="mt-3.5" onClick={() => router.push("/tools")}>
+            <Btn
+              full
+              size="lg"
+              iconRight="arrow-right"
+              onClick={() => router.push("/home/tasks")}
+            >
+              할 일 · 체크리스트에서 보기
+            </Btn>
+            <Btn full size="lg" v="outline" className="mt-2" onClick={() => router.push("/tools")}>
               AI 도구로 돌아가기
             </Btn>
           </>

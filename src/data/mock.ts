@@ -5,6 +5,7 @@ import type {
   ContribKind,
   ContribRecord,
   ContribReportBase,
+  IceGame,
   ClerkDraft,
   CushionTone,
   ChatMessage,
@@ -22,6 +23,8 @@ import type {
   Role,
   SentenceMode,
   SubmissionBox,
+  Task,
+  TaskKind,
   Team,
   TeamCheckRecord,
 } from "@/lib/types";
@@ -194,7 +197,7 @@ export const AI_TOOLS: AiTool[] = [
 /** 홈의 "최근 자료·업무". 13·21번 화면이 없어 아직 갈 곳이 없는 항목은 href 가 null 이다. */
 export const RECENT_ITEMS: RecentItem[] = [
   { id: "r1", title: "발표자료 v4", note: "어제 수정 · 이서연", icon: "file-check-2", href: "/drive" },
-  { id: "r2", title: "할 일 · 체크리스트", note: "3건 남음", icon: "list-checks", href: null },
+  { id: "r2", title: "할 일 · 체크리스트", note: "", icon: "list-checks", href: "/home/tasks" },
 ];
 
 /* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
@@ -670,3 +673,91 @@ export const CONTRIB_REPORT_BASE: ContribReportBase[] = [
   { memberId: "m3", who: "박지호", role: "일정 관리", confirmed: 4 },
   { memberId: "m4", who: "최유나", role: "발표 대본", confirmed: 2 },
 ];
+
+/* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
+
+export const TASK_KINDS: TaskKind[] = [
+  { key: "team", name: "팀 업무", icon: "users-round" },
+  { key: "study", name: "개인 학습", icon: "book-open" },
+  { key: "check", name: "점검", icon: "list-checks" },
+];
+
+export const TASKS: Task[] = [
+  {
+    id: "t1",
+    title: "발표 자료 표지 시안 3개",
+    kind: "team",
+    assignee: "이서연",
+    mbti: "ENFP",
+    due: "9/19",
+    status: "doing",
+    source: "clerk",
+  },
+  {
+    id: "t2",
+    title: "설문 응답 분석 표 정리",
+    kind: "team",
+    assignee: null,
+    mbti: null,
+    due: "9/20",
+    status: "todo",
+    source: "clerk",
+  },
+  {
+    id: "t3",
+    title: "발표 대본 초안",
+    kind: "team",
+    assignee: "최유나",
+    mbti: null,
+    due: "9/22",
+    status: "todo",
+    source: "clerk",
+  },
+  {
+    id: "t4",
+    title: "자료조사 마감 확인",
+    kind: "check",
+    assignee: "김민준",
+    mbti: "INFJ",
+    due: "9/18",
+    status: "done",
+    source: "manual",
+  },
+  {
+    id: "t5",
+    title: "발표 연습 개인 대본 외우기",
+    kind: "study",
+    assignee: "김민준",
+    mbti: "INFJ",
+    due: "9/24",
+    status: "todo",
+    source: "manual",
+  },
+];
+
+/* ── 28 / 29 팀 친목 ────────────────────────────────────────── */
+
+/**
+ * 아이스브레이킹 게임.
+ * 셋 중 사과게임만 먼저 연결했다 — 공유 링크형이라 앱 안에 화면을 만들지 않아도 된다.
+ */
+export const ICE_GAMES: IceGame[] = [
+  {
+    key: "apple",
+    name: "사과게임",
+    icon: "link",
+    desc: "숫자 칸을 지워 합을 맞추는 게임 — 링크로 공유해 같이 합니다",
+    playable: true,
+  },
+  { key: "liar", name: "라이어 게임", icon: "drama", desc: "제시어를 모르는 한 명을 찾는 게임", playable: false },
+  {
+    key: "gartic",
+    name: "갈틱폰",
+    icon: "pencil-ruler",
+    desc: "그림과 설명을 돌려가며 잇는 게임",
+    playable: false,
+  },
+];
+
+/** 메뉴 룰렛 후보. */
+export const MENU_OPTIONS = ["국밥", "마라탕", "돈까스", "김밥천국", "파스타", "떡볶이", "라멘"];
