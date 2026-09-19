@@ -8,7 +8,18 @@ import {
   SENTENCE_SAMPLE_OUTPUT,
 } from "@/data/catalog";
 import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
-import { askShape, askText, askWithSearch, isAiConfigured } from "./claude";
+import { askShape, askText, askWithSearch, isAiConfigured } from "./model";
+
+/**
+ * 모델이 "없음"을 적는 방식이 제각각이다 — 빈 문자열, "null", "미정", "<UNKNOWN>".
+ * 무료 라우터에서 실제로 겪었다. 프롬프트로 부탁만 하지 않고 여기서 한 번 더 거른다.
+ */
+const NOTHING = new Set(["", "null", "none", "n/a", "미정", "없음", "<unknown>", "unknown", "-"]);
+
+function orNull(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  return NOTHING.has(trimmed.toLowerCase()) ? null : trimmed;
+}
 
 /**
  * AI 도구 5종의 실제 내용.
@@ -126,14 +137,19 @@ export async function summarizeMeeting(raw: string): Promise<ClerkDraft> {
   });
 
   return {
-    summary: draft.summary,
-    candidates: draft.candidates.map((c, index) => ({
-      id: `c${index + 1}`,
-      title: c.title,
-      assignee: c.assignee,
-      basis: c.basis,
-      due: c.due,
-    })),
+    summary: draft.summary?.trim() ?? "",
+    candidates: (draft.candidates ?? [])
+      // 제목 없는 후보는 화면에서 빈 줄이 된다.
+      .filter((c) => orNull(c.title) !== null)
+      .map((c, index) => ({
+        id: `c${index + 1}`,
+        title: c.title.trim(),
+        // 담당자는 **정해졌을 때만** 이름이다. 빈 문자열이 넘어오면 정해진 것처럼 보여
+        // 아무도 책임지지 않는 업무가 생긴다 — 07 의 MBTI 배정 금지와 같은 급의 약속이다.
+        assignee: orNull(c.assignee),
+        basis: orNull(c.basis) ?? "담당 미정 — 직접 정해 주세요",
+        due: orNull(c.due) ?? "미정",
+      })),
   };
 }
 
@@ -163,6 +179,7 @@ export async function searchResearch(query: string): Promise<ResearchResult[]> {
     user: query,
   });
 
+  // 출처가 하나도 없으면 보여 줄 것이 없다. 이것이 리서처의 약속이다.
   if (answer.citations.length === 0) return [];
 
   const allowed = new Map(answer.citations.map((c) => [c.url, c]));
@@ -179,13 +196,14 @@ export async function searchResearch(query: string): Promise<ResearchResult[]> {
 - source 는 어디서 나온 자료인지를 짧게 적는다(매체·기관 이름, 연도를 알면 함께).
 - snippet 은 그 자료가 무엇을 말하는지 한두 문장으로 적는다.
 - 검색 내용에 근거가 없는 카드는 만들지 않는다.`,
+    // 모델이 본문을 한 글자도 안 돌려주는 일이 있어(무료 모델에서 겪었다) 페이지 발췌를
+    // 함께 넘긴다. 발췌는 검색이 가져온 실제 본문이라 이것만으로도 카드를 만들 수 있다.
     user: `질문: ${query}
-
-검색으로 정리한 내용:
-${answer.text}
-
-출처 목록:
-${answer.citations.map((c) => `- ${c.title} :: ${c.url}`).join("\n")}`,
+${answer.text ? `\n검색으로 정리한 내용:\n${answer.text}\n` : ""}
+출처와 그 페이지에서 가져온 발췌:
+${answer.citations
+  .map((c) => `- ${c.title} :: ${c.url}\n  ${c.excerpt.slice(0, 900) || "(발췌 없음)"}`)
+  .join("\n")}`,
     shapeName: "research_results",
     shapeDescription: "출처가 붙은 자료 카드 목록",
     schema: {
@@ -209,16 +227,26 @@ ${answer.citations.map((c) => `- ${c.title} :: ${c.url}`).join("\n")}`,
     },
   });
 
-  // 마지막 문 — 인용되지 않은 주소가 붙은 카드는 버린다.
-  return shaped.results
-    .filter((r) => allowed.has(r.url))
+  // 마지막 문 — 인용되지 않은 주소가 붙은 카드는 버린다. 프롬프트가 아니라 여기가 규칙이다.
+  return (shaped.results ?? [])
+    .filter((r) => allowed.has(r.url) && orNull(r.title) !== null)
     .map((r, index) => ({
       id: `r${index + 1}`,
-      title: r.title,
-      source: r.source,
-      snippet: r.snippet,
+      title: r.title.trim(),
+      // 출처 이름을 못 적으면 주소의 도메인이라도 보여 준다 — 빈 칸보다 낫다.
+      source: orNull(r.source) ?? hostOf(r.url),
+      snippet: orNull(r.snippet) ?? "",
       url: r.url,
     }));
+}
+
+/** 주소에서 보여 줄 만한 이름만 뽑는다. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 /* ── 26 발표 지원 ───────────────────────────────────────────── */
@@ -232,7 +260,7 @@ ${answer.citations.map((c) => `- ${c.title} :: ${c.url}`).join("\n")}`,
 export async function refineScript(raw: string): Promise<PresentDraft> {
   if (!isAiConfigured()) return PRESENT_SAMPLE_DRAFT;
 
-  return askShape<PresentDraft>({
+  const draft = await askShape<PresentDraft>({
     system: `${BASE}
 
 너는 발표 지원 도구다. 발표 대본의 표현을 다듬고, 나올 만한 질문을 뽑는다.
@@ -260,6 +288,11 @@ export async function refineScript(raw: string): Promise<PresentDraft> {
     },
     maxTokens: 3000,
   });
+
+  return {
+    refined: draft.refined?.trim() ?? "",
+    questions: (draft.questions ?? []).map((q) => q.trim()).filter(Boolean),
+  };
 }
 
 /* ── 27 상황별 문장 변환 ────────────────────────────────────── */

@@ -14,7 +14,7 @@
 | 아이콘 | lucide-react (직접 등록한 것만 번들에 들어감) |
 | 서체 | Pretendard Variable (저장소에 포함, `next/font/local`) |
 | 데이터 | PostgreSQL (Supabase) + Prisma |
-| AI | Anthropic Claude (`claude-sonnet-5`) |
+| AI | OpenRouter (기본 `openrouter/free`) |
 | 서버 | Next.js Server Actions |
 
 ### 처음 실행
@@ -55,7 +55,7 @@ npm run dev
 
 **핸드오프의 33개 화면을 모두 옮겼습니다.**
 
-> **AI 도구는 `ANTHROPIC_API_KEY` 가 있을 때만 모델을 부릅니다.** 키가 없으면 앱은 그대로
+> **AI 도구는 `OPENROUTER_KEY` 가 있을 때만 모델을 부릅니다.** 키가 없으면 앱은 그대로
 > 돌아가고 도구는 미리 적어 둔 샘플을 돌려주며, 화면이 "아직 AI가 연결되지 않았습니다"라고
 > 그대로 알립니다 — 샘플을 AI 결과인 척 보여 주지 않습니다.
 
@@ -169,6 +169,19 @@ npm run build && npx tsc --noEmit && npm run lint
 **리서처만 웹 검색을 붙였습니다.** "출처가 없는 결과는 보여주지 않는다"가 약속인데 검색
 없이 물으면 있을 법한 논문 제목과 학회지 이름을 지어냅니다. 그래서 검색 결과에서 실제로
 인용된 주소를 가진 카드만 남깁니다 — 프롬프트가 아니라 코드가 거릅니다.
+
+**모델은 `.env` 의 `OPENROUTER_MODEL` 로 고릅니다.** 기본값 `openrouter/free` 는 무료 모델
+하나를 요청마다 무작위로 고르는 라우터입니다. 돈은 들지 않지만 **같은 요청이 899초(실패)·
+5.3초·3.9초로 갈렸고**, 담당자 자리에 `null` 대신 빈 문자열을 넣는 등 지시를 덜 정확히
+따릅니다. 그래서
+
+- 요청마다 `AbortSignal` 로 60초에 끊습니다(`OPENROUTER_TIMEOUT_MS` 로 조절).
+  SDK 의 `timeout` 만으로는 위의 899초가 끊기지 않았습니다.
+- `tools.ts` 가 모델 출력을 그대로 믿지 않습니다 — 빈 담당자는 "미정"으로 돌리고,
+  인용되지 않은 주소가 붙은 자료 카드는 버립니다.
+
+품질이 필요하면 `OPENROUTER_MODEL="anthropic/claude-sonnet-5"` 처럼 유료 슬러그로 바꾸세요
+(실측 3~6초, 5종 모두 규칙대로 동작 확인).
 
 아직 남은 것:
 

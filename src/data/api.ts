@@ -36,7 +36,7 @@ import type {
   TeamCheckRecord,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
-import { isAiConfigured } from "@/server/ai/claude";
+import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { getSessionMember } from "@/server/session";
 import {

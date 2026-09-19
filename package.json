@@ -14,11 +14,11 @@
     "db:reset": "prisma migrate reset"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.127.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "lucide-react": "^1.47.0",
     "next": "16.3.5",
+    "openai": "^7.19.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1"
