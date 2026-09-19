@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 
@@ -50,11 +51,15 @@ export async function proposeMeeting(slotId: string): Promise<void> {
  *
  * 반대가 하나라도 있으면 확정되지 않는다 — 제안을 지우고 후보를 다시 고르는 상태로 돌린다.
  */
-export async function respondToMeeting(agree: boolean): Promise<void> {
+export async function respondToMeeting(agree: boolean): Promise<"ok" | "closed"> {
   const me = await requireSessionMember();
 
   const proposal = await currentProposal(me.teamId);
-  if (!proposal || proposal.stage !== "proposed") return;
+  if (!proposal || proposal.stage !== "proposed") return "closed";
+
+  // 마감이 지난 뒤의 반대는 받지 않는다. 받아 주면 이미 확정된 회의가 뒤집혀,
+  // "마감까지 반대가 없으면 확정"이라는 말이 아무 뜻도 없게 된다.
+  if (isPastDeadline(proposal.respondBy)) return "closed";
 
   if (!agree) {
     await db.meetingProposal.delete({ where: { id: proposal.id } });
@@ -68,34 +73,33 @@ export async function respondToMeeting(agree: boolean): Promise<void> {
 
   revalidatePath("/schedule", "layout");
   revalidatePath("/home");
+  return "ok";
 }
 
 /**
- * 응답 마감이 지난 것으로 보고 확정한다.
+ * 데모 — 응답 마감을 지금으로 당긴다.
  *
- * ⚠️ 원래는 마감 시각이 되면 서버가 알아서 하는 일이다(예약 작업). 지금은 그 장치가 없어
- * 화면의 "응답 마감 시뮬레이션" 버튼이 부른다 — 그래서 화면에도 데모라고 적혀 있다.
- * 반대가 하나라도 있으면 확정하지 않는 규칙은 여기서도 지킨다.
+ * 24시간을 기다리지 않고 마감 뒤의 화면을 보기 위한 것이다. **확정하지는 않는다** —
+ * 시계만 앞으로 돌리고, 확정 여부는 평소와 똑같이 규칙이 정한다(반대가 있으면 그대로
+ * 대기). 그래서 이 버튼으로 본 화면이 실제 마감 뒤의 화면과 같다.
  *
- * 결과를 돌려주는 이유: 반대가 있어 확정하지 않은 것과 확정한 것이 화면에서 구별되지 않으면
- * 버튼이 고장 난 것처럼 보인다. 화면은 이 값으로 무엇이 일어났는지 알린다.
+ * 개발 환경에서만 동작한다.
  */
-export async function confirmMeetingByDeadline(): Promise<"confirmed" | "blocked" | "gone"> {
-  const me = await requireSessionMember();
+export async function fastForwardMeetingDeadline(): Promise<"moved" | "gone"> {
+  if (process.env.NODE_ENV === "production") throw new Error("데모 기능입니다.");
 
+  const me = await requireSessionMember();
   const proposal = await currentProposal(me.teamId);
   if (!proposal || proposal.stage !== "proposed") return "gone";
 
-  const objections = await db.meetingResponse.count({
-    where: { proposalId: proposal.id, agree: false },
+  await db.meetingProposal.update({
+    where: { id: proposal.id },
+    data: { respondBy: new Date() },
   });
-  if (objections > 0) return "blocked";
-
-  await db.meetingProposal.update({ where: { id: proposal.id }, data: { stage: "confirmed" } });
 
   revalidatePath("/schedule", "layout");
   revalidatePath("/home");
-  return "confirmed";
+  return "moved";
 }
 
 /** 전원 불가한 주를 건너뛰고 다음 주로 넘긴다. */

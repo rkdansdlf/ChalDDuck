@@ -18,7 +18,7 @@ import { cn } from "@/lib/cn";
 import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/types";
 import {
   carryOverMeeting,
-  confirmMeetingByDeadline,
+  fastForwardMeetingDeadline,
   proposeMeeting,
   respondToMeeting,
 } from "@/server/actions/meetings";
@@ -40,10 +40,13 @@ export function SlotsScreen({
   week,
   proposal,
   preview,
+  devDemo,
 }: {
   team: Team;
   week: MeetingWeek;
   proposal: MeetingProposal;
+  /** 24시간을 기다리지 않고 마감 뒤 화면을 보는 버튼을 띄울지. 개발 환경에서만 참. */
+  devDemo: boolean;
   /** 데모 전용 — 전원 불가한 주를 미리 보는 중인지. 후보를 시간표에서 계산하면 없앤다. */
   preview?: "none";
 }) {
@@ -136,9 +139,9 @@ export function SlotsScreen({
                   size="sm"
                   icon="check"
                   onClick={async () => {
-                    await respondToMeeting(true);
+                    const result = await respondToMeeting(true);
                     router.refresh();
-                    flash("동의했습니다");
+                    flash(result === "ok" ? "동의했습니다" : "응답 마감이 지났습니다");
                   }}
                 >
                   동의하기
@@ -149,34 +152,35 @@ export function SlotsScreen({
                 v="outline"
                 icon="x"
                 onClick={async () => {
-                  await respondToMeeting(false);
+                  const result = await respondToMeeting(false);
                   setPickedId(null);
                   router.refresh();
-                  flash("반대가 있어 확정되지 않았습니다");
+                  flash(
+                    result === "ok"
+                      ? "반대가 있어 확정되지 않았습니다"
+                      : "응답 마감이 지나 더 이상 반대할 수 없습니다",
+                  );
                 }}
               >
                 참석 어려움 알리기
               </Btn>
-              {/* 마감 시각이 되면 서버가 알아서 확정해야 하는 일인데, 그 예약 장치가 아직 없다.
-                  그래서 화면에서 부르고 데모라고 적어 둔다. */}
-              <Btn
-                size="sm"
-                v="ghost"
-                icon="clock"
-                onClick={async () => {
-                  const result = await confirmMeetingByDeadline();
-                  router.refresh();
-                  flash(
-                    result === "confirmed"
-                      ? "반대가 없어 확정됐습니다"
-                      : result === "blocked"
-                        ? "반대가 있어 확정되지 않았습니다"
-                        : "이미 정리된 제안입니다",
-                  );
-                }}
-              >
-                응답 마감 시뮬레이션 (데모)
-              </Btn>
+              {/* 마감은 서버의 예약 작업이 잰다(`/api/cron/meetings`). 이 버튼은 24시간을
+                  기다리지 않고 마감 뒤 화면을 보기 위해 **시계만 당기는** 것이고,
+                  확정 여부는 평소와 똑같이 규칙이 정한다. 개발 환경에서만 보인다. */}
+              {devDemo ? (
+                <Btn
+                  size="sm"
+                  v="ghost"
+                  icon="clock"
+                  onClick={async () => {
+                    await fastForwardMeetingDeadline();
+                    router.refresh();
+                    flash("응답 마감을 지금으로 당겼습니다");
+                  }}
+                >
+                  마감 지금으로 당기기 (데모)
+                </Btn>
+              ) : null}
             </div>
           </>
         ) : (

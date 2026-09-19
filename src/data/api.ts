@@ -36,6 +36,7 @@ import type {
   TeamCheckRecord,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
+import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { getSessionMember } from "@/server/session";
@@ -314,7 +315,13 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
   const mine = proposal.responses.find((r) => r.memberId === session?.id);
 
   return {
-    stage: proposal.stage as MeetingProposal["stage"],
+    // 저장된 값이 아니라 **계산한** 상태를 보여 준다 — 예약 작업이 표를 고치기 전에
+    // 화면을 열어도 지나간 마감이 "대기 중"으로 보이지 않게.
+    stage: effectiveStage({
+      stage: proposal.stage as MeetingProposal["stage"],
+      respondBy: proposal.respondBy,
+      against,
+    }),
     slot: proposal.slot
       ? {
           id: proposal.slot.id,
