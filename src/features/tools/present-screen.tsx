@@ -15,6 +15,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import { refineScript } from "@/server/actions/ai";
+import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import type { PresentDraft } from "@/lib/types";
 
 /**
@@ -26,21 +27,27 @@ import type { PresentDraft } from "@/lib/types";
 export function PresentScreen({
   sample,
   initialDraft,
+  aiReady,
 }: {
   sample: string;
   initialDraft: PresentDraft;
+  aiReady: boolean;
 }) {
   const router = useRouter();
 
   const [raw, setRaw] = useState(sample);
   const [draft, setDraft] = useState(initialDraft);
   const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refine = async () => {
     if (!raw.trim() || working) return;
     setWorking(true);
+    setError(null);
     try {
       setDraft(await refineScript(raw.trim()));
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
       setWorking(false);
     }
@@ -51,6 +58,9 @@ export function PresentScreen({
       <AppBar title="발표 지원" sub="대본 다듬기 · 예상 질문" onBack={() => router.push("/tools")} />
 
       <Body dense>
+        {aiReady ? null : <SampleNote className="mb-3.5" />}
+        {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
         <CompareCard
           inputLabel="원래 대본"
           editableInput

@@ -16,6 +16,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import { summarizeMeeting } from "@/server/actions/ai";
+import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import type { ClerkDraft, Member } from "@/lib/types";
@@ -30,7 +31,15 @@ const STEP_LABELS = ["회의 내용 입력", "요약 · 할 일 후보", "업무
  * **AI 는 후보만 뽑는다.** 담당자와 기한은 사람이 확인해야 반영된다 —
  * 회의에서 정해지지 않은 담당자를 AI 가 임의로 채우면 아무도 책임지지 않는 업무가 생긴다.
  */
-export function ClerkScreen({ sample, roster }: { sample: string; roster: Member[] }) {
+export function ClerkScreen({
+  sample,
+  roster,
+  aiReady,
+}: {
+  sample: string;
+  roster: Member[];
+  aiReady: boolean;
+}) {
   const router = useRouter();
   const names = roster.map((m) => m.name);
 
@@ -38,6 +47,7 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
   const [raw, setRaw] = useState(sample);
   const [draft, setDraft] = useState<ClerkDraft | null>(null);
   const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   /** 업무로 반영할 후보. */
   const [picked, setPicked] = useState<Record<string, boolean>>({});
@@ -50,12 +60,15 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
   const extract = async () => {
     if (!raw.trim() || working) return;
     setWorking(true);
+    setError(null);
     try {
       const result = await summarizeMeeting(raw.trim());
       setDraft(result);
       setPicked(Object.fromEntries(result.candidates.map((c) => [c.id, true])));
       setAssignees(Object.fromEntries(result.candidates.map((c) => [c.id, c.assignee])));
       setStep(1);
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
       setWorking(false);
     }
@@ -80,6 +93,9 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
 
       <Body dense>
         <Progress step={step + 1} total={3} label="AI 서기 진행 단계" className="mb-4" />
+
+        {aiReady ? null : <SampleNote className="mb-3.5" />}
+        {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
 
         {step === 0 ? (
           <>

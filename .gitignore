@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 예시 파일에는 자리만 있고 비밀이 없다. README 가 이 파일을 보라고 하므로 저장소에 둔다.
+!.env.example
 
 # vercel
 .vercel

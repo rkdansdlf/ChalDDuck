@@ -9,7 +9,6 @@ import type {
   BusyBlock,
   BusyKind,
   ChatMessage,
-  ClerkDraft,
   ContribKind,
   ContribRecord,
   ContribReportRow,
@@ -37,13 +36,13 @@ import type {
   TeamCheckRecord,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
+import { isAiConfigured } from "@/server/ai/claude";
 import { db } from "@/server/db";
 import { getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
   AI_TOOLS,
   BUSY_KINDS,
-  CLERK_SAMPLE_DRAFT,
   CLERK_SAMPLE_INPUT,
   CONTRIB_KINDS,
   CUSHION_SAMPLE_INPUT,
@@ -628,12 +627,21 @@ export async function getRecentItems(teamId: string): Promise<RecentItem[]> {
 /* ── 14 ~ 27 AI 도구 ────────────────────────────────────────── */
 
 /**
- * ⚠️ 아래 함수들은 **아직 AI 에 연결되어 있지 않다.** 입력을 받긴 하지만 무시하고
- * 미리 적어 둔 샘플 결과를 돌려준다. 화면이 그 사실을 감추지 않도록,
- * 결과 자리마다 "AI 초안" 배지와 샘플 안내를 함께 보여 준다.
+ * 여기 있는 것은 **화면을 열자마자 보이는 값**뿐이다 — 예시 입력과, 아직 아무것도
+ * 물어보지 않았을 때 자리를 채우는 예시 결과.
  *
- * 모델을 붙일 때는 이 함수들의 본문만 실제 호출로 바꾸면 된다.
+ * ⚠️ 이 자리에서 모델을 부르지 않는다. 첫 화면을 AI 로 채우면 페이지를 열 때마다,
+ * 빌드할 때마다 호출이 나간다(실제로 그렇게 돼 있었다). 사용자가 직접 요청한 호출만
+ * `server/actions/ai.ts` 를 거쳐 나간다 — 거기에 세션 확인이 붙는다.
+ *
+ * 도구 내용은 `server/ai/tools.ts` 한 곳에 있다. `ANTHROPIC_API_KEY` 가 없으면 거기서도
+ * 같은 샘플이 나오고, 화면은 `getAiStatus()` 로 어느 쪽인지 알아 사용자에게 그대로 알린다.
  */
+
+/** AI 가 실제로 붙어 있는지. 화면이 "샘플"이라고 말할지 말지를 이 값으로 정한다. */
+export async function getAiStatus(): Promise<{ connected: boolean }> {
+  return { connected: isAiConfigured() };
+}
 
 export async function getAiPolicy(): Promise<AiPolicy> {
   return AI_POLICY;
@@ -644,25 +652,22 @@ export async function getCushionTones(): Promise<CushionTone[]> {
 export async function getCushionSample(): Promise<string> {
   return CUSHION_SAMPLE_INPUT;
 }
-export async function rewriteWithCushion(_text: string, tone: string): Promise<string> {
+export async function getCushionSampleOutput(tone: string): Promise<string> {
   return CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
 }
 export async function getClerkSample(): Promise<string> {
   return CLERK_SAMPLE_INPUT;
 }
-export async function summarizeMeeting(_raw: string): Promise<ClerkDraft> {
-  return CLERK_SAMPLE_DRAFT;
-}
 export async function getResearchSampleQuery(): Promise<string> {
   return RESEARCH_SAMPLE_QUERY;
 }
-export async function searchResearch(_query: string): Promise<ResearchResult[]> {
+export async function getResearchSampleResults(): Promise<ResearchResult[]> {
   return RESEARCH_SAMPLE_RESULTS;
 }
 export async function getPresentSample(): Promise<string> {
   return PRESENT_SAMPLE_INPUT;
 }
-export async function refineScript(_raw: string): Promise<PresentDraft> {
+export async function getPresentSampleDraft(): Promise<PresentDraft> {
   return PRESENT_SAMPLE_DRAFT;
 }
 export async function getSentenceModes(): Promise<SentenceMode[]> {
@@ -671,6 +676,6 @@ export async function getSentenceModes(): Promise<SentenceMode[]> {
 export async function getSentenceSample(mode: string): Promise<string> {
   return SENTENCE_SAMPLE_INPUT[mode] ?? "";
 }
-export async function convertSentence(_text: string, mode: string): Promise<string> {
+export async function getSentenceSampleOutput(mode: string): Promise<string> {
   return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
 }

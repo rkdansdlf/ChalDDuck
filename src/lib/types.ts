@@ -192,6 +192,12 @@ export type ResearchResult = {
   title: string;
   source: string;
   snippet: string;
+  /**
+   * 열어 볼 수 있는 주소. 열 수 없는 출처는 확인할 수 없는 출처다.
+   *
+   * 샘플 결과에는 없어서 `null` 이 될 수 있다 — 화면은 그때 링크를 만들지 않는다.
+   */
+  url: string | null;
 };
 
 /** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */

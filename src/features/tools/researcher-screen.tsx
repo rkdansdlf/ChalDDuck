@@ -14,6 +14,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import { searchResearch } from "@/server/actions/ai";
+import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import type { ResearchResult } from "@/lib/types";
 
 /**
@@ -25,21 +26,33 @@ import type { ResearchResult } from "@/lib/types";
 export function ResearcherScreen({
   sampleQuery,
   initialResults,
+  aiReady,
 }: {
   sampleQuery: string;
   initialResults: ResearchResult[];
+  aiReady: boolean;
 }) {
   const router = useRouter();
 
   const [query, setQuery] = useState(sampleQuery);
   const [results, setResults] = useState(initialResults);
+  /** 아직 한 번도 찾지 않았으면 화면의 결과는 예시다. */
+  const [searched, setSearched] = useState(false);
   const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /** 예시 결과를 보고 있는 중인지. 아니라고 말할 수 있을 때만 "샘플" 표시를 뗀다. */
+  const showingSample = !aiReady || !searched;
 
   const search = async () => {
     if (!query.trim() || working) return;
     setWorking(true);
+    setError(null);
     try {
       setResults(await searchResearch(query.trim()));
+      setSearched(true);
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
       setWorking(false);
     }
@@ -50,6 +63,9 @@ export function ResearcherScreen({
       <AppBar title="AI 리서처" sub="출처와 함께 찾습니다" onBack={() => router.push("/tools")} />
 
       <Body dense>
+        {aiReady ? null : <SampleNote className="mb-3.5" />}
+        {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -84,9 +100,15 @@ export function ResearcherScreen({
           <SecTitle note="출처가 없는 결과는 보여주지 않습니다" className="m-0 flex-1">
             결과 {results.length}건
           </SecTitle>
-          <Chip tone="warn" icon="flask-conical">
-            샘플 결과
-          </Chip>
+          {showingSample ? (
+            <Chip tone="warn" icon="flask-conical">
+              샘플 결과
+            </Chip>
+          ) : (
+            <Chip tone="y" icon="sparkles">
+              AI 검색 결과
+            </Chip>
+          )}
         </div>
 
         <div className="mt-2 mb-4 flex flex-col gap-[9px]">
@@ -95,9 +117,21 @@ export function ResearcherScreen({
               <div className="keep-all font-bold text-[14.5px] leading-[1.4] text-txt-strong">
                 {result.title}
               </div>
-              <div className="mt-1 font-mono font-semibold text-[12.5px] leading-[1.4] text-link">
-                {result.source}
-              </div>
+              {/* 열 수 없는 출처는 확인할 수 없는 출처다 — 주소가 있으면 링크로 건다. */}
+              {result.url ? (
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 block font-mono font-semibold text-[12.5px] leading-[1.4] text-link underline"
+                >
+                  {result.source}
+                </a>
+              ) : (
+                <div className="mt-1 font-mono font-semibold text-[12.5px] leading-[1.4] text-link">
+                  {result.source}
+                </div>
+              )}
               <div className="text-pretty-keep mt-1.5 text-[13.5px] leading-[1.55] text-txt-muted">
                 {result.snippet}
               </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   AppBar,
   Body,
@@ -14,6 +14,8 @@ import {
   Undecided,
 } from "@/components/ui";
 import { rewriteWithCushion } from "@/server/actions/ai";
+import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { useAiDraft } from "./use-ai-draft";
 import { cn } from "@/lib/cn";
 import type { CushionTone } from "@/lib/types";
 
@@ -26,41 +28,30 @@ import type { CushionTone } from "@/lib/types";
 export function CushionScreen({
   tones,
   sample,
+  initialResult,
+  aiReady,
 }: {
   tones: CushionTone[];
   sample: string;
+  /** 서버가 미리 준 첫 결과. 화면을 열자마자 호출이 나가지 않게 한다. */
+  initialResult: string;
+  aiReady: boolean;
 }) {
   const router = useRouter();
 
+  const initialTone = tones[0]?.key ?? "soft";
   const [text, setText] = useState(sample);
-  const [tone, setTone] = useState(tones[0]?.key ?? "soft");
-  const [result, setResult] = useState("");
-  /**
-   * 새 결과를 기다리는 중.
-   *
-   * 입력이 바뀌는 순간(이벤트)에 켜고 결과가 도착하면 끈다. 이걸 두지 않으면
-   * 이전 말투의 결과가 화면에 남아 있어 이미 바뀐 것처럼 읽힌다.
-   */
-  const [working, setWorking] = useState(false);
+  const [tone, setTone] = useState(initialTone);
   const [toast, setToast] = useState<string | null>(null);
 
-  // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다.
-  useEffect(() => {
-    const trimmed = text.trim();
-    let cancelled = false;
-
-    const draft = trimmed ? rewriteWithCushion(trimmed, tone) : Promise.resolve("");
-    draft.then((value) => {
-      if (cancelled) return;
-      setResult(value);
-      setWorking(false);
-    });
-
-    // 타이핑 중 앞선 결과가 뒤늦게 도착해 최신 입력을 덮어쓰지 않도록 취소한다
-    return () => {
-      cancelled = true;
-    };
-  }, [text, tone]);
+  // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다 — 입력이 멎은 뒤 한 번만.
+  const run = useCallback((value: string, key: string) => rewriteWithCushion(value, key), []);
+  const { result, working, error } = useAiDraft({
+    text,
+    variant: tone,
+    initial: { text: sample, variant: initialTone, result: initialResult },
+    run,
+  });
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -72,13 +63,13 @@ export function CushionScreen({
       <AppBar title="쿠션 번역기" sub="말투만 바꿉니다" onBack={() => router.push("/tools")} />
 
       <Body dense>
+        {aiReady ? null : <SampleNote className="mb-3.5" />}
+        {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
         <div className="t-cap-strong mb-1.5 font-bold text-txt-muted">하고 싶은 말</div>
         <Textarea
           value={text}
-          onChange={(value) => {
-            setText(value);
-            setWorking(true);
-          }}
+          onChange={setText}
           minHeight={92}
           placeholder="팀원에게 하고 싶은 말을 그대로 적어 주세요"
           aria-label="하고 싶은 말"
@@ -94,10 +85,7 @@ export function CushionScreen({
                 type="button"
                 role="radio"
                 aria-checked={on}
-                onClick={() => {
-                  setTone(item.key);
-                  setWorking(true);
-                }}
+                onClick={() => setTone(item.key)}
                 className={cn(
                   "min-h-11 flex-none cursor-pointer whitespace-nowrap rounded-xl px-3.5 font-bold text-[13.5px] leading-none",
                   on

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Toast, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
+import { SampleNote } from "./ai-state-notes";
 
 /**
  * 14 AI 도구 허브.
@@ -12,7 +13,15 @@ import type { AiPolicy, AiTool } from "@/lib/types";
  * 제품의 약속 하나가 여기 적혀 있다: **AI 는 초안만 만든다.** 팀에 보낼지, 어떻게 고칠지는
  * 사람이 정한다. 그래서 모든 도구 화면이 결과를 원문과 나란히 보여 준다.
  */
-export function AiHubScreen({ tools, policy }: { tools: AiTool[]; policy: AiPolicy }) {
+export function AiHubScreen({
+  tools,
+  policy,
+  aiReady,
+}: {
+  tools: AiTool[];
+  policy: AiPolicy;
+  aiReady: boolean;
+}) {
   const router = useRouter();
   const [toast, setToast] = useState<string | null>(null);
 
@@ -79,10 +88,14 @@ export function AiHubScreen({ tools, policy }: { tools: AiTool[]; policy: AiPoli
           원문과 나란히 보여줍니다.
         </Note>
 
-        <Note tone="warn" icon="flask-conical" title="아직 AI가 연결되지 않았습니다" className="mt-2.5">
-          지금은 어떤 글을 넣어도 <b>미리 적어 둔 샘플 결과</b>가 나옵니다. 화면 흐름을 보기 위한
-          것이며, 결과의 품질을 판단할 수 있는 상태가 아닙니다.
-        </Note>
+        {aiReady ? (
+          <Note tone="info" icon="sparkles" title="결과는 AI가 만든 초안입니다" className="mt-2.5">
+            사실관계·수치는 <b>사람이 확인해야</b> 합니다. 리서처는 웹에서 찾은 자료만 보여 주고,
+            출처가 없는 결과는 올리지 않습니다.
+          </Note>
+        ) : (
+          <SampleNote className="mt-2.5" />
+        )}
 
         <Note tone="info" icon="database" title="AI 이용·보관 정책" className="mt-2.5">
           대화 내용은 <b>{policy.retentionDays}일</b> 보관 후 자동 삭제됩니다. 학생 팀플 규모를 기준으로
