@@ -15,7 +15,6 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox } from "@/lib/types";
-import { useVersions } from "./versions-state";
 
 /**
  * 13 파일 버전 기록.
@@ -27,13 +26,12 @@ import { useVersions } from "./versions-state";
  */
 export function VersionsScreen({
   box,
-  versions: fromServer,
+  versions,
 }: {
   box: SubmissionBox;
   versions: FileVersion[];
 }) {
   const router = useRouter();
-  const versions = useVersions(box.id, fromServer);
   const [toast, setToast] = useState<string | null>(null);
 
   const latest = versions[0] ?? null;

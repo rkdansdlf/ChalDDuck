@@ -17,7 +17,8 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox } from "@/lib/types";
-import { nextVersionLabel, restoreVersion, useVersions } from "./versions-state";
+import { restoreFileVersion } from "@/server/actions/drive";
+import { nextVersionLabel } from "./version-label";
 
 /**
  * 22 파일 열람·복원.
@@ -30,21 +31,18 @@ import { nextVersionLabel, restoreVersion, useVersions } from "./versions-state"
  */
 export function FileViewScreen({
   box,
-  versions: fromServer,
+  versions,
   versionId,
-  me,
 }: {
   box: SubmissionBox;
   versions: FileVersion[];
   versionId: string;
-  /** 복원한 사람으로 기록될 이름. */
-  me: string;
 }) {
   const router = useRouter();
-  const versions = useVersions(box.id, fromServer);
 
   const [confirming, setConfirming] = useState(false);
   const [restoredAs, setRestoredAs] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const current = versions.find((v) => v.id === versionId) ?? versions[0] ?? null;
@@ -68,10 +66,17 @@ export function FileViewScreen({
   const canPreview = current.previewUrl !== null;
   const nextLabel = nextVersionLabel(versions);
 
-  const restore = () => {
-    const created = restoreVersion(box.id, versions, current, me);
-    setConfirming(false);
-    setRestoredAs(created.label);
+  const restore = async () => {
+    // 이름은 서버가 붙인다 — 두 사람이 동시에 복원해도 같은 이름이 두 번 생기지 않아야 한다.
+    setRestoring(true);
+    try {
+      const label = await restoreFileVersion(box.id, current.id);
+      setConfirming(false);
+      setRestoredAs(label);
+      router.refresh();
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const flash = (msg: string) => {
@@ -195,11 +200,11 @@ export function FileViewScreen({
           포함해 기존 버전은 지워지지 않습니다.
         </p>
         <div className="flex gap-2">
-          <Btn full v="outline" onClick={() => setConfirming(false)}>
+          <Btn full v="outline" disabled={restoring} onClick={() => setConfirming(false)}>
             취소
           </Btn>
-          <Btn full onClick={restore}>
-            복원하기
+          <Btn full disabled={restoring} onClick={restore}>
+            {restoring ? "복원하는 중" : "복원하기"}
           </Btn>
         </div>
       </Sheet>
