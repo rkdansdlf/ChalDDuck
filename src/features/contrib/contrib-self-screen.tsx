@@ -17,7 +17,6 @@ import {
 } from "@/components/ui";
 import type { ContribKind, ContribRecord } from "@/lib/types";
 import { ContribRow } from "./contrib-row";
-import { useMyContrib } from "./records-state";
 import { StepRail } from "./step-rail";
 
 /**
@@ -27,14 +26,13 @@ import { StepRail } from "./step-rail";
  * MBTI·채팅량·친목은 기여도에 넣지 않는다.
  */
 export function ContribSelfScreen({
-  records: fromServer,
+  records,
   kinds,
 }: {
   records: ContribRecord[];
   kinds: ContribKind[];
 }) {
   const router = useRouter();
-  const records = useMyContrib(fromServer);
   const [adding, setAdding] = useState(false);
 
   const pending = records.filter((r) => r.state === "pending").length;

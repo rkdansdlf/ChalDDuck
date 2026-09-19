@@ -16,7 +16,6 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { Member, TeamCheckRecord } from "@/lib/types";
-import { useTeamCheck } from "./records-state";
 import { StepRail } from "./step-rail";
 
 /**
@@ -26,14 +25,13 @@ import { StepRail } from "./step-rail";
  * 정리돼 버리면, 정정을 요구한 사람은 기록을 신뢰할 수 없게 된다.
  */
 export function ContribTeamScreen({
-  records: fromServer,
+  records,
   roster,
 }: {
   records: TeamCheckRecord[];
   roster: Member[];
 }) {
   const router = useRouter();
-  const records = useTeamCheck(fromServer);
 
   const confirmed = records.filter((r) => r.state === "ok").length;
   const disputed = records.filter((r) => r.state === "disputed");
@@ -101,24 +99,35 @@ export function ContribTeamScreen({
                       <div className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
                         {record.dispute}
                       </div>
-                      <div className="mt-[9px] flex flex-wrap gap-1.5">
-                        <Btn
-                          size="sm"
-                          v="outline"
-                          icon="messages-square"
-                          onClick={() => router.push("/chat/dm")}
-                        >
-                          1:1 DM
-                        </Btn>
-                        <Btn
-                          size="sm"
-                          v="ghost"
-                          icon="split"
-                          onClick={() => router.push(`/team/contrib/resolve/${record.id}`)}
-                        >
-                          정정에 응답하기
-                        </Btn>
-                      </div>
+                      {/* 정리된 뒤에도 적힌 의견은 그대로 두고 결론을 아래에 덧붙인다 —
+                          의견을 지우고 결론만 남기면 한쪽 말로 덮는 것이 된다. */}
+                      {record.resolution ? (
+                        <div className="mt-[9px] flex items-center gap-1.5 text-[#8A3B31]">
+                          <Icon name="check" size={14} />
+                          <span className="t-cap-strong">
+                            이렇게 정리했습니다 · {record.resolution}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mt-[9px] flex flex-wrap gap-1.5">
+                          <Btn
+                            size="sm"
+                            v="outline"
+                            icon="messages-square"
+                            onClick={() => router.push("/chat/dm")}
+                          >
+                            1:1 DM
+                          </Btn>
+                          <Btn
+                            size="sm"
+                            v="ghost"
+                            icon="split"
+                            onClick={() => router.push(`/team/contrib/resolve/${record.id}`)}
+                          >
+                            정정에 응답하기
+                          </Btn>
+                        </div>
+                      )}
                     </div>
                   ) : null}
                 </div>

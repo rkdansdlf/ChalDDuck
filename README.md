@@ -73,10 +73,10 @@ src/
   app/preview/          디자인 기준 페이지 (33 PC 채팅) — 사용자 경로가 아님
   components/ui/        공통 컴포넌트 (핸드오프 ui.jsx 대응)
   features/chat/        19·30·31·32 채팅 화면 + 말풍선·입력줄
-  features/contrib/     16·17·18·23 기여도 화면 + 기록 상태
+  features/contrib/     16·17·18·23 기여도 화면
   features/social/      28·29 팀 친목 화면
   features/tasks/       21·24 할 일 화면 + 할 일 상태
-  features/drive/       12·13·22 드라이브 화면 + 버전 상태
+  features/drive/       12·13·22 드라이브 화면
   features/home/        11 홈 화면
   features/onboarding/  온보딩 화면 + 상태
   features/roles/       07 역할 조율 화면 + 협의 상태
@@ -136,7 +136,7 @@ npm run build && npx tsc --noEmit && npm run lint
 
 ### 1. 남은 서버 이관
 
-**읽기는 전부 데이터베이스**에서 옵니다. 쓰기는 절반쯤 옮겼습니다.
+**읽기는 전부 데이터베이스**에서 옵니다. 쓰기도 할 일 하나만 남았습니다.
 
 | 옮긴 것 | 위치 |
 |---|---|
@@ -144,6 +144,7 @@ npm run build && npx tsc --noEmit && npm run lint
 | 역할 추첨·수락·거절 | `server/actions/roles.ts` |
 | 회의 제안·응답·확정·이월 | `server/actions/meetings.ts` |
 | 파일 복원(새 버전 추가) | `server/actions/drive.ts` |
+| 기여 기록 추가 · 정정 응답 | `server/actions/contrib.ts` |
 | 내 시간표 저장 | `server/actions/schedule.ts` |
 | 메시지 보내기 · 읽음 표시 | `server/actions/chat.ts` |
 | AI 도구 호출 자리 | `server/actions/ai.ts` |
@@ -152,7 +153,6 @@ npm run build && npx tsc --noEmit && npm run lint
 
 | 파일 | 옮겨야 하는 것 | 표는 이미 있음 |
 |---|---|---|
-| `features/contrib/records-state.ts` | 기여 기록 추가·정정 응답 | `ContribRecord` |
 | `features/tasks/tasks-state.ts` | 할 일 추가·상태 변경·콕 찌르기 | `Task`, `Poke` |
 
 ### 1-1. 인증의 알려진 구멍
@@ -175,7 +175,8 @@ npm run build && npx tsc --noEmit && npm run lint
 - **제출함에 파일이 여러 개일 때의 목록 화면이 33개 어디에도 없습니다.** 지금은 대표 파일의
   버전 기록으로 바로 들어갑니다.
 - 회의 참여를 무엇으로 판정하는지(입장 여부·발언 여부·시간)
-- 의견 차이가 끝까지 안 좁혀졌을 때의 최종 기재 방식
+- 의견 차이가 끝까지 안 좁혀졌을 때의 최종 기재 방식. 또 **누가 정정에 응답할 수 있는지**가
+  정해지지 않아 지금은 팀원 누구나 가능합니다(서버는 같은 팀인지만 확인합니다).
 
 ### 4. 아직 손대지 않은 것
 

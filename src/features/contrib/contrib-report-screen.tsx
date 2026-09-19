@@ -12,8 +12,7 @@ import {
   Toast,
   Undecided,
 } from "@/components/ui";
-import type { ContribRecord, ContribReportBase, Team, TeamCheckRecord } from "@/lib/types";
-import { useMyContrib, useTeamCheck } from "./records-state";
+import type { ContribReportRow, Team } from "@/lib/types";
 import { StepRail } from "./step-rail";
 
 /**
@@ -26,40 +25,17 @@ import { StepRail } from "./step-rail";
  */
 export function ContribReportScreen({
   team,
-  base,
-  myRecords: myFromServer,
-  teamRecords: teamFromServer,
-  meName,
+  rows,
   issuedOn,
 }: {
   team: Team;
-  base: ContribReportBase[];
-  myRecords: ContribRecord[];
-  teamRecords: TeamCheckRecord[];
-  meName: string;
+  /** 서버가 16·17 과 같은 표에서 센 줄. 화면은 세지 않는다. */
+  rows: ContribReportRow[];
   /** 서버에서 만든 발행일. 화면에서 만들면 서버 렌더와 어긋난다. */
   issuedOn: string;
 }) {
   const router = useRouter();
-  const myRecords = useMyContrib(myFromServer);
-  const teamRecords = useTeamCheck(teamFromServer);
   const [toast, setToast] = useState<string | null>(null);
-
-  /**
-   * 리포트 줄을 실제 기록에서 센다.
-   *
-   * 내 줄은 16 화면과 같은 목록에서 세므로, 기록을 하나 추가하면 여기 건수도 함께 바뀐다.
-   * 의견 차이는 17 화면과 같은 목록에서 세므로, 정정에 응답하면 여기서도 사라진다.
-   */
-  const rows = base.map((member) => {
-    const mine = member.who === meName;
-    return {
-      ...member,
-      confirmed: mine ? myRecords.filter((r) => r.state === "ok").length : member.confirmed,
-      pending: mine ? myRecords.filter((r) => r.state === "pending").length : 0,
-      disputed: teamRecords.filter((r) => r.who === member.who && r.state === "disputed").length,
-    };
-  });
 
   return (
     <>

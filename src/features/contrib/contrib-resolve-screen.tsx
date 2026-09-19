@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { AppBar, Body, Btn, Note, Panel, SecTitle, Undecided } from "@/components/ui";
 import type { TeamCheckRecord } from "@/lib/types";
-import { resolveTeamCheck } from "./records-state";
+import { resolveContribDispute } from "@/server/actions/contrib";
 
 /**
  * 23 기여 기록 정정 응답 — 누군가 "사실과 다르다"고 적은 항목에 답하는 화면.
@@ -13,10 +14,18 @@ import { resolveTeamCheck } from "./records-state";
  */
 export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
   const router = useRouter();
+  const [answering, setAnswering] = useState(false);
 
-  const resolve = (way: string) => {
-    resolveTeamCheck(record.id, way);
-    router.push("/team/contrib/members");
+  const resolve = async (way: string) => {
+    if (answering) return;
+    setAnswering(true);
+    try {
+      await resolveContribDispute(record.id, way);
+      router.push("/team/contrib/members");
+      router.refresh();
+    } finally {
+      setAnswering(false);
+    }
   };
 
   return (
@@ -45,10 +54,21 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
         </Note>
 
         <div className="flex flex-col gap-2">
-          <Btn full icon="check" onClick={() => resolve("정정 동의 · 의견대로 수정")}>
+          <Btn
+            full
+            icon="check"
+            disabled={answering}
+            onClick={() => resolve("정정 동의 · 의견대로 수정")}
+          >
             정정 의견에 동의하기
           </Btn>
-          <Btn full v="outline" icon="split" onClick={() => resolve("공동 작업으로 나눔")}>
+          <Btn
+            full
+            v="outline"
+            icon="split"
+            disabled={answering}
+            onClick={() => resolve("공동 작업으로 나눔")}
+          >
             공동 작업으로 나누기
           </Btn>
         </div>

@@ -32,6 +32,8 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
   ]);
 
   const roleClashes = unresolvedClashes(roles, roster, negotiation.draws).length;
+  // 내가 넣었지만 아직 팀원 확인을 못 받은 기록 수.
+  const contribPending = myContrib.filter((r) => r.state === "pending").length;
   // 내가 아직 응답하지 않은 제안이 있으면 일정 탭에 배지를 띄운다.
   const meetingPending = meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0;
 
@@ -39,14 +41,14 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
     <AppShell
       sideNav={
         <AppNav as="side" dmThreads={dmThreads}
-          myContrib={myContrib}
+          contribPending={contribPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}
         />
       }
       tabBar={
         <AppNav as="tabs" dmThreads={dmThreads}
-          myContrib={myContrib}
+          contribPending={contribPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}
         />

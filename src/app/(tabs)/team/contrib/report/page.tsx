@@ -1,10 +1,4 @@
-import {
-  getContribReportBase,
-  getCurrentTeam,
-  getMyContrib,
-  getRoster,
-  getTeamCheck,
-} from "@/data/api";
+import { getContribReport, getCurrentTeam } from "@/data/api";
 import { ContribReportScreen } from "@/features/contrib/contrib-report-screen";
 
 /**
@@ -17,12 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ContribReportPage() {
   const team = await getCurrentTeam();
-  const [base, myRecords, teamRecords, roster] = await Promise.all([
-    getContribReportBase(team.id),
-    getMyContrib(team.id),
-    getTeamCheck(team.id),
-    getRoster(team.id),
-  ]);
+  const rows = await getContribReport(team.id);
 
   const issuedOn = new Intl.DateTimeFormat("ko-KR", {
     year: "numeric",
@@ -33,14 +22,5 @@ export default async function ContribReportPage() {
     .format(new Date())
     .replace(/\.$/, "");
 
-  return (
-    <ContribReportScreen
-      team={team}
-      base={base}
-      myRecords={myRecords}
-      teamRecords={teamRecords}
-      meName={roster.find((m) => m.isMe)?.name ?? "나"}
-      issuedOn={issuedOn}
-    />
-  );
+  return <ContribReportScreen team={team} rows={rows} issuedOn={issuedOn} />;
 }

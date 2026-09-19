@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ContribKind } from "@/lib/types";
-import { addContribRecord } from "./records-state";
+import { addContribRecord } from "@/server/actions/contrib";
 
 /**
  * 23 기여 기록 추가 — 앱이 놓친 일을 본인이 넣는 화면.
@@ -27,11 +27,18 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
 
   const [title, setTitle] = useState("");
   const [hasEvidence, setHasEvidence] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const submit = () => {
-    if (!title.trim()) return;
-    addContribRecord({ kind: kind.key, title: title.trim(), hasEvidence });
-    router.push("/team/contrib");
+  const submit = async () => {
+    if (!title.trim() || saving) return;
+    setSaving(true);
+    try {
+      await addContribRecord({ kind: kind.key, title: title.trim(), hasEvidence });
+      router.push("/team/contrib");
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -76,8 +83,8 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
           )}
         </Field>
 
-        <Btn full size="lg" onClick={submit} disabled={!title.trim()}>
-          추가하고 확인 요청하기
+        <Btn full size="lg" onClick={submit} disabled={!title.trim() || saving}>
+          {saving ? "추가하는 중" : "추가하고 확인 요청하기"}
         </Btn>
 
         <Undecided>근거 파일의 형식·용량 제한이 기획안에 없어 다루지 않았습니다.</Undecided>

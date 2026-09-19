@@ -12,7 +12,7 @@ import type {
   ClerkDraft,
   ContribKind,
   ContribRecord,
-  ContribReportBase,
+  ContribReportRow,
   CushionTone,
   DmThread,
   DriveLimits,
@@ -525,10 +525,12 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
     state: r.state as TeamCheckRecord["state"],
     by: r.byLabel,
     dispute: r.dispute,
+    resolution: r.resolution,
   }));
 }
 
-export async function getContribReportBase(teamId: string): Promise<ContribReportBase[]> {
+/** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
+export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
   const members = await db.member.findMany({
     where: { teamId },
     include: { contribRecords: { select: { state: true } } },
@@ -540,6 +542,8 @@ export async function getContribReportBase(teamId: string): Promise<ContribRepor
     who: m.name,
     role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
     confirmed: m.contribRecords.filter((r) => r.state === "ok").length,
+    pending: m.contribRecords.filter((r) => r.state === "pending").length,
+    disputed: m.contribRecords.filter((r) => r.state === "disputed").length,
   }));
 }
 

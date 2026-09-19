@@ -359,22 +359,31 @@ export type TeamCheckRecord = {
   state: "ok" | "pending" | "disputed";
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
-  /** 의견 차이가 적힌 경우 그 내용. */
+  /** 의견 차이가 적힌 경우 그 내용. 정리된 뒤에도 지우지 않는다. */
   dispute: string | null;
+  /**
+   * 정정에 어떻게 답했는지. 이 값이 있으면 의견 차이는 정리된 것이다.
+   *
+   * `dispute` 와 **함께** 남는다 — 적힌 의견을 지우고 결론만 남기면
+   * 한쪽 말로 덮는 것이 되어 정정을 요구한 사람이 기록을 믿을 수 없게 된다.
+   */
+  resolution: string | null;
 };
 
 /**
- * 리포트 한 줄의 기준값.
+ * 리포트 한 줄.
  *
- * TODO(서버): 확인된 기록 수는 원래 서버가 세어 준다. 지금은 나를 뺀 팀원의
- * 기준 수치만 데모로 두고, 내 수치와 의견 차이 수는 화면에서 계산한다.
+ * 세 수치 모두 **같은 표를 서버가 센다** — 16·17 화면과 어긋날 수 없다.
+ * 점수도 순위도 없고, 미확인·의견 차이를 감추지도 않는다.
  */
-export type ContribReportBase = {
+export type ContribReportRow = {
   memberId: string;
   who: string;
   /** 합의한 역할 이름. */
   role: string;
   confirmed: number;
+  pending: number;
+  disputed: number;
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
