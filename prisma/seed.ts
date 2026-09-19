@@ -35,10 +35,11 @@ async function main() {
 
   const [minjun, seoyeon, jiho, yuna] = await Promise.all(
     [
-      { name: "김민준", mbti: "INFJ", wantRole: "research", vetoRole: "present" },
-      { name: "이서연", mbti: "ENFP", wantRole: "deck", vetoRole: "manage" },
-      { name: "박지호", mbti: "ISTJ", wantRole: "manage", vetoRole: "present" },
-      { name: "최유나", mbti: null, wantRole: "research", vetoRole: null },
+      // 팀을 만든 사람이 팀장이다. 시드에서는 "나"인 김민준이 만든 것으로 본다.
+      { name: "김민준", mbti: "INFJ", wantRole: "research", vetoRole: "present", isLeader: true },
+      { name: "이서연", mbti: "ENFP", wantRole: "deck", vetoRole: "manage", isLeader: false },
+      { name: "박지호", mbti: "ISTJ", wantRole: "manage", vetoRole: "present", isLeader: false },
+      { name: "최유나", mbti: null, wantRole: "research", vetoRole: null, isLeader: false },
     ].map((m) => prisma.member.create({ data: { ...m, teamId: team.id } })),
   );
 

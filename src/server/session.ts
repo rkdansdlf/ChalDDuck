@@ -1,10 +1,11 @@
 import "server-only";
 
-import { cookies } from "next/headers";
+import { randomUUID } from "node:crypto";
+import { cookies, headers } from "next/headers";
 import { db } from "./db";
 
 /**
- * 세션.
+ * 세션 = 기기 하나.
  *
  * 찰떡은 가입·로그인이 없고 **초대 코드 + 이름**으로 들어온다. 그래서 세션은
  * "이 브라우저가 어느 팀원인지"만 기억한다.
@@ -12,29 +13,84 @@ import { db } from "./db";
  * 쿠키에는 임의 토큰만 담고 회원 식별자는 담지 않는다 — 쿠키 값을 고쳐서 남이 되는 일을
  * 막기 위해서다. 토큰과 회원의 연결은 서버(`Session` 표)에만 있다.
  *
- * ⚠️ **남은 구멍**: 이름만 알면 같은 팀의 다른 사람으로 처음부터 들어올 수 있다
- * (02 화면의 "본인 확인" 시트는 안내일 뿐 막지 못한다). 기획의 재입장 규칙이 확정되면
- * 기기 토큰이나 팀원 승인 같은 단계를 넣어야 한다.
+ * 세션은 **서버에서도 만료된다.** 쿠키 만료만 믿으면 쿠키 값을 한 번 얻은 쪽이
+ * 영원히 쓸 수 있다 — 쿠키는 가져간 사람이 마음대로 붙잡아 둘 수 있기 때문이다.
+ *
+ * 이름만으로 남이 되는 구멍은 `server/actions/rejoin.ts` 에서 막는다 — 이미 있는
+ * 이름으로 새 기기에서 들어오려면 재입장 코드나 팀장 승인이 필요하다.
  */
 const COOKIE = "cd_session";
-const MAX_AGE = 60 * 60 * 24 * 90; // 90일
+const MAX_AGE_SECONDS = 60 * 60 * 24 * 90; // 90일
+
+/** `lastSeenAt` 을 얼마나 자주 고칠지. 매 요청마다 쓰면 읽기마다 쓰기가 한 번씩 붙는다. */
+const SEEN_THROTTLE_MS = 60 * 60 * 1000;
 
 export type SessionMember = {
   id: string;
   teamId: string;
   name: string;
+  /** 팀을 만든 사람. 새 기기 재입장 요청을 승인할 수 있다. */
+  isLeader: boolean;
 };
 
-/** 지금 브라우저의 팀원. 세션이 없거나 끊겼으면 null. */
+/** 기기 목록에 보일 짧은 설명. 정확할 필요는 없고 "내 것"인지 알아볼 정도면 된다. */
+export async function describeDevice(): Promise<string> {
+  const agent = (await headers()).get("user-agent") ?? "";
+
+  const os = /iPhone/i.test(agent)
+    ? "iPhone"
+    : /iPad/i.test(agent)
+      ? "iPad"
+      : /Android/i.test(agent)
+        ? "Android"
+        : /Macintosh/i.test(agent)
+          ? "Mac"
+          : /Windows/i.test(agent)
+            ? "Windows"
+            : "기기";
+
+  // 순서가 중요하다 — Chrome 의 UA 에는 Safari 도 들어 있다.
+  const browser = /Edg\//i.test(agent)
+    ? "Edge"
+    : /OPR\//i.test(agent)
+      ? "Opera"
+      : /Chrome\//i.test(agent)
+        ? "Chrome"
+        : /Firefox\//i.test(agent)
+          ? "Firefox"
+          : /Safari\//i.test(agent)
+            ? "Safari"
+            : "브라우저";
+
+  return `${os} · ${browser}`;
+}
+
+/** 지금 브라우저의 팀원. 세션이 없거나 끊겼거나 만료됐으면 null. */
 export async function getSessionMember(): Promise<SessionMember | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
 
   const session = await db.session.findUnique({
     where: { token },
-    select: { member: { select: { id: true, teamId: true, name: true } } },
+    select: {
+      expiresAt: true,
+      lastSeenAt: true,
+      member: { select: { id: true, teamId: true, name: true, isLeader: true } },
+    },
   });
-  return session?.member ?? null;
+  if (!session) return null;
+
+  if (session.expiresAt.getTime() <= Date.now()) {
+    await db.session.deleteMany({ where: { token } });
+    return null;
+  }
+
+  // 기기 목록의 "마지막 사용"을 위한 값이라 대략이면 된다.
+  if (Date.now() - session.lastSeenAt.getTime() > SEEN_THROTTLE_MS) {
+    await db.session.update({ where: { token }, data: { lastSeenAt: new Date() } });
+  }
+
+  return session.member;
 }
 
 /**
@@ -49,17 +105,39 @@ export async function requireSessionMember(): Promise<SessionMember> {
   return member;
 }
 
-/** 로그인 — 이 브라우저를 한 팀원에 묶는다. */
-export async function startSession(memberId: string) {
-  const token = crypto.randomUUID();
-  await db.session.create({ data: { token, memberId } });
+/** 팀장만 할 수 있는 일에 쓴다. */
+export async function requireLeader(): Promise<SessionMember> {
+  const member = await requireSessionMember();
+  if (!member.isLeader) throw new Error("팀장만 할 수 있습니다.");
+  return member;
+}
 
+/**
+ * 이 브라우저를 한 팀원에 묶는다.
+ *
+ * `token` 을 받을 수 있는 이유: 팀장이 승인한 재입장 요청은 **요청한 브라우저가 들고 있던
+ * 토큰**으로 세션이 만들어져야 한다. 승인하는 사람의 브라우저에 쿠키를 심으면 안 된다.
+ */
+export async function startSession(memberId: string, token: string = randomUUID()) {
+  await db.session.create({
+    data: {
+      token,
+      memberId,
+      label: await describeDevice(),
+      expiresAt: new Date(Date.now() + MAX_AGE_SECONDS * 1000),
+    },
+  });
+
+  await setSessionCookie(token);
+}
+
+export async function setSessionCookie(token: string) {
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: MAX_AGE,
+    maxAge: MAX_AGE_SECONDS,
   });
 }
 
@@ -68,4 +146,9 @@ export async function endSession() {
   const token = store.get(COOKIE)?.value;
   if (token) await db.session.deleteMany({ where: { token } });
   store.delete(COOKIE);
+}
+
+/** 지금 이 브라우저의 토큰. 기기 목록에서 "이 기기"를 표시할 때 쓴다. */
+export async function currentSessionToken(): Promise<string | null> {
+  return (await cookies()).get(COOKIE)?.value ?? null;
 }

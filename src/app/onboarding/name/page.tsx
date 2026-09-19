@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Sheet, TopInset, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, TopInset, Undecided } from "@/components/ui";
 import { findMemberByName } from "@/server/actions/onboarding";
 import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
 
@@ -12,7 +12,7 @@ const MIN_NAME = 2;
  * 02 이름 입력.
  *
  * 가입이 없는 앱이라 **초대 코드 + 이름**이 사실상의 신원이다. 같은 코드에 같은 이름이
- * 이미 있으면 "본인 확인" 시트를 띄워 이전 기록에 이어 붙일지 묻는다.
+ * 이미 있으면 재입장 화면으로 보낸다 — 거기서 재입장 코드나 팀장 승인을 거친다.
  * (동명이인 구분 방법은 아직 확정되지 않은 정책 — 핸드오프 표 1행)
  */
 export default function NamePage() {
@@ -20,9 +20,6 @@ export default function NamePage() {
   const { teamCode, name } = useOnboarding();
 
   const [existing, setExisting] = useState<{ name: string } | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  /** "아니요, 다른 사람이에요" 를 고른 뒤에는 같은 이름으로 다시 묻지 않는다. */
-  const [notMe, setNotMe] = useState(false);
 
   const trimmed = name.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_NAME;
@@ -45,11 +42,15 @@ export default function NamePage() {
   }, [teamCode, trimmed]);
 
   const proceed = () => {
-    if (existing && !notMe) {
-      setConfirming(true);
+    // 이미 있는 이름이면 온보딩을 이어가지 않는다 — 본인이면 재입장, 아니면 다른 이름이다.
+    // 예전에는 "네, 저예요"를 누르면 그대로 통과해서, 초대 코드를 아는 사람이 팀원을
+    // 사칭할 수 있었다(사칭한 쪽이 상대의 희망 역할까지 덮어썼다).
+    if (!existing) {
+      router.push("/onboarding/mbti");
       return;
     }
-    router.push("/onboarding/mbti");
+    const query = new URLSearchParams({ code: teamCode ?? "", name: trimmed });
+    router.push(`/join/rejoin?${query}`);
   };
 
   return (
@@ -69,10 +70,7 @@ export default function NamePage() {
             <Input
               {...props}
               value={name}
-              onChange={(v) => {
-                setName(v);
-                setNotMe(false);
-              }}
+              onChange={setName}
               placeholder="예: 김민준"
               error={tooShort}
               maxLength={20}
@@ -80,15 +78,15 @@ export default function NamePage() {
           )}
         </Field>
 
-        <Note tone="info" icon="key-round" title="초대 코드 + 이름으로 기록을 이어갑니다">
-          같은 초대 코드({teamCode ?? "—"})로 같은 이름을 다시 적으면 이전 기록에 자동으로 연결됩니다. 기기를
-          바꿔도 됩니다 — 별도 로그인은 필요 없습니다.
+        <Note tone="info" icon="key-round" title="처음 들어오는 이름이면 바로 통과합니다">
+          초대 코드({teamCode ?? "—"})에 없는 이름이면 아무것도 더 묻지 않습니다. 이미 있는 이름이면
+          본인 확인을 한 번 거칩니다 — 이름만으로 팀원인 척할 수 있으면 안 되기 때문입니다.
         </Note>
 
-        {existing && !notMe ? (
+        {existing ? (
           <Note tone="warn" icon="user-search" title="이미 쓰이고 있는 이름입니다" className="mt-3">
-            &ldquo;{existing.name}&rdquo;님 기록이 이미 있습니다. 본인이 맞으면 이어서 들어가고, 아니면 다른
-            이름을 적어 주세요.
+            &ldquo;{existing.name}&rdquo;님 기록이 이미 있습니다. 본인이 맞으면 다음 화면에서{" "}
+            <b>재입장 코드</b>나 <b>팀장 승인</b>으로 들어오고, 아니면 다른 이름을 적어 주세요.
           </Note>
         ) : null}
 
@@ -104,32 +102,6 @@ export default function NamePage() {
         </Btn>
       </Dock>
 
-      <Sheet open={confirming} title="본인 확인" onClose={() => setConfirming(false)}>
-        <p className="text-pretty-keep m-0 mb-4 text-[14.5px] leading-[1.6] text-txt">
-          <b>{existing?.name}</b>님이 맞으신가요? 맞으면 이전 기록(희망 역할·기여 기록 등)에 이어서 들어갑니다.
-        </p>
-        <div className="flex gap-2">
-          <Btn
-            full
-            v="outline"
-            onClick={() => {
-              setConfirming(false);
-              setNotMe(true);
-            }}
-          >
-            아니요, 다른 사람이에요
-          </Btn>
-          <Btn
-            full
-            onClick={() => {
-              setConfirming(false);
-              router.push("/onboarding/mbti");
-            }}
-          >
-            네, 저예요
-          </Btn>
-        </div>
-      </Sheet>
     </AppFrame>
   );
 }

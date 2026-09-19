@@ -5,6 +5,7 @@ import {
   getDmThreads,
   getMeetingProposal,
   getMyContrib,
+  getRejoinRequests,
   getRoleNegotiation,
   getRoles,
   getRoster,
@@ -22,18 +23,23 @@ import { unresolvedClashes } from "@/features/roles/roster-model";
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
   const team = await getCurrentTeam();
-  const [dmThreads, myContrib, roles, roster, negotiation, meeting] = await Promise.all([
-    getDmThreads(team.id),
-    getMyContrib(team.id),
-    getRoles(),
-    getRoster(team.id),
-    getRoleNegotiation(team.id),
-    getMeetingProposal(team.id),
-  ]);
+  const [dmThreads, myContrib, roles, roster, negotiation, meeting, rejoinRequests] =
+    await Promise.all([
+      getDmThreads(team.id),
+      getMyContrib(team.id),
+      getRoles(),
+      getRoster(team.id),
+      getRoleNegotiation(team.id),
+      getMeetingProposal(team.id),
+      // 팀장이 아니면 빈 목록이 온다 — 화면에서 감추는 것과 별개로 데이터를 주지 않는다.
+      getRejoinRequests(team.id),
+    ]);
 
   const roleClashes = unresolvedClashes(roles, roster, negotiation.draws).length;
   // 내가 넣었지만 아직 팀원 확인을 못 받은 기록 수.
   const contribPending = myContrib.filter((r) => r.state === "pending").length;
+  // 팀장이 승인해 줘야 하는 재입장 요청.
+  const rejoinPending = rejoinRequests.length;
   // 내가 아직 응답하지 않은 제안이 있으면 일정 탭에 배지를 띄운다.
   const meetingPending = meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0;
 
@@ -42,6 +48,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
       sideNav={
         <AppNav as="side" dmThreads={dmThreads}
           contribPending={contribPending}
+          rejoinPending={rejoinPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}
         />
@@ -49,6 +56,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
       tabBar={
         <AppNav as="tabs" dmThreads={dmThreads}
           contribPending={contribPending}
+          rejoinPending={rejoinPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}
         />

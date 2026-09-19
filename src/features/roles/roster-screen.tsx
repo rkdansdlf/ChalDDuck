@@ -39,12 +39,15 @@ export function RosterScreen({
   roster,
   tools,
   negotiation,
+  rejoinPending,
 }: {
   team: Team;
   roles: Role[];
   roster: Member[];
   tools: RandomTool[];
   negotiation: RoleNegotiation;
+  /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
+  rejoinPending: number;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -256,6 +259,22 @@ export function RosterScreen({
           onClick={() => router.push("/team/contrib")}
         >
           내 기여 기록 확인하기
+        </Btn>
+
+        <SecTitle
+          className="mt-5"
+          note="재입장 승인·내 기기·재입장 코드"
+        >
+          계정과 기기
+        </SecTitle>
+        <Btn
+          v="outline"
+          size="sm"
+          icon="lock"
+          iconRight="chevron-right"
+          onClick={() => router.push("/team/access")}
+        >
+          {rejoinPending > 0 ? `재입장 요청 ${rejoinPending}건 확인하기` : "계정과 기기 관리"}
         </Btn>
 
         <SecTitle className="mt-5" note="가볍게 분위기를 푸는 도구들">팀 친목</SecTitle>

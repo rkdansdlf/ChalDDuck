@@ -18,6 +18,7 @@ export function AppNav({
   as,
   dmThreads,
   contribPending,
+  rejoinPending,
   roleClashes,
   meetingPending,
 }: {
@@ -25,12 +26,14 @@ export function AppNav({
   dmThreads: DmThread[];
   /** 팀원 확인을 기다리는 내 기여 기록 수. 서버가 센다. */
   contribPending: number;
+  /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
+  rejoinPending: number;
   /** 아직 확정되지 않은, 희망자가 겹친 역할 수. 서버가 센다. */
   roleClashes: number;
   /** 내 응답을 기다리는 회의 제안이 있으면 1. 서버가 센다. */
   meetingPending: number;
 }) {
-  // 팀 탭에는 두 가지가 모인다 — 겹친 역할과 확인 대기 중인 기여 기록.
+  // 팀 탭에 모이는 것 — 겹친 역할, 확인 대기 중인 기여 기록, 재입장 승인 요청.
   const clashes = roleClashes;
   const contrib = contribPending;
   const cal = meetingPending;
@@ -38,7 +41,7 @@ export function AppNav({
   const chat = dmThreads.reduce((sum, t) => sum + t.unread, 0);
 
   const pending = {
-    team: clashes + contrib || undefined,
+    team: clashes + contrib + rejoinPending || undefined,
     cal: cal || undefined,
     chat: chat || undefined,
   };

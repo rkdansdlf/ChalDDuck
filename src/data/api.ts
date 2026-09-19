@@ -39,7 +39,7 @@ import { TASKS_RECENT_ID } from "@/lib/types";
 import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
-import { getSessionMember } from "@/server/session";
+import { currentSessionToken, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
   AI_TOOLS,
@@ -221,6 +221,67 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
   }
 
   return result;
+}
+
+/* ── 인증 · 기기 ────────────────────────────────────────────── */
+
+/** 새 기기에서 재입장하려는 요청. **팀장에게만** 보여 준다. */
+export type RejoinRequest = {
+  id: string;
+  who: string;
+  device: string;
+  when: string;
+};
+
+/**
+ * 지금 승인을 기다리는 재입장 요청.
+ *
+ * 팀장이 아니면 빈 목록이다 — 화면에서 감추는 것과 별개로 데이터 자체를 주지 않는다.
+ */
+export async function getRejoinRequests(teamId: string): Promise<RejoinRequest[]> {
+  const session = await getSessionMember();
+  if (!session || !session.isLeader) return [];
+
+  const claims = await db.memberClaim.findMany({
+    where: { status: "pending", member: { teamId } },
+    include: { member: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return claims.map((c) => ({
+    id: c.id,
+    who: c.member.name,
+    device: c.label ?? "알 수 없는 기기",
+    when: formatDeadline(c.createdAt),
+  }));
+}
+
+/** 내 이름으로 열려 있는 기기 목록. 내 것만 보인다. */
+export type MyDevice = {
+  token: string;
+  label: string;
+  lastSeen: string;
+  isCurrent: boolean;
+};
+
+export async function getMyDevices(): Promise<MyDevice[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const [sessions, current] = await Promise.all([
+    db.session.findMany({
+      where: { memberId: session.id },
+      orderBy: { lastSeenAt: "desc" },
+    }),
+    currentSessionToken(),
+  ]);
+
+  return sessions.map((s) => ({
+    token: s.token,
+    label: s.label ?? "알 수 없는 기기",
+    lastSeen: formatDeadline(s.lastSeenAt),
+    isCurrent: s.token === current,
+  }));
 }
 
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */

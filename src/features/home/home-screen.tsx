@@ -55,6 +55,7 @@ export function HomeScreen({
   tasks,
   negotiation,
   meeting,
+  rejoinRequests,
 }: {
   team: Team;
   roles: Role[];
@@ -64,6 +65,8 @@ export function HomeScreen({
   tasks: Task[];
   negotiation: RoleNegotiation;
   meeting: MeetingProposal;
+  /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
+  rejoinRequests: number;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -127,8 +130,23 @@ export function HomeScreen({
       });
     }
 
+    // 팀장에게만 온다. 남이 내 이름으로 들어오려는 것일 수 있어 맨 위에 둘 만한 일이다.
+    if (rejoinRequests > 0) {
+      list.push({
+        key: "rejoin",
+        icon: "user-search",
+        surface: "bg-coral-100 text-coral-700",
+        title: "재입장 요청 확인",
+        note:
+          rejoinRequests === 1
+            ? "팀원 1명이 새 기기에서 들어오려 합니다"
+            : `팀원 ${rejoinRequests}명이 새 기기에서 들어오려 합니다`,
+        href: "/team/access",
+      });
+    }
+
     return list;
-  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse]);
+  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse, rejoinRequests]);
 
   return (
     <>

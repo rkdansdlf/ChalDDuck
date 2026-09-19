@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Progress, Rows, TopInset } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, Progress, Rows, TopInset } from "@/components/ui";
 import { joinTeam } from "@/server/actions/onboarding";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
@@ -22,6 +22,8 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
 
   const [mode, setMode] = useState<Mode>("want");
   const [submitting, setSubmitting] = useState(false);
+  /** 들어간 뒤 한 번만 보여 주는 재입장 코드. 서버에는 해시만 남아 다시 볼 수 없다. */
+  const [issued, setIssued] = useState<{ rejoinCode: string; isLeader: boolean } | null>(null);
 
   const picked = mode === "want" ? want : veto;
   const set = mode === "want" ? setWant : setVeto;
@@ -30,13 +32,15 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
     if (!want || submitting) return;
     setSubmitting(true);
     try {
-      // 성공하면 서버가 세션을 만들고 /team 으로 보낸다.
-      await joinTeam(teamCode ?? "", toDraft());
+      // 서버가 세션을 만들고 재입장 코드를 돌려준다. 코드를 보여 준 뒤에 팀으로 넘어간다.
+      setIssued(await joinTeam(teamCode ?? "", toDraft()));
     } catch (error) {
       setSubmitting(false);
       throw error;
     }
   };
+
+  if (issued) return <RejoinCodePanel {...issued} onDone={() => router.push("/team")} />;
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
@@ -147,6 +151,74 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
       <Dock>
         <Btn full size="lg" disabled={!want || submitting} onClick={submit} iconRight="arrow-right">
           {want ? (submitting ? "알리는 중…" : "팀에 알리기") : "1순위 희망을 골라 주세요"}
+        </Btn>
+      </Dock>
+    </AppFrame>
+  );
+}
+
+/**
+ * 첫 입장 직후 재입장 코드를 **한 번만** 보여 준다.
+ *
+ * 서버에는 해시만 남아 이 화면을 지나면 아무도 다시 볼 수 없다. 그래서 "확인했습니다"를
+ * 누르기 전에는 넘어가지 못하게 한다 — 그냥 넘겨 버리면 기기를 바꿨을 때
+ * 팀장을 붙잡는 수밖에 없다.
+ */
+function RejoinCodePanel({
+  rejoinCode,
+  isLeader,
+  onDone,
+}: {
+  rejoinCode: string;
+  isLeader: boolean;
+  onDone: () => void;
+}) {
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <AppFrame label="재입장 코드">
+      <TopInset />
+      <AppBar title="들어왔습니다" sub={isLeader ? "팀장" : undefined} />
+      <Body>
+        <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">재입장 코드를 저장해 주세요</h1>
+        <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
+          기기를 바꾸거나 브라우저 기록을 지웠을 때 이 코드로 돌아옵니다.{" "}
+          <b>이 화면을 지나면 다시 볼 수 없습니다.</b>
+        </p>
+
+        <Panel s="yellow" pad={18} r={18} className="mb-4 text-center">
+          <div className="font-mono font-extrabold text-[22px] leading-[1.4] tracking-[.08em] text-ink-900">
+            {rejoinCode}
+          </div>
+        </Panel>
+
+        {isLeader ? (
+          <Note tone="info" icon="user-round" title="팀을 만드셨으니 팀장입니다" className="mb-3">
+            팀원이 기기를 바꿔 다시 들어올 때 <b>승인</b>하는 역할입니다. 팀 탭에 요청이 뜹니다.
+          </Note>
+        ) : null}
+
+        <Note tone="warn" icon="shield" title="코드는 서버에도 남지 않습니다">
+          저장해 두지 않으면 재입장할 때 팀장 승인을 받아야 합니다. 팀 화면에서 새 코드를 다시
+          받을 수는 있습니다.
+        </Note>
+
+        <button
+          type="button"
+          aria-pressed={saved}
+          onClick={() => setSaved((v) => !v)}
+          className="mt-4 flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 text-left"
+        >
+          <Icon name={saved ? "check" : "circle-dashed"} size={18} />
+          <span className="font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
+            따로 적어 두었습니다
+          </span>
+        </button>
+      </Body>
+
+      <Dock>
+        <Btn full size="lg" disabled={!saved} onClick={onDone} iconRight="arrow-right">
+          팀으로 가기
         </Btn>
       </Dock>
     </AppFrame>
