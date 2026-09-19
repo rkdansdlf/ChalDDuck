@@ -2,6 +2,9 @@ import type {
   AiPolicy,
   AiTool,
   BusyBlock,
+  ContribKind,
+  ContribRecord,
+  ContribReportBase,
   ClerkDraft,
   CushionTone,
   ChatMessage,
@@ -20,6 +23,7 @@ import type {
   SentenceMode,
   SubmissionBox,
   Team,
+  TeamCheckRecord,
 } from "@/lib/types";
 
 /**
@@ -577,3 +581,92 @@ export const SENTENCE_SAMPLE_OUTPUT: Record<string, string> = {
   email:
     "교수님, 안녕하세요. 디지털콘텐츠기획 3조 김민준입니다. 발표 순서가 언제 공지되는지 여쭙고자 메일 드립니다. 바쁘신 중에 확인 부탁드립니다.",
 };
+
+/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+
+/** 기여로 인정하는 다섯 가지. MBTI·채팅량·친목은 여기 없다. */
+export const CONTRIB_KINDS: ContribKind[] = [
+  { key: "task", name: "담당 업무", icon: "clipboard-check" },
+  { key: "file", name: "결과물 제작·수정", icon: "file-pen" },
+  { key: "meet", name: "회의 참여", icon: "users-round" },
+  { key: "help", name: "협업 지원", icon: "handshake" },
+  { key: "due", name: "마감 이행", icon: "calendar-check" },
+];
+
+/** 내 기록(데모). `auto` 는 앱이 모은 것, `self` 는 내가 직접 넣은 것. */
+export const MY_CONTRIB: ContribRecord[] = [
+  {
+    id: "mc1",
+    kind: "task",
+    title: "설문 문항 설계와 배포",
+    detail: "합의한 역할: 자료조사",
+    when: "9/8 – 9/12",
+    source: "auto",
+    state: "ok",
+  },
+  {
+    id: "mc2",
+    kind: "file",
+    title: "발표 자료 v3 — 그래프 3개 추가",
+    detail: "드라이브 버전 기록",
+    when: "9/13 16:02",
+    source: "auto",
+    state: "ok",
+  },
+  {
+    id: "mc3",
+    kind: "meet",
+    title: "팀 회의 3회 참여",
+    detail: "9/5 · 9/9 · 9/13",
+    when: "9월",
+    source: "auto",
+    state: "ok",
+  },
+  {
+    id: "mc4",
+    kind: "due",
+    title: "자료조사 마감 이행",
+    detail: "약속 9/12 → 제출 9/12",
+    when: "9/12",
+    source: "auto",
+    state: "ok",
+  },
+  {
+    id: "mc5",
+    kind: "help",
+    title: "이서연님 PPT 오류 수정 도움",
+    detail: "오프라인 작업 — 내가 직접 추가",
+    when: "9/14",
+    source: "self",
+    state: "pending",
+  },
+];
+
+export const TEAM_CHECK: TeamCheckRecord[] = [
+  { id: "tc1", who: "이서연", title: "PPT 템플릿 제작과 4회 수정", state: "ok", by: "3명 확인", dispute: null },
+  { id: "tc2", who: "박지호", title: "회의 일정 조율과 마감 알림", state: "ok", by: "3명 확인", dispute: null },
+  {
+    id: "tc3",
+    who: "김민준",
+    title: "이서연님 PPT 오류 수정 도움",
+    state: "pending",
+    by: "이서연 확인 대기",
+    dispute: null,
+  },
+  {
+    id: "tc4",
+    who: "최유나",
+    title: "발표 대본 초안 작성",
+    state: "disputed",
+    by: "박지호 · 의견 차이 1건",
+    dispute: "초안은 공동 작성이었고 분량 절반은 제가 썼습니다.",
+  },
+];
+
+/** 리포트의 기준 수치. 내 줄은 화면에서 실제 기록으로 다시 센다. */
+export const CONTRIB_REPORT_BASE: ContribReportBase[] = [
+  { memberId: "m1", who: "김민준", role: "자료조사", confirmed: 4 },
+  { memberId: "m2", who: "이서연", role: "PPT 제작", confirmed: 5 },
+  { memberId: "m3", who: "박지호", role: "일정 관리", confirmed: 4 },
+  { memberId: "m4", who: "최유나", role: "발표 대본", confirmed: 2 },
+];

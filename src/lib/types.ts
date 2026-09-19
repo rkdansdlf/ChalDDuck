@@ -289,3 +289,69 @@ export type DmThread = {
   time: string;
   unread: number;
 };
+
+/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+
+/**
+ * 기여 기록의 종류.
+ *
+ * ⚠️ 이 목록이 곧 "무엇을 기여로 보는가"의 정의다.
+ * **MBTI·채팅량·친목은 들어 있지 않고, 들어가서도 안 된다.**
+ */
+export type ContribKindKey = "task" | "file" | "meet" | "help" | "due";
+
+export type ContribKind = {
+  key: ContribKindKey;
+  name: string;
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+};
+
+/**
+ * 내 기여 기록 한 줄.
+ *
+ * `auto` 는 앱이 드라이브 버전 기록·회의 참석 등에서 모은 것이고,
+ * `self` 는 앱 밖에서 한 일을 본인이 직접 넣은 것이다.
+ * 직접 넣은 기록은 **팀원 확인을 거치기 전까지 `pending` 으로 남는다** —
+ * 본인 말만으로 확정되면 기록의 의미가 없어진다.
+ */
+export type ContribRecord = {
+  id: string;
+  kind: ContribKindKey;
+  title: string;
+  detail: string;
+  when: string;
+  source: "auto" | "self";
+  state: "ok" | "pending";
+};
+
+/**
+ * 팀원이 확인해야 하는 기록.
+ *
+ * `disputed` 는 누군가 사실과 다르다고 적은 항목이다.
+ * **한쪽 말로 덮지 않고 둘 다 남긴다.**
+ */
+export type TeamCheckRecord = {
+  id: string;
+  who: string;
+  title: string;
+  state: "ok" | "pending" | "disputed";
+  /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
+  by: string;
+  /** 의견 차이가 적힌 경우 그 내용. */
+  dispute: string | null;
+};
+
+/**
+ * 리포트 한 줄의 기준값.
+ *
+ * TODO(서버): 확인된 기록 수는 원래 서버가 세어 준다. 지금은 나를 뺀 팀원의
+ * 기준 수치만 데모로 두고, 내 수치와 의견 차이 수는 화면에서 계산한다.
+ */
+export type ContribReportBase = {
+  memberId: string;
+  who: string;
+  /** 합의한 역할 이름. */
+  role: string;
+  confirmed: number;
+};

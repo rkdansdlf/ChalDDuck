@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   AppBar,
@@ -49,6 +50,7 @@ export function RosterScreen({
   roster: Member[];
   tools: RandomTool[];
 }) {
+  const router = useRouter();
   const onboarding = useOnboarding();
   const { resolutions, rejected } = useNegotiation();
 
@@ -204,7 +206,9 @@ export function RosterScreen({
           아니라 남은 후보끼리 다시 추첨하는 정상 절차입니다. 이 과정 어디에도 MBTI는 쓰이지 않습니다.
         </Note>
 
-        <SecTitle note="각자 본인이 직접 고른 값입니다 · 아바타를 누르면 1:1 대화가 열립니다">
+        <SecTitle
+          note="각자 본인이 직접 고른 값입니다 · 아바타를 누르면 1:1 대화가 열립니다"
+        >
           팀원별 선호
         </SecTitle>
         <Rows>
@@ -251,6 +255,17 @@ export function RosterScreen({
             </div>
           ))}
         </Rows>
+
+        <SecTitle className="mt-5" note="합의한 역할과 실제 수행 내역만 모읍니다">기여 기록</SecTitle>
+        <Btn
+          full
+          v="outline"
+          icon="clipboard-check"
+          iconRight="chevron-right"
+          onClick={() => router.push("/team/contrib")}
+        >
+          내 기여 기록 확인하기
+        </Btn>
       </Body>
 
       <Sheet open={drawingFor !== null} title="추첨 방식 고르기" onClose={() => setDrawingFor(null)}>

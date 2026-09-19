@@ -4,7 +4,8 @@ import { TabBar } from "@/components/ui";
 import { usePendingChatCount } from "@/features/chat/messages-state";
 import { usePendingTeamCount } from "@/features/roles/negotiation-state";
 import { usePendingScheduleCount } from "@/features/schedule/meeting-state";
-import type { DmThread } from "@/lib/types";
+import { useMyContrib, usePendingContribCount } from "@/features/contrib/records-state";
+import type { ContribRecord, DmThread } from "@/lib/types";
 
 /**
  * 탭 셸이 쓰는 탭바 — 배지 숫자를 붙여 준다.
@@ -14,8 +15,17 @@ import type { DmThread } from "@/lib/types";
  *
  * TODO(서버): 드라이브 마감 배지는 서버가 붙은 뒤에 같은 방식으로 더한다.
  */
-export function AppTabBar({ dmThreads }: { dmThreads: DmThread[] }) {
-  const team = usePendingTeamCount();
+export function AppTabBar({
+  dmThreads,
+  myContrib,
+}: {
+  dmThreads: DmThread[];
+  myContrib: ContribRecord[];
+}) {
+  // 팀 탭에는 두 가지가 모인다 — 겹친 역할과 확인 대기 중인 기여 기록.
+  const clashes = usePendingTeamCount();
+  const contrib = usePendingContribCount(useMyContrib(myContrib));
+  const team = clashes + contrib;
   const cal = usePendingScheduleCount();
   const chat = usePendingChatCount(dmThreads);
 

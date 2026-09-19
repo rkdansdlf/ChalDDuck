@@ -2,6 +2,9 @@ import type {
   AiPolicy,
   AiTool,
   BusyBlock,
+  ContribKind,
+  ContribRecord,
+  ContribReportBase,
   ClerkDraft,
   CushionTone,
   ChatMessage,
@@ -21,6 +24,7 @@ import type {
   SentenceMode,
   SubmissionBox,
   Team,
+  TeamCheckRecord,
 } from "@/lib/types";
 import {
   AI_POLICY,
@@ -30,6 +34,8 @@ import {
   CLERK_SAMPLE_INPUT,
   CUSHION_SAMPLE_INPUT,
   CUSHION_SAMPLE_OUTPUT,
+  CONTRIB_KINDS,
+  CONTRIB_REPORT_BASE,
   CUSHION_TONES,
   DM_MESSAGES,
   DM_THREADS,
@@ -53,7 +59,9 @@ import {
   SENTENCE_MODES,
   SENTENCE_SAMPLE_INPUT,
   SENTENCE_SAMPLE_OUTPUT,
+  MY_CONTRIB,
   SUBMISSION_BOXES,
+  TEAM_CHECK,
   TEAM_MESSAGES,
 } from "./mock";
 
@@ -312,4 +320,23 @@ export async function getSentenceSample(mode: string): Promise<string> {
 
 export async function convertSentence(_text: string, mode: string): Promise<string> {
   return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
+}
+
+/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+
+export async function getContribKinds(): Promise<ContribKind[]> {
+  return CONTRIB_KINDS;
+}
+
+/** 앱이 모은 내 기록 + 내가 이미 넣어 둔 기록. */
+export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
+  return MY_CONTRIB;
+}
+
+export async function getTeamCheck(_teamId: string): Promise<TeamCheckRecord[]> {
+  return TEAM_CHECK;
+}
+
+export async function getContribReportBase(_teamId: string): Promise<ContribReportBase[]> {
+  return CONTRIB_REPORT_BASE;
 }
