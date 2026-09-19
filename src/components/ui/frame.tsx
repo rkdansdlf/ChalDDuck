@@ -5,15 +5,16 @@ import { cn } from "@/lib/cn";
 import { Icon, type IconName } from "./icon";
 
 /**
- * 앱 프레임.
+ * 집중 흐름(온보딩)의 프레임.
  *
- * 프로토타입은 모든 화면을 390×812 고정 프레임(`Phone`)에 넣었지만, 실제 서비스는
- * 브라우저에서 돌아가므로 그대로 옮길 수 없다. 그래서 같은 컴포넌트를 반응형으로 옮겼다.
- * - 좁은 화면(모바일 실기기): 뷰포트를 꽉 채운다. `100dvh` 라 주소창 높이 변화에도 잘린 곳이 없다.
- * - 넓은 화면(개발·리뷰용 데스크톱): 디자인 원본과 같은 390×812 기기 프레임을 가운데에 띄운다.
+ * 탭이 없는 화면들이 쓴다. 온보딩은 한 번에 한 가지만 묻는 흐름이라 넓은 화면에서도
+ * 폭을 넓히지 않고 가운데 카드로 모은다 — 입력칸 하나가 1200px 로 늘어나면 읽기 어렵다.
  *
- * 33번(PC 3분할) 같은 데스크톱 전용 레이아웃은 아직 범위 밖이라, 지금은 넓은 화면에서도
- * 모바일 레이아웃을 그대로 보여준다.
+ * - 좁은 화면: 뷰포트를 꽉 채운다. `dvh` 라 주소창 높이가 바뀌어도 잘리는 곳이 없다.
+ * - 넓은 화면: 420px 카드로 가운데 정렬.
+ *
+ * 높이를 고정하는 이유: 안쪽 `Body` 가 `flex-1` 로 스크롤 영역을 잡고 `Dock` 이 그 아래
+ * 붙으려면 기준 높이가 있어야 한다.
  */
 export function AppFrame({ children, label }: { children: ReactNode; label?: string }) {
   return (
@@ -21,10 +22,10 @@ export function AppFrame({ children, label }: { children: ReactNode; label?: str
       <div
         data-screen-label={label}
         className={cn(
-          "cd-frame relative flex w-full flex-col overflow-hidden bg-page",
+          "relative flex w-full flex-col overflow-hidden bg-page",
           "h-dvh",
-          "sm:h-[812px] sm:max-h-full sm:w-[390px] sm:flex-none",
-          "sm:rounded-phone sm:border sm:border-line-strong sm:shadow-lg",
+          "sm:h-[calc(100dvh-3rem)] sm:max-h-[860px] sm:w-[420px] sm:flex-none",
+          "sm:rounded-card sm:border sm:border-line sm:shadow-lg",
         )}
       >
         {children}
@@ -34,29 +35,20 @@ export function AppFrame({ children, label }: { children: ReactNode; label?: str
 }
 
 /**
- * 상태바 — 디자인 원본의 9:41 목업.
+ * 화면 맨 위의 안전 영역.
  *
- * 실기기에서는 OS가 그리는 영역이라 화면에 그릴 필요가 없다. 대신 노치/다이나믹 아일랜드를
- * 피하도록 safe-area 만큼 자리를 잡아 준다. 데스크톱 프레임에서만 목업 상태바를 보여
- * 디자인 시안과 나란히 놓고 비교할 수 있게 한다.
+ * 노치·다이나믹 아일랜드에 내용이 가리지 않도록 그만큼 자리를 비운다.
+ * 그 영역에도 화면 색이 이어져야 해서 `tone` 을 받는다.
+ *
+ * 디자인 원본에는 9:41 목업 상태바가 있었지만 옮기지 않았다 — 실기기에서는 OS 가 그리는
+ * 영역이고, 가짜 시계를 그리면 44px 을 버리면서 틀린 시각을 보여 주게 된다.
  */
-export function StatusBar({ tone }: { tone?: "y" | "ink" }) {
+export function TopInset({ tone }: { tone?: "y" }) {
   return (
     <div
-      className={cn(
-        "flex min-h-11 flex-none items-center justify-between px-5 pt-[env(safe-area-inset-top)]",
-        "font-semibold text-[13px] leading-none",
-        tone === "y" && "bg-yellow-100",
-        tone === "ink" ? "bg-ink-700 text-on-action" : "text-txt-strong",
-      )}
-    >
-      <span aria-hidden="true">9:41</span>
-      <span className="flex items-center gap-[5px] opacity-80" aria-hidden="true">
-        <Icon name="signal" size={13} />
-        <Icon name="wifi" size={13} />
-        <Icon name="battery-full" size={15} />
-      </span>
-    </div>
+      aria-hidden="true"
+      className={cn("h-[env(safe-area-inset-top)] flex-none", tone === "y" && "bg-yellow-100")}
+    />
   );
 }
 

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { AppFrame, Body, Btn, Chip, Dock, Panel, StatusBar } from "@/components/ui";
+import { AppFrame, Body, Btn, Chip, Dock, Panel, TopInset } from "@/components/ui";
 import type { Team } from "@/lib/types";
 import { setTeamCode } from "./onboarding-state";
 
@@ -18,7 +18,7 @@ export function JoinScreen({ team }: { team: Team }) {
 
   return (
     <AppFrame label="01 초대 링크 입장">
-      <StatusBar tone="y" />
+      <TopInset tone="y" />
       <Body tone="y" pad={20} className="flex flex-col">
         <div className="flex flex-1 flex-col items-center justify-center gap-[18px] pt-5 pb-2 text-center">
           <Image

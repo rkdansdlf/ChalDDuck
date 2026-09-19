@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Progress, Rows, StatusBar } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Progress, Rows, TopInset } from "@/components/ui";
 import { submitOnboarding } from "@/data/api";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
@@ -40,7 +40,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
-      <StatusBar />
+      <TopInset />
       <AppBar title="맡고 싶은 일" sub="4 / 4단계" onBack={() => router.back()} />
       <Body dense>
         <Progress step={4} total={4} className="mt-1 mb-4" />

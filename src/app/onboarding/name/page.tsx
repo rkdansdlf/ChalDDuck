@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Sheet, StatusBar, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Sheet, TopInset, Undecided } from "@/components/ui";
 import { findExistingMember } from "@/data/api";
 import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
 import type { Member } from "@/lib/types";
@@ -55,7 +55,7 @@ export default function NamePage() {
 
   return (
     <AppFrame label="02 이름 입력">
-      <StatusBar />
+      <TopInset />
       <AppBar title="팀에 들어가기" sub="1 / 4단계" onBack={() => router.push("/join")} />
       <Body>
         <Progress step={1} total={4} className="mb-[18px]" />

@@ -89,7 +89,6 @@
   --radius-card: var(--r-card);
   --radius-control: var(--r-control);
   --radius-sheet: var(--r-sheet);
-  --radius-phone: var(--r-phone);
 
   /* 그림자 */
   --shadow-sm: var(--sh-sm);
@@ -215,12 +214,3 @@
   }
 }
 
-/* 기기 프레임 안쪽 스크롤바는 숨긴다 — 실제 모바일에는 없는 요소라
-   데스크톱 미리보기에서만 보이면 레이아웃 판단을 흐린다 */
-.cd-frame ::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-.cd-frame * {
-  scrollbar-width: none;
-}

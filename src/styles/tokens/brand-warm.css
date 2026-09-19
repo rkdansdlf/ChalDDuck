@@ -89,7 +89,6 @@
   --r-card: 20px;
   --r-control: 14px; /* 입력창·버튼 */
   --r-sheet: 28px;
-  --r-phone: 34px;
   --h-control: 44px; /* 버튼 기본 · 최소 히트 영역 */
   --h-control-lg: 52px; /* 버튼 lg · 입력창 */
 }

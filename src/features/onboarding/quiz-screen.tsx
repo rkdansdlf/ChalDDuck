@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, StatusBar, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, TopInset, Undecided } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { picksToMbti } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/types";
@@ -23,7 +23,7 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
 
   return (
     <AppFrame label="04 30초 MBTI 판별">
-      <StatusBar />
+      <TopInset />
       <AppBar
         title="30초 컷"
         sub={`${answeredCount} / ${total}문항`}
