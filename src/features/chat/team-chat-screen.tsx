@@ -79,8 +79,8 @@ export function TeamChatScreen({
         placeholder="메시지 입력"
         onSend={send}
         onAttach={() => flash("첨부는 아직 준비 중입니다")}
-        // TODO(15 쿠션 번역기): 구현되면 입력 중인 글을 들고 그 화면으로 넘어간다.
-        onCushion={() => flash("쿠션 번역기는 아직 준비 중입니다")}
+        // TODO(15 쿠션 번역기): 입력 중이던 글을 들고 넘어가야 한다. 지금은 빈 화면으로 연다.
+        onCushion={() => router.push("/tools/cushion")}
       />
 
       <Toast msg={toast} />

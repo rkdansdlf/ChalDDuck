@@ -209,13 +209,19 @@ export function HomeScreen({
           ))}
         </Rows>
 
-        <SecTitle note="채팅·일정·팀 탭에는 없는 자리">AI 도구 바로가기</SecTitle>
+        <SecTitle
+          note="채팅·일정·팀 탭에는 없는 자리"
+          action="전체 보기"
+          onAction={() => router.push("/tools")}
+        >
+          AI 도구 바로가기
+        </SecTitle>
         <div className="flex flex-wrap gap-2">
           {aiTools.slice(0, 4).map((tool) => (
             <button
               key={tool.key}
               type="button"
-              onClick={() => notReady(tool.name)}
+              onClick={() => (tool.href ? router.push(tool.href) : notReady(tool.name))}
               className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5"
             >
               <Icon name={tool.icon as IconName} size={17} className="text-info" />

@@ -1,6 +1,9 @@
 import type {
+  AiPolicy,
   AiTool,
   BusyBlock,
+  ClerkDraft,
+  CushionTone,
   ChatMessage,
   DmThread,
   BusyKind,
@@ -10,8 +13,11 @@ import type {
   MeetingSlot,
   QuizQuestion,
   RandomTool,
+  PresentDraft,
   RecentItem,
+  ResearchResult,
   Role,
+  SentenceMode,
   SubmissionBox,
   Team,
 } from "@/lib/types";
@@ -145,6 +151,7 @@ export const AI_TOOLS: AiTool[] = [
     icon: "message-square-heart",
     note: "하고 싶은 말의 말투만 부드럽게 바꿔 줍니다",
     ready: true,
+    href: "/tools/cushion",
   },
   {
     key: "clerk",
@@ -152,14 +159,23 @@ export const AI_TOOLS: AiTool[] = [
     icon: "notebook-pen",
     note: "회의 내용을 할 일 카드로 정리합니다",
     ready: true,
+    href: "/tools/clerk",
   },
-  { key: "research", name: "AI 리서처", icon: "search", note: "자료 출처와 함께 찾아 줍니다", ready: true },
+  {
+    key: "research",
+    name: "AI 리서처",
+    icon: "search",
+    note: "자료 출처와 함께 찾아 줍니다",
+    ready: true,
+    href: "/tools/researcher",
+  },
   {
     key: "present",
     name: "발표 지원",
     icon: "presentation",
     note: "대본 다듬기와 예상 질문 정리",
     ready: true,
+    href: "/tools/present",
   },
   {
     key: "sentence",
@@ -167,6 +183,7 @@ export const AI_TOOLS: AiTool[] = [
     icon: "file-output",
     note: "핵심 요약·교수님 질문 메일 모드",
     ready: true,
+    href: "/tools/sentence",
   },
 ];
 
@@ -451,4 +468,112 @@ export const DM_MESSAGES: Record<string, ChatMessage[]> = {
       status: "sent",
     },
   ],
+};
+
+/* ── 14 ~ 27 AI 도구 ────────────────────────────────────────── */
+
+/** 대화 90일 보관 후 삭제, 사용량 한도 없음. 아직 확정되지 않은 정책이다. */
+export const AI_POLICY: AiPolicy = { retentionDays: 90 };
+
+/**
+ * 쿠션 번역기 말투 3종.
+ * 개수와 이름이 기획안에 없어 임시로 정한 값이다.
+ */
+export const CUSHION_TONES: CushionTone[] = [
+  { key: "soft", name: "부드럽게" },
+  { key: "plain", name: "담담하게" },
+  { key: "firm", name: "분명하게" },
+];
+
+/** 말투만 바뀌고 요구 내용(마감·필요한 것)은 그대로라는 걸 보이기 위한 예시. */
+export const CUSHION_SAMPLE_INPUT = "이거 왜 아직 안 올렸어요? 내일이 마감인데요";
+
+export const CUSHION_SAMPLE_OUTPUT: Record<string, string> = {
+  soft: "혹시 자료 올리는 데 어려운 점이 있을까요? 내일이 마감이라 지금 상황만 알려주시면 제가 맞춰서 준비해 볼게요.",
+  plain: "내일이 마감인데 자료가 아직 올라오지 않았습니다. 언제쯤 가능한지 알려주시면 일정을 맞추겠습니다.",
+  firm: "내일 마감이라 오늘 안에는 자료가 필요합니다. 어려우시면 지금 말씀해 주세요. 범위를 줄이거나 나눠서 진행하겠습니다.",
+};
+
+export const CLERK_SAMPLE_INPUT =
+  "오늘 회의: 발표 자료 표지 3개 시안 필요하다고 이서연이 얘기함. 설문 응답 분석 표는 아직 담당 안 정함. 발표 대본 초안은 최유나가 9/22까지 쓰기로 했음. 다음 회의는 목요일 15시.";
+
+export const CLERK_SAMPLE_DRAFT: ClerkDraft = {
+  summary: "표지 시안, 설문 분석 표, 발표 대본 초안이 논의됐고 다음 회의는 목요일 15시입니다.",
+  candidates: [
+    {
+      id: "c1",
+      title: "발표 자료 표지 시안 3개",
+      assignee: "이서연",
+      basis: "회의에서 직접 맡겠다고 말함",
+      due: "9/19",
+    },
+    {
+      id: "c2",
+      title: "설문 응답 분석 표 정리",
+      assignee: null,
+      basis: "담당 의견 없음 — 직접 정해 주세요",
+      due: "9/20",
+    },
+    {
+      id: "c3",
+      title: "발표 대본 초안",
+      assignee: "최유나",
+      basis: "회의에서 직접 맡겠다고 말함",
+      due: "9/22",
+    },
+  ],
+};
+
+export const RESEARCH_SAMPLE_QUERY = "MBTI와 팀 프로젝트 만족도 관련 자료 있어?";
+
+export const RESEARCH_SAMPLE_RESULTS: ResearchResult[] = [
+  {
+    id: "r1",
+    title: "MBTI 유형과 팀 협업 만족도의 관계",
+    source: "한국심리학회지 · 2021",
+    snippet:
+      "MBTI 유형보다 역할 명확성이 팀 협업 만족도에 더 큰 영향을 보였다는 연구 결과입니다.",
+  },
+  {
+    id: "r2",
+    title: "대학생 팀 프로젝트의 역할 분담 전략",
+    source: "교육공학연구 · 2019",
+    snippet: "자발적 희망 기반 역할 분담이 배정식보다 만족도가 높게 나타났습니다.",
+  },
+  {
+    id: "r3",
+    title: "비대면 팀 프로젝트 커뮤니케이션 실태",
+    source: "한국콘텐츠학회논문지 · 2022",
+    snippet: "채팅 중심 소통에서 발생하는 오해 사례와 완화 방법을 다룹니다.",
+  },
+];
+
+export const PRESENT_SAMPLE_INPUT =
+  "이 발표는 저희 팀이 3주 동안 조사한 내용을 정리한 것입니다. 먼저 배경을 설명하고, 다음으로 조사 방법, 마지막으로 결론을 말씀드리겠습니다.";
+
+export const PRESENT_SAMPLE_DRAFT: PresentDraft = {
+  refined: "오늘은 3주간 조사한 내용을 배경, 조사 방법, 결론 순서로 말씀드리겠습니다.",
+  questions: [
+    "조사 대상을 이렇게 정한 근거는 무엇인가요?",
+    "표본 수가 적은데 결과를 일반화할 수 있나요?",
+    "다음 연구에서 보완하고 싶은 점은 무엇인가요?",
+  ],
+};
+
+/** 쿠션 번역기(말투)와 분리된 두 모드. */
+export const SENTENCE_MODES: SentenceMode[] = [
+  { key: "summary", name: "핵심 요약 모드", desc: "긴 글을 짧게 줄입니다" },
+  { key: "email", name: "교수님 질문 메일 모드", desc: "질문을 격식 있는 메일로 바꿉니다" },
+];
+
+export const SENTENCE_SAMPLE_INPUT: Record<string, string> = {
+  summary:
+    "회의에서는 표지 시안 3개, 설문 분석 표, 발표 대본 초안 담당을 정했고 다음 회의는 목요일 15시로 잡았습니다. 자료조사 마감은 이미 지켰습니다.",
+  email: "교수님 저희 조 발표 순서 언제 정해지나요?",
+};
+
+export const SENTENCE_SAMPLE_OUTPUT: Record<string, string> = {
+  summary: "표지·설문표·대본 담당 확정, 다음 회의 목 15시.",
+  email:
+    "교수님, 안녕하세요. 디지털콘텐츠기획 3조 김민준입니다. 발표 순서가 언제 공지되는지 여쭙고자 메일 드립니다. 바쁘신 중에 확인 부탁드립니다.",
 };

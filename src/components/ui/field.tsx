@@ -88,3 +88,37 @@ export function Input({ value, onChange, error, mono, className, ...rest }: Inpu
     />
   );
 }
+
+export type TextareaProps = {
+  id?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  /** 보이는 최소 높이(px). 내용이 길어지면 스크롤된다. */
+  minHeight?: number;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
+};
+
+/** 여러 줄 입력 — 회의 메모·대본처럼 문단을 받는 자리에 쓴다. */
+export function Textarea({
+  value,
+  onChange,
+  minHeight = 160,
+  className,
+  ...rest
+}: TextareaProps & { className?: string }) {
+  return (
+    <textarea
+      {...rest}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ minHeight }}
+      className={cn(
+        "text-pretty-keep box-border w-full resize-y rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
+        "text-[14.5px] leading-[1.6] text-txt-strong outline-none",
+        className,
+      )}
+    />
+  );
+}

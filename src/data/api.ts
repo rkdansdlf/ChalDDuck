@@ -1,6 +1,9 @@
 import type {
+  AiPolicy,
   AiTool,
   BusyBlock,
+  ClerkDraft,
+  CushionTone,
   ChatMessage,
   DmThread,
   BusyKind,
@@ -11,14 +14,23 @@ import type {
   OnboardingDraft,
   QuizQuestion,
   RandomTool,
+  PresentDraft,
   RecentItem,
+  ResearchResult,
   Role,
+  SentenceMode,
   SubmissionBox,
   Team,
 } from "@/lib/types";
 import {
+  AI_POLICY,
   AI_TOOLS,
   BOX_VERSIONS,
+  CLERK_SAMPLE_DRAFT,
+  CLERK_SAMPLE_INPUT,
+  CUSHION_SAMPLE_INPUT,
+  CUSHION_SAMPLE_OUTPUT,
+  CUSHION_TONES,
   DM_MESSAGES,
   DM_THREADS,
   BUSY_KINDS,
@@ -34,6 +46,13 @@ import {
   ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
+  PRESENT_SAMPLE_DRAFT,
+  PRESENT_SAMPLE_INPUT,
+  RESEARCH_SAMPLE_QUERY,
+  RESEARCH_SAMPLE_RESULTS,
+  SENTENCE_MODES,
+  SENTENCE_SAMPLE_INPUT,
+  SENTENCE_SAMPLE_OUTPUT,
   SUBMISSION_BOXES,
   TEAM_MESSAGES,
 } from "./mock";
@@ -226,4 +245,71 @@ export async function sendChatMessage(
   _text: string,
 ): Promise<{ ok: boolean }> {
   return { ok: Math.random() >= DEMO_SEND_FAILURE_RATE };
+}
+
+/* ── 14 ~ 27 AI 도구 ────────────────────────────────────────── */
+
+/**
+ * ⚠️ 아래 함수들은 **아직 AI 에 연결되어 있지 않다.** 입력을 받긴 하지만 무시하고
+ * 미리 적어 둔 샘플 결과를 돌려준다. 화면이 그 사실을 감추지 않도록,
+ * 결과 자리마다 "AI 초안" 배지와 샘플 안내를 함께 보여 준다.
+ *
+ * 모델을 붙일 때는 이 함수들의 본문만 실제 호출로 바꾸면 된다 —
+ * 화면은 이미 "입력을 보내고 초안을 기다린다"는 모양으로 쓰여 있다.
+ */
+
+export async function getAiPolicy(): Promise<AiPolicy> {
+  return AI_POLICY;
+}
+
+export async function getCushionTones(): Promise<CushionTone[]> {
+  return CUSHION_TONES;
+}
+
+export async function getCushionSample(): Promise<string> {
+  return CUSHION_SAMPLE_INPUT;
+}
+
+/** 말투만 바꾼다 — 요구하는 내용(마감·필요한 것)은 그대로 둔다. */
+export async function rewriteWithCushion(_text: string, tone: string): Promise<string> {
+  return CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
+}
+
+export async function getClerkSample(): Promise<string> {
+  return CLERK_SAMPLE_INPUT;
+}
+
+/** 회의 메모에서 요약과 할 일 **후보**를 뽑는다. 그대로 반영되지는 않는다. */
+export async function summarizeMeeting(_raw: string): Promise<ClerkDraft> {
+  return CLERK_SAMPLE_DRAFT;
+}
+
+export async function getResearchSampleQuery(): Promise<string> {
+  return RESEARCH_SAMPLE_QUERY;
+}
+
+/** 출처가 없는 결과는 돌려주지 않는다. 적합도 점수는 만들지 않는다. */
+export async function searchResearch(_query: string): Promise<ResearchResult[]> {
+  return RESEARCH_SAMPLE_RESULTS;
+}
+
+export async function getPresentSample(): Promise<string> {
+  return PRESENT_SAMPLE_INPUT;
+}
+
+/** 표현만 다듬고 내용을 새로 지어내지 않는다. */
+export async function refineScript(_raw: string): Promise<PresentDraft> {
+  return PRESENT_SAMPLE_DRAFT;
+}
+
+export async function getSentenceModes(): Promise<SentenceMode[]> {
+  return SENTENCE_MODES;
+}
+
+export async function getSentenceSample(mode: string): Promise<string> {
+  return SENTENCE_SAMPLE_INPUT[mode] ?? "";
+}
+
+export async function convertSentence(_text: string, mode: string): Promise<string> {
+  return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
 }

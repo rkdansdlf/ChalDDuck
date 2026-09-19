@@ -132,6 +132,51 @@ export type AiTool = {
   note: string;
   /** 아직 열지 않은 도구는 false. */
   ready: boolean;
+  /** 도구 화면 경로. 아직 없으면 null. */
+  href: string | null;
+};
+
+/** AI 이용·보관 정책. 90일이 적정한지는 아직 확정되지 않았다. */
+export type AiPolicy = { retentionDays: number };
+
+/** 쿠션 번역기의 말투. 요구 내용은 그대로 두고 말투만 바꾼다. */
+export type CushionTone = { key: string; name: string };
+
+/** 27 상황별 문장 변환의 모드. 쿠션 번역기(말투)와는 다른 기능이다. */
+export type SentenceMode = {
+  key: string;
+  name: string;
+  desc: string;
+};
+
+/** AI 서기가 회의 메모에서 뽑은 할 일 후보. **초안일 뿐 그대로 반영되지 않는다.** */
+export type ClerkCandidate = {
+  id: string;
+  title: string;
+  /** AI 가 추측한 담당자. 회의에서 정해지지 않았으면 null 이고 사람이 정해야 한다. */
+  assignee: string | null;
+  /** 왜 이 사람을 넣었는지 — 근거 없이 배정하지 않는다. */
+  basis: string;
+  due: string;
+};
+
+export type ClerkDraft = {
+  summary: string;
+  candidates: ClerkCandidate[];
+};
+
+/** 리서처 결과. **출처가 없는 결과는 보여주지 않는다.** 적합도 점수는 만들지 않는다. */
+export type ResearchResult = {
+  id: string;
+  title: string;
+  source: string;
+  snippet: string;
+};
+
+/** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */
+export type PresentDraft = {
+  refined: string;
+  questions: string[];
 };
 
 /** 홈의 "최근 자료·업무" 한 줄. */

@@ -13,11 +13,19 @@ import { Panel } from "./panel";
 export function CompareCard({
   inputLabel = "원문",
   input,
+  editableInput,
   resultLabel = "AI 초안",
   result,
 }: {
   inputLabel?: string;
   input: ReactNode;
+  /**
+   * `input` 이 입력창처럼 스스로 면을 갖는 경우 true.
+   *
+   * 원문을 고칠 수 있는 화면에서 읽기 전용 원문 칸을 따로 두면 같은 글이 두 번 보인다.
+   * 그럴 때는 입력창 자체를 왼쪽 칸으로 넣고, 카드가 면을 덧씌우지 않게 한다.
+   */
+  editableInput?: boolean;
   resultLabel?: string;
   result: ReactNode;
 }) {
@@ -25,9 +33,13 @@ export function CompareCard({
     <div className="mb-4 flex flex-wrap gap-3.5">
       <div className="min-w-0 flex-[1_1_240px]">
         <div className="t-cap-strong mb-1.5 font-bold text-txt-muted">{inputLabel}</div>
-        <Panel s="fill" pad={14} r={16}>
-          <div className="text-pretty-keep text-[14.5px] leading-[1.6] text-txt-strong">{input}</div>
-        </Panel>
+        {editableInput ? (
+          input
+        ) : (
+          <Panel s="fill" pad={14} r={16}>
+            <div className="text-pretty-keep text-[14.5px] leading-[1.6] text-txt-strong">{input}</div>
+          </Panel>
+        )}
       </div>
       <div className="min-w-0 flex-[1_1_240px]">
         <div className="mb-1.5 flex items-center gap-1.5">
