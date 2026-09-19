@@ -1,6 +1,8 @@
 import type {
   AiTool,
   BusyBlock,
+  ChatMessage,
+  DmThread,
   BusyKind,
   DriveLimits,
   FileVersion,
@@ -302,4 +304,151 @@ export const BOX_VERSIONS: Record<string, FileVersion[]> = {
   "box-deck": DECK_VERSIONS,
   "box-research": RESEARCH_VERSIONS,
   "box-script": [],
+};
+
+/* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
+
+/** 팀 전체가 보는 단톡방. 기획안에 채널을 여러 개 두는 규칙이 없어 하나만 둔다. */
+export const TEAM_MESSAGES: ChatMessage[] = [
+  {
+    id: "t1",
+    author: "이서연",
+    mbti: "ENFP",
+    isMine: false,
+    text: "내일 회의 몇 시로 할까요? 저는 오후 다 됩니다",
+    time: "14:02",
+    status: "sent",
+  },
+  {
+    id: "t2",
+    author: "박지호",
+    mbti: "ISTJ",
+    isMine: false,
+    text: "저는 3시 이후로 부탁드려요, 알바 있어서",
+    time: "14:03",
+    status: "sent",
+    reactions: [{ icon: "thumbs-up", count: 2 }],
+  },
+  {
+    id: "t3",
+    author: "최유나",
+    mbti: null,
+    isMine: false,
+    text: "네 저도 3시 이후 괜찮아요",
+    time: "14:04",
+    status: "sent",
+  },
+  {
+    id: "t4",
+    author: "김민준",
+    mbti: "INFJ",
+    isMine: true,
+    text: "혹시 자료 올리는 데 어려운 점이 있을까요? 내일이 마감이라 지금 상황만 알려주시면 제가 맞춰서 준비해 볼게요.",
+    time: "14:05",
+    status: "sent",
+    viaCushion: true,
+    reactions: [{ icon: "check", count: 1 }],
+  },
+];
+
+/** 1:1 대화 목록 — 김민준(나) 기준. id 는 팀원 id 와 같다. */
+export const DM_THREADS: DmThread[] = [
+  {
+    id: "m2",
+    name: "이서연",
+    mbti: "ENFP",
+    lastMessage: "표지 시안 오늘 밤까지 올릴게요!",
+    time: "13:20",
+    unread: 1,
+  },
+  { id: "m3", name: "박지호", mbti: "ISTJ", lastMessage: "네, 확인했습니다", time: "어제", unread: 0 },
+  {
+    id: "m4",
+    name: "최유나",
+    mbti: null,
+    lastMessage: "대본 초안 부분은 저도 같이 썼는데요",
+    time: "9/14",
+    unread: 2,
+  },
+];
+
+export const DM_MESSAGES: Record<string, ChatMessage[]> = {
+  m2: [
+    {
+      id: "m2-1",
+      author: "이서연",
+      mbti: "ENFP",
+      isMine: false,
+      text: "표지 시안 3개 중에 어떤 게 나아요?",
+      time: "13:15",
+      status: "sent",
+    },
+    {
+      id: "m2-2",
+      author: "김민준",
+      mbti: "INFJ",
+      isMine: true,
+      text: "노란 톤이 팀 캐릭터랑도 잘 어울려서 저는 그게 좋아요",
+      time: "13:18",
+      status: "sent",
+    },
+    {
+      id: "m2-3",
+      author: "이서연",
+      mbti: "ENFP",
+      isMine: false,
+      text: "표지 시안 오늘 밤까지 올릴게요!",
+      time: "13:20",
+      status: "sent",
+    },
+  ],
+  m3: [
+    {
+      id: "m3-1",
+      author: "김민준",
+      mbti: "INFJ",
+      isMine: true,
+      text: "목요일 회의 시간 3시로 확정해도 될까요?",
+      time: "어제 20:40",
+      status: "sent",
+    },
+    {
+      id: "m3-2",
+      author: "박지호",
+      mbti: "ISTJ",
+      isMine: false,
+      text: "네, 확인했습니다",
+      time: "어제 20:41",
+      status: "sent",
+    },
+  ],
+  m4: [
+    {
+      id: "m4-1",
+      author: "김민준",
+      mbti: "INFJ",
+      isMine: true,
+      text: "대본 초안 기록에 박지호님이 의견을 남겼어요. 한번 봐주실 수 있을까요?",
+      time: "9/14 22:01",
+      status: "sent",
+    },
+    {
+      id: "m4-2",
+      author: "최유나",
+      mbti: null,
+      isMine: false,
+      text: "대본 초안 부분은 저도 같이 썼는데요",
+      time: "9/14 22:05",
+      status: "sent",
+    },
+    {
+      id: "m4-3",
+      author: "최유나",
+      mbti: null,
+      isMine: false,
+      text: "기여도 화면에서 정정 요청 넣어볼게요",
+      time: "9/14 22:06",
+      status: "sent",
+    },
+  ],
 };

@@ -200,3 +200,47 @@ export type FileVersion = {
   /** 실제로 열리는 형식만 미리보기 주소를 갖는다. 그 외는 다운로드 안내만. */
   previewUrl: string | null;
 };
+
+/* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
+
+/** 스레드 식별자. 팀 단톡방은 하나뿐이라 고정값을 쓴다. */
+export const TEAM_THREAD_ID = "team";
+
+/** 메시지에 붙은 반응. 지금은 표시만 하고 누를 수는 없다. */
+export type MessageReaction = {
+  /** `IconName` 과 같은 kebab-case 어휘. */
+  icon: string;
+  count: number;
+};
+
+/**
+ * 채팅 메시지 하나. 단톡방(19)과 DM(31)이 같은 말풍선 규격을 쓴다.
+ */
+export type ChatMessage = {
+  id: string;
+  author: string;
+  mbti: MbtiType | null;
+  /** 내가 보낸 말인지 — 말풍선이 오른쪽에 붙고 색이 달라진다. */
+  isMine: boolean;
+  text: string;
+  /** 보낸 시각 표시. 아직 못 보낸 메시지는 null. */
+  time: string | null;
+  status: "sent" | "failed";
+  /**
+   * 쿠션 번역기로 다듬어 보낸 말.
+   * **표시가 남는다** — 다듬었다는 사실을 숨기지 않는다.
+   */
+  viaCushion?: boolean;
+  reactions?: MessageReaction[];
+};
+
+/** 1:1 대화 목록의 한 줄. 팀원 한 명당 하나씩 열린다. */
+export type DmThread = {
+  /** 상대 팀원의 id. 그대로 스레드 id 로 쓴다. */
+  id: string;
+  name: string;
+  mbti: MbtiType | null;
+  lastMessage: string;
+  time: string;
+  unread: number;
+};

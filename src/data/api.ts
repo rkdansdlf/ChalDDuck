@@ -1,6 +1,8 @@
 import type {
   AiTool,
   BusyBlock,
+  ChatMessage,
+  DmThread,
   BusyKind,
   DriveLimits,
   FileVersion,
@@ -17,6 +19,8 @@ import type {
 import {
   AI_TOOLS,
   BOX_VERSIONS,
+  DM_MESSAGES,
+  DM_THREADS,
   BUSY_KINDS,
   DRIVE_LIMITS,
   MEETING_SLOTS,
@@ -31,6 +35,7 @@ import {
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
   SUBMISSION_BOXES,
+  TEAM_MESSAGES,
 } from "./mock";
 
 /**
@@ -184,4 +189,41 @@ export async function getSubmissionBox(
 /** 버전 기록. **맨 앞이 최신**이다. */
 export async function getFileVersions(_teamId: string, boxId: string): Promise<FileVersion[]> {
   return BOX_VERSIONS[boxId] ?? [];
+}
+
+/* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
+
+export async function getTeamMessages(_teamId: string): Promise<ChatMessage[]> {
+  return TEAM_MESSAGES;
+}
+
+export async function getDmThreads(_teamId: string): Promise<DmThread[]> {
+  return DM_THREADS;
+}
+
+export async function getDmThread(_teamId: string, threadId: string): Promise<DmThread | null> {
+  return DM_THREADS.find((t) => t.id === threadId) ?? null;
+}
+
+export async function getDmMessages(_teamId: string, threadId: string): Promise<ChatMessage[]> {
+  return DM_MESSAGES[threadId] ?? [];
+}
+
+/**
+ * 데모에서 메시지 전송이 실패할 확률.
+ *
+ * 전송 실패와 "다시 보내기"는 설계에 있는 상태인데, 목 구현이 항상 성공하면
+ * 그 화면을 볼 방법이 없다. 그래서 **목 구현 안에서만** 가끔 실패시킨다 —
+ * 화면 코드는 서버가 붙은 뒤와 똑같이 결과만 보고 판단한다.
+ *
+ * 실제 API 를 붙일 때 이 상수는 목 구현과 함께 사라진다.
+ */
+const DEMO_SEND_FAILURE_RATE = 0.25;
+
+/** 메시지를 보낸다. 실패하면 화면이 "전송 실패 · 다시 보내기"를 보여 준다. */
+export async function sendChatMessage(
+  _threadId: string,
+  _text: string,
+): Promise<{ ok: boolean }> {
+  return { ok: Math.random() >= DEMO_SEND_FAILURE_RATE };
 }
