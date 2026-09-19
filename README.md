@@ -35,6 +35,10 @@ npm run dev
 `DATABASE_URL` 은 런타임용 **트랜잭션 풀러(6543)**, `DIRECT_URL` 은 마이그레이션·시드용
 **직결(5432)** 입니다. 풀러로는 prepared statement 와 DDL 잠금을 못 버텨 마이그레이션이 깨집니다.
 
+런타임 커넥션 풀은 [`src/server/db.ts`](src/server/db.ts) 에서 직접 만듭니다 — 쉬고 있던
+연결이 끊겼을 때 프로세스가 죽지 않게 받아 주고, 순간적인 연결 실패(P1001·P2024)는
+짧게 두 번 다시 시도합니다. 자세한 이유는 그 파일 주석에 있습니다.
+
 ## 지금까지 구현된 것
 
 - **디자인 토큰** — 색·타이포·치수 ([`src/styles/tokens/`](src/styles/tokens))
