@@ -75,8 +75,10 @@ export function ContribReportScreen({
       <Body dense>
         <StepRail at={3} />
 
-        {/* 제출물 미리 보기 — 앱 색이 아니라 문서 색을 쓴다 */}
-        <div className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px]">
+        {/* 제출물 미리 보기 — 앱 색이 아니라 문서 색을 쓴다.
+            넓은 화면에서는 A4 비율(1:1.414)을 최소 높이로 잡아 인쇄했을 때의 모습에 가깝게 보여 준다.
+            내용이 더 길면 늘어난다 — 비율을 지키려고 내용을 자르지는 않는다. */}
+        <div className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10">
           <div className="mb-3 border-b-[1.5px] border-ink-900 pb-3">
             <div className="keep-all font-extrabold text-[17px] leading-[1.3] tracking-[-.025em] text-ink-900">
               팀 기여 기록

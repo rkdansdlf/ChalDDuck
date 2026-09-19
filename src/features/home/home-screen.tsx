@@ -136,6 +136,10 @@ export function HomeScreen({
       />
 
       <Body dense>
+        {/* 넓은 화면에서는 두 기둥으로 나눈다 — 한 기둥이면 오른쪽이 통째로 빈다.
+            왼쪽은 "지금 나를 기다리는 것", 오른쪽은 "필요할 때 꺼내 쓰는 것". */}
+        <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
+        <div>
         <SecTitle
           note={
             todos.length > 0
@@ -189,6 +193,9 @@ export function HomeScreen({
           onOpen={() => router.push("/schedule/slots")}
         />
 
+        </div>
+
+        <div>
         <SecTitle note="드라이브에서 방금 바뀐 것">최근 자료·업무</SecTitle>
         <Rows className="mb-[18px]">
           {recent.map((item) => (
@@ -237,6 +244,8 @@ export function HomeScreen({
               </span>
             </button>
           ))}
+        </div>
+        </div>
         </div>
       </Body>
 

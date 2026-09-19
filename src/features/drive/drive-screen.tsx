@@ -53,7 +53,8 @@ export function DriveScreen({
       <Body dense>
         <SecTitle note="맡은 역할대로 칸이 나뉘어 있습니다">역할별 제출함</SecTitle>
 
-        <div className="mb-[18px] flex flex-col gap-[9px]">
+        {/* 제출함은 서로 독립된 카드라 넓은 화면에서 두 줄로 세워도 읽는 순서가 깨지지 않는다 */}
+        <div className="mb-[18px] grid gap-[9px] lg:grid-cols-2">
           {boxes.map((box) => {
             const empty = box.fileCount === 0;
             return (

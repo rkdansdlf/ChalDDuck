@@ -38,9 +38,9 @@ const nextBlockId = () => `local-${(blockSeq += 1)}`;
  * 시간표는 **"안 되는 시간"만** 표시한다 — 표시하지 않은 시간은 가능한 시간이다.
  * 사유(수업·아르바이트·시험)는 본인 화면에만 보이고, 팀원에게는 가능/불가만 공유된다.
  *
- * 입력 방식이 두 가지인데 **목록형이 기본**이다. 주간 격자의 칸은 30px 이라
- * 최소 탭 영역 44px 을 못 지키는 유일한 예외라서, 기본 경로로 두지 않기로 팀이 정했다.
- * 격자는 한 주를 한눈에 보고 고칠 때 쓰는 보조 수단으로 남겼다.
+ * 입력 방식이 두 가지인데 **목록형이 기본**이다. 좁은 화면(600px 미만)의 주간 격자는 칸이
+ * 30px 이라 최소 탭 영역 44px 을 못 지키기 때문이다 — 그 폭에서 칸을 키우면 한 주가
+ * 한눈에 안 들어와 격자를 둘 이유가 없어진다. 600px 부터는 칸이 44px 로 커져 예외가 사라진다.
  */
 export function MyTimeScreen({
   team,
@@ -312,7 +312,10 @@ export function MyTimeScreen({
                         aria-pressed={Boolean(block)}
                         aria-label={`${day} ${hour}시 ${block ? `— ${kindOf(block.kind).name}, 지우기` : "— 안 되는 시간으로 표시"}`}
                         onClick={() => toggleCell(dayIndex, hourIndex)}
-                        className="h-[30px] cursor-pointer rounded-md border-none p-0"
+                        // 600px 부터는 칸을 44px 로 키워 최소 탭 영역을 지킨다.
+                        // 좁은 화면에서만 30px 로 두는 이유는 그래야 한 주가 한 번에 보이기 때문이고,
+                        // 그 대신 기본 입력 방식이 목록형이다.
+                        className="h-[30px] cursor-pointer rounded-md border-none p-0 sm:h-11"
                         style={{ background: block ? kindOf(block.kind).color : "var(--cr-100)" }}
                       />
                     );
@@ -345,8 +348,9 @@ export function MyTimeScreen({
         </Note>
 
         <Undecided>
-          <b>목록으로 담기</b>를 기본 입력 방식으로 확정했습니다. 주간 격자의 30px 칸은 최소 탭 영역 44px 의
-          유일한 예외로 남아 있으므로, 격자는 한눈에 보고 고치는 보조 수단으로만 씁니다.
+          <b>목록으로 담기</b>를 기본 입력 방식으로 확정했습니다. 주간 격자는 <b>600px 미만에서만</b> 칸이
+          30px 이라 최소 탭 영역 44px 을 못 지킵니다 — 그 폭에서 격자는 한눈에 보는 보조 수단이고,
+          실제 입력은 목록형으로 합니다.
         </Undecided>
       </Body>
 
