@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppBar, Body, CompareCard, Textarea, Undecided } from "@/components/ui";
-import { convertSentence, getSentenceSample } from "@/data/api";
+import { convertSentence, getSentenceSample } from "@/server/actions/ai";
 import { cn } from "@/lib/cn";
 import type { SentenceMode } from "@/lib/types";
 

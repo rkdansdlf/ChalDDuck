@@ -1,4 +1,4 @@
-import { getDemoTeam, getDmThreads, getRecentItems, getTeamMessages } from "@/data/api";
+import { getCurrentTeam, getDmThreads, getRecentItems, getTeamMessages } from "@/data/api";
 import { ChatInfoPane } from "@/features/chat/chat-info-pane";
 import { ChatThreadList } from "@/features/chat/chat-thread-list";
 
@@ -14,7 +14,7 @@ import { ChatThreadList } from "@/features/chat/chat-thread-list";
  *   말풍선 한 줄도 못 담을 만큼 좁아진다(왼쪽 앱 내비게이션이 232px 을 이미 쓴다).
  */
 export default async function ChatLayout({ children }: LayoutProps<"/chat">) {
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const [teamMessages, threads, recent] = await Promise.all([
     getTeamMessages(team.id),
     getDmThreads(team.id),

@@ -14,7 +14,7 @@ import {
   Textarea,
   Undecided,
 } from "@/components/ui";
-import { refineScript } from "@/data/api";
+import { refineScript } from "@/server/actions/ai";
 import type { PresentDraft } from "@/lib/types";
 
 /**

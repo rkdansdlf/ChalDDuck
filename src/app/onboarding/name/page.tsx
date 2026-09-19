@@ -3,9 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Sheet, TopInset, Undecided } from "@/components/ui";
-import { findExistingMember } from "@/data/api";
+import { findMemberByName } from "@/server/actions/onboarding";
 import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
-import type { Member } from "@/lib/types";
 
 const MIN_NAME = 2;
 
@@ -20,7 +19,7 @@ export default function NamePage() {
   const router = useRouter();
   const { teamCode, name } = useOnboarding();
 
-  const [existing, setExisting] = useState<Member | null>(null);
+  const [existing, setExisting] = useState<{ name: string } | null>(null);
   const [confirming, setConfirming] = useState(false);
   /** "아니요, 다른 사람이에요" 를 고른 뒤에는 같은 이름으로 다시 묻지 않는다. */
   const [notMe, setNotMe] = useState(false);
@@ -33,7 +32,7 @@ export default function NamePage() {
     const lookup =
       trimmed.length < MIN_NAME
         ? Promise.resolve(null)
-        : findExistingMember(teamCode ?? "", trimmed);
+        : findMemberByName(teamCode ?? "", trimmed);
 
     lookup.then((member) => {
       if (!cancelled) setExisting(member);

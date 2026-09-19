@@ -13,7 +13,7 @@ import {
   SecTitle,
   Undecided,
 } from "@/components/ui";
-import { searchResearch } from "@/data/api";
+import { searchResearch } from "@/server/actions/ai";
 import type { ResearchResult } from "@/lib/types";
 
 /**

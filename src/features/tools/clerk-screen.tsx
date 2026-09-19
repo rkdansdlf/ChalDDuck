@@ -15,7 +15,7 @@ import {
   Textarea,
   Undecided,
 } from "@/components/ui";
-import { summarizeMeeting } from "@/data/api";
+import { summarizeMeeting } from "@/server/actions/ai";
 import { addTasksFromClerk } from "@/features/tasks/tasks-state";
 import { cn } from "@/lib/cn";
 import type { ClerkDraft, Member } from "@/lib/types";

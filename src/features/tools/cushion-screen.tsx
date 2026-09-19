@@ -13,7 +13,7 @@ import {
   Toast,
   Undecided,
 } from "@/components/ui";
-import { rewriteWithCushion } from "@/data/api";
+import { rewriteWithCushion } from "@/server/actions/ai";
 import { cn } from "@/lib/cn";
 import type { CushionTone } from "@/lib/types";
 

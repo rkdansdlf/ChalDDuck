@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Prisma 가 만들어 내는 클라이언트 — 우리가 쓰는 코드가 아니라 생성물이다.
+    "src/generated/**",
     // 디자인 핸드오프 원본 — 참고 자료이지 이 앱의 소스가 아니다.
     // (React UMD + Babel 환경을 전제로 쓰인 코드라 이 프로젝트 규칙으로 검사할 수 없다)
     "docs/handoff/**",

@@ -5,7 +5,7 @@ import { Avatar, Icon, Rows, SecTitle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ChatMessage, DmThread, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
-import { useThreadMessages, useUnreadThreads } from "./messages-state";
+import { useThreadMessages } from "./messages-state";
 import { ThreadRow } from "./thread-row";
 
 /**
@@ -33,7 +33,7 @@ export function ChatThreadList({
   const router = useRouter();
   const pathname = usePathname();
 
-  const threads = useUnreadThreads(fromServer);
+  const threads = fromServer;
   const messages = useThreadMessages(TEAM_THREAD_ID, teamMessages);
   // 전송에 실패한 말은 아직 아무도 못 봤으므로 목록의 미리보기가 되면 안 된다.
   const lastTeamMessage = messages.findLast((m) => m.status === "sent");

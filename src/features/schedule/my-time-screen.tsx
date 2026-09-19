@@ -16,9 +16,9 @@ import {
   Undecided,
   type IconName,
 } from "@/components/ui";
-import { saveMyBusyBlocks } from "@/data/api";
+import { saveMyBusyBlocks } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
-import type { BusyBlock, BusyKind, BusyKindKey, Team } from "@/lib/types";
+import type { BusyBlock, BusyKind, BusyKindKey } from "@/lib/types";
 
 type View = "list" | "grid";
 
@@ -43,13 +43,11 @@ const nextBlockId = () => `local-${(blockSeq += 1)}`;
  * 한눈에 안 들어와 격자를 둘 이유가 없어진다. 600px 부터는 칸이 44px 로 커져 예외가 사라진다.
  */
 export function MyTimeScreen({
-  team,
   kinds,
   days,
   hours,
   initialBlocks,
 }: {
-  team: Team;
   kinds: BusyKind[];
   days: string[];
   hours: string[];
@@ -109,7 +107,7 @@ export function MyTimeScreen({
     if (saving) return;
     setSaving(true);
     try {
-      await saveMyBusyBlocks(team.id, blocks);
+      await saveMyBusyBlocks(blocks);
       router.push("/schedule/slots");
     } finally {
       setSaving(false);

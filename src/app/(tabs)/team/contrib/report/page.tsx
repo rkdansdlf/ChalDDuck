@@ -1,6 +1,6 @@
 import {
   getContribReportBase,
-  getDemoTeam,
+  getCurrentTeam,
   getMyContrib,
   getRoster,
   getTeamCheck,
@@ -16,7 +16,7 @@ import { ContribReportScreen } from "@/features/contrib/contrib-report-screen";
 export const dynamic = "force-dynamic";
 
 export default async function ContribReportPage() {
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const [base, myRecords, teamRecords, roster] = await Promise.all([
     getContribReportBase(team.id),
     getMyContrib(team.id),

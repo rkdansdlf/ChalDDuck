@@ -1,4 +1,4 @@
-import { getDemoTeam, getMeetingWeek } from "@/data/api";
+import { getCurrentTeam, getMeetingWeek } from "@/data/api";
 import { SlotsScreen } from "@/features/schedule/slots-screen";
 
 /**
@@ -11,7 +11,7 @@ export default async function SlotsPage({ searchParams }: PageProps<"/schedule/s
   const { preview } = await searchParams;
   const asNone = preview === "none" ? "none" : undefined;
 
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const week = await getMeetingWeek(team.id, asNone);
 
   return <SlotsScreen team={team} week={week} preview={asNone} />;

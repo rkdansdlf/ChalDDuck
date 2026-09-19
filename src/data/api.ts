@@ -1,27 +1,32 @@
+import "server-only";
+
+import { redirect } from "next/navigation";
+import type { MbtiType } from "@/lib/mbti";
+import { isMbtiType } from "@/lib/mbti";
 import type {
   AiPolicy,
   AiTool,
   BusyBlock,
+  BusyKind,
+  ChatMessage,
+  ClerkDraft,
   ContribKind,
   ContribRecord,
   ContribReportBase,
-  IceGame,
-  ClerkDraft,
   CushionTone,
-  ChatMessage,
   DmThread,
-  BusyKind,
   DriveLimits,
   FileVersion,
+  IceGame,
   Member,
   MeetingWeek,
-  OnboardingDraft,
+  PresentDraft,
   QuizQuestion,
   RandomTool,
-  PresentDraft,
   RecentItem,
   ResearchResult,
   Role,
+  RoleKey,
   SentenceMode,
   SubmissionBox,
   Task,
@@ -29,125 +34,152 @@ import type {
   Team,
   TeamCheckRecord,
 } from "@/lib/types";
+import { db } from "@/server/db";
+import { getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
   AI_TOOLS,
-  BOX_VERSIONS,
+  BUSY_KINDS,
   CLERK_SAMPLE_DRAFT,
   CLERK_SAMPLE_INPUT,
+  CONTRIB_KINDS,
   CUSHION_SAMPLE_INPUT,
   CUSHION_SAMPLE_OUTPUT,
-  CONTRIB_KINDS,
-  CONTRIB_REPORT_BASE,
   CUSHION_TONES,
   ICE_GAMES,
   MENU_OPTIONS,
-  DM_MESSAGES,
-  DM_THREADS,
-  BUSY_KINDS,
-  DRIVE_LIMITS,
-  MEETING_SLOTS,
-  MEETING_SLOTS_PARTIAL,
-  MOCK_ROSTER,
-  MOCK_TEAM,
-  MY_BUSY_BLOCKS,
+  PRESENT_SAMPLE_DRAFT,
+  PRESENT_SAMPLE_INPUT,
   QUIZ,
-  RECENT_ITEMS,
   RANDOM_TOOLS,
+  RESEARCH_SAMPLE_QUERY,
+  RESEARCH_SAMPLE_RESULTS,
   ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
-  PRESENT_SAMPLE_DRAFT,
-  PRESENT_SAMPLE_INPUT,
-  RESEARCH_SAMPLE_QUERY,
-  RESEARCH_SAMPLE_RESULTS,
   SENTENCE_MODES,
   SENTENCE_SAMPLE_INPUT,
   SENTENCE_SAMPLE_OUTPUT,
-  MY_CONTRIB,
-  SUBMISSION_BOXES,
-  TASKS,
   TASK_KINDS,
-  TEAM_CHECK,
-  TEAM_MESSAGES,
-} from "./mock";
+} from "./catalog";
 
 /**
  * 데이터 접근 계층.
  *
- * 지금은 전부 목 데이터를 돌려주지만, 화면은 **이 모듈만** 통해 데이터를 읽는다.
- * 서버가 붙으면 아래 함수 본문을 `fetch` 로 갈아끼우는 것으로 끝나야 한다 —
- * 화면 코드에서 `MOCK_*` 를 직접 import 하지 말 것.
+ * 화면은 **이 모듈만** 통해 데이터를 읽는다. Prisma 클라이언트를 화면에서 직접 부르지 말 것 —
+ * 그러면 DB 행 모양이 화면까지 새어 들어와 스키마를 고칠 때마다 화면을 따라 고쳐야 한다.
+ * 여기서 도메인 타입(`src/lib/types.ts`)으로 한 번 번역한다.
  *
- * 모든 함수가 `async` 인 것도 같은 이유다. 지금 동기로 두면 나중에 모든 호출부를 고쳐야 한다.
+ * 읽기만 있다. 쓰기는 `src/server/actions/` 의 서버 액션이 맡는다.
  */
 
-/** 초대 코드로 팀을 찾는다. 없는 코드면 `null`. */
-export async function getTeamByCode(code: string): Promise<Team | null> {
-  return code.toUpperCase() === MOCK_TEAM.code ? MOCK_TEAM : null;
+/* ── 세션·팀 ────────────────────────────────────────────────── */
+
+/** 지금 사용자가 속한 팀. 세션이 없으면 초대 입장 화면으로 보낸다. */
+export async function getCurrentTeam(): Promise<Team> {
+  const member = await getSessionMember();
+  if (!member) redirect("/join");
+
+  const team = await db.team.findUnique({
+    where: { id: member.teamId },
+    include: { _count: { select: { members: true } } },
+  });
+  if (!team) redirect("/join");
+
+  return {
+    id: team.id,
+    name: team.name,
+    course: team.course,
+    code: team.code,
+    memberCount: team._count.members,
+    dday: team.dday,
+  };
 }
 
-/** 초대 링크 없이 들어왔을 때 보여 줄 기본 팀(데모 전용). */
-export async function getDemoTeam(): Promise<Team> {
-  return MOCK_TEAM;
+/** 초대 코드로 팀을 찾는다. 없는 코드면 `null`. 세션이 없어도 쓸 수 있다. */
+export async function getTeamByCode(code: string): Promise<Team | null> {
+  const team = await db.team.findUnique({
+    where: { code: code.trim().toUpperCase() },
+    include: { _count: { select: { members: true } } },
+  });
+  if (!team) return null;
+
+  return {
+    id: team.id,
+    name: team.name,
+    course: team.course,
+    code: team.code,
+    memberCount: team._count.members,
+    dday: team.dday,
+  };
 }
+
+const toMbti = (value: string | null | undefined): MbtiType | null =>
+  isMbtiType(value) ? value : null;
+const toRole = (value: string | null): RoleKey | null => (value as RoleKey | null) ?? null;
+
+export async function getRoster(teamId: string): Promise<Member[]> {
+  const session = await getSessionMember();
+  const members = await db.member.findMany({ where: { teamId }, orderBy: { joinedAt: "asc" } });
+
+  return members.map((m) => ({
+    id: m.id,
+    name: m.name,
+    isMe: m.id === session?.id,
+    mbti: toMbti(m.mbti),
+    want: toRole(m.wantRole),
+    veto: toRole(m.vetoRole),
+  }));
+}
+
+/**
+ * 같은 팀에 같은 이름의 기록이 이미 있는지 확인한다.
+ *
+ * 재입장·기기 변경 시 기록을 잇기 위한 것이다. 동명이인 구분 방법은
+ * **아직 확정되지 않은 정책**이라 지금은 이름만으로 판단한다.
+ */
+export async function findExistingMember(teamCode: string, name: string): Promise<Member | null> {
+  const team = await getTeamByCode(teamCode);
+  if (!team) return null;
+
+  const member = await db.member.findUnique({
+    where: { teamId_name: { teamId: team.id, name: name.trim() } },
+  });
+  if (!member) return null;
+
+  return {
+    id: member.id,
+    name: member.name,
+    isMe: false,
+    mbti: toMbti(member.mbti),
+    want: toRole(member.wantRole),
+    veto: toRole(member.vetoRole),
+  };
+}
+
+/* ── 제품 설정 (팀마다 달라지지 않는 값) ───────────────────── */
 
 export async function getRoles(): Promise<Role[]> {
   return ROLES;
 }
-
 export async function getQuiz(): Promise<QuizQuestion[]> {
   return QUIZ;
 }
-
 export async function getRandomTools(): Promise<RandomTool[]> {
   return RANDOM_TOOLS;
 }
-
-export async function getRoster(_teamId: string): Promise<Member[]> {
-  return MOCK_ROSTER;
+export async function getContribKinds(): Promise<ContribKind[]> {
+  return CONTRIB_KINDS;
 }
-
-/**
- * 같은 초대 코드에 같은 이름의 기록이 이미 있는지 확인한다.
- *
- * 재입장·기기 변경 시 기록을 잇기 위한 것이다. 동명이인 구분 방법은
- * **아직 확정되지 않은 정책**이라(핸드오프 표 1행) 지금은 이름만으로 판단한다.
- */
-export async function findExistingMember(teamId: string, name: string): Promise<Member | null> {
-  const roster = await getRoster(teamId);
-  const target = name.trim();
-  return roster.find((m) => !m.isMe && m.name === target) ?? null;
+export async function getTaskKinds(): Promise<TaskKind[]> {
+  return TASK_KINDS;
 }
-
-/** 팀 만들기 — 서버가 초대 코드를 발급한다. 지금은 데모 코드를 그대로 돌려준다. */
-export async function createTeam(input: { name: string; course: string }): Promise<Team> {
-  return {
-    ...MOCK_TEAM,
-    id: "team_new",
-    name: input.name.trim(),
-    course: input.course.trim(),
-    memberCount: 1,
-    dday: null,
-  };
+export async function getIceGames(): Promise<IceGame[]> {
+  return ICE_GAMES;
 }
-
-/**
- * 온보딩 입력을 팀에 등록한다.
- *
- * TODO(서버): 실제로는 이 호출이 멤버를 만들고 세션을 발급한다.
- * 지금은 아무것도 저장하지 않고 성공만 돌려준다.
- */
-export async function submitOnboarding(
-  _teamId: string,
-  _draft: OnboardingDraft,
-): Promise<{ ok: true }> {
-  return { ok: true };
+export async function getMenuOptions(_teamId: string): Promise<string[]> {
+  return MENU_OPTIONS;
 }
-
-/* ── 08 내 가능한 시간 ─────────────────────────────────────── */
-
-/** 시간표 화면이 필요한 고정 값들 — 사유 종류·요일·시간대. */
 export async function getScheduleOptions(): Promise<{
   kinds: BusyKind[];
   days: string[];
@@ -156,18 +188,24 @@ export async function getScheduleOptions(): Promise<{
   return { kinds: BUSY_KINDS, days: SCHEDULE_DAYS, hours: SCHEDULE_HOURS };
 }
 
-export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
-  return MY_BUSY_BLOCKS;
-}
+/* ── 08 내 가능한 시간 ─────────────────────────────────────── */
 
-/**
- * 내 시간표를 저장한다.
- *
- * TODO(서버): 실제로는 저장 후 팀의 회의 시간 후보가 다시 계산된다.
- * 지금은 아무것도 저장하지 않고 성공만 돌려준다.
- */
-export async function saveMyBusyBlocks(_teamId: string, _blocks: BusyBlock[]): Promise<{ ok: true }> {
-  return { ok: true };
+export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const blocks = await db.busyBlock.findMany({
+    where: { memberId: session.id },
+    orderBy: [{ day: "asc" }, { startHour: "asc" }],
+  });
+
+  return blocks.map((b) => ({
+    id: b.id,
+    day: b.day,
+    startHour: b.startHour,
+    hours: b.hours,
+    kind: b.kind as BusyBlock["kind"],
+  }));
 }
 
 /* ── 09 / 10 회의 시간 ─────────────────────────────────────── */
@@ -175,22 +213,262 @@ export async function saveMyBusyBlocks(_teamId: string, _blocks: BusyBlock[]): P
 /**
  * 이번 주 회의 시간 후보.
  *
- * 전원 가능한 후보가 없으면 `hasFullAvailability` 가 false 가 되고,
- * 화면은 10번(전원 불가한 주) 흐름으로 바뀐다.
- *
- * `preview` 는 **데모 전용**이다. 서버가 붙으면 실제 시간표로만 판단하므로 없앤다.
+ * `preview` 는 **데모 전용**이다 — 전원 불가한 주가 어떻게 보이는지 확인하기 위한 것으로,
+ * 후보를 실제 시간표에서 계산하게 되면 없앤다.
  */
-export async function getMeetingWeek(
-  _teamId: string,
-  preview?: "none",
-): Promise<MeetingWeek> {
-  const slots = preview === "none" ? MEETING_SLOTS_PARTIAL : MEETING_SLOTS;
+export async function getMeetingWeek(teamId: string, preview?: "none"): Promise<MeetingWeek> {
+  const [slots, total] = await Promise.all([
+    db.meetingSlot.findMany({
+      where: { teamId, weekKey: preview === "none" ? "none" : "this" },
+      orderBy: { available: "desc" },
+    }),
+    db.member.count({ where: { teamId } }),
+  ]);
+
   return {
-    slots,
+    slots: slots.map((s) => ({
+      id: s.id,
+      day: s.day,
+      time: s.time,
+      available: s.available,
+      total: s.total,
+      blockedBy: s.blockedBy,
+    })),
     hasFullAvailability: slots.some((s) => s.available === s.total),
-    submitted: MOCK_ROSTER.length,
-    total: MOCK_ROSTER.length,
+    submitted: total,
+    total,
   };
+}
+
+/* ── 12 / 13 / 22 드라이브 ─────────────────────────────────── */
+
+/** 용량 한도는 아직 확정되지 않은 정책이라 코드에 둔다 — 팀별로 다르게 줄 값이 아니다. */
+export async function getDriveLimits(teamId: string): Promise<DriveLimits> {
+  const versions = await db.fileVersion.findMany({
+    where: { box: { teamId } },
+    select: { size: true },
+  });
+
+  // "8.4MB" 같은 표시 문자열을 더해 대략의 사용량을 낸다. 실제 바이트 수가 생기면 그걸로 바꾼다.
+  const usedMB = versions.reduce((sum, v) => sum + (Number.parseFloat(v.size) || 0), 0);
+
+  return {
+    capGB: 2,
+    usedGB: Math.round((usedMB / 1024) * 100) / 100,
+    types: ["문서", "이미지", "PPT", "PDF"],
+  };
+}
+
+export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[]> {
+  const boxes = await db.submissionBox.findMany({
+    where: { teamId },
+    include: { owner: { select: { name: true } }, versions: { select: { isLate: true } } },
+    orderBy: { id: "asc" },
+  });
+
+  return boxes.map((b) => ({
+    id: b.id,
+    role: b.role as RoleKey,
+    name: b.name,
+    owner: b.owner.name,
+    fileName: b.fileName,
+    fileCount: b.versions.length,
+    due: b.due,
+    hasLate: b.versions.some((v) => v.isLate),
+  }));
+}
+
+export async function getSubmissionBox(
+  teamId: string,
+  boxId: string,
+): Promise<SubmissionBox | null> {
+  const boxes = await getSubmissionBoxes(teamId);
+  return boxes.find((b) => b.id === boxId) ?? null;
+}
+
+/** 버전 기록. **맨 앞이 최신**이다. */
+export async function getFileVersions(_teamId: string, boxId: string): Promise<FileVersion[]> {
+  const versions = await db.fileVersion.findMany({
+    where: { boxId },
+    include: { author: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return versions.map((v) => ({
+    id: v.id,
+    label: v.label,
+    author: v.author.name,
+    when: v.whenLabel,
+    note: v.note,
+    size: v.size,
+    kind: v.kind as FileVersion["kind"],
+    previewUrl: v.previewUrl,
+  }));
+}
+
+/* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
+
+/** DM 스레드 키 — 두 사람의 id 를 정렬해 이어 붙인다(누가 먼저 열든 같은 방). */
+export function dmThreadKey(a: string, b: string): string {
+  return `dm:${[a, b].sort().join(":")}`;
+}
+
+async function loadMessages(teamId: string, threadKey: string, meId: string | null) {
+  const rows = await db.message.findMany({
+    where: { teamId, threadKey },
+    include: {
+      author: { select: { id: true, name: true, mbti: true } },
+      reactions: { select: { icon: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map<ChatMessage>((m) => {
+    const counts = new Map<string, number>();
+    for (const r of m.reactions) counts.set(r.icon, (counts.get(r.icon) ?? 0) + 1);
+
+    return {
+      id: m.id,
+      author: m.author.name,
+      mbti: toMbti(m.author.mbti),
+      isMine: m.author.id === meId,
+      text: m.text,
+      time: m.whenLabel,
+      status: "sent",
+      viaCushion: m.viaCushion,
+      reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
+    };
+  });
+}
+
+export async function getTeamMessages(teamId: string): Promise<ChatMessage[]> {
+  const session = await getSessionMember();
+  return loadMessages(teamId, "team", session?.id ?? null);
+}
+
+export async function getDmMessages(teamId: string, threadId: string): Promise<ChatMessage[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+  return loadMessages(teamId, dmThreadKey(session.id, threadId), session.id);
+}
+
+/** 1:1 대화 목록 — 나를 뺀 팀원 한 명당 하나씩. */
+export async function getDmThreads(teamId: string): Promise<DmThread[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const [others, readMarks] = await Promise.all([
+    db.member.findMany({ where: { teamId, id: { not: session.id } }, orderBy: { joinedAt: "asc" } }),
+    db.readMark.findMany({ where: { memberId: session.id } }),
+  ]);
+  const readAt = new Map(readMarks.map((r) => [r.threadKey, r.readAt]));
+
+  return Promise.all(
+    others.map(async (other) => {
+      const threadKey = dmThreadKey(session.id, other.id);
+      const [last, unread] = await Promise.all([
+        db.message.findFirst({ where: { teamId, threadKey }, orderBy: { createdAt: "desc" } }),
+        db.message.count({
+          where: {
+            teamId,
+            threadKey,
+            authorId: { not: session.id },
+            createdAt: { gt: readAt.get(threadKey) ?? new Date(0) },
+          },
+        }),
+      ]);
+
+      return {
+        id: other.id,
+        name: other.name,
+        mbti: toMbti(other.mbti),
+        lastMessage: last?.text ?? "아직 대화가 없습니다",
+        time: last?.whenLabel ?? "",
+        unread,
+      };
+    }),
+  );
+}
+
+export async function getDmThread(teamId: string, threadId: string): Promise<DmThread | null> {
+  const threads = await getDmThreads(teamId);
+  return threads.find((t) => t.id === threadId) ?? null;
+}
+
+/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+
+export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const rows = await db.contribRecord.findMany({
+    where: { memberId: session.id },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind as ContribRecord["kind"],
+    title: r.title,
+    detail: r.detail,
+    when: r.whenLabel,
+    source: r.source as ContribRecord["source"],
+    state: r.state === "ok" ? "ok" : "pending",
+  }));
+}
+
+/** 팀 전체의 기록. 내 화면(16)과 **같은 표**를 본다. */
+export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
+  const rows = await db.contribRecord.findMany({
+    where: { member: { teamId } },
+    include: { member: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    who: r.member.name,
+    title: r.title,
+    state: r.state as TeamCheckRecord["state"],
+    by: r.byLabel,
+    dispute: r.dispute,
+  }));
+}
+
+export async function getContribReportBase(teamId: string): Promise<ContribReportBase[]> {
+  const members = await db.member.findMany({
+    where: { teamId },
+    include: { contribRecords: { select: { state: true } } },
+    orderBy: { joinedAt: "asc" },
+  });
+
+  return members.map((m) => ({
+    memberId: m.id,
+    who: m.name,
+    role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
+    confirmed: m.contribRecords.filter((r) => r.state === "ok").length,
+  }));
+}
+
+/* ── 21 할 일 ──────────────────────────────────────────────── */
+
+export async function getTasks(teamId: string): Promise<Task[]> {
+  const rows = await db.task.findMany({
+    where: { teamId },
+    include: { assignee: { select: { name: true, mbti: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map((t) => ({
+    id: t.id,
+    title: t.title,
+    kind: t.kind as Task["kind"],
+    assignee: t.assignee?.name ?? null,
+    mbti: toMbti(t.assignee?.mbti),
+    due: t.due,
+    status: t.status as Task["status"],
+    source: t.source as Task["source"],
+  }));
 }
 
 /* ── 11 홈 ─────────────────────────────────────────────────── */
@@ -199,67 +477,34 @@ export async function getAiTools(): Promise<AiTool[]> {
   return AI_TOOLS;
 }
 
-export async function getRecentItems(_teamId: string): Promise<RecentItem[]> {
-  return RECENT_ITEMS;
-}
+/** 홈의 "최근 자료·업무". 드라이브의 최신 버전과 할 일 화면으로 잇는다. */
+export async function getRecentItems(teamId: string): Promise<RecentItem[]> {
+  const latest = await db.fileVersion.findFirst({
+    where: { box: { teamId } },
+    include: { author: { select: { name: true } }, box: { select: { id: true, fileName: true } } },
+    orderBy: { createdAt: "desc" },
+  });
 
-/* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
+  const items: RecentItem[] = [];
+  if (latest) {
+    items.push({
+      id: latest.id,
+      title: `${latest.box.fileName.replace(/\.[^.]+$/, "")} ${latest.label}`,
+      note: `${latest.whenLabel} · ${latest.author.name}`,
+      icon: "file-check-2",
+      href: `/drive/${latest.box.id}`,
+    });
+  }
+  // 남은 건수는 화면이 실제 목록에서 센다 — 여기 문구는 비워 둔다.
+  items.push({
+    id: "tasks",
+    title: "할 일 · 체크리스트",
+    note: "",
+    icon: "list-checks",
+    href: "/home/tasks",
+  });
 
-export async function getDriveLimits(_teamId: string): Promise<DriveLimits> {
-  return DRIVE_LIMITS;
-}
-
-export async function getSubmissionBoxes(_teamId: string): Promise<SubmissionBox[]> {
-  return SUBMISSION_BOXES;
-}
-
-export async function getSubmissionBox(
-  _teamId: string,
-  boxId: string,
-): Promise<SubmissionBox | null> {
-  return SUBMISSION_BOXES.find((b) => b.id === boxId) ?? null;
-}
-
-/** 버전 기록. **맨 앞이 최신**이다. */
-export async function getFileVersions(_teamId: string, boxId: string): Promise<FileVersion[]> {
-  return BOX_VERSIONS[boxId] ?? [];
-}
-
-/* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
-
-export async function getTeamMessages(_teamId: string): Promise<ChatMessage[]> {
-  return TEAM_MESSAGES;
-}
-
-export async function getDmThreads(_teamId: string): Promise<DmThread[]> {
-  return DM_THREADS;
-}
-
-export async function getDmThread(_teamId: string, threadId: string): Promise<DmThread | null> {
-  return DM_THREADS.find((t) => t.id === threadId) ?? null;
-}
-
-export async function getDmMessages(_teamId: string, threadId: string): Promise<ChatMessage[]> {
-  return DM_MESSAGES[threadId] ?? [];
-}
-
-/**
- * 데모에서 메시지 전송이 실패할 확률.
- *
- * 전송 실패와 "다시 보내기"는 설계에 있는 상태인데, 목 구현이 항상 성공하면
- * 그 화면을 볼 방법이 없다. 그래서 **목 구현 안에서만** 가끔 실패시킨다 —
- * 화면 코드는 서버가 붙은 뒤와 똑같이 결과만 보고 판단한다.
- *
- * 실제 API 를 붙일 때 이 상수는 목 구현과 함께 사라진다.
- */
-const DEMO_SEND_FAILURE_RATE = 0.25;
-
-/** 메시지를 보낸다. 실패하면 화면이 "전송 실패 · 다시 보내기"를 보여 준다. */
-export async function sendChatMessage(
-  _threadId: string,
-  _text: string,
-): Promise<{ ok: boolean }> {
-  return { ok: Math.random() >= DEMO_SEND_FAILURE_RATE };
+  return items;
 }
 
 /* ── 14 ~ 27 AI 도구 ────────────────────────────────────────── */
@@ -269,101 +514,45 @@ export async function sendChatMessage(
  * 미리 적어 둔 샘플 결과를 돌려준다. 화면이 그 사실을 감추지 않도록,
  * 결과 자리마다 "AI 초안" 배지와 샘플 안내를 함께 보여 준다.
  *
- * 모델을 붙일 때는 이 함수들의 본문만 실제 호출로 바꾸면 된다 —
- * 화면은 이미 "입력을 보내고 초안을 기다린다"는 모양으로 쓰여 있다.
+ * 모델을 붙일 때는 이 함수들의 본문만 실제 호출로 바꾸면 된다.
  */
 
 export async function getAiPolicy(): Promise<AiPolicy> {
   return AI_POLICY;
 }
-
 export async function getCushionTones(): Promise<CushionTone[]> {
   return CUSHION_TONES;
 }
-
 export async function getCushionSample(): Promise<string> {
   return CUSHION_SAMPLE_INPUT;
 }
-
-/** 말투만 바꾼다 — 요구하는 내용(마감·필요한 것)은 그대로 둔다. */
 export async function rewriteWithCushion(_text: string, tone: string): Promise<string> {
   return CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
 }
-
 export async function getClerkSample(): Promise<string> {
   return CLERK_SAMPLE_INPUT;
 }
-
-/** 회의 메모에서 요약과 할 일 **후보**를 뽑는다. 그대로 반영되지는 않는다. */
 export async function summarizeMeeting(_raw: string): Promise<ClerkDraft> {
   return CLERK_SAMPLE_DRAFT;
 }
-
 export async function getResearchSampleQuery(): Promise<string> {
   return RESEARCH_SAMPLE_QUERY;
 }
-
-/** 출처가 없는 결과는 돌려주지 않는다. 적합도 점수는 만들지 않는다. */
 export async function searchResearch(_query: string): Promise<ResearchResult[]> {
   return RESEARCH_SAMPLE_RESULTS;
 }
-
 export async function getPresentSample(): Promise<string> {
   return PRESENT_SAMPLE_INPUT;
 }
-
-/** 표현만 다듬고 내용을 새로 지어내지 않는다. */
 export async function refineScript(_raw: string): Promise<PresentDraft> {
   return PRESENT_SAMPLE_DRAFT;
 }
-
 export async function getSentenceModes(): Promise<SentenceMode[]> {
   return SENTENCE_MODES;
 }
-
 export async function getSentenceSample(mode: string): Promise<string> {
   return SENTENCE_SAMPLE_INPUT[mode] ?? "";
 }
-
 export async function convertSentence(_text: string, mode: string): Promise<string> {
   return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
-}
-
-/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
-
-export async function getContribKinds(): Promise<ContribKind[]> {
-  return CONTRIB_KINDS;
-}
-
-/** 앱이 모은 내 기록 + 내가 이미 넣어 둔 기록. */
-export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
-  return MY_CONTRIB;
-}
-
-export async function getTeamCheck(_teamId: string): Promise<TeamCheckRecord[]> {
-  return TEAM_CHECK;
-}
-
-export async function getContribReportBase(_teamId: string): Promise<ContribReportBase[]> {
-  return CONTRIB_REPORT_BASE;
-}
-
-/* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
-
-export async function getTaskKinds(): Promise<TaskKind[]> {
-  return TASK_KINDS;
-}
-
-export async function getTasks(_teamId: string): Promise<Task[]> {
-  return TASKS;
-}
-
-/* ── 28 / 29 팀 친목 ────────────────────────────────────────── */
-
-export async function getIceGames(): Promise<IceGame[]> {
-  return ICE_GAMES;
-}
-
-export async function getMenuOptions(_teamId: string): Promise<string[]> {
-  return MENU_OPTIONS;
 }

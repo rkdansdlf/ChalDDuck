@@ -1,6 +1,6 @@
 import { AppNav } from "@/components/app-nav";
 import { AppShell } from "@/components/ui";
-import { getDemoTeam, getDmThreads, getMyContrib } from "@/data/api";
+import { getCurrentTeam, getDmThreads, getMyContrib } from "@/data/api";
 
 /**
  * 탭 셸.
@@ -12,7 +12,7 @@ import { getDemoTeam, getDmThreads, getMyContrib } from "@/data/api";
  * 배지 숫자는 목록이 있어야 셀 수 있어 여기서 읽어 내비게이션에 넘긴다.
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const [dmThreads, myContrib] = await Promise.all([
     getDmThreads(team.id),
     getMyContrib(team.id),

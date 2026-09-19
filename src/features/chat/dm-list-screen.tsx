@@ -3,13 +3,11 @@
 import { useRouter } from "next/navigation";
 import { AppBar, Avatar, Body, Note, Rows, SecTitle, Undecided } from "@/components/ui";
 import type { DmThread } from "@/lib/types";
-import { useUnreadThreads } from "./messages-state";
 import { ThreadRow } from "./thread-row";
 
 /** 30 1:1 DM 목록 — 단톡방과 별도로 팀원마다 하나씩 열린다. */
-export function DmListScreen({ threads: fromServer }: { threads: DmThread[] }) {
+export function DmListScreen({ threads }: { threads: DmThread[] }) {
   const router = useRouter();
-  const threads = useUnreadThreads(fromServer);
 
   return (
     <>

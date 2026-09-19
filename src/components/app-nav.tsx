@@ -2,7 +2,6 @@
 
 import { SideNav, TabBar } from "@/components/ui";
 import { useMyContrib, usePendingContribCount } from "@/features/contrib/records-state";
-import { usePendingChatCount } from "@/features/chat/messages-state";
 import { usePendingTeamCount } from "@/features/roles/negotiation-state";
 import { usePendingScheduleCount } from "@/features/schedule/meeting-state";
 import type { ContribRecord, DmThread } from "@/lib/types";
@@ -31,7 +30,8 @@ export function AppNav({
   const clashes = usePendingTeamCount();
   const contrib = usePendingContribCount(useMyContrib(myContrib));
   const cal = usePendingScheduleCount();
-  const chat = usePendingChatCount(dmThreads);
+  // 안 읽음 수는 서버가 ReadMark 로 센다.
+  const chat = dmThreads.reduce((sum, t) => sum + t.unread, 0);
 
   const pending = {
     team: clashes + contrib || undefined,

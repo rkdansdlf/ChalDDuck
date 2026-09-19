@@ -1,0 +1,344 @@
+// 찰떡 데이터 모델
+//
+// 데이터베이스는 Supabase Postgres 한 벌입니다 — 로컬 개발도 같은 곳을 씁니다.
+// 환경마다 provider 가 달라지면 배포 때 스키마가 깨지기 때문입니다.
+//
+// 상태값(`status`, `kind` 등)은 아직 String 입니다. 어휘가 화면 쪽 `STATUS` 한 곳에
+// 모여 있어서, Postgres enum 으로 조이려면 양쪽을 같이 옮겨야 합니다 — 지금은 미룹니다.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 부터 연결 주소는 스키마가 아니라 `prisma.config.ts` 에 둔다.
+datasource db {
+  provider = "postgresql"
+}
+
+/// 팀. 초대 코드로만 들어온다 — 가입·로그인이 없다.
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  course    String
+  /// 초대 코드. 이 코드를 아는 사람만 들어올 수 있다.
+  code      String   @unique
+  /// "중간발표 D-12" 같은 표시 문자열. 날짜 계산은 아직 기획에 없다.
+  dday      String?
+  createdAt DateTime @default(now())
+
+  members        Member[]
+  submissionBoxes SubmissionBox[]
+  meetingSlots   MeetingSlot[]
+  proposals      MeetingProposal[]
+  messages       Message[]
+  tasks          Task[]
+}
+
+/// 팀원. 신원은 **초대 코드 + 이름**이라 팀 안에서 이름이 유일해야 한다.
+model Member {
+  id           String   @id @default(cuid())
+  teamId       String
+  name         String
+  /// 16유형 중 하나. 고르지 않고 넘어갈 수 있다.
+  mbti         String?
+  /// 30초 컷으로 얻은 값인지. 화면 문구가 달라진다.
+  mbtiFromQuiz Boolean  @default(false)
+  /// 1순위 희망 역할 / 이번엔 피하고 싶은 역할.
+  wantRole     String?
+  vetoRole     String?
+  joinedAt     DateTime @default(now())
+
+  team            Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sessions        Session[]
+  busyBlocks      BusyBlock[]
+  ownedBoxes      SubmissionBox[]
+  fileVersions    FileVersion[]
+  messages        Message[]
+  reactions       MessageReaction[]
+  readMarks       ReadMark[]
+  contribRecords  ContribRecord[]
+  assignedTasks   Task[]
+  pokesSent       Poke[]
+  proposalsMade   MeetingProposal[]
+  meetingResponses MeetingResponse[]
+  roleDraws       RoleDraw[]
+  roleRejections  RoleRejection[]
+
+  @@unique([teamId, name])
+}
+
+/// 로그인 세션. 쿠키에는 이 토큰만 담고 회원 식별자는 담지 않는다.
+model Session {
+  token     String   @id
+  memberId  String
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+/// 안 되는 시간 한 칸. 표시하지 않은 시간은 가능한 시간으로 본다.
+model BusyBlock {
+  id        String @id @default(cuid())
+  memberId  String
+  /// 0 = 월요일.
+  day       Int
+  /// `SCHEDULE_HOURS` 의 인덱스.
+  startHour Int
+  hours     Int
+  /// class | work | exam — 사유는 본인에게만 보인다.
+  kind      String
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+/// 회의 시간 후보.
+///
+/// TODO: 지금은 미리 넣어 둔 값이다. 원래는 팀원들의 `BusyBlock` 에서 계산해야 한다 —
+/// 계산 규칙(주말 포함 여부, 최소 길이)이 기획에 확정되면 그때 옮긴다.
+model MeetingSlot {
+  id         String @id @default(cuid())
+  teamId     String
+  /// "수" 같은 요일 한 글자.
+  day        String
+  /// "16:00 – 18:00"
+  time       String
+  available  Int
+  total      Int
+  /// 못 오는 사람과 사유. 전원 가능하면 null.
+  blockedBy  String?
+  /// 어느 주의 후보인지. "this" = 이번 주, "none" = 전원 불가한 주(데모).
+  weekKey    String @default("this")
+
+  team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  proposals MeetingProposal[]
+
+  @@index([teamId, weekKey])
+}
+
+/// 회의 제안. **특정 한 사람이 단독으로 확정하지 않는다** — 마감까지 반대가 없어야 확정된다.
+model MeetingProposal {
+  id           String   @id @default(cuid())
+  teamId       String
+  slotId       String?
+  proposedById String
+  /// proposed | confirmed | carried — idle 은 행이 없는 상태다.
+  stage        String   @default("proposed")
+  /// 응답 마감 시각. 이때까지 반대가 없으면 확정.
+  respondBy    DateTime
+  createdAt    DateTime @default(now())
+
+  team       Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  slot       MeetingSlot?      @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  proposedBy Member            @relation(fields: [proposedById], references: [id], onDelete: Cascade)
+  responses  MeetingResponse[]
+
+  @@index([teamId])
+}
+
+model MeetingResponse {
+  id         String   @id @default(cuid())
+  proposalId String
+  memberId   String
+  /// true = 동의, false = 참석 어려움.
+  agree      Boolean
+  createdAt  DateTime @default(now())
+
+  proposal MeetingProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  member   Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, memberId])
+}
+
+/// 역할 추첨 결과. 당사자가 수락해야 확정된다.
+model RoleDraw {
+  id        String   @id @default(cuid())
+  teamId    String
+  /// research | deck | script | present | manage
+  role      String
+  /// 어떤 도구로 뽑았는지 — "룰렛" 처럼 화면에 그대로 보인다.
+  tool      String
+  winnerId  String
+  accepted  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  winner Member @relation(fields: [winnerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, role])
+}
+
+/// 추첨을 거절해 다음 추첨에서 빠지는 사람.
+model RoleRejection {
+  id       String @id @default(cuid())
+  teamId   String
+  role     String
+  memberId String
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, role, memberId])
+}
+
+/// 역할별 제출함. 마감이 지나도 잠그지 않고 라벨만 붙인다.
+model SubmissionBox {
+  id       String @id @default(cuid())
+  teamId   String
+  role     String
+  name     String
+  ownerId  String
+  /// 제출함을 열었을 때 보여 줄 대표 파일 이름.
+  fileName String
+  /// "9/15" 같은 표시 문자열.
+  due      String
+
+  team     Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  owner    Member        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  versions FileVersion[]
+
+  @@index([teamId])
+}
+
+/// 파일 버전. **덮어쓰지 않고 쌓인다** — 복원도 새 버전을 더하는 것이다.
+model FileVersion {
+  id         String   @id @default(cuid())
+  boxId      String
+  /// "v4" 처럼 화면에 그대로 보이는 이름.
+  label      String
+  authorId   String
+  note       String
+  size       String
+  /// pptx | docx | pdf | image
+  kind       String
+  /// 실제로 열리는 형식만 미리보기 주소를 갖는다.
+  previewUrl String?
+  /// 마감을 지나 올라왔는지.
+  isLate     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  /// 화면에 보이는 시각 문자열("어제 21:14"). 서버가 날짜를 포맷하게 되면 지운다.
+  whenLabel  String
+
+  box    SubmissionBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  author Member        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([boxId])
+}
+
+/// 메시지. 팀 단톡방과 1:1 DM 이 같은 표에 들어가고 `threadKey` 로 갈린다.
+model Message {
+  id         String   @id @default(cuid())
+  teamId     String
+  /// "team" 또는 DM 상대 두 명의 id 를 정렬해 이은 값("dm:<a>:<b>").
+  threadKey  String
+  authorId   String
+  text       String
+  /// 쿠션 번역기로 다듬어 보낸 말. **표시가 남는다.**
+  viaCushion Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  /// 화면에 보이는 시각 문자열("14:02").
+  whenLabel  String
+
+  team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  author    Member            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reactions MessageReaction[]
+
+  @@index([teamId, threadKey])
+}
+
+model MessageReaction {
+  id        String @id @default(cuid())
+  messageId String
+  memberId  String
+  icon      String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, memberId, icon])
+}
+
+/// 어디까지 읽었는지. 안 읽음 배지가 이 값으로 계산된다.
+model ReadMark {
+  id        String   @id @default(cuid())
+  memberId  String
+  threadKey String
+  readAt    DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, threadKey])
+}
+
+/// 기여 기록.
+///
+/// 내 화면(16)과 팀 화면(17)이 **같은 표**를 본다 — 두 표로 나누면 같은 일이 두 곳에서
+/// 다르게 적히는 일이 생긴다.
+model ContribRecord {
+  id        String   @id @default(cuid())
+  memberId  String
+  /// task | file | meet | help | due
+  kind      String
+  title     String
+  detail    String
+  /// "9/8 – 9/12" 같은 표시 문자열.
+  whenLabel String
+  /// auto = 앱이 모음 / self = 본인이 직접 추가
+  source    String
+  /// ok | pending | disputed
+  state     String   @default("pending")
+  /// 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기").
+  byLabel   String
+  /// 사실과 다르다고 적힌 의견. **한쪽 말로 덮지 않고 남긴다.**
+  dispute   String?
+  hasEvidence Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+/// 할 일. 팀 업무·개인 학습·점검이 한 목록에 있고 종류로만 구분된다.
+model Task {
+  id         String   @id @default(cuid())
+  teamId     String
+  title      String
+  /// team | study | check
+  kind       String
+  /// 담당자. 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다.
+  assigneeId String?
+  /// "9/19" 같은 표시 문자열.
+  due        String
+  /// todo | doing | done
+  status     String   @default("todo")
+  /// clerk = AI 서기가 만듦 / manual = 사람이 직접 넣음
+  source     String   @default("manual")
+  createdAt  DateTime @default(now())
+
+  team     Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  assignee Member? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  pokes    Poke[]
+
+  @@index([teamId])
+}
+
+/// 익명 콕 찌르기.
+///
+/// 보낸 사람(`senderId`)은 **하루 한 번 제한을 세기 위해서만** 저장하고 절대 밖으로 내보내지 않는다.
+/// 받는 사람에게도, 다른 팀원에게도 보이지 않는다.
+model Poke {
+  id       String   @id @default(cuid())
+  taskId   String
+  senderId String
+  sentOn   String
+  createdAt DateTime @default(now())
+
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  sender Member @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  /// 같은 사람이 같은 업무를 같은 날 두 번 찌를 수 없다.
+  @@unique([taskId, senderId, sentOn])
+}

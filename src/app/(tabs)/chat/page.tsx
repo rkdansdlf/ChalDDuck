@@ -1,4 +1,4 @@
-import { getDemoTeam, getDmThreads, getTeamMessages } from "@/data/api";
+import { getCurrentTeam, getDmThreads, getTeamMessages } from "@/data/api";
 import { ChatEmptyPane, NarrowOnly, WideOnly } from "@/features/chat/chat-panes";
 import { ChatHubScreen } from "@/features/chat/chat-hub-screen";
 
@@ -9,7 +9,7 @@ import { ChatHubScreen } from "@/features/chat/chat-hub-screen";
  * 가운데에 같은 목록을 한 번 더 그리지 않고 "대화를 고르세요"만 둔다.
  */
 export default async function ChatPage() {
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const [teamMessages, threads] = await Promise.all([
     getTeamMessages(team.id),
     getDmThreads(team.id),

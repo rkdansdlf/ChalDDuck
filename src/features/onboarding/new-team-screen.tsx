@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, TopInset, Toast, Undecided } from "@/components/ui";
-import { createTeam } from "@/data/api";
+import { createTeam } from "@/server/actions/onboarding";
 import type { Team } from "@/lib/types";
 import { setTeamCode } from "./onboarding-state";
 

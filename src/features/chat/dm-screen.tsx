@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { AppBar, Body, Note } from "@/components/ui";
 import type { ChatMessage, DmThread, Member } from "@/lib/types";
 import { useMe } from "@/features/onboarding/use-me";
-import { markThreadRead } from "./messages-state";
+import { markThreadRead } from "@/server/actions/chat";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
 import { useChatThread } from "./use-chat-thread";

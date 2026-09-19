@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Progress, Rows, TopInset } from "@/components/ui";
-import { submitOnboarding } from "@/data/api";
+import { joinTeam } from "@/server/actions/onboarding";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
 import { setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
@@ -30,11 +30,11 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
     if (!want || submitting) return;
     setSubmitting(true);
     try {
-      await submitOnboarding(teamCode ?? "", toDraft());
-      // 07 팀 역할 조율 화면이 아직 없어 팀 탭으로 보낸다.
-      router.push("/team");
-    } finally {
+      // 성공하면 서버가 세션을 만들고 /team 으로 보낸다.
+      await joinTeam(teamCode ?? "", toDraft());
+    } catch (error) {
       setSubmitting(false);
+      throw error;
     }
   };
 

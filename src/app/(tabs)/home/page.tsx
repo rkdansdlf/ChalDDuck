@@ -1,6 +1,6 @@
 import {
   getAiTools,
-  getDemoTeam,
+  getCurrentTeam,
   getRecentItems,
   getRoles,
   getRoster,
@@ -10,7 +10,7 @@ import { HomeScreen } from "@/features/home/home-screen";
 
 /** 홈 탭 — 11 홈. */
 export default async function HomePage() {
-  const team = await getDemoTeam();
+  const team = await getCurrentTeam();
   const [roles, roster, recent, aiTools, tasks] = await Promise.all([
     getRoles(),
     getRoster(team.id),

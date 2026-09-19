@@ -13,11 +13,26 @@
 | 스타일 | Tailwind CSS v4 + CSS 변수 디자인 토큰 |
 | 아이콘 | lucide-react (직접 등록한 것만 번들에 들어감) |
 | 서체 | Pretendard Variable (저장소에 포함, `next/font/local`) |
-| 데이터 | 아직 서버 없음 — `src/data/` 의 목 구현 |
+| 데이터 | PostgreSQL (Supabase) + Prisma |
+| 서버 | Next.js Server Actions |
+
+### 처음 실행
 
 ```bash
-npm install && npm run dev
+npm install
 ```
+
+`.env` 를 만들고 Supabase 대시보드 > Connect 의 값으로 채웁니다
+(`.env.example` 참고 — 커밋되지 않습니다).
+
+```bash
+npx prisma migrate dev --name init   # 표 만들기
+npm run db:seed                      # 데모 팀 한 개 넣기
+npm run dev
+```
+
+`DATABASE_URL` 은 런타임용 **트랜잭션 풀러(6543)**, `DIRECT_URL` 은 마이그레이션·시드용
+**직결(5432)** 입니다. 풀러로는 prepared statement 와 DDL 잠금을 못 버텨 마이그레이션이 깨집니다.
 
 ## 지금까지 구현된 것
 
@@ -67,7 +82,9 @@ src/
   features/roles/       07 역할 조율 화면 + 협의 상태
   features/schedule/    08·09·10 회의 시간 화면
   features/tools/       14·15·20·25·26·27 AI 도구 화면
-  data/                 목 데이터와 API 시임 ← 서버 붙일 때 여기만 교체
+  data/                 api.ts(읽기 전용, 서버) · catalog.ts(제품 설정값)
+  server/               db.ts · session.ts · actions/(쓰기)
+prisma/                 schema.prisma · seed.ts · migrations/
   lib/                  도메인 타입·MBTI·유틸
   styles/tokens/        디자인 토큰 (색·타이포)
 docs/handoff/           디자인 핸드오프 원본 (참고 자료, 빌드에 포함되지 않음)
@@ -117,24 +134,32 @@ npm run build && npx tsc --noEmit && npm run lint
 
 핸드오프의 화면은 모두 옮겼습니다. 제품이 되려면 다음이 남아 있습니다.
 
-### 1. 서버 (가장 큼)
+### 1. 남은 서버 이관
 
-지금 모든 상태는 **내 브라우저 안에서만** 유지됩니다 — 다른 팀원이 보낸 메시지가 들어오지 않고,
-추첨 결과·파일 복원·기여 기록도 나만 봅니다. 새로고침하면 사라집니다.
+**읽기는 전부 데이터베이스**에서 옵니다. 쓰기는 절반쯤 옮겼습니다.
 
-화면은 이미 준비돼 있습니다. [`src/data/api.ts`](src/data/api.ts) 의 함수 본문만 실제 호출로
-바꾸면 되고, 화면 코드는 손대지 않아도 됩니다. 세션 상태를 들고 있는 곳은 다섯 군데입니다.
-
-| 파일 | 서버로 옮겨야 하는 것 |
+| 옮긴 것 | 위치 |
 |---|---|
-| `features/roles/negotiation-state.ts` | 역할 추첨·수락·거절 |
-| `features/schedule/meeting-state.ts` | 회의 제안·응답·마감 확정 |
-| `features/drive/versions-state.ts` | 파일 복원(새 버전 추가) |
-| `features/chat/messages-state.ts` | 메시지·읽음 표시 |
-| `features/contrib/records-state.ts` | 기여 기록 추가·정정 응답 |
-| `features/tasks/tasks-state.ts` | 할 일 추가·상태 변경·콕 찌르기 |
+| 팀 만들기 · 입장 · 세션 | `server/actions/onboarding.ts` |
+| 내 시간표 저장 | `server/actions/schedule.ts` |
+| 메시지 보내기 · 읽음 표시 | `server/actions/chat.ts` |
+| AI 도구 호출 자리 | `server/actions/ai.ts` |
 
-인증은 기획상 **초대 코드 + 이름**이고, 재입장 규칙이 아직 확정되지 않았습니다.
+아직 브라우저 안에만 있는 것 — 새로고침하면 사라지고 팀원에게도 안 보입니다.
+
+| 파일 | 옮겨야 하는 것 | 표는 이미 있음 |
+|---|---|---|
+| `features/roles/negotiation-state.ts` | 역할 추첨·수락·거절 | `RoleDraw`, `RoleRejection` |
+| `features/schedule/meeting-state.ts` | 회의 제안·응답·확정 | `MeetingProposal`, `MeetingResponse` |
+| `features/drive/versions-state.ts` | 파일 복원(새 버전 추가) | `FileVersion` |
+| `features/contrib/records-state.ts` | 기여 기록 추가·정정 응답 | `ContribRecord` |
+| `features/tasks/tasks-state.ts` | 할 일 추가·상태 변경·콕 찌르기 | `Task`, `Poke` |
+
+### 1-1. 인증의 알려진 구멍
+
+신원이 **초대 코드 + 이름**뿐입니다. 코드를 아는 사람은 같은 팀의 다른 사람 이름을 적어
+그 사람으로 들어갈 수 있습니다 — 02 화면의 "본인 확인" 시트는 안내일 뿐 막지 못합니다.
+기획의 재입장 규칙이 확정되면 기기 토큰이나 팀원 승인 같은 단계가 필요합니다.
 
 ### 2. AI 연결
 
