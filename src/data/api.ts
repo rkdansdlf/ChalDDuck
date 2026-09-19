@@ -36,6 +36,7 @@ import type {
   Team,
   TeamCheckRecord,
 } from "@/lib/types";
+import { TASKS_RECENT_ID } from "@/lib/types";
 import { db } from "@/server/db";
 import { getSessionMember } from "@/server/session";
 import {
@@ -496,7 +497,8 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
 
   const rows = await db.contribRecord.findMany({
     where: { memberId: session.id },
-    orderBy: { createdAt: "asc" },
+    // 같은 초에 들어간 행이 있으면 정렬이 흔들려 목록 순서가 조회마다 달라진다.
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   return rows.map((r) => ({
@@ -515,7 +517,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   const rows = await db.contribRecord.findMany({
     where: { member: { teamId } },
     include: { member: { select: { name: true } } },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   return rows.map((r) => ({
@@ -553,7 +555,7 @@ export async function getTasks(teamId: string): Promise<Task[]> {
   const rows = await db.task.findMany({
     where: { teamId },
     include: { assignee: { select: { name: true, mbti: true } } },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   return rows.map((t) => ({
@@ -566,6 +568,25 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     status: t.status as Task["status"],
     source: t.source as Task["source"],
   }));
+}
+
+/**
+ * 24 오늘 내가 이미 콕 찌른 업무의 id.
+ *
+ * 하루 한 번 제한이라 **오늘 내가 보낸 것만** 본다 — 팀 전체의 찌르기를 보여 주면
+ * 익명이 깨지고(누가 언제 몇 번 보냈는지 드러난다), 남이 보냈다고 내 버튼이 잠길 이유도 없다.
+ */
+export async function getMyPokedTaskIds(teamId: string): Promise<string[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  const pokes = await db.poke.findMany({
+    where: { senderId: session.id, sentOn: today, task: { teamId } },
+    select: { taskId: true },
+  });
+
+  return pokes.map((p) => p.taskId);
 }
 
 /* ── 11 홈 ─────────────────────────────────────────────────── */
@@ -594,7 +615,7 @@ export async function getRecentItems(teamId: string): Promise<RecentItem[]> {
   }
   // 남은 건수는 화면이 실제 목록에서 센다 — 여기 문구는 비워 둔다.
   items.push({
-    id: "tasks",
+    id: TASKS_RECENT_ID,
     title: "할 일 · 체크리스트",
     note: "",
     icon: "list-checks",

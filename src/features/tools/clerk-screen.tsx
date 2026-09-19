@@ -16,7 +16,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import { summarizeMeeting } from "@/server/actions/ai";
-import { addTasksFromClerk } from "@/features/tasks/tasks-state";
+import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import type { ClerkDraft, Member } from "@/lib/types";
 
@@ -190,9 +190,9 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
               icon="list-checks"
               className="mt-3.5"
               disabled={acceptedCount === 0}
-              onClick={() => {
+              onClick={async () => {
                 // 담당자는 사람이 확인한 값을 쓴다 — AI 가 추측한 값이 아니다.
-                addTasksFromClerk(
+                await addTasksFromClerk(
                   candidates
                     .filter((c) => picked[c.id])
                     .map((c) => ({
@@ -202,6 +202,7 @@ export function ClerkScreen({ sample, roster }: { sample: string; roster: Member
                     })),
                 );
                 setStep(2);
+                router.refresh();
               }}
             >
               선택한 {acceptedCount}건 업무로 반영하기

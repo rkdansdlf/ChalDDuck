@@ -75,7 +75,7 @@ src/
   features/chat/        19·30·31·32 채팅 화면 + 말풍선·입력줄
   features/contrib/     16·17·18·23 기여도 화면
   features/social/      28·29 팀 친목 화면
-  features/tasks/       21·24 할 일 화면 + 할 일 상태
+  features/tasks/       21·24 할 일 화면
   features/drive/       12·13·22 드라이브 화면
   features/home/        11 홈 화면
   features/onboarding/  온보딩 화면 + 상태
@@ -134,9 +134,9 @@ npm run build && npx tsc --noEmit && npm run lint
 
 핸드오프의 화면은 모두 옮겼습니다. 제품이 되려면 다음이 남아 있습니다.
 
-### 1. 남은 서버 이관
+### 1. 서버 이관 (끝)
 
-**읽기는 전부 데이터베이스**에서 옵니다. 쓰기도 할 일 하나만 남았습니다.
+**읽기도 쓰기도 전부 데이터베이스**를 거칩니다. 브라우저 안에만 남아 있는 상태는 없습니다.
 
 | 옮긴 것 | 위치 |
 |---|---|
@@ -145,15 +145,13 @@ npm run build && npx tsc --noEmit && npm run lint
 | 회의 제안·응답·확정·이월 | `server/actions/meetings.ts` |
 | 파일 복원(새 버전 추가) | `server/actions/drive.ts` |
 | 기여 기록 추가 · 정정 응답 | `server/actions/contrib.ts` |
+| 할 일 추가·상태 변경 · 콕 찌르기 | `server/actions/tasks.ts` |
 | 내 시간표 저장 | `server/actions/schedule.ts` |
 | 메시지 보내기 · 읽음 표시 | `server/actions/chat.ts` |
 | AI 도구 호출 자리 | `server/actions/ai.ts` |
 
-아직 브라우저 안에만 있는 것 — 새로고침하면 사라지고 팀원에게도 안 보입니다.
-
-| 파일 | 옮겨야 하는 것 | 표는 이미 있음 |
-|---|---|---|
-| `features/tasks/tasks-state.ts` | 할 일 추가·상태 변경·콕 찌르기 | `Task`, `Poke` |
+온보딩 중에만 쓰는 `features/onboarding/onboarding-state.ts` 는 남겨 뒀습니다 —
+아직 팀에 저장되기 전의 선택이라 서버로 보낼 것이 없습니다.
 
 ### 1-1. 인증의 알려진 구멍
 

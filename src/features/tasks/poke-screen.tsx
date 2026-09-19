@@ -17,7 +17,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Task } from "@/lib/types";
-import { pokeTask, usePokedTasks, useTasks } from "./tasks-state";
+import { pokeTask } from "@/server/actions/tasks";
 
 /**
  * 24 익명 콕 찌르기.
@@ -25,23 +25,43 @@ import { pokeTask, usePokedTasks, useTasks } from "./tasks-state";
  * 다그치지 않고 슬쩍 알린다. 보낸 사람은 밝히지 않고, **업무당 하루 한 번만** 보낼 수 있다 —
  * 익명이면서 횟수 제한이 없으면 재촉이 괴롭힘이 된다.
  */
-export function PokeScreen({ tasks: fromServer }: { tasks: Task[] }) {
+export function PokeScreen({
+  tasks,
+  poked,
+}: {
+  tasks: Task[];
+  /** 오늘 내가 이미 찌른 업무 id. 서버가 하루 단위로 센다. */
+  poked: string[];
+}) {
   const router = useRouter();
-  const tasks = useTasks(fromServer);
-  const poked = usePokedTasks();
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   /** 끝난 일과 담당자 없는 일은 찌를 대상이 아니다. */
   const targets = tasks.filter((t) => t.status !== "done" && t.assignee);
   const selectedTask = targets.find((t) => t.id === selected) ?? null;
 
-  const send = () => {
-    if (!selectedTask || poked.includes(selectedTask.id)) return;
-    pokeTask(selectedTask.id);
-    setSelected(null);
-    setToast(`${selectedTask.assignee}님에게 익명으로 알렸습니다`);
+  const send = async () => {
+    if (!selectedTask || sending || poked.includes(selectedTask.id)) return;
+    setSending(true);
+    try {
+      const result = await pokeTask(selectedTask.id);
+      setSelected(null);
+      router.refresh();
+      flash(
+        result === "sent"
+          ? `${selectedTask.assignee}님에게 익명으로 알렸습니다`
+          : "이 업무에는 오늘 이미 보냈습니다",
+      );
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const flash = (msg: string) => {
+    setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
   };
 
@@ -112,8 +132,8 @@ export function PokeScreen({ tasks: fromServer }: { tasks: Task[] }) {
       </Body>
 
       <Dock>
-        <Btn full size="lg" icon="bell" disabled={!selectedTask} onClick={send}>
-          익명으로 콕 찌르기
+        <Btn full size="lg" icon="bell" disabled={!selectedTask || sending} onClick={send}>
+          {sending ? "보내는 중" : "익명으로 콕 찌르기"}
         </Btn>
       </Dock>
 

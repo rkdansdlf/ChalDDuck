@@ -19,7 +19,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Task, TaskKind, TaskKindKey } from "@/lib/types";
-import { addTask, cycleTaskStatus, useTasks } from "./tasks-state";
+import { addTask, cycleTaskStatus } from "@/server/actions/tasks";
 
 /**
  * 21 할 일 · 체크리스트.
@@ -30,14 +30,13 @@ import { addTask, cycleTaskStatus, useTasks } from "./tasks-state";
  * 상태는 드라이브·버전 기록과 같은 `STATUS` 어휘를 쓴다.
  */
 export function TasksScreen({
-  tasks: fromServer,
+  tasks,
   kinds,
 }: {
   tasks: Task[];
   kinds: TaskKind[];
 }) {
   const router = useRouter();
-  const tasks = useTasks(fromServer);
 
   const [filter, setFilter] = useState<TaskKindKey | "all">("all");
   const [adding, setAdding] = useState(false);
@@ -105,7 +104,10 @@ export function TasksScreen({
               <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px]">
                 <button
                   type="button"
-                  onClick={() => cycleTaskStatus(task)}
+                  onClick={async () => {
+                    await cycleTaskStatus(task.id);
+                    router.refresh();
+                  }}
                   aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
                   className="mt-px flex-none cursor-pointer border-none bg-transparent p-0 text-txt-muted"
                 >
@@ -168,10 +170,11 @@ export function TasksScreen({
             <button
               key={kind.key}
               type="button"
-              onClick={() => {
-                addTask(kind.key, `새 ${kind.name}`);
+              onClick={async () => {
                 setAdding(false);
                 setFilter("all");
+                await addTask(kind.key, `새 ${kind.name}`);
+                router.refresh();
               }}
               className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 py-3 text-left"
             >

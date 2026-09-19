@@ -200,6 +200,14 @@ export type PresentDraft = {
   questions: string[];
 };
 
+/**
+ * "최근 자료·업무"의 할 일 줄 식별자.
+ *
+ * 이 줄의 설명("3건 남음")만 홈이 실제 목록에서 세어 채운다. 양쪽이 문자열을 따로 적으면
+ * 한쪽만 바뀌었을 때 건수가 조용히 사라진다 — 실제로 그렇게 사라져 있었다.
+ */
+export const TASKS_RECENT_ID = "tasks";
+
 /** 홈의 "최근 자료·업무" 한 줄. */
 export type RecentItem = {
   id: string;

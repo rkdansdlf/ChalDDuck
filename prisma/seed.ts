@@ -249,8 +249,9 @@ async function main() {
   });
 
   /* ── 16 / 17 / 18 / 23 기여도 ──────────────────────────── */
-  await prisma.contribRecord.createMany({
-    data: [
+  // 한 줄씩 1분 간격으로 넣는다. `createMany` 로 한꺼번에 넣으면 `createdAt` 이 모두 같아져
+  // `orderBy: createdAt` 이 갈리지 않고 목록 순서가 조회마다 달라진다.
+  const contribRecords = [
       {
         memberId: minjun.id,
         kind: "task",
@@ -332,19 +333,27 @@ async function main() {
         byLabel: "박지호 · 의견 차이 1건",
         dispute: "초안은 공동 작성이었고 분량 절반은 제가 썼습니다.",
       },
-    ],
-  });
+  ];
+  for (const [i, r] of contribRecords.entries()) {
+    await prisma.contribRecord.create({
+      data: { ...r, createdAt: new Date(Date.now() - (contribRecords.length - i) * 60_000) },
+    });
+  }
 
   /* ── 21 할 일 ──────────────────────────────────────────── */
-  await prisma.task.createMany({
-    data: [
+  // 기여 기록과 같은 이유로 한 줄씩 넣는다 — 순서가 흔들리면 안 된다.
+  const tasks = [
       { title: "발표 자료 표지 시안 3개", kind: "team", assigneeId: seoyeon.id, due: "9/19", status: "doing", source: "clerk" },
       { title: "설문 응답 분석 표 정리", kind: "team", assigneeId: null, due: "9/20", status: "todo", source: "clerk" },
       { title: "발표 대본 초안", kind: "team", assigneeId: yuna.id, due: "9/22", status: "todo", source: "clerk" },
       { title: "자료조사 마감 확인", kind: "check", assigneeId: minjun.id, due: "9/18", status: "done", source: "manual" },
       { title: "발표 연습 개인 대본 외우기", kind: "study", assigneeId: minjun.id, due: "9/24", status: "todo", source: "manual" },
-    ].map((t) => ({ ...t, teamId: team.id })),
-  });
+  ];
+  for (const [i, t] of tasks.entries()) {
+    await prisma.task.create({
+      data: { ...t, teamId: team.id, createdAt: new Date(Date.now() - (tasks.length - i) * 60_000) },
+    });
+  }
 
   console.log(`데모 팀을 넣었습니다 — ${team.name} (초대 코드 ${team.code})`);
 }

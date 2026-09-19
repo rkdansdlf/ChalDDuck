@@ -14,7 +14,6 @@ import {
 } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
-import { useTasks } from "@/features/tasks/tasks-state";
 import type {
   AiTool,
   MeetingProposal,
@@ -25,6 +24,7 @@ import type {
   Task,
   Team,
 } from "@/lib/types";
+import { TASKS_RECENT_ID } from "@/lib/types";
 
 /** 홈에 세로로 쌓이는 "확인이 필요한 일" 한 줄. */
 type Todo = {
@@ -52,7 +52,7 @@ export function HomeScreen({
   roster,
   recent,
   aiTools,
-  tasks: tasksFromServer,
+  tasks,
   negotiation,
   meeting,
 }: {
@@ -68,7 +68,6 @@ export function HomeScreen({
   const router = useRouter();
   const onboarding = useOnboarding();
   const { stage, slot } = meeting;
-  const tasks = useTasks(tasksFromServer);
 
   /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
   const remainingTasks = tasks.filter((t) => t.status !== "done").length;
@@ -221,7 +220,7 @@ export function HomeScreen({
                   {item.title}
                 </span>
                 <span className="keep-all mt-0.5 block font-medium text-[13px] leading-[1.45] text-txt-muted">
-                  {item.id === "r2" ? `${remainingTasks}건 남음` : item.note}
+                  {item.id === TASKS_RECENT_ID ? `${remainingTasks}건 남음` : item.note}
                 </span>
               </span>
               <span className="flex-none text-txt-muted">
