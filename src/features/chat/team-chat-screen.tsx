@@ -48,6 +48,7 @@ export function TeamChatScreen({
         title={team.name}
         sub={`${team.memberCount}명 · 단체 채팅방 1개`}
         onBack={() => router.push("/chat")}
+        hideBackOnWide
         action="users-round"
         actionLabel="참여자 보기"
         onAction={() => router.push("/team")}

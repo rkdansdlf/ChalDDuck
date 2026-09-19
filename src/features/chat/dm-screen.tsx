@@ -44,6 +44,7 @@ export function DmScreen({
         title={thread.name}
         sub={thread.mbti ?? "MBTI 미입력"}
         onBack={() => router.push("/chat/dm")}
+        hideBackOnWide
       />
 
       <Body dense className="flex flex-col gap-3">

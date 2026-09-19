@@ -1,6 +1,8 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { cn } from "@/lib/cn";
 
 /**
  * 탭 화면의 셸.
@@ -25,12 +27,27 @@ export function AppShell({
   tabBar: ReactNode;
   children: ReactNode;
 }) {
+  const pathname = usePathname();
+
+  /**
+   * 채팅만 더 넓게 쓴다.
+   *
+   * 다른 화면은 한 기둥이라 860px 이 읽기 좋은 상한이지만, 채팅은 넓은 화면에서
+   * 목록·대화·자료를 나란히 놓는다(33번). 860px 에 가두면 세 기둥이 들어가지 않는다.
+   */
+  const wide = pathname === "/chat" || pathname.startsWith("/chat/");
+
   return (
     <div className="flex h-dvh bg-cr-100">
       {sideNav}
 
       <div className="flex min-w-0 flex-1 justify-center">
-        <div className="relative flex h-dvh w-full max-w-[860px] flex-col overflow-hidden bg-page lg:border-x lg:border-line">
+        <div
+          className={cn(
+            "relative flex h-dvh w-full flex-col overflow-hidden bg-page lg:border-x lg:border-line",
+            wide ? "max-w-[1400px]" : "max-w-[860px]",
+          )}
+        >
           {children}
           <div className="lg:hidden">{tabBar}</div>
         </div>

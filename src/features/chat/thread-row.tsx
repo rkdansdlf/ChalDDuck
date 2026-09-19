@@ -15,6 +15,7 @@ export function ThreadRow({
   time,
   preview,
   unread = 0,
+  active = false,
   onClick,
 }: {
   leading: ReactNode;
@@ -22,13 +23,19 @@ export function ThreadRow({
   time: string;
   preview: string;
   unread?: number;
+  /** 3분할에서 지금 열려 있는 대화. 좁은 화면에서는 쓰지 않는다. */
+  active?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
+      aria-current={active ? "true" : undefined}
       onClick={onClick}
-      className="box-border flex min-h-[60px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-[13px] text-left"
+      className={cn(
+        "box-border flex min-h-[60px] w-full cursor-pointer items-center gap-3 border-none px-[15px] py-[13px] text-left",
+        active ? "bg-yellow-100" : "bg-transparent",
+      )}
     >
       {leading}
 

@@ -62,14 +62,31 @@ export type AppBarProps = {
   actionLabel?: string;
   onAction?: () => void;
   tone?: "y";
+  /**
+   * 넓은 화면에서 뒤로가기를 숨긴다.
+   *
+   * 3분할처럼 돌아갈 목록이 이미 옆에 보이는 화면에서 쓴다 — 보이는 곳으로 "돌아가는"
+   * 버튼은 무엇이 일어날지 알 수 없다.
+   */
+  hideBackOnWide?: boolean;
 };
 
-export function AppBar({ title, sub, onBack, action, actionLabel, onAction, tone }: AppBarProps) {
+export function AppBar({
+  title,
+  sub,
+  onBack,
+  action,
+  actionLabel,
+  onAction,
+  tone,
+  hideBackOnWide,
+}: AppBarProps) {
   return (
     <div
       className={cn(
         "flex min-h-[52px] flex-none items-center gap-1 pr-1.5 backdrop-blur-md",
         onBack ? "pl-0.5" : "pl-[18px]",
+        onBack && hideBackOnWide && "lg:pl-[18px]",
         tone === "y" ? "bg-yellow-100 border-b border-transparent" : "border-b border-line",
       )}
       style={tone === "y" ? undefined : { background: "rgba(255,253,249,.94)" }}
@@ -79,7 +96,10 @@ export function AppBar({ title, sub, onBack, action, actionLabel, onAction, tone
           type="button"
           onClick={onBack}
           aria-label="뒤로"
-          className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt"
+          className={cn(
+            "grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt",
+            hideBackOnWide && "lg:hidden",
+          )}
         >
           <Icon name="chevron-left" size={22} />
         </button>
