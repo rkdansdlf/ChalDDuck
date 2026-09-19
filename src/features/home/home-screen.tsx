@@ -14,9 +14,17 @@ import {
 } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
-import { useMeeting } from "@/features/schedule/meeting-state";
 import { useTasks } from "@/features/tasks/tasks-state";
-import type { AiTool, Member, RecentItem, Role, RoleNegotiation, Task, Team } from "@/lib/types";
+import type {
+  AiTool,
+  MeetingProposal,
+  Member,
+  RecentItem,
+  Role,
+  RoleNegotiation,
+  Task,
+  Team,
+} from "@/lib/types";
 
 /** 홈에 세로로 쌓이는 "확인이 필요한 일" 한 줄. */
 type Todo = {
@@ -46,6 +54,7 @@ export function HomeScreen({
   aiTools,
   tasks: tasksFromServer,
   negotiation,
+  meeting,
 }: {
   team: Team;
   roles: Role[];
@@ -54,10 +63,11 @@ export function HomeScreen({
   aiTools: AiTool[];
   tasks: Task[];
   negotiation: RoleNegotiation;
+  meeting: MeetingProposal;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
-  const { stage, slot } = useMeeting();
+  const { stage, slot } = meeting;
   const tasks = useTasks(tasksFromServer);
 
   /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
@@ -105,19 +115,21 @@ export function HomeScreen({
       });
     }
 
-    if (stage === "proposed" && slot) {
+    // 아직 내가 답하지 않은 제안만 "내 할 일"이다 — 일정 탭 배지와 같은 조건이어야
+    // 배지는 0인데 홈은 1건이라고 말하는 어긋남이 생기지 않는다.
+    if (stage === "proposed" && slot && meeting.myResponse === null) {
       list.push({
         key: "meeting",
         icon: "calendar-clock",
         surface: "bg-yellow-200 text-yellow-700",
         title: `${slot.day}요일 회의 제안에 응답`,
-        note: "제안 대기 중 · 응답 마감까지",
+        note: `제안 대기 중 · 응답 마감 ${meeting.respondBy}`,
         href: "/schedule/slots",
       });
     }
 
     return list;
-  }, [clashes, members, stage, slot]);
+  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse]);
 
   return (
     <>
@@ -184,7 +196,8 @@ export function HomeScreen({
           stage={stage}
           day={slot?.day ?? null}
           time={slot?.time ?? null}
-          total={team.memberCount}
+          agreed={meeting.agreed}
+          pending={meeting.pending}
           onOpen={() => router.push("/schedule/slots")}
         />
 
@@ -254,18 +267,20 @@ function UpcomingMeeting({
   stage,
   day,
   time,
-  total,
+  agreed,
+  pending,
   onOpen,
 }: {
   stage: "idle" | "proposed" | "confirmed" | "carried";
   day: string | null;
   time: string | null;
-  total: number;
+  agreed: number;
+  pending: number;
   onOpen: () => void;
 }) {
   const content =
     stage === "proposed" && day && time
-      ? { title: `${day}요일 ${time}`, note: `제안 대기 중 · 동의 1명 / 미응답 ${total - 1}명` }
+      ? { title: `${day}요일 ${time}`, note: `제안 대기 중 · 동의 ${agreed}명 / 미응답 ${pending}명` }
       : stage === "confirmed" && day && time
         ? { title: `${day}요일 ${time}`, note: "확정 · 60분" }
         : stage === "carried"

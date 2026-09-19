@@ -82,6 +82,27 @@ export type MeetingSlot = {
   blockedBy: string | null;
 };
 
+/**
+ * 지금 올라와 있는 회의 제안.
+ *
+ * 확정 규칙: **특정 한 사람이 단독으로 확정하지 않는다.** 응답 마감까지 반대가 없어야
+ * 확정되고, 누구든 반대하면 확정되지 않는다.
+ *
+ * `idle` 은 제안이 아직 없는 상태다.
+ */
+export type MeetingProposal = {
+  stage: "idle" | "proposed" | "confirmed" | "carried";
+  slot: MeetingSlot | null;
+  agreed: number;
+  /** 아직 응답하지 않은 사람 수. */
+  pending: number;
+  against: number;
+  /** "9/20 15:00" 같은 표시 문자열. 제안이 없으면 null. */
+  respondBy: string | null;
+  /** 내가 이미 응답했는지 — 같은 사람이 두 번 누르지 않게 한다. */
+  myResponse: "agree" | "against" | null;
+};
+
 /** 한 주의 회의 시간 후보와 그 주의 상황. */
 export type MeetingWeek = {
   slots: MeetingSlot[];

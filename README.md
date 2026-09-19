@@ -142,6 +142,7 @@ npm run build && npx tsc --noEmit && npm run lint
 |---|---|
 | 팀 만들기 · 입장 · 세션 | `server/actions/onboarding.ts` |
 | 역할 추첨·수락·거절 | `server/actions/roles.ts` |
+| 회의 제안·응답·확정·이월 | `server/actions/meetings.ts` |
 | 내 시간표 저장 | `server/actions/schedule.ts` |
 | 메시지 보내기 · 읽음 표시 | `server/actions/chat.ts` |
 | AI 도구 호출 자리 | `server/actions/ai.ts` |
@@ -150,7 +151,6 @@ npm run build && npx tsc --noEmit && npm run lint
 
 | 파일 | 옮겨야 하는 것 | 표는 이미 있음 |
 |---|---|---|
-| `features/schedule/meeting-state.ts` | 회의 제안·응답·확정 | `MeetingProposal`, `MeetingResponse` |
 | `features/drive/versions-state.ts` | 파일 복원(새 버전 추가) | `FileVersion` |
 | `features/contrib/records-state.ts` | 기여 기록 추가·정정 응답 | `ContribRecord` |
 | `features/tasks/tasks-state.ts` | 할 일 추가·상태 변경·콕 찌르기 | `Task`, `Poke` |
@@ -179,6 +179,9 @@ npm run build && npx tsc --noEmit && npm run lint
 
 ### 4. 아직 손대지 않은 것
 
+- **회의 응답 마감을 실제로 재는 예약 작업.** 마감 시각이 되면 서버가 알아서 확정해야 하는데
+  그 장치가 없어, 09 화면의 "응답 마감 시뮬레이션 (데모)" 버튼이 `confirmMeetingByDeadline()`
+  을 대신 부릅니다. 규칙(반대가 하나라도 있으면 확정 안 함)은 서버가 지킵니다.
 - 파일 업로드·다운로드, 메시지 첨부
 - 알림(푸시·앱 내), 쿠션 번역기 → 단톡방 전송 연결
 - 팀원이 **내** 기여 기록을 확인해 주는 경로 (서버가 있어야 존재할 수 있음)

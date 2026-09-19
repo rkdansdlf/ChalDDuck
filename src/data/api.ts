@@ -19,6 +19,7 @@ import type {
   FileVersion,
   IceGame,
   Member,
+  MeetingProposal,
   MeetingWeek,
   PresentDraft,
   QuizQuestion,
@@ -270,6 +271,65 @@ export async function getMeetingWeek(teamId: string, preview?: "none"): Promise<
     hasFullAvailability: slots.some((s) => s.available === s.total),
     submitted: total,
     total,
+  };
+}
+
+/** 화면에 보일 마감 시각. 서버가 포맷해야 사람마다 다르게 보이지 않는다. */
+function formatDeadline(at: Date): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Seoul",
+  }).format(at);
+}
+
+/** 지금 올라와 있는 회의 제안. 09/10 화면·홈·일정 탭 배지가 같은 값을 본다. */
+export async function getMeetingProposal(teamId: string): Promise<MeetingProposal> {
+  const session = await getSessionMember();
+
+  const proposal = await db.meetingProposal.findFirst({
+    where: { teamId },
+    orderBy: { createdAt: "desc" },
+    include: { slot: true, responses: true },
+  });
+
+  if (!proposal) {
+    return {
+      stage: "idle",
+      slot: null,
+      agreed: 0,
+      pending: 0,
+      against: 0,
+      respondBy: null,
+      myResponse: null,
+    };
+  }
+
+  const total = await db.member.count({ where: { teamId } });
+  const agreed = proposal.responses.filter((r) => r.agree).length;
+  const against = proposal.responses.filter((r) => !r.agree).length;
+  const mine = proposal.responses.find((r) => r.memberId === session?.id);
+
+  return {
+    stage: proposal.stage as MeetingProposal["stage"],
+    slot: proposal.slot
+      ? {
+          id: proposal.slot.id,
+          day: proposal.slot.day,
+          time: proposal.slot.time,
+          available: proposal.slot.available,
+          total: proposal.slot.total,
+          blockedBy: proposal.slot.blockedBy,
+        }
+      : null,
+    agreed,
+    against,
+    pending: Math.max(0, total - proposal.responses.length),
+    respondBy: formatDeadline(proposal.respondBy),
+    myResponse: mine ? (mine.agree ? "agree" : "against") : null,
   };
 }
 

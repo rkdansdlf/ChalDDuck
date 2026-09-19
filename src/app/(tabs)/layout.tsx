@@ -3,6 +3,7 @@ import { AppShell } from "@/components/ui";
 import {
   getCurrentTeam,
   getDmThreads,
+  getMeetingProposal,
   getMyContrib,
   getRoleNegotiation,
   getRoles,
@@ -21,23 +22,34 @@ import { unresolvedClashes } from "@/features/roles/roster-model";
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
   const team = await getCurrentTeam();
-  const [dmThreads, myContrib, roles, roster, negotiation] = await Promise.all([
+  const [dmThreads, myContrib, roles, roster, negotiation, meeting] = await Promise.all([
     getDmThreads(team.id),
     getMyContrib(team.id),
     getRoles(),
     getRoster(team.id),
     getRoleNegotiation(team.id),
+    getMeetingProposal(team.id),
   ]);
 
   const roleClashes = unresolvedClashes(roles, roster, negotiation.draws).length;
+  // 내가 아직 응답하지 않은 제안이 있으면 일정 탭에 배지를 띄운다.
+  const meetingPending = meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0;
 
   return (
     <AppShell
       sideNav={
-        <AppNav as="side" dmThreads={dmThreads} myContrib={myContrib} roleClashes={roleClashes} />
+        <AppNav as="side" dmThreads={dmThreads}
+          myContrib={myContrib}
+          roleClashes={roleClashes}
+          meetingPending={meetingPending}
+        />
       }
       tabBar={
-        <AppNav as="tabs" dmThreads={dmThreads} myContrib={myContrib} roleClashes={roleClashes} />
+        <AppNav as="tabs" dmThreads={dmThreads}
+          myContrib={myContrib}
+          roleClashes={roleClashes}
+          meetingPending={meetingPending}
+        />
       }
     >
       {children}

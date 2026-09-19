@@ -3,6 +3,7 @@ import {
   getCurrentTeam,
   getRecentItems,
   getRoles,
+  getMeetingProposal,
   getRoleNegotiation,
   getRoster,
   getTasks,
@@ -12,13 +13,14 @@ import { HomeScreen } from "@/features/home/home-screen";
 /** 홈 탭 — 11 홈. */
 export default async function HomePage() {
   const team = await getCurrentTeam();
-  const [roles, roster, recent, aiTools, tasks, negotiation] = await Promise.all([
+  const [roles, roster, recent, aiTools, tasks, negotiation, meeting] = await Promise.all([
     getRoles(),
     getRoster(team.id),
     getRecentItems(team.id),
     getAiTools(),
     getTasks(team.id),
     getRoleNegotiation(team.id),
+    getMeetingProposal(team.id),
   ]);
 
   return (
@@ -30,6 +32,7 @@ export default async function HomePage() {
       aiTools={aiTools}
       tasks={tasks}
       negotiation={negotiation}
+      meeting={meeting}
     />
   );
 }

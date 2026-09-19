@@ -15,14 +15,13 @@ import {
   Toast,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { MeetingSlot, MeetingWeek, Team } from "@/lib/types";
+import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/types";
 import {
   carryOverMeeting,
-  confirmMeeting,
-  objectToMeeting,
+  confirmMeetingByDeadline,
   proposeMeeting,
-  useMeeting,
-} from "./meeting-state";
+  respondToMeeting,
+} from "@/server/actions/meetings";
 
 /** 기본 회의 길이 — 확정되지 않은 정책(1시간이 적당한지 팀 확인 필요). */
 const DEFAULT_MINUTES = 60;
@@ -39,16 +38,18 @@ const DEFAULT_MINUTES = 60;
 export function SlotsScreen({
   team,
   week,
+  proposal,
   preview,
 }: {
   team: Team;
   week: MeetingWeek;
-  /** 데모 전용 — 전원 불가한 주를 미리 보는 중인지. 서버가 붙으면 없앤다. */
+  proposal: MeetingProposal;
+  /** 데모 전용 — 전원 불가한 주를 미리 보는 중인지. 후보를 시간표에서 계산하면 없앤다. */
   preview?: "none";
 }) {
   const router = useRouter();
 
-  const { stage, slot: proposed } = useMeeting();
+  const { stage, slot: proposed } = proposal;
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -61,9 +62,10 @@ export function SlotsScreen({
     window.setTimeout(() => setToast(null), 2600);
   };
 
-  const propose = () => {
+  const propose = async () => {
     if (!picked) return;
-    proposeMeeting(picked);
+    await proposeMeeting(picked.id);
+    router.refresh();
     flash(`팀원 ${week.total - 1}명에게 확인 요청을 보냈습니다`);
   };
 
@@ -111,16 +113,16 @@ export function SlotsScreen({
                 {proposed.day} {proposed.time}
               </div>
               <div className="t-cap-strong mt-[3px] text-txt-muted">
-                {DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감까지
+                {DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감 {proposal.respondBy}
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 <Chip tone="ok" icon="check">
-                  동의 1명
+                  동의 {proposal.agreed}명
                 </Chip>
                 <Chip tone="warn" icon="circle-dashed">
-                  미응답 {week.total - 1}명
+                  미응답 {proposal.pending}명
                 </Chip>
-                <Chip icon="x">반대 0명</Chip>
+                <Chip icon="x">반대 {proposal.against}명</Chip>
               </div>
             </Panel>
 
@@ -129,21 +131,50 @@ export function SlotsScreen({
             </Note>
 
             <div className="mt-2.5 flex flex-wrap gap-[7px]">
+              {proposal.myResponse === null ? (
+                <Btn
+                  size="sm"
+                  icon="check"
+                  onClick={async () => {
+                    await respondToMeeting(true);
+                    router.refresh();
+                    flash("동의했습니다");
+                  }}
+                >
+                  동의하기
+                </Btn>
+              ) : null}
               <Btn
                 size="sm"
                 v="outline"
                 icon="x"
-                onClick={() => {
-                  objectToMeeting();
+                onClick={async () => {
+                  await respondToMeeting(false);
                   setPickedId(null);
+                  router.refresh();
                   flash("반대가 있어 확정되지 않았습니다");
                 }}
               >
                 참석 어려움 알리기
               </Btn>
-              {/* 서버가 없어 다른 팀원의 응답과 마감 시각을 흉내 낼 수 없다.
-                  실제로는 마감이 지나면 서버가 알아서 확정한다. */}
-              <Btn size="sm" v="ghost" icon="clock" onClick={confirmMeeting}>
+              {/* 마감 시각이 되면 서버가 알아서 확정해야 하는 일인데, 그 예약 장치가 아직 없다.
+                  그래서 화면에서 부르고 데모라고 적어 둔다. */}
+              <Btn
+                size="sm"
+                v="ghost"
+                icon="clock"
+                onClick={async () => {
+                  const result = await confirmMeetingByDeadline();
+                  router.refresh();
+                  flash(
+                    result === "confirmed"
+                      ? "반대가 없어 확정됐습니다"
+                      : result === "blocked"
+                        ? "반대가 있어 확정되지 않았습니다"
+                        : "이미 정리된 제안입니다",
+                  );
+                }}
+              >
                 응답 마감 시뮬레이션 (데모)
               </Btn>
             </div>
@@ -203,7 +234,15 @@ export function SlotsScreen({
                   >
                     비대면 참여 요청 보내기
                   </Btn>
-                  <Btn v="ghost" size="sm" icon="arrow-right" onClick={carryOverMeeting}>
+                  <Btn
+                    v="ghost"
+                    size="sm"
+                    icon="arrow-right"
+                    onClick={async () => {
+                      await carryOverMeeting();
+                      router.refresh();
+                    }}
+                  >
                     다음 주로 이월 확정하기
                   </Btn>
                 </>
