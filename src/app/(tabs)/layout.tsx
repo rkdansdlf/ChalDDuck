@@ -1,6 +1,14 @@
 import { AppNav } from "@/components/app-nav";
 import { AppShell } from "@/components/ui";
-import { getCurrentTeam, getDmThreads, getMyContrib } from "@/data/api";
+import {
+  getCurrentTeam,
+  getDmThreads,
+  getMyContrib,
+  getRoleNegotiation,
+  getRoles,
+  getRoster,
+} from "@/data/api";
+import { unresolvedClashes } from "@/features/roles/roster-model";
 
 /**
  * 탭 셸.
@@ -13,15 +21,24 @@ import { getCurrentTeam, getDmThreads, getMyContrib } from "@/data/api";
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
   const team = await getCurrentTeam();
-  const [dmThreads, myContrib] = await Promise.all([
+  const [dmThreads, myContrib, roles, roster, negotiation] = await Promise.all([
     getDmThreads(team.id),
     getMyContrib(team.id),
+    getRoles(),
+    getRoster(team.id),
+    getRoleNegotiation(team.id),
   ]);
+
+  const roleClashes = unresolvedClashes(roles, roster, negotiation.draws).length;
 
   return (
     <AppShell
-      sideNav={<AppNav as="side" dmThreads={dmThreads} myContrib={myContrib} />}
-      tabBar={<AppNav as="tabs" dmThreads={dmThreads} myContrib={myContrib} />}
+      sideNav={
+        <AppNav as="side" dmThreads={dmThreads} myContrib={myContrib} roleClashes={roleClashes} />
+      }
+      tabBar={
+        <AppNav as="tabs" dmThreads={dmThreads} myContrib={myContrib} roleClashes={roleClashes} />
+      }
     >
       {children}
     </AppShell>

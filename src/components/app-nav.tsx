@@ -2,7 +2,6 @@
 
 import { SideNav, TabBar } from "@/components/ui";
 import { useMyContrib, usePendingContribCount } from "@/features/contrib/records-state";
-import { usePendingTeamCount } from "@/features/roles/negotiation-state";
 import { usePendingScheduleCount } from "@/features/schedule/meeting-state";
 import type { ContribRecord, DmThread } from "@/lib/types";
 
@@ -21,13 +20,16 @@ export function AppNav({
   as,
   dmThreads,
   myContrib,
+  roleClashes,
 }: {
   as: "tabs" | "side";
   dmThreads: DmThread[];
   myContrib: ContribRecord[];
+  /** 아직 확정되지 않은, 희망자가 겹친 역할 수. 서버가 센다. */
+  roleClashes: number;
 }) {
   // 팀 탭에는 두 가지가 모인다 — 겹친 역할과 확인 대기 중인 기여 기록.
-  const clashes = usePendingTeamCount();
+  const clashes = roleClashes;
   const contrib = usePendingContribCount(useMyContrib(myContrib));
   const cal = usePendingScheduleCount();
   // 안 읽음 수는 서버가 ReadMark 로 센다.

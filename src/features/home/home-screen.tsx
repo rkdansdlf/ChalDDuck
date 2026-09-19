@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AppBar,
   Body,
@@ -13,11 +13,10 @@ import {
   type IconName,
 } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
-import { setPendingCount, useNegotiation } from "@/features/roles/negotiation-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
 import { useMeeting } from "@/features/schedule/meeting-state";
 import { useTasks } from "@/features/tasks/tasks-state";
-import type { AiTool, Member, RecentItem, Role, Task, Team } from "@/lib/types";
+import type { AiTool, Member, RecentItem, Role, RoleNegotiation, Task, Team } from "@/lib/types";
 
 /** 홈에 세로로 쌓이는 "확인이 필요한 일" 한 줄. */
 type Todo = {
@@ -46,6 +45,7 @@ export function HomeScreen({
   recent,
   aiTools,
   tasks: tasksFromServer,
+  negotiation,
 }: {
   team: Team;
   roles: Role[];
@@ -53,10 +53,10 @@ export function HomeScreen({
   recent: RecentItem[];
   aiTools: AiTool[];
   tasks: Task[];
+  negotiation: RoleNegotiation;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
-  const { resolutions } = useNegotiation();
   const { stage, slot } = useMeeting();
   const tasks = useTasks(tasksFromServer);
 
@@ -81,16 +81,11 @@ export function HomeScreen({
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
+  // 07 화면·탭 배지와 같은 함수로 센다 — 어느 쪽을 먼저 열어도 같은 값이어야 한다.
   const clashes = useMemo(
-    () => unresolvedClashes(roles, members, resolutions),
-    [roles, members, resolutions],
+    () => unresolvedClashes(roles, members, negotiation.draws),
+    [roles, members, negotiation.draws],
   );
-
-  // 홈이 "1건"이라고 적어 놓고 팀 탭 배지는 비어 있으면 안 된다.
-  // 07 화면과 같은 계산이라 어느 쪽을 먼저 열어도 같은 값이 된다.
-  useEffect(() => {
-    setPendingCount(clashes.length);
-  }, [clashes.length]);
 
   const todos = useMemo<Todo[]>(() => {
     const list: Todo[] = [];

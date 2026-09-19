@@ -141,6 +141,7 @@ npm run build && npx tsc --noEmit && npm run lint
 | 옮긴 것 | 위치 |
 |---|---|
 | 팀 만들기 · 입장 · 세션 | `server/actions/onboarding.ts` |
+| 역할 추첨·수락·거절 | `server/actions/roles.ts` |
 | 내 시간표 저장 | `server/actions/schedule.ts` |
 | 메시지 보내기 · 읽음 표시 | `server/actions/chat.ts` |
 | AI 도구 호출 자리 | `server/actions/ai.ts` |
@@ -149,7 +150,6 @@ npm run build && npx tsc --noEmit && npm run lint
 
 | 파일 | 옮겨야 하는 것 | 표는 이미 있음 |
 |---|---|---|
-| `features/roles/negotiation-state.ts` | 역할 추첨·수락·거절 | `RoleDraw`, `RoleRejection` |
 | `features/schedule/meeting-state.ts` | 회의 제안·응답·확정 | `MeetingProposal`, `MeetingResponse` |
 | `features/drive/versions-state.ts` | 파일 복원(새 버전 추가) | `FileVersion` |
 | `features/contrib/records-state.ts` | 기여 기록 추가·정정 응답 | `ContribRecord` |

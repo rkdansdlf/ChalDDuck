@@ -1,6 +1,5 @@
 import type { MbtiType } from "@/lib/mbti";
-import type { Member, Role, RoleKey } from "@/lib/types";
-import type { Resolution } from "./negotiation-state";
+import type { Member, Role, RoleDrawResult, RoleKey } from "@/lib/types";
 
 /**
  * 역할 조율의 계산 규칙.
@@ -50,9 +49,9 @@ export function wantersOf(members: Member[], role: RoleKey): Member[] {
 export function unresolvedClashes(
   roles: Role[],
   members: Member[],
-  resolutions: Partial<Record<RoleKey, Resolution>>,
+  draws: Partial<Record<RoleKey, RoleDrawResult>>,
 ): Role[] {
   return roles.filter(
-    (role) => wantersOf(members, role.key).length > 1 && !resolutions[role.key]?.accepted,
+    (role) => wantersOf(members, role.key).length > 1 && !draws[role.key]?.accepted,
   );
 }

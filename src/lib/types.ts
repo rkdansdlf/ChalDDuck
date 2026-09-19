@@ -393,3 +393,25 @@ export type IceGame = {
   /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
   playable: boolean;
 };
+
+/* ── 07 역할 조율 ───────────────────────────────────────────── */
+
+/**
+ * 한 역할의 추첨 결과. `accepted` 가 true 여야 최종 확정이다.
+ *
+ * 조율 순서: 선호 확인 → 협의 → (필요하면) 추첨 → 당사자 수락 → 최종 확정.
+ * 거절은 오류가 아니라 남은 후보끼리 다시 추첨하는 정상 절차다.
+ */
+export type RoleDrawResult = {
+  /** 어떤 도구로 뽑았는지 — "룰렛" 처럼 화면에 그대로 보인다. */
+  tool: string;
+  winner: string;
+  accepted: boolean;
+};
+
+/** 팀의 역할 조율 현황. */
+export type RoleNegotiation = {
+  draws: Partial<Record<RoleKey, RoleDrawResult>>;
+  /** 역할별로 거절해서 다음 추첨에서 빠지는 사람들. */
+  rejected: Partial<Record<RoleKey, string[]>>;
+};

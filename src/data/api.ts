@@ -27,6 +27,7 @@ import type {
   ResearchResult,
   Role,
   RoleKey,
+  RoleNegotiation,
   SentenceMode,
   SubmissionBox,
   Task,
@@ -186,6 +187,38 @@ export async function getScheduleOptions(): Promise<{
   hours: string[];
 }> {
   return { kinds: BUSY_KINDS, days: SCHEDULE_DAYS, hours: SCHEDULE_HOURS };
+}
+
+/* ── 07 역할 조율 ───────────────────────────────────────────── */
+
+/** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
+export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
+  const [draws, rejections] = await Promise.all([
+    db.roleDraw.findMany({
+      where: { teamId },
+      include: { winner: { select: { name: true } } },
+    }),
+    db.roleRejection.findMany({
+      where: { teamId },
+      include: { member: { select: { name: true } } },
+    }),
+  ]);
+
+  const result: RoleNegotiation = { draws: {}, rejected: {} };
+
+  for (const d of draws) {
+    result.draws[d.role as RoleKey] = {
+      tool: d.tool,
+      winner: d.winner.name,
+      accepted: d.accepted,
+    };
+  }
+  for (const r of rejections) {
+    const role = r.role as RoleKey;
+    result.rejected[role] = [...(result.rejected[role] ?? []), r.member.name];
+  }
+
+  return result;
 }
 
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AppBar,
   Avatar,
@@ -18,16 +18,10 @@ import {
   type ChipTone,
   type IconName,
 } from "@/components/ui";
-import type { Member, RandomTool, Role, RoleKey, Team } from "@/lib/types";
+import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@/lib/types";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
-import {
-  acceptDraw,
-  drawFor,
-  rejectDraw,
-  setPendingCount,
-  useNegotiation,
-} from "./negotiation-state";
-import { applyMyChoices, unresolvedClashes, wantersOf } from "./roster-model";
+import { acceptRoleDraw, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
+import { applyMyChoices, wantersOf } from "./roster-model";
 
 /**
  * 07 팀 역할 조율.
@@ -44,15 +38,17 @@ export function RosterScreen({
   roles,
   roster,
   tools,
+  negotiation,
 }: {
   team: Team;
   roles: Role[];
   roster: Member[];
   tools: RandomTool[];
+  negotiation: RoleNegotiation;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
-  const { resolutions, rejected } = useNegotiation();
+  const { draws, rejected } = negotiation;
 
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
@@ -71,27 +67,18 @@ export function RosterScreen({
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
-  /** 아직 확정되지 않은, 희망자가 겹친 역할 수 — 탭바 배지가 읽어 간다. */
-  const pending = useMemo(
-    () => unresolvedClashes(roles, members, resolutions).length,
-    [roles, members, resolutions],
-  );
-
-  useEffect(() => {
-    setPendingCount(pending);
-  }, [pending]);
-
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
   };
 
-  const handleDraw = (tool: RandomTool) => {
+  /** 당첨자는 서버가 고른다 — 화면에서 뽑아 보내면 누구나 자기를 적어 보낼 수 있다. */
+  const handleDraw = async (tool: RandomTool) => {
     if (!drawingFor) return;
-    const candidates = members.filter((m) => m.want === drawingFor).map((m) => m.name);
-    const winner = drawFor(drawingFor, tool.name, candidates);
+    const result = await drawForRole(drawingFor, tool.name);
     setDrawingFor(null);
-    if (winner) flash(`${tool.name} 결과를 ${winner}님에게 보냈습니다 — 수락 대기`);
+    router.refresh();
+    if (result) flash(`${tool.name} 결과를 ${result.winner}님에게 보냈습니다 — 수락 대기`);
   };
 
   return (
@@ -103,7 +90,7 @@ export function RosterScreen({
         <div className="mb-5 flex flex-col gap-2">
           {roles.map((role) => {
             const wanters = wantersOf(members, role.key);
-            const result = resolutions[role.key];
+            const result = draws[role.key];
             const clash = wanters.length > 1;
             const excluded = rejected[role.key] ?? [];
 
@@ -167,8 +154,9 @@ export function RosterScreen({
                       <Btn
                         size="sm"
                         icon="check"
-                        onClick={() => {
-                          acceptDraw(role.key);
+                        onClick={async () => {
+                          await acceptRoleDraw(role.key);
+                          router.refresh();
                           flash("확정되었습니다");
                         }}
                       >
@@ -178,9 +166,12 @@ export function RosterScreen({
                         size="sm"
                         v="ghost"
                         icon="x"
-                        onClick={() => {
-                          const who = rejectDraw(role.key);
-                          if (who) flash(`${who}님을 다음 추첨에서 제외합니다 — 다시 추첨해 주세요`);
+                        onClick={async () => {
+                          const rejectedMember = await rejectRoleDraw(role.key);
+                          router.refresh();
+                          if (rejectedMember) {
+                            flash(`${rejectedMember.winner}님을 다음 추첨에서 제외합니다 — 다시 추첨해 주세요`);
+                          }
                         }}
                       >
                         {result.winner}님이 거절
