@@ -261,7 +261,6 @@ async function main() {
         whenLabel: "9/8 – 9/12",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: minjun.id,
@@ -271,7 +270,6 @@ async function main() {
         whenLabel: "9/13 16:02",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: minjun.id,
@@ -281,7 +279,6 @@ async function main() {
         whenLabel: "9월",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: minjun.id,
@@ -291,7 +288,6 @@ async function main() {
         whenLabel: "9/12",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: minjun.id,
@@ -301,7 +297,6 @@ async function main() {
         whenLabel: "9/14",
         source: "self",
         state: "pending",
-        byLabel: "이서연 확인 대기",
       },
       {
         memberId: seoyeon.id,
@@ -311,7 +306,6 @@ async function main() {
         whenLabel: "9/11 – 9/18",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: jiho.id,
@@ -321,7 +315,6 @@ async function main() {
         whenLabel: "9월",
         source: "auto",
         state: "ok",
-        byLabel: "3명 확인",
       },
       {
         memberId: yuna.id,
@@ -331,14 +324,24 @@ async function main() {
         whenLabel: "9/14",
         source: "auto",
         state: "disputed",
-        byLabel: "박지호 · 의견 차이 1건",
         dispute: "초안은 공동 작성이었고 분량 절반은 제가 썼습니다.",
+        disputedById: jiho.id,
       },
   ];
+  const everyone = [minjun, seoyeon, jiho, yuna];
   for (const [i, r] of contribRecords.entries()) {
-    await prisma.contribRecord.create({
+    const record = await prisma.contribRecord.create({
       data: { ...r, createdAt: new Date(Date.now() - (contribRecords.length - i) * 60_000) },
     });
+    // 확인 문구("3명 확인")는 저장하지 않고 확인 행에서 계산한다. `ok` 인 기록은
+    // 본인을 뺀 팀원이 확인해 준 것이므로 그 행들을 함께 넣는다.
+    if (r.state === "ok") {
+      await prisma.contribConfirm.createMany({
+        data: everyone
+          .filter((m) => m.id !== r.memberId)
+          .map((m) => ({ recordId: record.id, memberId: m.id })),
+      });
+    }
   }
 
   /* ── 21 할 일 ──────────────────────────────────────────── */

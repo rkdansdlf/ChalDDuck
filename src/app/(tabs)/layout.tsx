@@ -9,6 +9,7 @@ import {
   getRoleNegotiation,
   getRoles,
   getRoster,
+  getTeamCheck,
 } from "@/data/api";
 import { unresolvedClashes } from "@/features/roles/roster-model";
 
@@ -23,7 +24,7 @@ import { unresolvedClashes } from "@/features/roles/roster-model";
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
   const team = await getCurrentTeam();
-  const [dmThreads, myContrib, roles, roster, negotiation, meeting, rejoinRequests] =
+  const [dmThreads, myContrib, roles, roster, negotiation, meeting, rejoinRequests, teamCheck] =
     await Promise.all([
       getDmThreads(team.id),
       getMyContrib(team.id),
@@ -33,11 +34,16 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
       getMeetingProposal(team.id),
       // 팀장이 아니면 빈 목록이 온다 — 화면에서 감추는 것과 별개로 데이터를 주지 않는다.
       getRejoinRequests(team.id),
+      getTeamCheck(team.id),
     ]);
 
   const roleClashes = unresolvedClashes(roles, roster, negotiation.draws).length;
   // 내가 넣었지만 아직 팀원 확인을 못 받은 기록 수.
   const contribPending = myContrib.filter((r) => r.state === "pending").length;
+  // 내가 확인해 줘야 하는 팀원의 기록 — 내가 누르지 않으면 영영 대기로 남는다.
+  const awaitingMyConfirm = teamCheck.filter(
+    (r) => !r.isMine && r.state === "pending" && !r.iConfirmed,
+  ).length;
   // 팀장이 승인해 줘야 하는 재입장 요청.
   const rejoinPending = rejoinRequests.length;
   // 내가 아직 응답하지 않은 제안이 있으면 일정 탭에 배지를 띄운다.
@@ -47,7 +53,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
     <AppShell
       sideNav={
         <AppNav as="side" dmThreads={dmThreads}
-          contribPending={contribPending}
+          contribPending={contribPending + awaitingMyConfirm}
           rejoinPending={rejoinPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}
@@ -55,7 +61,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
       }
       tabBar={
         <AppNav as="tabs" dmThreads={dmThreads}
-          contribPending={contribPending}
+          contribPending={contribPending + awaitingMyConfirm}
           rejoinPending={rejoinPending}
           roleClashes={roleClashes}
           meetingPending={meetingPending}

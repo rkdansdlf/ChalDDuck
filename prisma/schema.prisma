@@ -66,7 +66,9 @@ model Member {
   messages        Message[]
   reactions       MessageReaction[]
   readMarks       ReadMark[]
-  contribRecords  ContribRecord[]
+  contribRecords  ContribRecord[]   @relation("ContribOwner")
+  contribDisputes ContribRecord[]   @relation("ContribDisputer")
+  contribConfirms ContribConfirm[]
   assignedTasks   Task[]
   pokesSent       Poke[]
   proposalsMade   MeetingProposal[]
@@ -324,21 +326,41 @@ model ContribRecord {
   whenLabel String
   /// auto = 앱이 모음 / self = 본인이 직접 추가
   source    String
-  /// ok | pending | disputed
+  /// ok | pending | disputed — 확인 수와 의견에서 다시 계산한다(`server/contrib/state.ts`).
   state     String   @default("pending")
-  /// 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기").
-  byLabel   String
   /// 사실과 다르다고 적힌 의견. **한쪽 말로 덮지 않고 남긴다.**
   dispute   String?
+  /// 그 의견을 적은 사람. 다툼이 생기면 누가 적었는지가 중요하다.
+  disputedById String?
   /// 정정에 어떻게 답했는지("공동 작업으로 나눔"). 적히면 의견 차이가 정리된 것으로 본다.
   /// `dispute` 는 여기 값이 생겨도 지우지 않는다 — 지우면 한쪽 말로 덮는 것이 된다.
   resolution String?
   hasEvidence Boolean @default(false)
   createdAt DateTime @default(now())
 
-  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member     Member          @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
+  disputedBy Member?         @relation("ContribDisputer", fields: [disputedById], references: [id], onDelete: SetNull)
+  confirms   ContribConfirm[]
 
   @@index([memberId])
+}
+
+/// 기여 기록 하나에 대한 팀원의 확인.
+///
+/// 본인이 넣은 기록은 팀원이 확인해야 확정된다 — 본인 말만으로 확정되면 기록이
+/// 근거가 되지 못한다. 누가 확인했는지 남아야 나중에 다툴 때 따져 볼 수 있다.
+model ContribConfirm {
+  id        String   @id @default(cuid())
+  recordId  String
+  memberId  String
+  createdAt DateTime @default(now())
+
+  record ContribRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  member Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  /// 같은 사람이 같은 기록을 두 번 확인하지 못한다.
+  @@unique([recordId, memberId])
+  @@index([recordId])
 }
 
 /// 할 일. 팀 업무·개인 학습·점검이 한 목록에 있고 종류로만 구분된다.

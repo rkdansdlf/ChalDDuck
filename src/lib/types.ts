@@ -371,6 +371,12 @@ export type TeamCheckRecord = {
   who: string;
   title: string;
   state: "ok" | "pending" | "disputed";
+  /** 내 기록인지. 자기 기록은 확인하거나 정정을 적을 수 없다. */
+  isMine: boolean;
+  /** 지금까지 확인해 준 팀원 수. */
+  confirms: number;
+  /** 내가 이미 확인했는지. */
+  iConfirmed: boolean;
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
   /** 의견 차이가 적힌 경우 그 내용. 정리된 뒤에도 지우지 않는다. */

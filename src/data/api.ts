@@ -39,6 +39,7 @@ import { TASKS_RECENT_ID } from "@/lib/types";
 import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
+import { contribByLabel } from "@/server/contrib/state";
 import { currentSessionToken, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
@@ -595,21 +596,38 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
 
 /** 팀 전체의 기록. 내 화면(16)과 **같은 표**를 본다. */
 export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
+  const session = await getSessionMember();
+
   const rows = await db.contribRecord.findMany({
     where: { member: { teamId } },
-    include: { member: { select: { name: true } } },
+    include: {
+      member: { select: { id: true, name: true } },
+      disputedBy: { select: { name: true } },
+      confirms: { select: { memberId: true } },
+    },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
-  return rows.map((r) => ({
-    id: r.id,
-    who: r.member.name,
-    title: r.title,
-    state: r.state as TeamCheckRecord["state"],
-    by: r.byLabel,
-    dispute: r.dispute,
-    resolution: r.resolution,
-  }));
+  return rows.map((r) => {
+    const state = r.state as TeamCheckRecord["state"];
+    return {
+      id: r.id,
+      who: r.member.name,
+      title: r.title,
+      state,
+      isMine: r.member.id === session?.id,
+      confirms: r.confirms.length,
+      iConfirmed: r.confirms.some((c) => c.memberId === session?.id),
+      // 표시 문구는 저장하지 않고 그때그때 만든다 — 저장해 두면 확인 수와 어긋난다.
+      by: contribByLabel({
+        state,
+        confirms: r.confirms.length,
+        disputedBy: r.disputedBy?.name ?? null,
+      }),
+      dispute: r.dispute,
+      resolution: r.resolution,
+    };
+  });
 }
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */

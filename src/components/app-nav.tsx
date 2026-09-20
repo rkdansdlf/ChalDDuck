@@ -24,7 +24,7 @@ export function AppNav({
 }: {
   as: "tabs" | "side";
   dmThreads: DmThread[];
-  /** 팀원 확인을 기다리는 내 기여 기록 수. 서버가 센다. */
+  /** 기여 기록으로 뜬 건수 — 내 기록의 확인 대기 + 내가 확인해 줘야 하는 팀원 기록. */
   contribPending: number;
   /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
   rejoinPending: number;

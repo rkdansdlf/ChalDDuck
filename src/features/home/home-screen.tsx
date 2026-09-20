@@ -56,6 +56,7 @@ export function HomeScreen({
   negotiation,
   meeting,
   rejoinRequests,
+  awaitingMyConfirm,
 }: {
   team: Team;
   roles: Role[];
@@ -67,6 +68,8 @@ export function HomeScreen({
   meeting: MeetingProposal;
   /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
   rejoinRequests: number;
+  /** 내가 확인해 줘야 하는 팀원의 기여 기록 수. */
+  awaitingMyConfirm: number;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -130,6 +133,17 @@ export function HomeScreen({
       });
     }
 
+    if (awaitingMyConfirm > 0) {
+      list.push({
+        key: "contrib",
+        icon: "list-checks",
+        surface: "bg-yellow-200 text-yellow-700",
+        title: "팀원 기록 확인",
+        note: `${awaitingMyConfirm}건이 내 확인을 기다립니다`,
+        href: "/team/contrib/members",
+      });
+    }
+
     // 팀장에게만 온다. 남이 내 이름으로 들어오려는 것일 수 있어 맨 위에 둘 만한 일이다.
     if (rejoinRequests > 0) {
       list.push({
@@ -146,7 +160,7 @@ export function HomeScreen({
     }
 
     return list;
-  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse, rejoinRequests]);
+  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse, rejoinRequests, awaitingMyConfirm]);
 
   return (
     <>
