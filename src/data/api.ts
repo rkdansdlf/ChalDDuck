@@ -6,6 +6,7 @@ import { isMbtiType } from "@/lib/mbti";
 import type {
   AiPolicy,
   AiTool,
+  AppNotification,
   BusyBlock,
   BusyKind,
   ChatMessage,
@@ -771,6 +772,38 @@ export async function getMyPokedTaskIds(teamId: string): Promise<string[]> {
   });
 
   return pokes.map((p) => p.taskId);
+}
+
+/* ── 알림 ───────────────────────────────────────────────────── */
+
+/** 내게 온 알림. 최근 것이 위. */
+export async function getNotifications(): Promise<AppNotification[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const rows = await db.notification.findMany({
+    where: { memberId: session.id },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    // 오래된 것까지 다 보여 줄 이유는 없다. 최근 것만 본다.
+    take: 50,
+  });
+
+  return rows.map((n) => ({
+    id: n.id,
+    kind: n.kind as AppNotification["kind"],
+    title: n.title,
+    body: n.body,
+    href: n.href,
+    when: formatDeadline(n.createdAt),
+    read: n.readAt !== null,
+  }));
+}
+
+/** 안 읽은 알림 수. 홈의 종 배지에 쓴다. */
+export async function getUnreadNotificationCount(): Promise<number> {
+  const session = await getSessionMember();
+  if (!session) return 0;
+  return db.notification.count({ where: { memberId: session.id, readAt: null } });
 }
 
 /* ── 11 홈 ─────────────────────────────────────────────────── */

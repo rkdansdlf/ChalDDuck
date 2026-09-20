@@ -60,6 +60,14 @@ export type AppBarProps = {
   /** 우측 아이콘 버튼 — 아이콘 이름이 곧 접근성 라벨이 되지 않도록 `actionLabel` 을 함께 준다. */
   action?: IconName;
   actionLabel?: string;
+  /**
+   * 아이콘 위에 얹는 건수.
+   *
+   * 색 점 대신 숫자를 쓴다 — 상태를 색만으로 구분하지 않는다는 규칙과 같은 이유이고,
+   * "몇 건인지"가 "있다/없다"보다 행동을 정하는 데 쓸모 있다. 읽는 이름(`actionLabel`)에도
+   * 건수를 담아야 화면을 못 보는 사람도 같은 것을 안다.
+   */
+  actionBadge?: number;
   onAction?: () => void;
   tone?: "y";
   /**
@@ -77,6 +85,7 @@ export function AppBar({
   onBack,
   action,
   actionLabel,
+  actionBadge,
   onAction,
   tone,
   hideBackOnWide,
@@ -113,9 +122,18 @@ export function AppBar({
           type="button"
           onClick={onAction}
           aria-label={actionLabel ?? action}
-          className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt"
+          className="relative grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt"
         >
           <Icon name={action} size={20} />
+          {actionBadge ? (
+            // 탭바 배지와 같은 규격을 쓴다 — 같은 뜻의 표시가 화면마다 달라 보이면 안 된다.
+            <span
+              aria-hidden
+              className="absolute top-1.5 right-1.5 box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900"
+            >
+              {actionBadge > 9 ? "9+" : actionBadge}
+            </span>
+          ) : null}
         </button>
       ) : null}
     </div>

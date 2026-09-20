@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
+import { leaderIds, notify } from "@/server/notify/create";
 import { describeDevice, requireLeader, requireSessionMember, startSession } from "@/server/session";
 
 /**
@@ -114,6 +115,14 @@ export async function requestRejoinApproval(
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: CLAIM_MAX_AGE,
+  });
+
+  await notify({
+    to: await leaderIds(member.teamId),
+    kind: "rejoin-request",
+    title: `${member.name}님이 새 기기에서 들어오려 합니다`,
+    body: "본인이 맞는지 확인하고 승인해 주세요",
+    href: "/team/access",
   });
 
   revalidatePath("/team", "layout");

@@ -57,6 +57,7 @@ export function HomeScreen({
   meeting,
   rejoinRequests,
   awaitingMyConfirm,
+  unreadNotifications,
 }: {
   team: Team;
   roles: Role[];
@@ -70,6 +71,8 @@ export function HomeScreen({
   rejoinRequests: number;
   /** 내가 확인해 줘야 하는 팀원의 기여 기록 수. */
   awaitingMyConfirm: number;
+  /** 안 읽은 알림 수. 종에 붙는다. */
+  unreadNotifications: number;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -169,8 +172,11 @@ export function HomeScreen({
         title={team.name}
         sub={team.dday ?? undefined}
         action="bell"
-        actionLabel="알림"
-        onAction={() => notReady("알림")}
+        actionLabel={
+          unreadNotifications > 0 ? `알림 ${unreadNotifications}건` : "알림"
+        }
+        actionBadge={unreadNotifications || undefined}
+        onAction={() => router.push("/home/notifications")}
       />
 
       <Body dense>

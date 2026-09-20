@@ -92,7 +92,7 @@ export function TasksScreen({
           className="mb-3.5"
           onClick={() => router.push("/home/tasks/poke")}
         >
-          담당자에게 콕 찌르기
+          담당자에게 진행상황 묻기
         </Btn>
 
         <Rows>

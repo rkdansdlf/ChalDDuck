@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { ContribKindKey } from "@/lib/types";
 import { refreshContribState } from "@/server/contrib/state";
 import { db } from "@/server/db";
+import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
 /**
@@ -86,6 +87,15 @@ export async function confirmContribRecord(
   await db.contribConfirm.create({ data: { recordId: record.id, memberId: me.id } });
   await refreshContribState(record.id);
 
+  await notify({
+    to: [record.memberId],
+    kind: "contrib-confirm",
+    title: `${me.name}님이 기록을 확인해 줬습니다`,
+    body: record.title,
+    href: "/team/contrib",
+    actorId: me.id,
+  });
+
   revalidatePath("/team", "layout");
   revalidatePath("/home");
   return "ok";
@@ -122,6 +132,15 @@ export async function disputeContribRecord(
     data: { dispute: text, disputedById: me.id, resolution: null },
   });
   await refreshContribState(record.id);
+
+  await notify({
+    to: [record.memberId],
+    kind: "contrib-dispute",
+    title: `${me.name}님이 기록에 의견을 남겼습니다`,
+    body: record.title,
+    href: "/team/contrib/members",
+    actorId: me.id,
+  });
 
   revalidatePath("/team", "layout");
   revalidatePath("/home");

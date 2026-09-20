@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { Task, TaskKindKey } from "@/lib/types";
 import { db } from "@/server/db";
+import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
 /**
@@ -108,11 +109,11 @@ export async function addTasksFromClerk(
 }
 
 /**
- * 담당자에게 익명으로 알린다.
+ * 담당자에게 제출이나 진행상황을 요청한다.
  *
- * **업무당 하루 한 번만.** 익명이면서 횟수 제한이 없으면 재촉이 괴롭힘이 된다.
- * 화면에서 막는 것과 별개로 표의 `@@unique([taskId, senderId, sentOn])` 이 마지막 문이다.
- * 보낸 사람은 `Poke.senderId` 에만 남고 받는 쪽 화면에는 나오지 않는다.
+ * **보낸 사람을 밝힌다.** 누가 물었는지 알아야 답할 수 있고, 익명 재촉은 답할 곳 없는
+ * 압박이 된다. 대신 **업무당 하루 한 번**으로 횟수를 막는다 — 화면에서 막는 것과 별개로
+ * 표의 `@@unique([taskId, senderId, sentOn])` 이 마지막 문이다.
  *
  * @returns 보냈으면 `"sent"`, 오늘 이미 보냈으면 `"already"`.
  */
@@ -131,6 +132,15 @@ export async function pokeTask(taskId: string): Promise<"sent" | "already"> {
   if (existing) return "already";
 
   await db.poke.create({ data: { taskId: task.id, senderId: me.id, sentOn } });
+
+  await notify({
+    to: [task.assigneeId],
+    kind: "poke",
+    title: `${me.name}님이 진행상황을 물었습니다`,
+    body: task.title,
+    href: "/home/tasks",
+    actorId: me.id,
+  });
 
   revalidatePath("/home", "layout");
   return "sent";

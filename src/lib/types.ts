@@ -142,6 +142,19 @@ export type OnboardingDraft = {
   veto: RoleKey | null;
 };
 
+/* ── 알림 ───────────────────────────────────────────────────── */
+
+/** 앱 안 알림 한 줄. 푸시는 아직 없다. */
+export type AppNotification = {
+  id: string;
+  kind: "poke" | "meeting" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request";
+  title: string;
+  body: string;
+  href: string | null;
+  when: string;
+  read: boolean;
+};
+
 /* ── 11 홈 ─────────────────────────────────────────────────── */
 
 /** AI 도구 목록. 14번 허브와 홈의 바로가기가 같은 목록을 쓴다. */

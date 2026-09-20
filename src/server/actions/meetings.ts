@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { db } from "@/server/db";
+import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
 /**
@@ -40,6 +41,15 @@ export async function proposeMeeting(slotId: string): Promise<void> {
     await tx.meetingResponse.create({
       data: { proposalId: proposal.id, memberId: me.id, agree: true },
     });
+  });
+
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    kind: "meeting",
+    title: `${me.name}님이 회의 시간을 제안했습니다`,
+    body: `${slot.day} ${slot.time} · 마감까지 반대가 없으면 확정됩니다`,
+    href: "/schedule/slots",
+    actorId: me.id,
   });
 
   revalidatePath("/schedule", "layout");

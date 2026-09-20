@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
+import { leaderIds, notify } from "@/server/notify/create";
 import { describeDevice, startSession } from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
 import type { OnboardingDraft, Team } from "@/lib/types";
@@ -169,6 +170,14 @@ export async function joinTeam(
       secure: process.env.NODE_ENV === "production",
       path: "/",
       maxAge: 60 * 60 * 24,
+    });
+
+    await notify({
+      to: await leaderIds(team.id),
+      kind: "join-request",
+      title: `${name}님이 팀에 들어오려 합니다`,
+      body: "본인이 맞는지 확인하고 승인해 주세요",
+      href: "/team/access",
     });
 
     revalidatePath("/team", "layout");

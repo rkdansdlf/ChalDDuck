@@ -20,10 +20,10 @@ import type { Task } from "@/lib/types";
 import { pokeTask } from "@/server/actions/tasks";
 
 /**
- * 24 익명 콕 찌르기.
+ * 24 콕 찌르기 — 담당자에게 제출이나 진행상황을 요청한다.
  *
- * 다그치지 않고 슬쩍 알린다. 보낸 사람은 밝히지 않고, **업무당 하루 한 번만** 보낼 수 있다 —
- * 익명이면서 횟수 제한이 없으면 재촉이 괴롭힘이 된다.
+ * **보낸 사람을 밝힌다.** 누가 물었는지 알아야 답할 수 있고, 익명 재촉은 답할 곳 없는
+ * 압박이 된다. 대신 **업무당 하루 한 번**으로 횟수를 막는다.
  */
 export function PokeScreen({
   tasks,
@@ -52,7 +52,7 @@ export function PokeScreen({
       router.refresh();
       flash(
         result === "sent"
-          ? `${selectedTask.assignee}님에게 익명으로 알렸습니다`
+          ? `${selectedTask.assignee}님에게 알렸습니다`
           : "이 업무에는 오늘 이미 보냈습니다",
       );
     } finally {
@@ -69,14 +69,14 @@ export function PokeScreen({
     <>
       <AppBar
         title="콕 찌르기"
-        sub="담당자에게 조용히 알립니다"
+        sub="담당자에게 진행상황을 묻습니다"
         onBack={() => router.push("/home/tasks")}
       />
 
       <Body dense>
-        <Note tone="info" icon="eye-off" className="mb-3.5">
-          보낸 사람은 밝히지 않습니다. 받는 사람에게만 조용히 뜨고, 업무당 <b>하루 한 번</b>만 보낼 수
-          있습니다.
+        <Note tone="info" icon="bell" className="mb-3.5">
+          담당자에게만 알림이 갑니다. <b>내 이름이 함께 갑니다</b> — 누가 물었는지 알아야 답할 수
+          있기 때문입니다. 대신 업무당 <b>하루 한 번</b>만 보낼 수 있습니다.
         </Note>
 
         <SecTitle note="아직 끝나지 않은 업무만 보입니다">업무 고르기</SecTitle>
@@ -127,13 +127,14 @@ export function PokeScreen({
         )}
 
         <Undecided>
-          익명이 악용될 때(과도하게 자주 찌르기 등) 대응 방법은 기획안에 없어 다루지 않았습니다.
+          같은 사람에게 여러 업무로 하루에 몇 번까지 물어볼 수 있는지는 기획안에 없습니다. 지금은
+          업무마다 하루 한 번이라, 업무가 많으면 여러 번 갈 수 있습니다.
         </Undecided>
       </Body>
 
       <Dock>
         <Btn full size="lg" icon="bell" disabled={!selectedTask || sending} onClick={send}>
-          {sending ? "보내는 중" : "익명으로 콕 찌르기"}
+          {sending ? "보내는 중" : "진행상황 물어보기"}
         </Btn>
       </Dock>
 
