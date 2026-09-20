@@ -16,7 +16,6 @@ import {
   SecTitle,
   Sheet,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import type { MyDevice, RejoinRequest } from "@/data/api";
 import type { Member } from "@/lib/types";
@@ -291,10 +290,6 @@ export function AccessScreen({
           </Btn>
         )}
 
-        <Undecided>
-          나간 사람이 같은 이름으로 다시 들어오면(재입장 코드나 팀장 승인을 거쳐) 명단에
-          되돌아옵니다. 다시 못 들어오게 막는 방법은 기획안에 없어 다루지 않았습니다.
-        </Undecided>
       </Body>
 
       <Sheet
@@ -340,7 +335,7 @@ export function AccessScreen({
       <Sheet open={sheet === "leave"} title="팀에서 나갈까요" onClose={() => setSheet(null)}>
         <p className="text-pretty-keep m-0 mb-4 text-[14.5px] leading-[1.6] text-txt">
           명단에서 빠지고 이 기기에서 로그아웃됩니다. <b>기여 기록과 올린 파일은 팀에 남습니다</b> —
-          성적 근거라 지우지 않습니다.
+          성적 근거라 지우지 않습니다. 마음이 바뀌면 같은 이름으로 다시 들어올 수 있습니다.
         </p>
         <div className="flex gap-2">
           <Btn full v="outline" disabled={working} onClick={() => setSheet(null)}>
