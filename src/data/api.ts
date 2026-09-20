@@ -268,6 +268,34 @@ export async function getRejoinRequests(teamId: string): Promise<RejoinRequest[]
   }));
 }
 
+/** 팀에 처음 들어오려는 요청. **팀장에게만** 보여 준다. */
+export type JoinRequestRow = {
+  id: string;
+  name: string;
+  /** 고른 1순위 희망 역할 이름. 승인 전에 무엇을 맡으려는지 보인다. */
+  want: string;
+  device: string;
+  when: string;
+};
+
+export async function getJoinRequests(teamId: string): Promise<JoinRequestRow[]> {
+  const session = await getSessionMember();
+  if (!session || !session.isLeader) return [];
+
+  const rows = await db.joinRequest.findMany({
+    where: { teamId, status: "pending" },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    want: ROLES.find((role) => role.key === r.wantRole)?.name ?? "미정",
+    device: r.label ?? "알 수 없는 기기",
+    when: formatDeadline(r.createdAt),
+  }));
+}
+
 /** 내 이름으로 열려 있는 기기 목록. 내 것만 보인다. */
 export type MyDevice = {
   token: string;

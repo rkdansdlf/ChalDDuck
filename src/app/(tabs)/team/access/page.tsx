@@ -1,4 +1,10 @@
-import { getCurrentTeam, getMyDevices, getRejoinRequests, getRoster } from "@/data/api";
+import {
+  getCurrentTeam,
+  getJoinRequests,
+  getMyDevices,
+  getRejoinRequests,
+  getRoster,
+} from "@/data/api";
 import { AccessScreen } from "@/features/onboarding/access-screen";
 import { requireSessionMember } from "@/server/session";
 
@@ -12,8 +18,9 @@ export const dynamic = "force-dynamic";
 export default async function AccessPage() {
   const me = await requireSessionMember();
   const team = await getCurrentTeam();
-  const [requests, devices, roster] = await Promise.all([
+  const [requests, joins, devices, roster] = await Promise.all([
     getRejoinRequests(team.id),
+    getJoinRequests(team.id),
     getMyDevices(),
     getRoster(team.id),
   ]);
@@ -21,6 +28,7 @@ export default async function AccessPage() {
   return (
     <AccessScreen
       requests={requests}
+      joins={joins}
       devices={devices}
       isLeader={me.isLeader}
       teamName={team.name}

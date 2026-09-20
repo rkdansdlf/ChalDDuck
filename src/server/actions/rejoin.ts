@@ -185,3 +185,29 @@ export async function regenerateRejoinCode(): Promise<string> {
   const me = await requireSessionMember();
   return issueRejoinCode(me.id);
 }
+
+/** 팀장이 새로 들어오려는 사람을 승인하거나 거절한다. */
+export async function resolveJoinRequest(
+  requestId: string,
+  approve: boolean,
+): Promise<"ok" | "gone"> {
+  const leader = await requireLeader();
+
+  const request = await db.joinRequest.findFirst({
+    where: { id: requestId, status: "pending", teamId: leader.teamId },
+  });
+  if (!request) return "gone";
+
+  await db.joinRequest.update({
+    where: { id: request.id },
+    data: {
+      status: approve ? "approved" : "rejected",
+      resolvedAt: new Date(),
+      approvedById: leader.id,
+    },
+  });
+
+  revalidatePath("/team", "layout");
+  revalidatePath("/home");
+  return "ok";
+}

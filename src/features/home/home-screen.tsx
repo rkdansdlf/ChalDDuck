@@ -66,7 +66,7 @@ export function HomeScreen({
   tasks: Task[];
   negotiation: RoleNegotiation;
   meeting: MeetingProposal;
-  /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
+  /** 팀장이 승인해 줘야 하는 요청 수(가입 + 재입장). 팀장이 아니면 0. */
   rejoinRequests: number;
   /** 내가 확인해 줘야 하는 팀원의 기여 기록 수. */
   awaitingMyConfirm: number;
@@ -150,11 +150,11 @@ export function HomeScreen({
         key: "rejoin",
         icon: "user-search",
         surface: "bg-coral-100 text-coral-700",
-        title: "재입장 요청 확인",
+        title: "들어오려는 사람 확인",
         note:
           rejoinRequests === 1
-            ? "팀원 1명이 새 기기에서 들어오려 합니다"
-            : `팀원 ${rejoinRequests}명이 새 기기에서 들어오려 합니다`,
+            ? "1명이 팀에 들어오려 합니다"
+            : `${rejoinRequests}명이 팀에 들어오려 합니다`,
         href: "/team/access",
       });
     }

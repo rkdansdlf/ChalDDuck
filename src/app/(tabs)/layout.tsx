@@ -5,6 +5,7 @@ import {
   getDmThreads,
   getMeetingProposal,
   getMyContrib,
+  getJoinRequests,
   getRejoinRequests,
   getRoleNegotiation,
   getRoles,
@@ -24,7 +25,7 @@ import { unresolvedClashes } from "@/features/roles/roster-model";
  */
 export default async function TabsLayout({ children }: LayoutProps<"/">) {
   const team = await getCurrentTeam();
-  const [dmThreads, myContrib, roles, roster, negotiation, meeting, rejoinRequests, teamCheck] =
+  const [dmThreads, myContrib, roles, roster, negotiation, meeting, rejoinRequests, joinRequests, teamCheck] =
     await Promise.all([
       getDmThreads(team.id),
       getMyContrib(team.id),
@@ -34,6 +35,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
       getMeetingProposal(team.id),
       // 팀장이 아니면 빈 목록이 온다 — 화면에서 감추는 것과 별개로 데이터를 주지 않는다.
       getRejoinRequests(team.id),
+      getJoinRequests(team.id),
       getTeamCheck(team.id),
     ]);
 
@@ -45,7 +47,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
     (r) => !r.isMine && r.state === "pending" && !r.iConfirmed,
   ).length;
   // 팀장이 승인해 줘야 하는 재입장 요청.
-  const rejoinPending = rejoinRequests.length;
+  const rejoinPending = rejoinRequests.length + joinRequests.length;
   // 내가 아직 응답하지 않은 제안이 있으면 일정 탭에 배지를 띄운다.
   const meetingPending = meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0;
 

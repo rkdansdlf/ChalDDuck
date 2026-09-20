@@ -28,6 +28,7 @@ model Team {
   createdAt DateTime @default(now())
 
   members        Member[]
+  joinRequests   JoinRequest[]
   submissionBoxes SubmissionBox[]
   meetingSlots   MeetingSlot[]
   proposals      MeetingProposal[]
@@ -60,6 +61,7 @@ model Member {
   sessions        Session[]
   claims          MemberClaim[]     @relation("ClaimMember")
   approvedClaims  MemberClaim[]     @relation("ClaimApprover")
+  approvedJoins   JoinRequest[]     @relation("JoinApprover")
   busyBlocks      BusyBlock[]
   ownedBoxes      SubmissionBox[]
   fileVersions    FileVersion[]
@@ -116,6 +118,38 @@ model MemberClaim {
   approvedBy Member? @relation("ClaimApprover", fields: [approvedById], references: [id], onDelete: SetNull)
 
   @@index([memberId])
+}
+
+/// 팀에 **처음** 들어오려는 요청. 팀장이 승인해야 팀원이 된다.
+///
+/// 초대 코드를 아는 것만으로 들어오면, 코드가 한 번 새면 누구든 팀 안을 볼 수 있다.
+/// 팀장이 직접 초대했든 본인이 요청했든 마지막 문은 팀장이 연다.
+///
+/// 아직 `Member` 가 아니라서 온보딩에서 고른 값(MBTI·희망 역할)을 여기 들고 있다가,
+/// 승인되는 순간 `Member` 로 옮긴다.
+model JoinRequest {
+  id           String    @id @default(cuid())
+  teamId       String
+  name         String
+  mbti         String?
+  mbtiFromQuiz Boolean   @default(false)
+  wantRole     String?
+  vetoRole     String?
+  /// 승인되면 이 토큰으로 세션이 만들어진다. 요청한 브라우저만 갖고 있다.
+  token        String    @unique
+  /// pending | approved | rejected
+  status       String    @default("pending")
+  label        String?
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  approvedById String?
+
+  team       Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  approvedBy Member? @relation("JoinApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  /// 같은 이름으로 요청이 쌓이지 않게 한다.
+  @@unique([teamId, name])
+  @@index([teamId])
 }
 
 /// 안 되는 시간 한 칸. 표시하지 않은 시간은 가능한 시간으로 본다.

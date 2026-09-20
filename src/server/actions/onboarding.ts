@@ -1,10 +1,11 @@
 "use server";
 
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
-import { startSession } from "@/server/session";
+import { describeDevice, startSession } from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
 import type { OnboardingDraft, Team } from "@/lib/types";
 
@@ -25,6 +26,9 @@ const MIN_NAME = 2;
  * 표시를 남겼다가, 그 브라우저가 들어올 때 팀장으로 세운다.
  */
 const CREATOR_COOKIE = "cd_creator";
+
+/** 승인을 기다리는 가입 요청을 들고 있는 쿠키. 세션 쿠키와 다르다 — 아직 아무 권한도 없다. */
+const JOIN_COOKIE = "cd_join";
 
 /** 같은 팀에 같은 이름의 기록이 이미 있는지. 02 화면이 "본인 확인" 시트를 띄울지 판단한다. */
 export async function findMemberByName(
@@ -104,12 +108,16 @@ async function nextInviteCode(): Promise<string> {
  * 이제 **이미 있는 이름이면 거절한다.** 본인이 기기를 바꾼 것이라면
  * 재입장(`server/actions/rejoin.ts`)으로 가야 한다.
  *
- * @returns 이 사람만 볼 수 있는 재입장 코드. 화면이 한 번만 보여 준다.
+ * 그리고 초대 코드를 아는 것만으로는 들어올 수 없다 — **팀장이 승인해야 팀원이 된다.**
+ * 코드가 한 번 새면 누구든 팀 안을 볼 수 있기 때문이다. 팀장이 직접 초대했든 본인이
+ * 요청했든 마지막 문은 팀장이 연다.
+ *
+ * 예외는 **팀을 만든 첫 사람**뿐이다. 승인해 줄 팀장이 아직 없다.
  */
 export async function joinTeam(
   teamCode: string,
   draft: OnboardingDraft,
-): Promise<{ rejoinCode: string; isLeader: boolean }> {
+): Promise<{ status: "joined"; rejoinCode: string; isLeader: boolean } | { status: "requested" }> {
   const name = draft.name.trim();
   if (name.length < MIN_NAME) throw new Error("이름을 두 글자 이상 적어 주세요.");
   if (!draft.want) throw new Error("1순위 희망 역할을 골라 주세요.");
@@ -125,26 +133,51 @@ export async function joinTeam(
     throw new Error("이미 쓰이고 있는 이름입니다. 본인이라면 재입장으로 들어와 주세요.");
   }
 
+  const values = {
+    mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
+    mbtiFromQuiz: draft.mbtiFromQuiz,
+    wantRole: draft.want,
+    vetoRole: draft.veto,
+  };
+
   // 팀을 만든 브라우저가 첫 팀장이다. 쿠키가 없어졌으면(다른 기기로 들어옴) 팀에
-  // 팀장이 아직 없을 때만 첫 사람에게 준다 — 나중에 들어온 사람이 가로채지 못한다.
+  // 아무도 없을 때만 첫 사람에게 준다 — 나중에 들어온 사람이 가로채지 못한다.
   const store = await cookies();
   const createdHere = store.get(CREATOR_COOKIE)?.value === team.id;
   const hasLeader =
     (await db.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;
-  const isLeader =
-    !hasLeader &&
-    (createdHere || (await db.member.count({ where: { teamId: team.id, leftAt: null } })) === 0);
+  const isFirst = (await db.member.count({ where: { teamId: team.id, leftAt: null } })) === 0;
+
+  if (hasLeader || !(createdHere || isFirst)) {
+    // 팀장이 있으면 초대 코드만으로는 들어오지 못한다. 요청만 남기고 승인을 기다린다.
+    const token = randomUUID();
+    await db.joinRequest.upsert({
+      where: { teamId_name: { teamId: team.id, name } },
+      update: {
+        ...values,
+        token,
+        status: "pending",
+        label: await describeDevice(),
+        resolvedAt: null,
+      },
+      create: { teamId: team.id, name, ...values, token, label: await describeDevice() },
+    });
+
+    store.set(JOIN_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24,
+    });
+
+    revalidatePath("/team", "layout");
+    revalidatePath("/home");
+    return { status: "requested" };
+  }
 
   const member = await db.member.create({
-    data: {
-      teamId: team.id,
-      name,
-      isLeader,
-      mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
-      mbtiFromQuiz: draft.mbtiFromQuiz,
-      wantRole: draft.want,
-      vetoRole: draft.veto,
-    },
+    data: { teamId: team.id, name, isLeader: true, ...values },
   });
 
   if (createdHere) store.delete(CREATOR_COOKIE);
@@ -153,5 +186,43 @@ export async function joinTeam(
   await startSession(member.id);
 
   // 여기서 redirect 하지 않는다 — 화면이 재입장 코드를 한 번 보여 준 뒤에 넘어간다.
-  return { rejoinCode, isLeader };
+  return { status: "joined", rejoinCode, isLeader: true };
+}
+
+/**
+ * 요청한 브라우저가 승인됐는지 스스로 확인한다.
+ *
+ * 승인되는 순간이 아니라 여기서 팀원이 된다 — 세션 쿠키를 심을 수 있는 것은 **요청한
+ * 브라우저 자신**뿐이라, 팀장의 브라우저에서 만들 수 없다.
+ */
+export async function checkJoinApproval(): Promise<
+  { status: "approved"; rejoinCode: string } | { status: "pending" | "rejected" | "none" }
+> {
+  const store = await cookies();
+  const token = store.get(JOIN_COOKIE)?.value;
+  if (!token) return { status: "none" };
+
+  const request = await db.joinRequest.findUnique({ where: { token } });
+  if (!request) return { status: "none" };
+  if (request.status === "pending") return { status: "pending" };
+
+  store.delete(JOIN_COOKIE);
+  if (request.status !== "approved") return { status: "rejected" };
+
+  const member = await db.member.create({
+    data: {
+      teamId: request.teamId,
+      name: request.name,
+      mbti: request.mbti,
+      mbtiFromQuiz: request.mbtiFromQuiz,
+      wantRole: request.wantRole,
+      vetoRole: request.vetoRole,
+    },
+  });
+
+  await db.joinRequest.delete({ where: { token } });
+
+  const rejoinCode = await issueRejoinCode(member.id);
+  await startSession(member.id, token);
+  return { status: "approved", rejoinCode };
 }

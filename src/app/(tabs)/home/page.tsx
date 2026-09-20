@@ -2,6 +2,7 @@ import {
   getAiTools,
   getCurrentTeam,
   getRecentItems,
+  getJoinRequests,
   getRejoinRequests,
   getTeamCheck,
   getRoles,
@@ -15,7 +16,7 @@ import { HomeScreen } from "@/features/home/home-screen";
 /** 홈 탭 — 11 홈. */
 export default async function HomePage() {
   const team = await getCurrentTeam();
-  const [roles, roster, recent, aiTools, tasks, negotiation, meeting, rejoinRequests, teamCheck] =
+  const [roles, roster, recent, aiTools, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck] =
     await Promise.all([
       getRoles(),
       getRoster(team.id),
@@ -25,6 +26,7 @@ export default async function HomePage() {
       getRoleNegotiation(team.id),
       getMeetingProposal(team.id),
       getRejoinRequests(team.id),
+      getJoinRequests(team.id),
       getTeamCheck(team.id),
     ]);
 
@@ -38,7 +40,7 @@ export default async function HomePage() {
       tasks={tasks}
       negotiation={negotiation}
       meeting={meeting}
-      rejoinRequests={rejoinRequests.length}
+      rejoinRequests={rejoinRequests.length + joinRequests.length}
       awaitingMyConfirm={
         teamCheck.filter((r) => !r.isMine && r.state === "pending" && !r.iConfirmed).length
       }

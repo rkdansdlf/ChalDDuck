@@ -263,7 +263,7 @@ export function RosterScreen({
 
         <SecTitle
           className="mt-5"
-          note="재입장 승인·내 기기·재입장 코드"
+          note="가입·재입장 승인 · 내 기기 · 재입장 코드"
         >
           계정과 기기
         </SecTitle>
@@ -274,7 +274,7 @@ export function RosterScreen({
           iconRight="chevron-right"
           onClick={() => router.push("/team/access")}
         >
-          {rejoinPending > 0 ? `재입장 요청 ${rejoinPending}건 확인하기` : "계정과 기기 관리"}
+          {rejoinPending > 0 ? `승인할 요청 ${rejoinPending}건 확인하기` : "계정과 기기 관리"}
         </Btn>
 
         <SecTitle className="mt-5" note="가볍게 분위기를 푸는 도구들">팀 친목</SecTitle>

@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, Progress, Rows, TopInset } from "@/components/ui";
-import { joinTeam } from "@/server/actions/onboarding";
+import { checkJoinApproval, joinTeam } from "@/server/actions/onboarding";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
 import { setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
@@ -24,6 +24,8 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   const [submitting, setSubmitting] = useState(false);
   /** 들어간 뒤 한 번만 보여 주는 재입장 코드. 서버에는 해시만 남아 다시 볼 수 없다. */
   const [issued, setIssued] = useState<{ rejoinCode: string; isLeader: boolean } | null>(null);
+  /** 팀장 승인을 기다리는 중. */
+  const [waiting, setWaiting] = useState(false);
 
   const picked = mode === "want" ? want : veto;
   const set = mode === "want" ? setWant : setVeto;
@@ -32,8 +34,10 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
     if (!want || submitting) return;
     setSubmitting(true);
     try {
-      // 서버가 세션을 만들고 재입장 코드를 돌려준다. 코드를 보여 준 뒤에 팀으로 넘어간다.
-      setIssued(await joinTeam(teamCode ?? "", toDraft()));
+      // 팀장이 있으면 바로 들어가지 못하고 승인을 기다린다.
+      const result = await joinTeam(teamCode ?? "", toDraft());
+      if (result.status === "requested") setWaiting(true);
+      else setIssued({ rejoinCode: result.rejoinCode, isLeader: result.isLeader });
     } catch (error) {
       setSubmitting(false);
       throw error;
@@ -41,6 +45,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   };
 
   if (issued) return <RejoinCodePanel {...issued} onDone={() => router.push("/team")} />;
+  if (waiting) return <WaitingPanel name={toDraft().name} onIssued={setIssued} />;
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
@@ -221,6 +226,84 @@ function RejoinCodePanel({
           팀으로 가기
         </Btn>
       </Dock>
+    </AppFrame>
+  );
+}
+
+/** 승인을 기다리는 동안 얼마나 자주 확인할지. */
+const POLL_MS = 5000;
+
+/**
+ * 팀장의 승인을 기다리는 화면.
+ *
+ * 승인되는 순간이 아니라 **이 브라우저가 물어볼 때** 팀원이 된다 — 세션 쿠키를 심을 수
+ * 있는 것은 여기뿐이라, 팀장의 브라우저에서 만들 수 없다.
+ */
+function WaitingPanel({
+  name,
+  onIssued,
+}: {
+  name: string;
+  onIssued: (issued: { rejoinCode: string; isLeader: boolean }) => void;
+}) {
+  const router = useRouter();
+  const [rejected, setRejected] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+    const tick = async () => {
+      const result = await checkJoinApproval();
+      if (stopped) return;
+
+      if (result.status === "approved") onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
+      else if (result.status === "rejected") setRejected(true);
+      else if (result.status === "none") router.push("/join");
+    };
+
+    const timer = window.setInterval(tick, POLL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [onIssued, router]);
+
+  return (
+    <AppFrame label="팀장 승인 대기">
+      <TopInset />
+      <AppBar title="승인을 기다립니다" sub={name} />
+      <Body>
+        {rejected ? (
+          <>
+            <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">팀장이 거절했습니다</h1>
+            <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
+              초대 코드나 이름이 잘못됐을 수 있습니다. 팀장에게 직접 확인한 뒤 다시 시도해 주세요.
+            </p>
+            <Btn full size="lg" v="outline" onClick={() => router.push("/join")}>
+              처음으로
+            </Btn>
+          </>
+        ) : (
+          <>
+            <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">
+              팀장이 확인하면 바로 들어갑니다
+            </h1>
+            <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
+              팀장 화면에 <b>{name}</b>님의 요청이 떴습니다. 승인하면 이 화면이 저절로 넘어갑니다.
+            </p>
+
+            <Panel s="fill" pad={16} r={16} className="mb-4">
+              <p className="t-note keep-all m-0 text-center text-txt-muted">
+                확인하는 중… 이 화면을 열어 두셔도 되고, 나중에 같은 기기로 다시 들어오셔도 됩니다.
+              </p>
+            </Panel>
+
+            <Note tone="info" icon="shield" title="왜 승인이 필요한가요">
+              초대 코드를 아는 것만으로 들어올 수 있으면, 코드가 한 번 새면 누구든 팀의 기여 기록과
+              대화를 볼 수 있습니다. 팀장이 마지막 문을 엽니다.
+            </Note>
+          </>
+        )}
+      </Body>
     </AppFrame>
   );
 }

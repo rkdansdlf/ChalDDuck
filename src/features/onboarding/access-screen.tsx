@@ -17,9 +17,14 @@ import {
   Sheet,
   Toast,
 } from "@/components/ui";
-import type { MyDevice, RejoinRequest } from "@/data/api";
+import type { JoinRequestRow, MyDevice, RejoinRequest } from "@/data/api";
 import type { Member } from "@/lib/types";
-import { regenerateRejoinCode, resolveRejoinClaim, revokeDevice } from "@/server/actions/rejoin";
+import {
+  regenerateRejoinCode,
+  resolveJoinRequest,
+  resolveRejoinClaim,
+  revokeDevice,
+} from "@/server/actions/rejoin";
 import {
   disbandTeam,
   handOverAndLeave,
@@ -37,12 +42,15 @@ import {
  */
 export function AccessScreen({
   requests,
+  joins,
   devices,
   isLeader,
   teamName,
   others,
 }: {
   requests: RejoinRequest[];
+  /** 팀에 처음 들어오려는 요청. 팀장이 아니면 빈 목록. */
+  joins: JoinRequestRow[];
   devices: MyDevice[];
   isLeader: boolean;
   teamName: string;
@@ -80,13 +88,84 @@ export function AccessScreen({
     }
   };
 
+  const resolveJoin = async (id: string, approve: boolean, who: string) => {
+    if (working) return;
+    setWorking(true);
+    try {
+      const result = await resolveJoinRequest(id, approve);
+      router.refresh();
+      flash(
+        result === "gone"
+          ? "이미 정리된 요청입니다"
+          : approve
+            ? `${who}님이 팀에 들어왔습니다`
+            : `${who}님의 요청을 거절했습니다`,
+      );
+    } finally {
+      setWorking(false);
+    }
+  };
+
   return (
     <>
-      <AppBar title="계정과 기기" sub="재입장·승인" onBack={() => router.push("/team")} />
+      <AppBar title="계정과 기기" sub="가입·재입장 승인" onBack={() => router.push("/team")} />
 
       <Body dense>
         {isLeader ? (
           <>
+            <SecTitle note="초대 코드만으로는 들어올 수 없습니다 — 팀장이 마지막 문을 엽니다">
+              들어오려는 사람 {joins.length}명
+            </SecTitle>
+
+            {joins.length > 0 ? (
+              <Rows className="mb-3.5">
+                {joins.map((join) => (
+                  <div key={join.id} className="px-[15px] py-[13px]">
+                    <div className="flex items-start gap-[11px]">
+                      <span className="mt-0.5 grid size-[34px] flex-none place-items-center rounded-xl bg-yellow-200 text-yellow-700">
+                        <Icon name="user-plus" size={17} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-[14.5px] leading-[1.4] text-txt-strong">
+                          {join.name}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-[5px]">
+                          <Chip icon="hand">희망 역할 · {join.want}</Chip>
+                          <Chip icon="info">{join.device}</Chip>
+                          <Chip icon="calendar-clock">{join.when}</Chip>
+                        </div>
+                        <div className="mt-[9px] flex flex-wrap gap-1.5">
+                          <Btn
+                            size="sm"
+                            icon="check"
+                            disabled={working}
+                            onClick={() => resolveJoin(join.id, true, join.name)}
+                          >
+                            들여보내기
+                          </Btn>
+                          <Btn
+                            size="sm"
+                            v="outline"
+                            icon="x"
+                            disabled={working}
+                            onClick={() => resolveJoin(join.id, false, join.name)}
+                          >
+                            아닙니다
+                          </Btn>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </Rows>
+            ) : (
+              <Panel s="fill" pad={16} className="mb-4">
+                <p className="t-note keep-all m-0 text-center text-txt-muted">
+                  들어오려는 사람이 없습니다.
+                </p>
+              </Panel>
+            )}
+
             <SecTitle note="본인이 맞는지 확인하고 승인해 주세요">
               재입장 요청 {requests.length}건
             </SecTitle>
