@@ -270,8 +270,8 @@ npm run build && npx tsc --noEmit && npm run lint
 
 이 앱은 Supabase Auth 를 쓰지 않아(가입·로그인이 없는 제품입니다) 저장소 RLS 가 판단할
 사용자가 없습니다. 그래서 **접근 권한은 앱이 서버에서 직접 확인하고**, 내려받기는 60초짜리
-서명된 주소로만 내줍니다. 서비스 롤 키는 `server/storage/` 안에서만 쓰이고 브라우저로
-나가지 않습니다.
+서명된 주소로만 내줍니다. 비밀 키(`SUPABASE_SECRET_KEY`)는 `server/storage/` 안에서만
+쓰이고 브라우저로 나가지 않습니다 — 예전 이름인 `SUPABASE_SERVICE_ROLE_KEY` 도 받습니다.
 
 - 한 파일 50MB, 문서·이미지·PPT·PDF 만 받습니다.
 - 저장소 객체는 **버전마다 하나**입니다. 같은 경로에 덮어쓰면 옛 버전을 내려받을 때 새

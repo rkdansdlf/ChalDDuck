@@ -56,7 +56,7 @@ export function UploadButton({
           : result.status === "bad-type"
             ? "문서·이미지·PPT·PDF 만 올릴 수 있습니다."
             : result.status === "not-configured"
-              ? "파일 저장소가 아직 연결되지 않았습니다(SUPABASE_SERVICE_ROLE_KEY)."
+              ? "파일 저장소가 아직 연결되지 않았습니다(SUPABASE_SECRET_KEY)."
               : "빈 파일은 올릴 수 없습니다.",
       );
     } finally {
