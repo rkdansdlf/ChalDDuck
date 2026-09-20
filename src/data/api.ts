@@ -85,7 +85,7 @@ export async function getCurrentTeam(): Promise<Team> {
 
   const team = await db.team.findUnique({
     where: { id: member.teamId },
-    include: { _count: { select: { members: true } } },
+    include: { _count: { select: { members: { where: ACTIVE } } } },
   });
   if (!team) redirect("/join");
 
@@ -103,7 +103,7 @@ export async function getCurrentTeam(): Promise<Team> {
 export async function getTeamByCode(code: string): Promise<Team | null> {
   const team = await db.team.findUnique({
     where: { code: code.trim().toUpperCase() },
-    include: { _count: { select: { members: true } } },
+    include: { _count: { select: { members: { where: ACTIVE } } } },
   });
   if (!team) return null;
 
@@ -117,13 +117,24 @@ export async function getTeamByCode(code: string): Promise<Team | null> {
   };
 }
 
+/**
+ * 지금 팀에 있는 사람만.
+ *
+ * 나간 사람의 `Member` 행은 남는다 — 기여 기록·메시지·파일 이력이 성적 근거라
+ * 지우면 팀 기록에 구멍이 난다. 대신 명단과 집계에서는 빠진다.
+ */
+const ACTIVE = { leftAt: null } as const;
+
 const toMbti = (value: string | null | undefined): MbtiType | null =>
   isMbtiType(value) ? value : null;
 const toRole = (value: string | null): RoleKey | null => (value as RoleKey | null) ?? null;
 
 export async function getRoster(teamId: string): Promise<Member[]> {
   const session = await getSessionMember();
-  const members = await db.member.findMany({ where: { teamId }, orderBy: { joinedAt: "asc" } });
+  const members = await db.member.findMany({
+    where: { teamId, ...ACTIVE },
+    orderBy: { joinedAt: "asc" },
+  });
 
   return members.map((m) => ({
     id: m.id,
@@ -243,7 +254,7 @@ export async function getRejoinRequests(teamId: string): Promise<RejoinRequest[]
   if (!session || !session.isLeader) return [];
 
   const claims = await db.memberClaim.findMany({
-    where: { status: "pending", member: { teamId } },
+    where: { status: "pending", member: { teamId, ...ACTIVE } },
     include: { member: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
   });
@@ -318,7 +329,7 @@ export async function getMeetingWeek(teamId: string, preview?: "none"): Promise<
       where: { teamId, weekKey: preview === "none" ? "none" : "this" },
       orderBy: { available: "desc" },
     }),
-    db.member.count({ where: { teamId } }),
+    db.member.count({ where: { teamId, ...ACTIVE } }),
   ]);
 
   return {
@@ -370,7 +381,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     };
   }
 
-  const total = await db.member.count({ where: { teamId } });
+  const total = await db.member.count({ where: { teamId, ...ACTIVE } });
   const agreed = proposal.responses.filter((r) => r.agree).length;
   const against = proposal.responses.filter((r) => !r.agree).length;
   const mine = proposal.responses.find((r) => r.memberId === session?.id);
@@ -519,7 +530,10 @@ export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   if (!session) return [];
 
   const [others, readMarks] = await Promise.all([
-    db.member.findMany({ where: { teamId, id: { not: session.id } }, orderBy: { joinedAt: "asc" } }),
+    db.member.findMany({
+      where: { teamId, ...ACTIVE, id: { not: session.id } },
+      orderBy: { joinedAt: "asc" },
+    }),
     db.readMark.findMany({ where: { memberId: session.id } }),
   ]);
   const readAt = new Map(readMarks.map((r) => [r.threadKey, r.readAt]));
@@ -601,7 +615,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
 export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
   const members = await db.member.findMany({
-    where: { teamId },
+    where: { teamId, ...ACTIVE },
     include: { contribRecords: { select: { state: true } } },
     orderBy: { joinedAt: "asc" },
   });

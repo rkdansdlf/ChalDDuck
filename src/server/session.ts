@@ -75,7 +75,7 @@ export async function getSessionMember(): Promise<SessionMember | null> {
     select: {
       expiresAt: true,
       lastSeenAt: true,
-      member: { select: { id: true, teamId: true, name: true, isLeader: true } },
+      member: { select: { id: true, teamId: true, name: true, isLeader: true, leftAt: true } },
     },
   });
   if (!session) return null;
@@ -85,12 +85,19 @@ export async function getSessionMember(): Promise<SessionMember | null> {
     return null;
   }
 
+  // 팀을 나간 사람의 세션은 더 이상 통하지 않는다. 행은 남아 있어도 팀원은 아니다.
+  if (session.member.leftAt) {
+    await db.session.deleteMany({ where: { memberId: session.member.id } });
+    return null;
+  }
+
   // 기기 목록의 "마지막 사용"을 위한 값이라 대략이면 된다.
   if (Date.now() - session.lastSeenAt.getTime() > SEEN_THROTTLE_MS) {
     await db.session.update({ where: { token }, data: { lastSeenAt: new Date() } });
   }
 
-  return session.member;
+  const { leftAt: _leftAt, ...member } = session.member;
+  return member;
 }
 
 /**

@@ -129,8 +129,11 @@ export async function joinTeam(
   // 팀장이 아직 없을 때만 첫 사람에게 준다 — 나중에 들어온 사람이 가로채지 못한다.
   const store = await cookies();
   const createdHere = store.get(CREATOR_COOKIE)?.value === team.id;
-  const hasLeader = (await db.member.count({ where: { teamId: team.id, isLeader: true } })) > 0;
-  const isLeader = !hasLeader && (createdHere || (await db.member.count({ where: { teamId: team.id } })) === 0);
+  const hasLeader =
+    (await db.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;
+  const isLeader =
+    !hasLeader &&
+    (createdHere || (await db.member.count({ where: { teamId: team.id, leftAt: null } })) === 0);
 
   const member = await db.member.create({
     data: {

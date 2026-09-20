@@ -52,6 +52,9 @@ model Member {
   wantRole     String?
   vetoRole     String?
   joinedAt     DateTime @default(now())
+  /// 팀을 나간 시각. 행은 **지우지 않는다** — 기여 기록·메시지·파일 이력이 성적 근거라
+  /// 사람이 나갔다고 팀 기록이 사라지면 안 된다. 명단·집계에서만 빠진다.
+  leftAt       DateTime?
 
   team            Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
   sessions        Session[]

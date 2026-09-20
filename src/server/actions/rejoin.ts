@@ -81,6 +81,8 @@ export async function rejoinWithCode(
   }
 
   attempts.delete(key);
+  // 나갔던 사람이 돌아오는 경우 — 재입장 문(코드·승인)을 거쳤으니 명단에 되돌린다.
+  if (member.leftAt) await db.member.update({ where: { id: member.id }, data: { leftAt: null } });
   await startSession(member.id);
   return "ok";
 }
@@ -137,6 +139,7 @@ export async function checkRejoinApproval(): Promise<"approved" | "pending" | "r
   store.delete(CLAIM_COOKIE);
   if (claim.status !== "approved") return "rejected";
 
+  await db.member.update({ where: { id: claim.memberId }, data: { leftAt: null } });
   await startSession(claim.memberId, token);
   await db.memberClaim.delete({ where: { token } });
   return "approved";

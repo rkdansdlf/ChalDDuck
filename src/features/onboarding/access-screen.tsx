@@ -4,19 +4,29 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   AppBar,
+  Avatar,
   Body,
   Btn,
   Chip,
   Icon,
+  Input,
   Note,
   Panel,
   Rows,
   SecTitle,
+  Sheet,
   Toast,
   Undecided,
 } from "@/components/ui";
 import type { MyDevice, RejoinRequest } from "@/data/api";
+import type { Member } from "@/lib/types";
 import { regenerateRejoinCode, resolveRejoinClaim, revokeDevice } from "@/server/actions/rejoin";
+import {
+  disbandTeam,
+  handOverAndLeave,
+  leaveTeam,
+  transferLeadership,
+} from "@/server/actions/team";
 
 /**
  * 계정과 기기 — 인증에서 사람이 손댈 수 있는 것을 한 화면에 모은다.
@@ -30,15 +40,23 @@ export function AccessScreen({
   requests,
   devices,
   isLeader,
+  teamName,
+  others,
 }: {
   requests: RejoinRequest[];
   devices: MyDevice[];
   isLeader: boolean;
+  teamName: string;
+  /** 나를 뺀 지금 팀원. 팀장을 넘길 상대를 고를 때 쓴다. */
+  others: Member[];
 }) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기. */
+  const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | null>(null);
+  const [confirmName, setConfirmName] = useState("");
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -211,10 +229,174 @@ export function AccessScreen({
           재입장 코드 새로 받기
         </Btn>
 
+        <SecTitle className="mt-5" note={isLeader ? "팀장은 그냥 나갈 수 없습니다" : undefined}>
+          팀에서 나가기
+        </SecTitle>
+
+        {isLeader ? (
+          <>
+            <Note tone="warn" icon="shield" title="팀장이 사라지면 팀이 잠깁니다" className="mb-3">
+              새 기기에서 들어오려는 팀원을 승인해 줄 사람이 없어집니다. 그래서 나갈 때{" "}
+              <b>팀장을 넘기거나 프로젝트를 없애야</b> 합니다.
+            </Note>
+
+            <div className="flex flex-wrap gap-[7px]">
+              <Btn
+                size="sm"
+                v="outline"
+                icon="user-round"
+                disabled={working || others.length === 0}
+                onClick={() => setSheet("hand")}
+              >
+                팀장 넘기기
+              </Btn>
+              <Btn
+                size="sm"
+                v="outline"
+                icon="arrow-right"
+                disabled={working || others.length === 0}
+                onClick={() => setSheet("handLeave")}
+              >
+                팀장 넘기고 나가기
+              </Btn>
+              <Btn
+                size="sm"
+                v="ghost"
+                icon="circle-alert"
+                disabled={working}
+                onClick={() => {
+                  setConfirmName("");
+                  setSheet("disband");
+                }}
+              >
+                프로젝트 없애기
+              </Btn>
+            </div>
+
+            {others.length === 0 ? (
+              <Note tone="info" icon="info" className="mt-3">
+                팀에 다른 사람이 없어 넘길 상대가 없습니다. 프로젝트를 없애는 길만 있습니다.
+              </Note>
+            ) : null}
+          </>
+        ) : (
+          <Btn
+            size="sm"
+            v="outline"
+            icon="x"
+            disabled={working}
+            onClick={() => setSheet("leave")}
+          >
+            팀에서 나가기
+          </Btn>
+        )}
+
         <Undecided>
-          팀장을 넘기는 방법과, 팀장이 나갔을 때 누가 승인할지는 기획안에 없어 다루지 않았습니다.
+          나간 사람이 같은 이름으로 다시 들어오면(재입장 코드나 팀장 승인을 거쳐) 명단에
+          되돌아옵니다. 다시 못 들어오게 막는 방법은 기획안에 없어 다루지 않았습니다.
         </Undecided>
       </Body>
+
+      <Sheet
+        open={sheet === "hand" || sheet === "handLeave"}
+        title={sheet === "handLeave" ? "누구에게 넘기고 나갈까요" : "누구에게 넘길까요"}
+        onClose={() => setSheet(null)}
+      >
+        <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
+          고른 사람이 <b>새 기기 재입장을 승인</b>하게 됩니다.
+          {sheet === "handLeave" ? " 넘긴 뒤 나는 팀에서 나갑니다." : ""}
+        </p>
+        <div className="flex flex-col gap-2">
+          {others.map((member) => (
+            <button
+              key={member.id}
+              type="button"
+              disabled={working}
+              onClick={async () => {
+                setWorking(true);
+                try {
+                  if (sheet === "handLeave") await handOverAndLeave(member.id);
+                  else {
+                    await transferLeadership(member.id);
+                    setSheet(null);
+                    router.refresh();
+                    flash(`${member.name}님이 팀장이 되었습니다`);
+                  }
+                } finally {
+                  setWorking(false);
+                }
+              }}
+              className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 py-3 text-left"
+            >
+              <Avatar name={member.name} mbti={member.mbti} size={30} />
+              <span className="font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
+                {member.name}
+              </span>
+            </button>
+          ))}
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === "leave"} title="팀에서 나갈까요" onClose={() => setSheet(null)}>
+        <p className="text-pretty-keep m-0 mb-4 text-[14.5px] leading-[1.6] text-txt">
+          명단에서 빠지고 이 기기에서 로그아웃됩니다. <b>기여 기록과 올린 파일은 팀에 남습니다</b> —
+          성적 근거라 지우지 않습니다.
+        </p>
+        <div className="flex gap-2">
+          <Btn full v="outline" disabled={working} onClick={() => setSheet(null)}>
+            취소
+          </Btn>
+          <Btn
+            full
+            disabled={working}
+            onClick={async () => {
+              setWorking(true);
+              try {
+                await leaveTeam();
+              } finally {
+                setWorking(false);
+              }
+            }}
+          >
+            나가기
+          </Btn>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === "disband"} title="프로젝트를 없앨까요" onClose={() => setSheet(null)}>
+        <Note tone="warn" icon="circle-alert" title="되돌릴 수 없습니다" className="mb-3.5">
+          팀원 {others.length + 1}명의 <b>기여 기록·채팅·파일 이력이 전부 사라집니다.</b> 내 것만이
+          아니라 팀원들의 기록까지 없어집니다.
+        </Note>
+        <p className="text-pretty-keep m-0 mb-2 text-[14.5px] leading-[1.6] text-txt">
+          맞다면 팀 이름 <b>{teamName}</b> 을(를) 그대로 적어 주세요.
+        </p>
+        <Input
+          value={confirmName}
+          onChange={setConfirmName}
+          placeholder={teamName}
+          aria-label="팀 이름 확인"
+        />
+        <div className="mt-3.5 flex gap-2">
+          <Btn full v="outline" disabled={working} onClick={() => setSheet(null)}>
+            취소
+          </Btn>
+          <Btn
+            full
+            disabled={working || confirmName.trim() !== teamName}
+            onClick={async () => {
+              setWorking(true);
+              try {
+                await disbandTeam(confirmName);
+              } finally {
+                setWorking(false);
+              }
+            }}
+          >
+            없애기
+          </Btn>
+        </div>
+      </Sheet>
 
       <Toast msg={toast} />
     </>

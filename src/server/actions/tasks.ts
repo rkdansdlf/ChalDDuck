@@ -83,7 +83,8 @@ export async function addTasksFromClerk(
   if (candidates.length === 0) return;
 
   const roster = await db.member.findMany({
-    where: { teamId: me.teamId },
+    // 나간 사람에게 새 업무를 배정하지 않는다.
+    where: { teamId: me.teamId, leftAt: null },
     select: { id: true, name: true },
   });
   const idOf = (name: string | null) =>
