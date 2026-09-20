@@ -104,9 +104,10 @@ async function main() {
       role: "research",
       name: "자료조사 제출함",
       ownerId: minjun.id,
-      fileName: "자료조사 정리.docx",
       due: "9/15",
+      files: { create: { name: "자료조사 정리.docx", kind: "docx" } },
     },
+    include: { files: true },
   });
   const deckBox = await prisma.submissionBox.create({
     data: {
@@ -114,9 +115,10 @@ async function main() {
       role: "deck",
       name: "PPT 템플릿 제출함",
       ownerId: seoyeon.id,
-      fileName: "발표 자료.pptx",
       due: "9/20",
+      files: { create: { name: "발표 자료.pptx", kind: "pptx" } },
     },
+    include: { files: true },
   });
   await prisma.submissionBox.create({
     data: {
@@ -124,8 +126,8 @@ async function main() {
       role: "script",
       name: "발표 대본 제출함",
       ownerId: yuna.id,
-      fileName: "발표 대본.docx",
       due: "9/22",
+      // 아직 아무것도 올라오지 않은 제출함 — 빈 상태 화면을 보기 위해 파일도 두지 않는다.
     },
   });
 
@@ -147,7 +149,7 @@ async function main() {
   ];
   for (const [i, v] of deckVersions.entries()) {
     await prisma.fileVersion.create({
-      data: { ...v, boxId: deckBox.id, createdAt: new Date(Date.now() - (deckVersions.length - i) * 60_000) },
+      data: { ...v, fileId: deckBox.files[0].id, createdAt: new Date(Date.now() - (deckVersions.length - i) * 60_000) },
     });
   }
 
@@ -160,7 +162,7 @@ async function main() {
       data: {
         ...v,
         kind: "docx",
-        boxId: researchBox.id,
+        fileId: researchBox.files[0].id,
         authorId: minjun.id,
         createdAt: new Date(Date.now() - (researchVersions.length - i) * 60_000),
       },

@@ -247,8 +247,7 @@ export type SubmissionBox = {
   name: string;
   /** 이 칸을 맡은 사람. */
   owner: string;
-  /** 제출함을 열었을 때 보여 줄 대표 파일 이름. */
-  fileName: string;
+  /** 안에 들어 있는 파일 수. */
   fileCount: number;
   /** "9/15" 같은 표시 문자열. 서버가 날짜를 주면 화면에서 계산하도록 바꿀 것. */
   due: string;
@@ -258,6 +257,26 @@ export type SubmissionBox = {
 
 /** 실제로 열리는 형식과 안내만 하는 형식을 구분하기 위한 종류. */
 export type FileKind = "pptx" | "docx" | "pdf" | "image";
+
+/**
+ * 제출함 안의 파일 하나.
+ *
+ * 제출함과 버전 사이에 이 단계가 있다 — 한 제출함에 파일이 여러 개일 수 있고
+ * (발표자료.pptx 와 대본.docx), 버전은 **그 파일 하나**의 역사이기 때문이다.
+ */
+export type SubmittedFile = {
+  id: string;
+  name: string;
+  kind: FileKind;
+  versionCount: number;
+  /** 최신 버전 정보. 아직 아무것도 올라오지 않았으면 전부 null. */
+  latestLabel: string | null;
+  latestBy: string | null;
+  latestWhen: string | null;
+  size: string | null;
+  /** 마감을 지나 올라온 버전이 있는지. */
+  hasLate: boolean;
+};
 
 /**
  * 파일 버전 하나.

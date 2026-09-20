@@ -15,6 +15,7 @@ import type {
   CushionTone,
   DmThread,
   DriveLimits,
+  FileKind,
   FileVersion,
   IceGame,
   Member,
@@ -30,6 +31,7 @@ import type {
   RoleNegotiation,
   SentenceMode,
   SubmissionBox,
+  SubmittedFile,
   Task,
   TaskKind,
   Team,
@@ -446,12 +448,16 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
 /** 용량 한도는 아직 확정되지 않은 정책이라 코드에 둔다 — 팀별로 다르게 줄 값이 아니다. */
 export async function getDriveLimits(teamId: string): Promise<DriveLimits> {
   const versions = await db.fileVersion.findMany({
-    where: { box: { teamId } },
-    select: { size: true },
+    where: { file: { box: { teamId } } },
+    select: { size: true, bytes: true },
   });
 
-  // "8.4MB" 같은 표시 문자열을 더해 대략의 사용량을 낸다. 실제 바이트 수가 생기면 그걸로 바꾼다.
-  const usedMB = versions.reduce((sum, v) => sum + (Number.parseFloat(v.size) || 0), 0);
+  // 실제로 올라온 파일은 바이트 수가 있다. 시드 데이터는 "8.4MB" 같은 표시 문자열뿐이라
+  // 그때만 문자열에서 대략을 읽는다.
+  const usedMB = versions.reduce(
+    (sum, v) => sum + (v.bytes !== null ? v.bytes / (1024 * 1024) : Number.parseFloat(v.size) || 0),
+    0,
+  );
 
   return {
     capGB: 2,
@@ -463,7 +469,10 @@ export async function getDriveLimits(teamId: string): Promise<DriveLimits> {
 export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[]> {
   const boxes = await db.submissionBox.findMany({
     where: { teamId },
-    include: { owner: { select: { name: true } }, versions: { select: { isLate: true } } },
+    include: {
+      owner: { select: { name: true } },
+      files: { include: { versions: { select: { isLate: true } } } },
+    },
     orderBy: { id: "asc" },
   });
 
@@ -472,11 +481,58 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     role: b.role as RoleKey,
     name: b.name,
     owner: b.owner.name,
-    fileName: b.fileName,
-    fileCount: b.versions.length,
+    // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세서, 같은 파일을 네 번 고치면
+    // "4개"로 보였다.
+    fileCount: b.files.length,
     due: b.due,
-    hasLate: b.versions.some((v) => v.isLate),
+    hasLate: b.files.some((f) => f.versions.some((v) => v.isLate)),
   }));
+}
+
+/** 제출함 안의 파일 목록. 각 파일의 최신 버전을 함께 준다. */
+export async function getSubmittedFiles(
+  teamId: string,
+  boxId: string,
+): Promise<SubmittedFile[]> {
+  const files = await db.submittedFile.findMany({
+    where: { boxId, box: { teamId } },
+    include: {
+      versions: {
+        include: { author: { select: { name: true } } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  return files.map((f) => {
+    const latest = f.versions[0];
+    return {
+      id: f.id,
+      name: f.name,
+      kind: f.kind as FileKind,
+      versionCount: f.versions.length,
+      latestLabel: latest?.label ?? null,
+      latestBy: latest?.author.name ?? null,
+      latestWhen: latest?.whenLabel ?? null,
+      size: latest?.size ?? null,
+      hasLate: f.versions.some((v) => v.isLate),
+    };
+  });
+}
+
+export async function getSubmittedFile(
+  teamId: string,
+  fileId: string,
+): Promise<SubmittedFile | null> {
+  const file = await db.submittedFile.findFirst({
+    where: { id: fileId, box: { teamId } },
+    select: { boxId: true },
+  });
+  if (!file) return null;
+
+  const files = await getSubmittedFiles(teamId, file.boxId);
+  return files.find((f) => f.id === fileId) ?? null;
 }
 
 export async function getSubmissionBox(
@@ -488,11 +544,12 @@ export async function getSubmissionBox(
 }
 
 /** 버전 기록. **맨 앞이 최신**이다. */
-export async function getFileVersions(_teamId: string, boxId: string): Promise<FileVersion[]> {
+export async function getFileVersions(teamId: string, fileId: string): Promise<FileVersion[]> {
   const versions = await db.fileVersion.findMany({
-    where: { boxId },
+    where: { fileId, file: { box: { teamId } } },
     include: { author: { select: { name: true } } },
-    orderBy: { createdAt: "desc" },
+    // 같은 초에 올라온 버전이 있으면 정렬이 흔들려 "맨 앞이 최신"이 깨진다.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
 
   return versions.map((v) => ({
@@ -725,19 +782,22 @@ export async function getAiTools(): Promise<AiTool[]> {
 /** 홈의 "최근 자료·업무". 드라이브의 최신 버전과 할 일 화면으로 잇는다. */
 export async function getRecentItems(teamId: string): Promise<RecentItem[]> {
   const latest = await db.fileVersion.findFirst({
-    where: { box: { teamId } },
-    include: { author: { select: { name: true } }, box: { select: { id: true, fileName: true } } },
-    orderBy: { createdAt: "desc" },
+    where: { file: { box: { teamId } } },
+    include: {
+      author: { select: { name: true } },
+      file: { select: { id: true, name: true, boxId: true } },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
 
   const items: RecentItem[] = [];
   if (latest) {
     items.push({
       id: latest.id,
-      title: `${latest.box.fileName.replace(/\.[^.]+$/, "")} ${latest.label}`,
+      title: `${latest.file.name.replace(/\.[^.]+$/, "")} ${latest.label}`,
       note: `${latest.whenLabel} · ${latest.author.name}`,
       icon: "file-check-2",
-      href: `/drive/${latest.box.id}`,
+      href: `/drive/${latest.file.boxId}/${latest.file.id}`,
     });
   }
   // 남은 건수는 화면이 실제 목록에서 센다 — 여기 문구는 비워 둔다.

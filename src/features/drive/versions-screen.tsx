@@ -12,9 +12,10 @@ import {
   SecTitle,
   StatusBadge,
   Toast,
-  Undecided,
 } from "@/components/ui";
-import type { FileVersion, SubmissionBox } from "@/lib/types";
+import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
+import { getDownloadUrl } from "@/server/actions/drive";
+import { UploadButton } from "./upload-button";
 
 /**
  * 13 파일 버전 기록.
@@ -26,9 +27,11 @@ import type { FileVersion, SubmissionBox } from "@/lib/types";
  */
 export function VersionsScreen({
   box,
+  file,
   versions,
 }: {
   box: SubmissionBox;
+  file: SubmittedFile;
   versions: FileVersion[];
 }) {
   const router = useRouter();
@@ -41,17 +44,30 @@ export function VersionsScreen({
     window.setTimeout(() => setToast(null), 2400);
   };
 
+  /**
+   * 내려받기.
+   *
+   * 버킷이 비공개라 주소를 미리 들고 있을 수 없다 — 누를 때마다 서버에서 짧게 사는
+   * 서명된 주소를 받아 연다.
+   */
+  const download = async (version: FileVersion) => {
+    const url = await getDownloadUrl(version.id);
+    if (!url) {
+      flash("이 버전에는 내려받을 파일이 없습니다");
+      return;
+    }
+    window.location.href = url;
+  };
+
   return (
     <>
       <AppBar
-        title={box.fileName}
+        title={file.name}
         sub={box.name}
-        onBack={() => router.push("/drive")}
+        onBack={() => router.push(`/drive/${box.id}`)}
         action="download"
         actionLabel="최신 버전 내려받기"
-        onAction={() =>
-          flash(latest ? `${latest.label} 를 내려받습니다` : "내려받을 파일이 없습니다")
-        }
+        onAction={() => (latest ? download(latest) : flash("내려받을 파일이 없습니다"))}
       />
 
       <Body dense>
@@ -106,7 +122,7 @@ export function VersionsScreen({
 
                   <button
                     type="button"
-                    onClick={() => router.push(`/drive/${box.id}/${version.id}`)}
+                    onClick={() => router.push(`/drive/${box.id}/${file.id}/${version.id}`)}
                     aria-label={`${version.label} 열기`}
                     className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted"
                   >
@@ -114,7 +130,7 @@ export function VersionsScreen({
                   </button>
                   <button
                     type="button"
-                    onClick={() => flash(`${version.label} 를 내려받습니다`)}
+                    onClick={() => download(version)}
                     aria-label={`${version.label} 내려받기`}
                     className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted"
                   >
@@ -127,19 +143,20 @@ export function VersionsScreen({
         ) : (
           <Panel s="fill" pad={16}>
             <p className="t-note keep-all m-0 text-center text-txt-muted">
-              아직 올라온 파일이 없습니다. {box.owner}님이 올리면 여기에 기록이 쌓입니다.
+              아직 올라온 버전이 없습니다. 올리면 여기에 기록이 쌓입니다.
             </p>
           </Panel>
         )}
+
+        <div className="mt-3.5">
+          <UploadButton boxId={box.id} label="이 파일의 새 버전 올리기" />
+        </div>
 
         <Note tone="info" icon="clipboard-list" className="mt-3.5">
           이 기록은 <b>기여도 리포트의 근거</b>로도 쓰입니다. 본인 확인을 거친 항목만 리포트에 올라갑니다.
         </Note>
 
-        <Undecided>
-          제출함 하나에 파일이 여러 개일 때 보여 줄 <b>파일 목록 화면</b>이 기획안에 없습니다. 지금은 제출함을
-          열면 대표 파일({box.fileName})의 버전 기록으로 바로 들어갑니다.
-        </Undecided>
+
       </Body>
 
       <Toast msg={toast} />

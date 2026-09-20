@@ -16,8 +16,8 @@ import {
   Toast,
   Undecided,
 } from "@/components/ui";
-import type { FileVersion, SubmissionBox } from "@/lib/types";
-import { restoreFileVersion } from "@/server/actions/drive";
+import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
+import { getDownloadUrl, restoreFileVersion } from "@/server/actions/drive";
 import { nextVersionLabel } from "./version-label";
 
 /**
@@ -31,12 +31,20 @@ import { nextVersionLabel } from "./version-label";
  */
 export function FileViewScreen({
   box,
+  file,
   versions,
   versionId,
+  previewUrl,
 }: {
   box: SubmissionBox;
+  file: SubmittedFile;
   versions: FileVersion[];
   versionId: string;
+  /**
+   * 이 버전을 화면에 그릴 수 있는 주소. 서버가 만들어 넘긴다 — 비공개 버킷이라
+   * 서명된 주소를 그때그때 만들어야 하고, 그 일은 서버에서만 할 수 있다.
+   */
+  previewUrl: string | null;
 }) {
   const router = useRouter();
 
@@ -50,7 +58,7 @@ export function FileViewScreen({
   if (!current) {
     return (
       <>
-        <AppBar title="파일 없음" sub={box.name} onBack={() => router.push(`/drive/${box.id}`)} />
+        <AppBar title="파일 없음" sub={box.name} onBack={() => router.push(`/drive/${box.id}/${file.id}`)} />
         <Body dense>
           <Panel s="fill" pad={16}>
             <p className="t-note keep-all m-0 text-center text-txt-muted">
@@ -63,14 +71,14 @@ export function FileViewScreen({
   }
 
   const isLatest = versions[0]?.id === current.id;
-  const canPreview = current.previewUrl !== null;
+  const canPreview = previewUrl !== null;
   const nextLabel = nextVersionLabel(versions);
 
   const restore = async () => {
     // 이름은 서버가 붙인다 — 두 사람이 동시에 복원해도 같은 이름이 두 번 생기지 않아야 한다.
     setRestoring(true);
     try {
-      const label = await restoreFileVersion(box.id, current.id);
+      const label = await restoreFileVersion(file.id, current.id);
       setConfirming(false);
       setRestoredAs(label);
       router.refresh();
@@ -89,7 +97,7 @@ export function FileViewScreen({
       <AppBar
         title={`${current.label} 미리보기`}
         sub={box.name}
-        onBack={() => router.push(`/drive/${box.id}`)}
+        onBack={() => router.push(`/drive/${box.id}/${file.id}`)}
       />
 
       <Body dense>
@@ -107,7 +115,7 @@ export function FileViewScreen({
             <div className="keep-all mt-1.5 font-medium text-[13.5px] leading-[1.5] text-yellow-700">
               기존 버전은 지워지지 않았습니다
             </div>
-            <Btn full size="lg" className="mt-3.5" onClick={() => router.push(`/drive/${box.id}`)}>
+            <Btn full size="lg" className="mt-3.5" onClick={() => router.push(`/drive/${box.id}/${file.id}`)}>
               버전 목록으로
             </Btn>
           </Panel>
@@ -116,7 +124,7 @@ export function FileViewScreen({
             {canPreview ? (
               <div className="mb-4 overflow-hidden rounded-[18px] border border-line bg-fill">
                 <Image
-                  src={current.previewUrl as string}
+                  src={previewUrl}
                   alt={current.note}
                   width={390}
                   height={260}
@@ -181,7 +189,14 @@ export function FileViewScreen({
                 size="lg"
                 v="outline"
                 icon="download"
-                onClick={() => flash(`${current.label} 를 내려받습니다`)}
+                onClick={async () => {
+                  const url = await getDownloadUrl(current.id);
+                  if (!url) {
+                    flash("이 버전에는 내려받을 파일이 없습니다");
+                    return;
+                  }
+                  window.location.href = url;
+                }}
               >
                 다운로드
               </Btn>

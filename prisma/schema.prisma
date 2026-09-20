@@ -263,22 +263,39 @@ model SubmissionBox {
   role     String
   name     String
   ownerId  String
-  /// 제출함을 열었을 때 보여 줄 대표 파일 이름.
-  fileName String
   /// "9/15" 같은 표시 문자열.
   due      String
 
-  team     Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  owner    Member        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  versions FileVersion[]
+  team  Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  owner Member          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  files SubmittedFile[]
 
   @@index([teamId])
+}
+
+/// 제출함에 올라온 파일 하나.
+///
+/// 제출함과 버전 사이에 이 단계가 필요하다 — 한 제출함에 파일이 여러 개일 수 있고
+/// (발표자료.pptx 와 대본.docx), 버전은 **그 파일 하나**의 역사이기 때문이다.
+model SubmittedFile {
+  id        String   @id @default(cuid())
+  boxId     String
+  /// 화면에 보이는 파일 이름("발표 자료.pptx").
+  name      String
+  /// pptx | docx | pdf | image
+  kind      String
+  createdAt DateTime @default(now())
+
+  box      SubmissionBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  versions FileVersion[]
+
+  @@index([boxId])
 }
 
 /// 파일 버전. **덮어쓰지 않고 쌓인다** — 복원도 새 버전을 더하는 것이다.
 model FileVersion {
   id         String   @id @default(cuid())
-  boxId      String
+  fileId     String
   /// "v4" 처럼 화면에 그대로 보이는 이름.
   label      String
   authorId   String
@@ -286,18 +303,25 @@ model FileVersion {
   size       String
   /// pptx | docx | pdf | image
   kind       String
-  /// 실제로 열리는 형식만 미리보기 주소를 갖는다.
+  /// 실제로 열리는 형식만 미리보기 주소를 갖는다. 저장소에 올린 파일은 볼 때마다
+  /// 서명된 주소를 새로 만들므로 여기에는 남기지 않는다(시드 이미지에만 남아 있다).
   previewUrl String?
+  /// Supabase Storage 안의 경로. 저장소에 없는 시드 데이터는 null 이다.
+  storagePath String?
+  /// 실제 바이트 수. `size` 는 화면에 보이는 문자열이라 계산에 쓰면 안 된다.
+  bytes      Int?
+  /// 내려받을 때 브라우저에 알려 줄 형식.
+  mimeType   String?
   /// 마감을 지나 올라왔는지.
   isLate     Boolean  @default(false)
   createdAt  DateTime @default(now())
   /// 화면에 보이는 시각 문자열("어제 21:14"). 서버가 날짜를 포맷하게 되면 지운다.
   whenLabel  String
 
-  box    SubmissionBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  file   SubmittedFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
   author Member        @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
-  @@index([boxId])
+  @@index([fileId])
 }
 
 /// 메시지. 팀 단톡방과 1:1 DM 이 같은 표에 들어가고 `threadKey` 로 갈린다.
