@@ -138,7 +138,11 @@ async function nextInviteCode(): Promise<string> {
 export async function joinTeam(
   teamCode: string,
   draft: OnboardingDraft,
-): Promise<{ status: "joined"; rejoinCode: string; isLeader: boolean } | { status: "requested" }> {
+): Promise<
+  | { status: "joined"; rejoinCode: string; isLeader: boolean }
+  | { status: "requested" }
+  | { status: "name-taken" }
+> {
   const name = draft.name.trim();
   if (name.length < MIN_NAME) throw new Error("이름을 두 글자 이상 적어 주세요.");
   if (!draft.want) throw new Error("1순위 희망 역할을 골라 주세요.");
@@ -150,9 +154,10 @@ export async function joinTeam(
     where: { teamId_name: { teamId: team.id, name } },
     select: { id: true },
   });
-  if (taken) {
-    throw new Error("이미 쓰이고 있는 이름입니다. 본인이라면 재입장으로 들어와 주세요.");
-  }
+  // 던지지 않고 돌려준다 — 이건 사고가 아니라 **예상되는 결말**이고, 화면은 여기서
+  // 재입장으로 안내해야 한다. 던지면 배포본에서 메시지가 가려져(Server Action 은 오류를
+  // 숨긴다) 버튼을 눌러도 아무 일도 일어나지 않는 화면이 된다(실제로 그랬다).
+  if (taken) return { status: "name-taken" };
 
   const values = {
     mbti: isMbtiType(draft.mbti) ? draft.mbti : null,

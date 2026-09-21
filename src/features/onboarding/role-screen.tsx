@@ -36,6 +36,12 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
     try {
       // 팀장이 있으면 바로 들어가지 못하고 승인을 기다린다.
       const result = await joinTeam(teamCode ?? "", toDraft());
+      if (result.status === "name-taken") {
+        // 이름 단계에서 걸러지지만, 그 사이에 같은 이름이 들어왔을 수 있다.
+        const query = new URLSearchParams({ code: teamCode ?? "", name: toDraft().name });
+        router.push(`/join/rejoin?${query}`);
+        return;
+      }
       if (result.status === "requested") setWaiting(true);
       else setIssued({ rejoinCode: result.rejoinCode, isLeader: result.isLeader });
     } catch (error) {

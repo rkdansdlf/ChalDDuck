@@ -20,6 +20,7 @@ export default function NamePage() {
   const { teamCode, name } = useOnboarding();
 
   const [existing, setExisting] = useState<{ name: string } | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const trimmed = name.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_NAME;
@@ -41,11 +42,22 @@ export default function NamePage() {
     };
   }, [teamCode, trimmed]);
 
-  const proceed = () => {
+  const proceed = async () => {
+    if (checking) return;
+
+    // 화면에 떠 있는 `existing` 을 믿지 않고 여기서 다시 물어본다. 빠르게 적고 바로
+    // 누르면 조회가 아직 안 끝나 `null` 인 채로 통과해 버린다 — 그러면 마지막 단계까지
+    // 갔다가 이름이 겹쳐 되돌아오게 된다(실제로 그랬다).
+    setChecking(true);
+    const member = await findMemberByName(teamCode ?? "", trimmed).finally(() =>
+      setChecking(false),
+    );
+    setExisting(member);
+
     // 이미 있는 이름이면 온보딩을 이어가지 않는다 — 본인이면 재입장, 아니면 다른 이름이다.
     // 예전에는 "네, 저예요"를 누르면 그대로 통과해서, 초대 코드를 아는 사람이 팀원을
     // 사칭할 수 있었다(사칭한 쪽이 상대의 희망 역할까지 덮어썼다).
-    if (!existing) {
+    if (!member) {
       router.push("/onboarding/mbti");
       return;
     }
@@ -97,8 +109,14 @@ export default function NamePage() {
       </Body>
 
       <Dock>
-        <Btn full size="lg" disabled={trimmed.length < MIN_NAME} onClick={proceed} iconRight="arrow-right">
-          다음
+        <Btn
+          full
+          size="lg"
+          disabled={trimmed.length < MIN_NAME || checking}
+          onClick={proceed}
+          iconRight="arrow-right"
+        >
+          {checking ? "확인하는 중…" : "다음"}
         </Btn>
       </Dock>
 
