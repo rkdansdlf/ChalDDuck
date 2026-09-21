@@ -2,6 +2,7 @@
 
 import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage } from "@/lib/types";
 
 /**
@@ -23,6 +24,7 @@ export function MessageBubble({
   onRetry: () => void;
 }) {
   const mine = message.isMine;
+  const { text: displayText, masked } = softenProfanity(message.text);
 
   return (
     <div className={cn("flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
@@ -41,13 +43,19 @@ export function MessageBubble({
             mine ? "bg-yellow-300" : "border border-line bg-card",
           )}
         >
-          {message.text}
+          {displayText}
         </div>
 
         <div className="mt-1 flex items-center gap-1.5">
           {message.viaCushion ? (
             <Chip tone="y" icon="wand-sparkles">
               쿠션 번역기
+            </Chip>
+          ) : null}
+
+          {masked ? (
+            <Chip tone="n" icon="shield">
+              순화됨
             </Chip>
           ) : null}
 
