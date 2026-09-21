@@ -352,16 +352,19 @@ export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
 /**
  * 이번 주 회의 시간 후보.
  *
- * `preview` 는 **데모 전용**이다 — 전원 불가한 주가 어떻게 보이는지 확인하기 위한 것으로,
- * 후보를 실제 시간표에서 계산하게 되면 없앤다.
+ * 여기서 계산하지 않고 읽기만 한다 — 후보를 만드는 곳은
+ * `server/meetings/candidates.ts` 한 곳이고, 시간표나 명단이 바뀔 때 다시 만든다.
  */
-export async function getMeetingWeek(teamId: string, preview?: "none"): Promise<MeetingWeek> {
-  const [slots, total] = await Promise.all([
+export async function getMeetingWeek(teamId: string): Promise<MeetingWeek> {
+  const [slots, total, submitted] = await Promise.all([
     db.meetingSlot.findMany({
-      where: { teamId, weekKey: preview === "none" ? "none" : "this" },
-      orderBy: { available: "desc" },
+      where: { teamId, weekKey: "this" },
+      orderBy: [{ available: "desc" }, { id: "asc" }],
     }),
     db.member.count({ where: { teamId, ...ACTIVE } }),
+    // "시간표를 냈다"는 표시가 따로 없어서 안 되는 시간을 하나라도 적은 사람으로 센다.
+    // 한 주가 통째로 비는 사람은 낸 것으로 보이지 않는다 — 확정되지 않은 정책이다.
+    db.member.count({ where: { teamId, ...ACTIVE, busyBlocks: { some: {} } } }),
   ]);
 
   return {
@@ -374,7 +377,7 @@ export async function getMeetingWeek(teamId: string, preview?: "none"): Promise<
       blockedBy: s.blockedBy,
     })),
     hasFullAvailability: slots.some((s) => s.available === s.total),
-    submitted: total,
+    submitted,
     total,
   };
 }
@@ -481,7 +484,7 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     id: b.id,
     role: b.role as RoleKey,
     name: b.name,
-    owner: b.owner.name,
+    owner: b.owner?.name ?? null,
     // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세서, 같은 파일을 네 번 고치면
     // "4개"로 보였다.
     fileCount: b.files.length,

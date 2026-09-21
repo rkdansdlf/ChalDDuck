@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
+import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
 import { describeDevice, startSession } from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
@@ -27,6 +28,18 @@ const MIN_NAME = 2;
  * 표시를 남겼다가, 그 브라우저가 들어올 때 팀장으로 세운다.
  */
 const CREATOR_COOKIE = "cd_creator";
+
+/**
+ * 팀을 만들 때 함께 생기는 제출함.
+ *
+ * **결과물을 내는 역할에만 칸이 있다.** 발표·일정 관리는 파일로 내는 것이 없어서 빼 둔다
+ * (시드 데이터가 잡아 둔 구성과 같다). 마감은 팀이 정하는 값이라 비워 둔다.
+ */
+const SUBMISSION_BOXES = [
+  { role: "research", name: "자료조사 제출함", due: "미정" },
+  { role: "deck", name: "PPT 제출함", due: "미정" },
+  { role: "script", name: "발표 대본 제출함", due: "미정" },
+];
 
 /** 승인을 기다리는 가입 요청을 들고 있는 쿠키. 세션 쿠키와 다르다 — 아직 아무 권한도 없다. */
 const JOIN_COOKIE = "cd_join";
@@ -55,7 +68,14 @@ export async function createTeam(input: { name: string; course: string }): Promi
   if (!name) throw new Error("팀 이름을 적어 주세요.");
 
   const team = await db.team.create({
-    data: { name, course: input.course.trim(), code: await nextInviteCode() },
+    data: {
+      name,
+      course: input.course.trim(),
+      code: await nextInviteCode(),
+      // 제출함은 팀과 함께 생긴다. 없으면 드라이브가 빈 화면이고 만들 방법도 없었다.
+      // 주인은 아직 없다 — 역할 추첨을 수락하면 그 사람이 주인이 된다.
+      submissionBoxes: { create: SUBMISSION_BOXES },
+    },
   });
 
   (await cookies()).set(CREATOR_COOKIE, team.id, {
@@ -228,6 +248,9 @@ export async function checkJoinApproval(): Promise<
       vetoRole: request.vetoRole,
     },
   });
+
+  // 인원이 늘면 "몇 명 가능"이 달라진다.
+  await rebuildMeetingCandidates(request.teamId);
 
   await db.joinRequest.delete({ where: { token } });
 

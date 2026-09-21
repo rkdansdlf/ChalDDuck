@@ -27,7 +27,7 @@ export function FilesScreen({
 
   return (
     <>
-      <AppBar title={box.name} sub={`${box.owner} · ${box.due} 마감`} onBack={() => router.push("/drive")} />
+      <AppBar title={box.name} sub={`${box.owner ?? "담당자 미정"} · ${box.due} 마감`} onBack={() => router.push("/drive")} />
 
       <Body dense>
         <SecTitle note="파일을 누르면 버전 기록이 열립니다">파일 {files.length}개</SecTitle>
@@ -76,7 +76,7 @@ export function FilesScreen({
         ) : (
           <Panel s="fill" pad={16} className="mb-3.5">
             <p className="t-note keep-all m-0 text-center text-txt-muted">
-              아직 올라온 파일이 없습니다. {box.owner}님이 올리면 여기에 쌓입니다.
+              아직 올라온 파일이 없습니다. 아래에서 올리면 여기에 쌓입니다.
             </p>
           </Panel>
         )}

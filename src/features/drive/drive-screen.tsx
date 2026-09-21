@@ -75,7 +75,7 @@ export function DriveScreen({
                 <span className="min-w-0 flex-1">
                   <span className="t-sec keep-all block text-txt-strong">{box.name}</span>
                   <span className="mt-1.5 flex flex-wrap gap-[5px]">
-                    <Chip icon="user-round">{box.owner}</Chip>
+                    <Chip icon="user-round">{box.owner ?? "담당자 미정"}</Chip>
                     {empty ? (
                       <StatusBadge status="none">아직 없음</StatusBadge>
                     ) : (

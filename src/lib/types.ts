@@ -258,8 +258,8 @@ export type SubmissionBox = {
   id: string;
   role: RoleKey;
   name: string;
-  /** 이 칸을 맡은 사람. */
-  owner: string;
+  /** 이 칸을 맡은 사람. 역할이 정해지기 전에는 null. */
+  owner: string | null;
   /** 안에 들어 있는 파일 수. */
   fileCount: number;
   /** "9/15" 같은 표시 문자열. 서버가 날짜를 주면 화면에서 계산하도록 바꿀 것. */

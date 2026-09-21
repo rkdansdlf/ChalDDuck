@@ -291,12 +291,14 @@ model SubmissionBox {
   teamId   String
   role     String
   name     String
-  ownerId  String
+  /// 이 칸을 맡은 사람. **역할이 정해지기 전에는 비어 있다** — 팀을 만들면 제출함부터
+  /// 생기고, 역할 추첨을 수락하면 그 사람이 주인이 된다.
+  ownerId  String?
   /// "9/15" 같은 표시 문자열.
   due      String
 
   team  Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  owner Member          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner Member?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   files SubmittedFile[]
 
   @@index([teamId])

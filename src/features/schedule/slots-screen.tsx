@@ -39,7 +39,6 @@ export function SlotsScreen({
   team,
   week,
   proposal,
-  preview,
   devDemo,
 }: {
   team: Team;
@@ -47,8 +46,6 @@ export function SlotsScreen({
   proposal: MeetingProposal;
   /** 24시간을 기다리지 않고 마감 뒤 화면을 보는 버튼을 띄울지. 개발 환경에서만 참. */
   devDemo: boolean;
-  /** 데모 전용 — 전원 불가한 주를 미리 보는 중인지. 후보를 시간표에서 계산하면 없앤다. */
-  preview?: "none";
 }) {
   const router = useRouter();
 
@@ -57,8 +54,19 @@ export function SlotsScreen({
   const [toast, setToast] = useState<string | null>(null);
 
   const picked = week.slots.find((s) => s.id === pickedId) ?? null;
+  /**
+   * 아직 후보 자체가 없는 상태.
+   *
+   * 새로 만든 팀이 여기 처음 들어오면 후보가 하나도 없다. 이걸 "전원 불가한 주"와
+   * 같이 취급하면 `Math.max()` 가 빈 배열에서 `-Infinity` 를 내고
+   * "최대 -Infinity명 참석 가능"이 화면에 뜬다(실제로 그랬다).
+   */
+  const noSlots = week.slots.length === 0;
+  /** 아직 나 혼자인 팀. 시간표를 더 내도 후보가 생기지 않는다 — 부를 사람이 먼저다. */
+  const alone = week.total < 2;
   /** 전원 가능한 후보가 없는 주 — 10번 화면 흐름. */
-  const noFullWeek = !week.hasFullAvailability;
+  const noFullWeek = !noSlots && !week.hasFullAvailability;
+  const bestAvailable = noSlots ? 0 : Math.max(...week.slots.map((s) => s.available));
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -88,12 +96,15 @@ export function SlotsScreen({
             <Chip tone="ok" icon="check">
               {week.submitted}명 시간표 제출
             </Chip>
-            <Chip
-              tone={noFullWeek ? "warn" : "ok"}
-              icon={noFullWeek ? "user-minus" : "check"}
-            >
-              최대 {Math.max(...week.slots.map((s) => s.available))}명 참석 가능
-            </Chip>
+            {noSlots ? (
+              <Chip tone="warn" icon="circle-dashed">
+                {alone ? "팀원이 아직 없습니다" : "후보를 아직 만들지 못했습니다"}
+              </Chip>
+            ) : (
+              <Chip tone={noFullWeek ? "warn" : "ok"} icon={noFullWeek ? "user-minus" : "check"}>
+                최대 {bestAvailable}명 참석 가능
+              </Chip>
+            )}
           </div>
         </Panel>
 
@@ -185,7 +196,28 @@ export function SlotsScreen({
           </>
         ) : (
           <>
-            {noFullWeek ? (
+            {noSlots ? (
+              <>
+                <Note
+                  tone="warn"
+                  icon="calendar-x"
+                  title="아직 회의 시간 후보가 없습니다"
+                  className="mb-3"
+                >
+                  {alone ? (
+                    <>
+                      회의 시간은 <b>두 사람 이상</b>의 시간표를 겹쳐 찾습니다. 팀 탭의 초대 코드를
+                      공유해 팀원을 부른 뒤 다시 와 주세요.
+                    </>
+                  ) : (
+                    <>
+                      후보는 팀원들이 낸 <b>안 되는 시간</b>에서 만들어집니다. 일정 탭에서 내 시간표를
+                      먼저 넣어 주세요. 팀원이 모두 내면 모두 되는 시간이 후보로 올라옵니다.
+                    </>
+                  )}
+                </Note>
+              </>
+            ) : noFullWeek ? (
               <>
                 <Note
                   tone="warn"
@@ -201,7 +233,7 @@ export function SlotsScreen({
                   팀이 버튼으로 직접 정합니다.
                 </Note>
                 <SecTitle className="mt-1" note="빠진 사람과 사유를 함께 표시합니다">
-                  {Math.max(...week.slots.map((s) => s.available))}명 가능한 시간
+                  {bestAvailable}명 가능한 시간
                 </SecTitle>
               </>
             ) : (
@@ -252,17 +284,6 @@ export function SlotsScreen({
                 </>
               ) : null}
 
-              {/* 데모 전용 — 서버가 붙으면 실제 시간표로만 판단하므로 없앤다. */}
-              <Btn
-                v="ghost"
-                size="sm"
-                icon="calendar-search"
-                onClick={() =>
-                  router.push(preview === "none" ? "/schedule/slots" : "/schedule/slots?preview=none")
-                }
-              >
-                {preview === "none" ? "이번 주 후보 다시 보기" : "전원 불가한 주는 어떻게 보이나요"}
-              </Btn>
             </div>
           </>
         )}
@@ -270,9 +291,23 @@ export function SlotsScreen({
 
       {stage === "idle" ? (
         <Dock>
-          <Btn full size="lg" disabled={!picked} onClick={propose} icon="calendar-check">
-            {picked ? `${picked.day} ${picked.time} 로 제안` : "시간을 골라 주세요"}
-          </Btn>
+          {/* 후보가 없을 때 "시간을 골라 주세요"를 비활성으로 띄우면 고를 것이 없는데
+              고르라고 하는 셈이다. 그 상태에서 할 수 있는 일은 시간표를 내는 것뿐이다. */}
+          {noSlots ? (
+            alone ? (
+              <Btn full size="lg" icon="user-round" onClick={() => router.push("/team")}>
+                팀원 초대하러 가기
+              </Btn>
+            ) : (
+              <Btn full size="lg" icon="calendar-clock" onClick={() => router.push("/schedule")}>
+                내 시간표 넣으러 가기
+              </Btn>
+            )
+          ) : (
+            <Btn full size="lg" disabled={!picked} onClick={propose} icon="calendar-check">
+              {picked ? `${picked.day} ${picked.time} 로 제안` : "시간을 골라 주세요"}
+            </Btn>
+          )}
         </Dock>
       ) : null}
 

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/server/db";
+import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { endSession, requireLeader, requireSessionMember } from "@/server/session";
 
 /**
@@ -58,6 +59,9 @@ export async function leaveTeam(): Promise<void> {
     db.session.deleteMany({ where: { memberId: me.id } }),
   ]);
 
+  // 나간 사람을 뺀 인원으로 후보를 다시 만든다.
+  await rebuildMeetingCandidates(me.teamId);
+
   await endSession();
   redirect("/join");
 }
@@ -90,6 +94,7 @@ export async function disbandTeam(confirmName: string): Promise<void> {
   }
 
   await db.team.delete({ where: { id: team.id } });
+
   await endSession();
   redirect("/join");
 }

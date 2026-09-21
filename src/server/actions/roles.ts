@@ -58,7 +58,15 @@ export async function acceptRoleDraw(role: RoleKey): Promise<void> {
     data: { accepted: true },
   });
 
+  // 역할이 정해지면 그 역할의 제출함 주인도 정해진다 — 드라이브가 "담당자 미정"으로
+  // 남아 있으면 누가 낼 칸인지 알 수 없다.
+  await db.submissionBox.updateMany({
+    where: { teamId: me.teamId, role },
+    data: { ownerId: me.id },
+  });
+
   revalidatePath("/team");
+  revalidatePath("/drive", "layout");
 }
 
 /** 당사자가 거절 — 제외 명단에 넣고 결과를 지워 다시 추첨할 수 있게 한다. */

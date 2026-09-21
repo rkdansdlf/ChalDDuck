@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
+import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
 
 /**
  * 데모 팀 한 개를 넣는다.
@@ -44,57 +45,61 @@ async function main() {
   );
 
   /* ── 08 내 시간표 ──────────────────────────────────────── */
+  // 네 사람 모두 넣는다. 한 사람만 있으면 "모두 되는 시간"이 그 사람의 빈 시간일 뿐이다.
+  const timetables: Array<[string, Array<{ day: number; startHour: number; hours: number; kind: string }>]> = [
+    [
+      minjun.id,
+      [
+        { day: 0, startHour: 1, hours: 3, kind: "class" },
+        { day: 0, startHour: 6, hours: 2, kind: "work" },
+        { day: 1, startHour: 0, hours: 2, kind: "class" },
+        { day: 2, startHour: 3, hours: 2, kind: "class" },
+        { day: 2, startHour: 7, hours: 3, kind: "work" },
+        { day: 3, startHour: 1, hours: 2, kind: "class" },
+        { day: 4, startHour: 2, hours: 2, kind: "class" },
+        { day: 4, startHour: 6, hours: 2, kind: "work" },
+      ],
+    ],
+    [
+      seoyeon.id,
+      [
+        { day: 0, startHour: 5, hours: 3, kind: "class" },
+        { day: 1, startHour: 2, hours: 2, kind: "class" },
+        { day: 3, startHour: 0, hours: 2, kind: "class" },
+        { day: 4, startHour: 5, hours: 2, kind: "work" },
+      ],
+    ],
+    [
+      jiho.id,
+      [
+        { day: 0, startHour: 0, hours: 2, kind: "class" },
+        { day: 2, startHour: 6, hours: 4, kind: "work" },
+        { day: 3, startHour: 6, hours: 4, kind: "work" },
+        { day: 4, startHour: 1, hours: 2, kind: "class" },
+      ],
+    ],
+    [
+      yuna.id,
+      [
+        { day: 1, startHour: 6, hours: 3, kind: "exam" },
+        { day: 2, startHour: 0, hours: 2, kind: "class" },
+        { day: 3, startHour: 3, hours: 3, kind: "exam" },
+        { day: 4, startHour: 0, hours: 2, kind: "class" },
+      ],
+    ],
+  ];
   await prisma.busyBlock.createMany({
-    data: [
-      { day: 0, startHour: 1, hours: 3, kind: "class" },
-      { day: 0, startHour: 6, hours: 2, kind: "work" },
-      { day: 1, startHour: 0, hours: 2, kind: "class" },
-      { day: 2, startHour: 3, hours: 2, kind: "class" },
-      { day: 2, startHour: 7, hours: 3, kind: "work" },
-      { day: 3, startHour: 1, hours: 2, kind: "class" },
-      { day: 4, startHour: 2, hours: 2, kind: "class" },
-      { day: 4, startHour: 6, hours: 2, kind: "work" },
-    ].map((b) => ({ ...b, memberId: minjun.id })),
+    data: timetables.flatMap(([memberId, blocks]) => blocks.map((b) => ({ ...b, memberId }))),
   });
 
   /* ── 09 / 10 회의 시간 후보 ────────────────────────────── */
+  // 후보는 시드가 지어내지 않는다 — 앱이 쓰는 계산을 그대로 돌린다. 손으로 적어 두면
+  // 시간표와 어긋난 후보가 데모에만 남는다.
+  const members = [minjun, seoyeon, jiho, yuna];
   await prisma.meetingSlot.createMany({
-    data: [
-      { day: "수", time: "16:00 – 18:00", available: 4, total: 4, blockedBy: null, weekKey: "this" },
-      { day: "화", time: "13:00 – 15:00", available: 4, total: 4, blockedBy: null, weekKey: "this" },
-      {
-        day: "목",
-        time: "15:00 – 17:00",
-        available: 3,
-        total: 4,
-        blockedBy: "박지호 · 아르바이트",
-        weekKey: "this",
-      },
-      {
-        day: "월",
-        time: "14:00 – 16:00",
-        available: 3,
-        total: 4,
-        blockedBy: "이서연 · 수업",
-        weekKey: "this",
-      },
-      {
-        day: "금",
-        time: "17:00 – 19:00",
-        available: 3,
-        total: 4,
-        blockedBy: "최유나 · 시험 기간",
-        weekKey: "none",
-      },
-      {
-        day: "토",
-        time: "11:00 – 13:00",
-        available: 3,
-        total: 4,
-        blockedBy: "박지호 · 아르바이트",
-        weekKey: "none",
-      },
-    ].map((s) => ({ ...s, teamId: team.id })),
+    data: computeMeetingSlots(
+      members.map((m, i) => ({ name: m.name, busyBlocks: timetables[i][1] })),
+    ).map((s) => ({ ...s, teamId: team.id, weekKey: "this" })),
   });
 
   /* ── 12 / 13 / 22 드라이브 ─────────────────────────────── */
@@ -113,7 +118,7 @@ async function main() {
     data: {
       teamId: team.id,
       role: "deck",
-      name: "PPT 템플릿 제출함",
+      name: "PPT 제출함",
       ownerId: seoyeon.id,
       due: "9/20",
       files: { create: { name: "발표 자료.pptx", kind: "pptx" } },

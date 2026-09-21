@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/server/db";
+import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { requireSessionMember } from "@/server/session";
 import type { BusyBlock } from "@/lib/types";
 
@@ -28,5 +29,8 @@ export async function saveMyBusyBlocks(blocks: BusyBlock[]): Promise<void> {
     }),
   ]);
 
-  revalidatePath("/schedule");
+  // 후보는 저장된 값이 아니라 시간표에서 나오는 계산 결과다 — 시간표가 바뀌면 다시 만든다.
+  await rebuildMeetingCandidates(me.teamId);
+
+  revalidatePath("/schedule", "layout");
 }
