@@ -9,6 +9,10 @@ import { confirmDueMeetings } from "@/server/meetings/confirm-due";
  *
  * 화면은 `effectiveStage()` 로 이미 확정된 것처럼 보여 주므로, 이 작업이 조금 늦게
  * 돌아도 사용자가 잘못된 상태를 보지는 않는다. 여기서 하는 일은 표를 맞추는 것이다.
+ *
+ * 그래서 **하루 한 번으로 충분하다.** Vercel Hobby 는 하루 한 번만 허용하고, 더 잦은
+ * 주기를 적으면 배포 자체가 실패한다. 더 촘촘히 돌리고 싶으면(Pro 이상) `vercel.json`
+ * 의 schedule 만 바꾸면 된다.
  */
 export const dynamic = "force-dynamic";
 

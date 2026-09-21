@@ -143,6 +143,29 @@ docs/handoff/           디자인 핸드오프 원본 (참고 자료, 빌드에 
 npm run build && npx tsc --noEmit && npm run lint
 ```
 
+## 배포 (Vercel)
+
+저장소를 Vercel 프로젝트에 연결하고 **환경변수 다섯 개**를 넣으면 됩니다.
+
+| 변수 | 없으면 |
+|---|---|
+| `DATABASE_URL` | 앱이 뜨지 않습니다 (런타임 · 트랜잭션 풀러 6543) |
+| `DIRECT_URL` | **빌드가 실패합니다** — 마이그레이션이 이걸 씁니다 (직결 5432) |
+| `CRON_SECRET` | 회의 마감 예약 작업이 항상 401 입니다 |
+| `SUPABASE_URL` + `SUPABASE_SECRET_KEY` | 파일 업로드만 막히고 앱은 돕니다 |
+| `OPENROUTER_KEY` | AI 도구가 샘플만 돌려주고 앱은 돕니다 |
+
+빌드 명령은 `vercel.json` 에 있습니다 — `prisma migrate deploy && next build`.
+**배포할 때마다 마이그레이션이 먼저 돕니다.**
+
+버킷은 한 번만 만들면 됩니다(로컬에서 `npm run db:storage`). 데이터베이스와 저장소는
+로컬과 배포본이 **같은 Supabase 프로젝트**를 씁니다 — 나눠야 할 때가 오면 `DATABASE_URL`
+계열만 갈아 끼우면 됩니다.
+
+⚠️ **Vercel Hobby 는 예약 작업이 하루 한 번까지**입니다. `vercel.json` 의 schedule 을
+그보다 잦게 적으면 **배포가 실패합니다**. 지금은 하루 한 번(00:00 KST)이고, 화면이
+`effectiveStage()` 로 직접 계산하므로 이 작업이 늦어도 사용자는 맞는 상태를 봅니다.
+
 ## 남은 일
 
 핸드오프의 화면은 모두 옮겼습니다. 제품이 되려면 다음이 남아 있습니다.
@@ -173,7 +196,8 @@ npm run build && npx tsc --noEmit && npm run lint
 - **화면은 계산해서 보여 줍니다.** `effectiveStage()` 가 "마감이 지났고 반대가 없으면 확정"을
   그 자리에서 판단하므로, 예약 작업이 늦게 돌아도 지나간 마감이 "대기 중"으로 보이지 않습니다.
 - **표는 예약 작업이 맞춥니다.** `/api/cron/meetings` 를 주기적으로 부르면 마감이 지난 제안을
-  `confirmed` 로 바꿉니다(`vercel.json` 에 15분 간격으로 등록). 다른 데 올린다면 어떤
+  `confirmed` 로 바꿉니다(`vercel.json` 에 **하루 한 번** 등록 — Vercel Hobby 는 그보다
+  잦으면 배포가 실패합니다. Pro 이상이면 schedule 만 바꾸면 됩니다). 다른 데 올린다면 어떤
   스케줄러로든 이 주소만 부르면 됩니다. `CRON_SECRET` 이 없으면 **항상 401** 입니다.
 
 마감이 지난 뒤의 반대는 서버가 거절합니다 — 받아 주면 이미 확정된 회의가 뒤집힙니다.
