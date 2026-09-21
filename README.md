@@ -145,7 +145,12 @@ npm run build && npx tsc --noEmit && npm run lint
 
 ## 배포 (Vercel)
 
-저장소를 Vercel 프로젝트에 연결하고 **환경변수 다섯 개**를 넣으면 됩니다.
+**배포돼 있습니다 — https://chalddeok-omega.vercel.app**
+
+저장소가 Vercel 프로젝트(`chalddeok`)에 연결돼 있어 `main` 에 푸시하면 자동으로 배포됩니다.
+직접 올리려면 `npx vercel --prod`.
+
+새로 세팅한다면 저장소를 Vercel 프로젝트에 연결하고 **환경변수 여섯 개**를 넣으면 됩니다.
 
 | 변수 | 없으면 |
 |---|---|
@@ -154,6 +159,10 @@ npm run build && npx tsc --noEmit && npm run lint
 | `CRON_SECRET` | 회의 마감 예약 작업이 항상 401 입니다 |
 | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` | 파일 업로드만 막히고 앱은 돕니다 |
 | `OPENROUTER_KEY` | AI 도구가 샘플만 돌려주고 앱은 돕니다 |
+
+⚠️ **배포본과 로컬이 같은 Supabase 프로젝트를 씁니다.** 배포본에서 누가 무엇을 바꾸면
+로컬에서도 바뀝니다. 실제 팀에게 써 보게 할 때 나누려면 Supabase 프로젝트를 하나 더 만들고
+`DATABASE_URL`·`DIRECT_URL`·`SUPABASE_*` 만 갈아 끼우면 됩니다.
 
 빌드 명령은 `vercel.json` 에 있습니다 — `prisma migrate deploy && next build`.
 **배포할 때마다 마이그레이션이 먼저 돕니다.**
