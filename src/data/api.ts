@@ -665,6 +665,35 @@ export async function getOlderMessages(
 }
 
 /**
+ * `afterId` 보다 **새로 들어온** 메시지. 대화방을 열어 둔 화면이 주기적으로 부른다.
+ *
+ * 과거를 부르는 쪽(`getOlderMessages`)과 방향만 반대다. 새것이 없으면 빈 배열이라,
+ * 대부분의 호출은 아무것도 돌려주지 않고 끝난다 — 그게 정상이고 가장 싼 경우다.
+ *
+ * `afterId` 가 없으면(아직 한 줄도 없는 방) 오래된 쪽부터 준다. 그 방의 첫 메시지가
+ * 곧 "새로 들어온 것"이기 때문이다.
+ *
+ * 한 번에 주는 양에 상한을 둔다. 오래 닫아 뒀다가 열면 그 사이에 쌓인 말이 많을 수
+ * 있는데, 다음 호출이 이어서 가져가므로 한 번에 다 줄 이유가 없다.
+ */
+export async function getNewerMessages(
+  teamId: string,
+  threadKey: string,
+  meId: string,
+  afterId: string | null,
+): Promise<ChatMessage[]> {
+  const rows = await db.message.findMany({
+    where: { teamId, threadKey },
+    include: MESSAGE_INCLUDE,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: MESSAGE_PAGE_SIZE,
+    ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
+  });
+
+  return rows.map((m) => toChatMessage(m, meId));
+}
+
+/**
  * 1:1 대화 목록 — 나를 뺀 팀원 한 명당 하나씩.
  *
  * 팀원 한 명당 "마지막 메시지"·"안 읽은 수"를 따로 쿼리하면 팀원이 늘어난 만큼

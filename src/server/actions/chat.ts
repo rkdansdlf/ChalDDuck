@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { dmThreadKey, getOlderMessages, type MessagePage } from "@/data/api";
+import { dmThreadKey, getNewerMessages, getOlderMessages, type MessagePage } from "@/data/api";
+import type { ChatMessage } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 
@@ -74,6 +75,30 @@ export async function loadOlderMessages(threadId: string, cursor: string): Promi
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
   return getOlderMessages(me.teamId, threadKey, me.id, cursor);
+}
+
+/**
+ * 열어 둔 방에 **새로 들어온 말**을 가져온다. 화면이 몇 초마다 부른다.
+ *
+ * 없으면 빈 배열이라 대부분의 호출은 아무것도 돌려주지 않는다 — 그게 정상이다.
+ *
+ * 새 말이 있으면 읽음 표시도 여기서 함께 밀어 둔다. 방을 열어 두고 보고 있는데
+ * 안 읽음이 쌓이면, 그 배지는 "내가 안 본 말"이 아니라 "내가 방을 열어 둔 시간"이 된다.
+ * 읽음 표시는 새 말이 실제로 왔을 때만 쓴다 — 조용한 방에서 몇 초마다 쓰기가 나가면
+ * 아무 일도 없는 동안 DB 에 쓰기만 쌓인다.
+ */
+export async function pollNewMessages(
+  threadId: string,
+  afterId: string | null,
+): Promise<ChatMessage[]> {
+  const me = await requireSessionMember();
+  const threadKey = await resolveThread(threadId, me.id, me.teamId);
+
+  const fresh = await getNewerMessages(me.teamId, threadKey, me.id, afterId);
+  if (fresh.length === 0) return fresh;
+
+  await touchReadMark(me.id, threadKey);
+  return fresh;
 }
 
 /** 대화를 열었으면 읽은 것이다 — 목록과 탭 배지의 안 읽음 수가 함께 내려간다. */

@@ -8,7 +8,7 @@ import { useMe } from "@/features/onboarding/use-me";
 import { markThreadRead } from "@/server/actions/chat";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
-import { useChatThread, useLoadOlderOnScroll } from "./use-chat-thread";
+import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
 /**
  * 31 1:1 DM 대화.
@@ -45,11 +45,9 @@ export function DmScreen({
     markThreadRead(thread.id);
   }, [thread.id]);
 
-  // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때는 움직이지 않는다.
-  const lastMessageId = messages.at(-1)?.id;
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [lastMessageId]);
+  // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때나 위로 올려 읽는 중일
+  // 때는 움직이지 않는다.
+  const { stick } = useStickToBottom(scrollRef, bottomRef, messages.at(-1)?.id);
 
   return (
     <>
@@ -79,7 +77,14 @@ export function DmScreen({
         <div ref={bottomRef} />
       </Body>
 
-      <Composer placeholder={`${thread.name}님에게 메시지`} onSend={send} />
+      <Composer
+        placeholder={`${thread.name}님에게 메시지`}
+        // 올려 보던 중에 보냈더라도 내가 방금 쓴 말은 보여야 한다.
+        onSend={(text) => {
+          stick();
+          send(text);
+        }}
+      />
     </>
   );
 }

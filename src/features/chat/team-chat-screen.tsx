@@ -1,14 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AppBar, Body, Note, Toast, Undecided } from "@/components/ui";
 import type { ChatMessage, Member, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { useMe } from "@/features/onboarding/use-me";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
-import { useChatThread, useLoadOlderOnScroll } from "./use-chat-thread";
+import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
 /**
  * 19 팀플 단톡방.
@@ -43,11 +43,9 @@ export function TeamChatScreen({
 
   useLoadOlderOnScroll(scrollRef, topRef, hasMore, loadOlder);
 
-  // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때는 움직이지 않는다.
-  const lastMessageId = messages.at(-1)?.id;
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [lastMessageId]);
+  // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때나 위로 올려 읽는 중일
+  // 때는 움직이지 않는다.
+  const { stick } = useStickToBottom(scrollRef, bottomRef, messages.at(-1)?.id);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -92,7 +90,11 @@ export function TeamChatScreen({
 
       <Composer
         placeholder="메시지 입력"
-        onSend={send}
+        // 올려 보던 중에 보냈더라도 내가 방금 쓴 말은 보여야 한다.
+        onSend={(text) => {
+          stick();
+          send(text);
+        }}
         onAttach={() => flash("첨부는 아직 준비 중입니다")}
         // TODO(15 쿠션 번역기): 입력 중이던 글을 들고 넘어가야 한다. 지금은 빈 화면으로 연다.
         onCushion={() => router.push("/tools/cushion")}
