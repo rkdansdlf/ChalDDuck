@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { db } from "./db";
 
@@ -65,8 +66,16 @@ export async function describeDevice(): Promise<string> {
   return `${os} · ${browser}`;
 }
 
-/** 지금 브라우저의 팀원. 세션이 없거나 끊겼거나 만료됐으면 null. */
-export async function getSessionMember(): Promise<SessionMember | null> {
+/**
+ * 지금 브라우저의 팀원. 세션이 없거나 끊겼거나 만료됐으면 null.
+ *
+ * `cache()`로 감싼다 — `src/data/api.ts`의 함수 17개가 각자 이걸 부르는데,
+ * 화면 하나가 그중 여러 개를 쓰면(예: 팀 채팅 화면이 `getCurrentTeam` +
+ * `getTeamMessages` + `getRoster`) 감싸지 않을 경우 요청 하나에 같은 세션 조회가
+ * 그 개수만큼 DB 왕복을 만든다. Supabase 가 원거리 리전이라 이게 메뉴 전환마다
+ * 체감되는 지연의 주 원인이었다.
+ */
+export const getSessionMember = cache(async (): Promise<SessionMember | null> => {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
 
@@ -98,7 +107,7 @@ export async function getSessionMember(): Promise<SessionMember | null> {
 
   const { leftAt: _leftAt, ...member } = session.member;
   return member;
-}
+});
 
 /**
  * 세션이 반드시 있어야 하는 곳에서 쓴다.
