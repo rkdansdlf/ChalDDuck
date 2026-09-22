@@ -42,6 +42,16 @@ export function wantersOf(members: Member[], role: RoleKey): Member[] {
 }
 
 /**
+ * 겹쳤다고 볼지 정하는 **한 가지 규칙.**
+ *
+ * 명단을 들고 있는 화면(07)과 숫자만 세는 곳(탭 배지)이 같은 판단을 해야 한다 —
+ * 한쪽이 "겹침 2건"인데 다른 쪽이 1건이면 어느 쪽을 믿어야 할지 알 수 없다.
+ */
+export function isUnresolvedClash(wanterCount: number, accepted: boolean): boolean {
+  return wanterCount > 1 && !accepted;
+}
+
+/**
  * 아직 확정되지 않은, 희망자가 겹친 역할들.
  *
  * 두 사람 이상이 같은 역할을 1순위로 골랐고 당사자 수락까지 끝나지 않은 것만 센다.
@@ -51,7 +61,7 @@ export function unresolvedClashes(
   members: Member[],
   draws: Partial<Record<RoleKey, RoleDrawResult>>,
 ): Role[] {
-  return roles.filter(
-    (role) => wantersOf(members, role.key).length > 1 && !draws[role.key]?.accepted,
+  return roles.filter((role) =>
+    isUnresolvedClash(wantersOf(members, role.key).length, draws[role.key]?.accepted ?? false),
   );
 }
