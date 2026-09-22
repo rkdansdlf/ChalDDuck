@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, Body, Btn, Chip, Icon, Note, Toast, type IconName } from "@/components/ui";
+import { AppBar, Body, Btn, Chip, Icon, Note, Toast, Undecided, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
 import { SampleNote } from "./ai-state-notes";
@@ -98,8 +98,14 @@ export function AiHubScreen({
         )}
 
         <Note tone="info" icon="database" title="AI 이용·보관 정책" className="mt-2.5">
-          대화 내용은 <b>{policy.retentionDays}일</b> 보관 후 자동 삭제됩니다. 학생 팀플 규모를 기준으로
-          사용량 한도는 두지 않습니다.
+          입력한 글과 결과는 <b>저장하지 않습니다</b>. 남는 것은 누가 언제 어떤 도구를 썼는지뿐이고,
+          그 기록도 <b>{policy.retentionDays}일</b> 뒤 자동 삭제됩니다. 하루에 쓸 수 있는 횟수는 팀{" "}
+          {policy.perTeamPerDay}회 · 한 사람 {policy.perMemberPerDay}회입니다.
+          <Undecided>
+            한도 수치(팀 {policy.perTeamPerDay}회 · 1인 {policy.perMemberPerDay}회)는 기획안에 없어
+            임시로 정한 값 — 호출마다 비용이 들어 한도를 아예 두지 않을 수는 없어 넉넉한 쪽으로 잡았다.
+            수업에서 실제로 얼마나 쓰는지 보고 확정할 것.
+          </Undecided>
           <span className="mt-2.5 block">
             <Btn
               size="sm"

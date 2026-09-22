@@ -170,8 +170,29 @@ export type AiTool = {
   href: string | null;
 };
 
-/** AI 이용·보관 정책. 90일이 적정한지는 아직 확정되지 않았다. */
-export type AiPolicy = { retentionDays: number };
+/**
+ * AI 이용·보관 정책.
+ *
+ * 숫자 셋 다 기획안에 없어 임시로 정한 값이다(핸드오프 "확정되지 않은 정책" 표).
+ * 화면이 `<Undecided>` 로 그 사실을 적고 있다.
+ */
+export type AiPolicy = {
+  /** 사용 기록(횟수)을 남겨 두는 기간. 입력한 글과 결과는 애초에 저장하지 않는다. */
+  retentionDays: number;
+  /** 한 팀이 하루에 부를 수 있는 횟수. */
+  perTeamPerDay: number;
+  /** 한 사람이 하루에 부를 수 있는 횟수. 한 사람이 팀 몫을 다 쓰지 못하게 한다. */
+  perMemberPerDay: number;
+};
+
+/**
+ * AI 도구의 결과.
+ *
+ * 실패를 **던지지 않고 돌려준다.** 운영 빌드의 Next 는 서버에서 던진 오류의 문구를 지우고
+ * `digest` 만 클라이언트로 보낸다 — 즉 `throw new Error("오늘 한도를 다 썼습니다")` 는
+ * 사용자에게 절대 닿지 않는다. 돌려주는 값은 그냥 데이터라서 그대로 도착한다.
+ */
+export type AiResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
 /** 쿠션 번역기의 말투. 요구 내용은 그대로 두고 말투만 바꾼다. */
 export type CushionTone = { key: string; name: string };
@@ -337,7 +358,8 @@ export type ChatMessage = {
   text: string;
   /** 보낸 시각 표시. 아직 못 보낸 메시지는 null. */
   time: string | null;
-  status: "sent" | "failed";
+  /** `sending` 은 서버 응답을 기다리는 중인 낙관적 말풍선. */
+  status: "sent" | "sending" | "failed";
   /**
    * 쿠션 번역기로 다듬어 보낸 말.
    * **표시가 남는다** — 다듬었다는 사실을 숨기지 않는다.

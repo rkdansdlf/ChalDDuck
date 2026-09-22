@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { refineScript } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { unwrapAi } from "./ai-result";
 import type { PresentDraft } from "@/lib/types";
 
 /**
@@ -45,7 +46,7 @@ export function PresentScreen({
     setWorking(true);
     setError(null);
     try {
-      setDraft(await refineScript(raw.trim()));
+      setDraft(unwrapAi(await refineScript(raw.trim())));
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {

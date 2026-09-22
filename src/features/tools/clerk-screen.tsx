@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { summarizeMeeting } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { unwrapAi } from "./ai-result";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import type { ClerkDraft, Member } from "@/lib/types";
@@ -62,7 +63,7 @@ export function ClerkScreen({
     setWorking(true);
     setError(null);
     try {
-      const result = await summarizeMeeting(raw.trim());
+      const result = unwrapAi(await summarizeMeeting(raw.trim()));
       setDraft(result);
       setPicked(Object.fromEntries(result.candidates.map((c) => [c.id, true])));
       setAssignees(Object.fromEntries(result.candidates.map((c) => [c.id, c.assignee])));

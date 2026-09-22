@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { searchResearch } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { unwrapAi } from "./ai-result";
 import type { ResearchResult } from "@/lib/types";
 
 /**
@@ -49,7 +50,7 @@ export function ResearcherScreen({
     setWorking(true);
     setError(null);
     try {
-      setResults(await searchResearch(query.trim()));
+      setResults(unwrapAi(await searchResearch(query.trim())));
       setSearched(true);
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");

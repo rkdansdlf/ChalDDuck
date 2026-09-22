@@ -34,6 +34,7 @@ model Team {
   proposals      MeetingProposal[]
   messages       Message[]
   tasks          Task[]
+  aiUsage        AiUsage[]
 }
 
 /// 팀원. 신원은 **초대 코드 + 이름**이라 팀 안에서 이름이 유일해야 한다.
@@ -79,6 +80,7 @@ model Member {
   meetingResponses MeetingResponse[]
   roleDraws       RoleDraw[]
   roleRejections  RoleRejection[]
+  aiUsage         AiUsage[]
 
   @@unique([teamId, name])
 }
@@ -507,4 +509,29 @@ model Poke {
 
   /// 같은 사람이 같은 업무를 같은 날 두 번 찌를 수 없다.
   @@unique([taskId, senderId, sentOn])
+}
+
+/// AI 도구를 한 번 쓴 기록.
+///
+/// **입력한 글도 결과도 남기지 않는다** — 남는 것은 "누가 언제 어떤 도구를 썼는지"뿐이다.
+/// 호출마다 비용이 들어서 하루 한도를 세려면 어딘가에 세어 둘 곳이 필요하고,
+/// 그 한도를 넘는 순간 화면이 그 사실을 그대로 알려 줘야 하기 때문이다.
+///
+/// 보관 기간은 `AI_POLICY.retentionDays` 다. 지난 행은 예약 작업이 지운다.
+model AiUsage {
+  id       String @id @default(cuid())
+  teamId   String
+  memberId String
+  /// cushion | clerk | research | present | sentence
+  tool     String
+  /// 한국 날짜(YYYY-MM-DD). 콕 찌르기의 "하루"와 같은 기준이다 — 서버가 어디서 돌든
+  /// 같은 하루여야 한다.
+  day      String
+  createdAt DateTime @default(now())
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, day])
+  @@index([memberId, day])
 }

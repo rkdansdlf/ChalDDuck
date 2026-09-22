@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AppBar, Body, CompareCard, Textarea, Undecided } from "@/components/ui";
 import { convertSentence, getSentenceSample } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { unwrapAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
 import { cn } from "@/lib/cn";
 import type { SentenceMode } from "@/lib/types";
@@ -46,7 +47,10 @@ export function SentenceScreen({
   }, [mode, initialMode]);
 
   // 입력이 멎은 뒤 한 번만 부른다 — 글자마다 부르면 모델 호출이 그만큼 나간다.
-  const run = useCallback((value: string, key: string) => convertSentence(value, key), []);
+  const run = useCallback(
+    (value: string, key: string) => convertSentence(value, key).then(unwrapAi),
+    [],
+  );
   const { result, working, error } = useAiDraft({
     text,
     variant: mode,

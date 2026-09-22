@@ -133,7 +133,21 @@ export const AI_TOOLS: AiTool[] = [
   },
 ];
 
-export const AI_POLICY: AiPolicy = { retentionDays: 90 };
+/**
+ * AI 이용·보관 정책.
+ *
+ * **세 숫자 모두 기획안에 없다** — 핸드오프의 "확정되지 않은 정책" 표에 "사용량 한도 없음"
+ * 으로 적혀 있던 자리다. 한도를 아예 두지 않으면 호출마다 비용이 드는 도구에 문이 없는
+ * 것이라, 정해질 때까지 **평범하게 쓰면 닿지 않을 만큼 넉넉한** 값을 둔다.
+ * 허브 화면이 `<Undecided>` 로 임시값이라는 것을 적고 있다.
+ *
+ * 하루의 기준은 한국 날짜다(콕 찌르기와 같다).
+ */
+export const AI_POLICY: AiPolicy = {
+  retentionDays: 90,
+  perTeamPerDay: 200,
+  perMemberPerDay: 60,
+};
 
 /**
  * 쿠션 번역기 말투 3종.

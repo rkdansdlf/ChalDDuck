@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { rewriteWithCushion } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { unwrapAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
 import { cn } from "@/lib/cn";
 import type { CushionTone } from "@/lib/types";
@@ -45,7 +46,10 @@ export function CushionScreen({
   const [toast, setToast] = useState<string | null>(null);
 
   // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다 — 입력이 멎은 뒤 한 번만.
-  const run = useCallback((value: string, key: string) => rewriteWithCushion(value, key), []);
+  const run = useCallback(
+    (value: string, key: string) => rewriteWithCushion(value, key).then(unwrapAi),
+    [],
+  );
   const { result, working, error } = useAiDraft({
     text,
     variant: tone,

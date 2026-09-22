@@ -1,4 +1,5 @@
 import { sweepAttempts } from "@/server/auth/attempts";
+import { sweepAiUsage } from "@/server/ai/limit";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
 
 /**
@@ -36,9 +37,15 @@ export async function GET(request: Request) {
 
   const confirmed = await confirmDueMeetings();
 
-  // 창이 지난 재입장 시도 기록도 함께 치운다. 하루 한 번이면 충분하고 늦어도 틀리지
-  // 않는 일이라, 예약 작업이 이미 있는 이 자리에 붙인다.
-  const attempts = await sweepAttempts();
+  // 같이 치우는 두 가지. 둘 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
+  // 예약 작업이 이미 있는 이 자리에 붙인다. 회의 확정이 실패하면 여기까지 오지 않지만,
+  // 그때는 치우는 일이 하루 밀리는 것뿐이다.
+  const [attempts, aiUsage] = await Promise.all([
+    // 창이 지난 재입장 시도 기록.
+    sweepAttempts(),
+    // 보관 기간이 지난 AI 사용 기록 — 화면이 "N일 뒤 삭제"라고 적고 있으므로 실제로 지운다.
+    sweepAiUsage(),
+  ]);
 
-  return Response.json({ confirmed, swept: { attempts } });
+  return Response.json({ confirmed, swept: { attempts, aiUsage } });
 }
