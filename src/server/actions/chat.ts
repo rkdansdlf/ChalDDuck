@@ -19,6 +19,18 @@ async function resolveThread(threadId: string, meId: string, teamId: string) {
   return dmThreadKey(meId, other.id);
 }
 
+/**
+ * 한 번에 보낼 수 있는 길이.
+ *
+ * 입력줄이 `maxLength` 로 먼저 막지만 **서버도 막아야 한다** — 서버 액션은 화면을 거치지
+ * 않고 POST 로 바로 불릴 수 있어서, 화면에서 막은 것은 막은 것이 아니다.
+ *
+ * 자르지 않고 거절한다. 다른 액션(할 일 제목 등)은 넘는 만큼 잘라 내지만, 대화는 잘린
+ * 줄을 보낸 사람이 뭘 썼는지 모른 채 보내게 된다. 거절하면 말풍선이 "보내지 못함"으로
+ * 남아 원문이 그대로 손에 있다.
+ */
+const MAX_MESSAGE = 2000;
+
 /** 화면에 보일 시각 문자열. 서버가 포맷해야 사람마다 다르게 보이지 않는다. */
 function nowLabel() {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -33,6 +45,7 @@ export async function sendChatMessage(threadId: string, text: string): Promise<{
   const me = await requireSessionMember();
   const trimmed = text.trim();
   if (!trimmed) return { ok: false };
+  if (trimmed.length > MAX_MESSAGE) return { ok: false };
 
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
 

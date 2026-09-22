@@ -4,6 +4,14 @@ import { useState } from "react";
 import { Icon } from "@/components/ui";
 
 /**
+ * 서버가 받아 주는 길이(`actions/chat.ts` 의 `MAX_MESSAGE`)와 같은 값.
+ *
+ * 여기서 막는 이유는 거절당한 뒤에 알려 주는 것보다 **애초에 넘겨 쓸 수 없는 편**이
+ * 낫기 때문이다. 서버 쪽 제한이 진짜 문이고, 이건 그 문 앞의 안내다.
+ */
+const MAX_MESSAGE = 2000;
+
+/**
  * 메시지 입력 줄.
  *
  * `Dock`·`TabBar` 와 마찬가지로 흐름 안에 둔다 — 띄워 두면 마지막 말풍선이 뒤로 들어간다.
@@ -67,6 +75,7 @@ export function Composer({
         }}
         placeholder={placeholder}
         aria-label={placeholder}
+        maxLength={MAX_MESSAGE}
         className="t-input min-h-11 min-w-0 flex-1 rounded-full border-[1.5px] border-input-border bg-card px-3.5 text-txt-strong outline-none"
       />
 
