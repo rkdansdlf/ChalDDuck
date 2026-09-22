@@ -2,6 +2,9 @@
 
 import { SideNav, TabBar } from "@/components/ui";
 import type { DmThread } from "@/lib/types";
+import { usePoll } from "@/lib/use-poll";
+import { pollNavBadges } from "@/server/actions/nav";
+import { setNavBadges, useNavBadges } from "./nav-badges-store";
 
 /**
  * 앱 내비게이션 — 배지 숫자를 붙여 준다.
@@ -9,11 +12,21 @@ import type { DmThread } from "@/lib/types";
  * 좁은 화면의 하단 탭바와 넓은 화면의 세로 막대는 **같은 숫자**를 보여야 하므로
  * 계산을 여기 한 곳에 두고 모양만 `as` 로 고른다.
  *
- * `TabBar`·`SideNav` 자체는 숫자를 어디서 가져올지 모르는 채로 둔다. 건수는 모두 서버가
- * 세어 레이아웃에서 내려 준다 — 화면마다 따로 세면 같은 값이 서로 어긋난다.
+ * 건수는 서버가 센다 — 화면마다 따로 세면 같은 값이 서로 어긋난다. 처음 숫자는 탭 셸이
+ * 서버에서 그려 주고, 그 뒤로는 **스스로 다시 세어 온다**: 팀원이 방금 한 일(가입 요청·
+ * 회의 제안·기여 기록·DM)이 내가 아무것도 누르지 않아도 배지에 나타나야 한다.
  *
  * TODO(서버): 드라이브 마감 배지는 같은 방식으로 더한다.
  */
+
+/**
+ * 배지를 다시 세는 주기.
+ *
+ * 대화방(3초)보다 훨씬 느긋하다. 배지는 "무언가 생겼다"는 신호라 몇십 초 늦어도 뜻이
+ * 달라지지 않고, 탭을 열어 둔 모든 사람이 부르는 값이라 주기가 곧 비용이다.
+ */
+const BADGE_POLL_MS = 30_000;
+
 export function AppNav({
   as,
   dmThreads,
@@ -33,17 +46,29 @@ export function AppNav({
   /** 내 응답을 기다리는 회의 제안이 있으면 1. 서버가 센다. */
   meetingPending: number;
 }) {
-  // 팀 탭에 모이는 것 — 겹친 역할, 확인 대기 중인 기여 기록, 재입장 승인 요청.
-  const clashes = roleClashes;
-  const contrib = contribPending;
-  const cal = meetingPending;
-  // 안 읽음 수는 서버가 ReadMark 로 센다.
-  const chat = dmThreads.reduce((sum, t) => sum + t.unread, 0);
+  // 서버가 그려 준 첫 숫자. 다시 세어 온 값이 있으면 그쪽이 최신이다.
+  const fromServer = {
+    team: roleClashes + contribPending + rejoinPending,
+    cal: meetingPending,
+    // 안 읽음 수는 서버가 ReadMark 로 센다.
+    chat: dmThreads.reduce((sum, t) => sum + t.unread, 0),
+  };
+
+  // 묻는 쪽은 하나뿐이다. 둘 다 물으면 같은 숫자에 요청이 두 배로 나간다.
+  usePoll(
+    async () => {
+      setNavBadges(await pollNavBadges());
+    },
+    BADGE_POLL_MS,
+    as === "tabs",
+  );
+
+  const badges = useNavBadges() ?? fromServer;
 
   const pending = {
-    team: clashes + contrib + rejoinPending || undefined,
-    cal: cal || undefined,
-    chat: chat || undefined,
+    team: badges.team || undefined,
+    cal: badges.cal || undefined,
+    chat: badges.chat || undefined,
   };
 
   return as === "side" ? <SideNav pending={pending} /> : <TabBar pending={pending} />;

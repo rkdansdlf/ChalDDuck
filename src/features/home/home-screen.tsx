@@ -12,6 +12,7 @@ import {
   Toast,
   type IconName,
 } from "@/components/ui";
+import { useNavBadges } from "@/components/nav-badges-store";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
 import type {
@@ -77,6 +78,10 @@ export function HomeScreen({
   const router = useRouter();
   const onboarding = useOnboarding();
   const { stage, slot } = meeting;
+
+  // 종은 내비게이션 배지와 **같은 값**을 본다 — 탭바에 "새 알림"이 떠 있는데 종은
+  // 비어 있으면 어느 쪽을 믿어야 할지 알 수 없다. 아직 다시 세기 전이면 서버가 준 값.
+  const unread = useNavBadges()?.notifications ?? unreadNotifications;
 
   /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
   const remainingTasks = tasks.filter((t) => t.status !== "done").length;
@@ -172,10 +177,8 @@ export function HomeScreen({
         title={team.name}
         sub={team.dday ?? undefined}
         action="bell"
-        actionLabel={
-          unreadNotifications > 0 ? `알림 ${unreadNotifications}건` : "알림"
-        }
-        actionBadge={unreadNotifications || undefined}
+        actionLabel={unread > 0 ? `알림 ${unread}건` : "알림"}
+        actionBadge={unread || undefined}
         onAction={() => router.push("/home/notifications")}
       />
 
