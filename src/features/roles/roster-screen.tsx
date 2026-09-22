@@ -8,6 +8,7 @@ import {
   Body,
   Btn,
   Chip,
+  DrawGame,
   Icon,
   Note,
   Panel,
@@ -16,6 +17,7 @@ import {
   Sheet,
   Toast,
   type ChipTone,
+  type DrawCandidate,
   type IconName,
 } from "@/components/ui";
 import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@/lib/types";
@@ -56,6 +58,14 @@ export function RosterScreen({
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** 서버 응답을 기다리는 동안 고른 도구 — 다 오면 바로 연출로 넘어간다. */
+  const [rollingTool, setRollingTool] = useState<RandomTool | null>(null);
+  /** 연출 중인 결과 — 서버가 이미 정한 당첨자를 쥐고 있다가 연출이 끝나면 확정 대기로 넘긴다. */
+  const [drawResult, setDrawResult] = useState<{
+    tool: RandomTool;
+    pool: DrawCandidate[];
+    winner: string;
+  } | null>(null);
 
   const roleName = (key: RoleKey | null) => roles.find((r) => r.key === key)?.name ?? "미정";
 
@@ -75,13 +85,38 @@ export function RosterScreen({
     window.setTimeout(() => setToast(null), 2600);
   };
 
-  /** 당첨자는 서버가 고른다 — 화면에서 뽑아 보내면 누구나 자기를 적어 보낼 수 있다. */
+  /** 같은 역할을 1순위로 고른 사람 중 이미 거절한 사람을 뺀 후보 — 서버의 후보 계산과 같은 규칙. */
+  const candidatePoolFor = (role: RoleKey): DrawCandidate[] => {
+    const wanters = wantersOf(members, role);
+    const excluded = rejected[role] ?? [];
+    const pool = wanters.filter((m) => !excluded.includes(m.name));
+    return (pool.length > 0 ? pool : wanters).map((m) => ({ name: m.name, mbti: m.mbti }));
+  };
+
+  /**
+   * 당첨자는 서버가 고른다 — 화면에서 뽑아 보내면 누구나 자기를 적어 보낼 수 있다.
+   * 응답이 오면 바로 닫지 않고, 정해진 당첨자를 쥔 채로 도구별 연출을 먼저 보여 준다.
+   */
   const handleDraw = async (tool: RandomTool) => {
     if (!drawingFor) return;
+    const pool = candidatePoolFor(drawingFor);
+    setRollingTool(tool);
     const result = await drawForRole(drawingFor, tool.name);
+    setRollingTool(null);
+    if (!result) {
+      flash("추첨할 사람이 없습니다");
+      return;
+    }
+    setDrawResult({ tool, pool, winner: result.winner });
+  };
+
+  /** 연출이 끝난 뒤 시트를 닫고 수락 대기 상태로 넘긴다. */
+  const finishDraw = () => {
+    const finished = drawResult;
+    setDrawResult(null);
     setDrawingFor(null);
     router.refresh();
-    if (result) flash(`${tool.name} 결과를 ${result.winner}님에게 보냈습니다 — 수락 대기`);
+    if (finished) flash(`${finished.tool.name} 결과를 ${finished.winner}님에게 보냈습니다 — 수락 대기`);
   };
 
   return (
@@ -288,24 +323,51 @@ export function RosterScreen({
         </div>
       </Body>
 
-      <Sheet open={drawingFor !== null} title="추첨 방식 고르기" onClose={() => setDrawingFor(null)}>
-        <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
-          결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 수락해야 최종 확정됩니다. Veto로 고른 사람은
-          추첨 대상에서 뺍니다.
-        </p>
-        <div className="grid grid-cols-2 gap-[9px]">
-          {tools.map((tool) => (
-            <button
-              key={tool.key}
-              type="button"
-              onClick={() => handleDraw(tool)}
-              className="flex min-h-[84px] cursor-pointer flex-col items-center justify-center gap-[7px] rounded-2xl border border-line bg-card text-txt-strong"
-            >
-              <Icon name={tool.icon as IconName} size={24} />
-              <span className="font-bold text-[14px] leading-none">{tool.name}</span>
-            </button>
-          ))}
-        </div>
+      <Sheet
+        open={drawingFor !== null}
+        title={rollingTool || drawResult ? undefined : "추첨 방식 고르기"}
+        onClose={() => {
+          // 연출이 도는 동안은 결과를 끝까지 보게 한다 — 도중에 닫아도 서버 결과는 이미 저장돼 있다.
+          if (rollingTool || drawResult) return;
+          setDrawingFor(null);
+        }}
+      >
+        {drawResult ? (
+          <DrawGame
+            toolKey={drawResult.tool.key}
+            toolName={drawResult.tool.name}
+            candidates={drawResult.pool}
+            winner={drawResult.winner}
+            onFinish={finishDraw}
+          />
+        ) : rollingTool ? (
+          <div className="flex min-h-[160px] flex-col items-center justify-center gap-3">
+            <span className="animate-spin text-yellow-700">
+              <Icon name="loader-circle" size={28} />
+            </span>
+            <p className="t-note text-txt-muted">{rollingTool.name} 준비 중…</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
+              결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 수락해야 최종 확정됩니다. Veto로 고른
+              사람은 추첨 대상에서 뺍니다.
+            </p>
+            <div className="grid grid-cols-2 gap-[9px]">
+              {tools.map((tool) => (
+                <button
+                  key={tool.key}
+                  type="button"
+                  onClick={() => handleDraw(tool)}
+                  className="flex min-h-[84px] cursor-pointer flex-col items-center justify-center gap-[7px] rounded-2xl border border-line bg-card text-txt-strong"
+                >
+                  <Icon name={tool.icon as IconName} size={24} />
+                  <span className="font-bold text-[14px] leading-none">{tool.name}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </Sheet>
 
       <Toast msg={toast} />
