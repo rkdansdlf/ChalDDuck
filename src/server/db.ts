@@ -115,7 +115,11 @@ function createClient(): PrismaClient {
     },
   }) as unknown as PrismaClient;
 
-  if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = client;
+  // 개발이든 프로덕션이든 항상 전역에 캐시한다. 이게 없으면 `db.xxx` 를 건드릴 때마다
+  // (요청마다, 심지어 한 요청 안에서 두 번째 접근에서도) 새 Pool 이 만들어져 연결이
+  // 쌓인다 — 서버리스에서 따뜻한 인스턴스가 재사용될 때 실제로 이렇게 터졌다
+  // (Supabase 풀러의 200 커넥션 한도를 채움).
+  globalForPrisma.prisma = client;
   return client;
 }
 
