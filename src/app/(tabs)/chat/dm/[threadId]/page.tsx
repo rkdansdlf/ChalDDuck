@@ -9,10 +9,14 @@ export default async function DmPage({ params }: PageProps<"/chat/dm/[threadId]"
   const thread = await getDmThread(team.id, threadId);
   if (!thread) notFound();
 
-  const [messages, roster] = await Promise.all([
-    getDmMessages(team.id, threadId),
-    getRoster(team.id),
-  ]);
+  const [page, roster] = await Promise.all([getDmMessages(team.id, threadId), getRoster(team.id)]);
 
-  return <DmScreen thread={thread} messages={messages} me={roster.find((m) => m.isMe)} />;
+  return (
+    <DmScreen
+      thread={thread}
+      messages={page.messages}
+      initialCursor={page.nextCursor}
+      me={roster.find((m) => m.isMe)}
+    />
+  );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { forwardRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon, type IconName } from "./icon";
 
@@ -153,9 +153,13 @@ export type BodyProps = {
   className?: string;
 };
 
-export function Body({ children, dense, tone, pad = 24, className }: BodyProps) {
+export const Body = forwardRef<HTMLDivElement, BodyProps>(function Body(
+  { children, dense, tone, pad = 24, className },
+  ref,
+) {
   return (
     <div
+      ref={ref}
       className={cn(
         "min-h-0 flex-1 overflow-y-auto overflow-x-hidden",
         dense ? "px-4 pt-3" : "px-5 pt-4",
@@ -167,7 +171,7 @@ export function Body({ children, dense, tone, pad = 24, className }: BodyProps) 
       {children}
     </div>
   );
-}
+});
 
 /**
  * 하단 고정 행동 바(주요 CTA).

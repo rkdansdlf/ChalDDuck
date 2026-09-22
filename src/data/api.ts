@@ -575,84 +575,160 @@ export function dmThreadKey(a: string, b: string): string {
   return `dm:${[a, b].sort().join(":")}`;
 }
 
-async function loadMessages(teamId: string, threadKey: string, meId: string | null) {
-  const rows = await db.message.findMany({
-    where: { teamId, threadKey },
-    include: {
-      author: { select: { id: true, name: true, mbti: true } },
-      reactions: { select: { icon: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
+/** 한 번에 가져오는 메시지 수. 대화가 쌓여도 방을 열 때마다 받는 양은 이만큼으로 고정된다. */
+const MESSAGE_PAGE_SIZE = 40;
 
-  return rows.map<ChatMessage>((m) => {
-    const counts = new Map<string, number>();
-    for (const r of m.reactions) counts.set(r.icon, (counts.get(r.icon) ?? 0) + 1);
+export type MessagePage = { messages: ChatMessage[]; nextCursor: string | null };
 
-    return {
-      id: m.id,
-      author: m.author.name,
-      mbti: toMbti(m.author.mbti),
-      isMine: m.author.id === meId,
-      text: m.text,
-      time: m.whenLabel,
-      status: "sent",
-      viaCushion: m.viaCushion,
-      reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
-    };
-  });
+/** 한 줄을 화면 타입으로. 과거를 부를 때와 새것을 부를 때가 같은 모양이어야 한다. */
+type MessageRow = {
+  id: string;
+  text: string;
+  whenLabel: string;
+  viaCushion: boolean;
+  author: { id: string; name: string; mbti: string | null };
+  reactions: { icon: string }[];
+};
+
+const MESSAGE_INCLUDE = {
+  author: { select: { id: true, name: true, mbti: true } },
+  reactions: { select: { icon: true } },
+} as const;
+
+function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
+  const counts = new Map<string, number>();
+  for (const r of m.reactions) counts.set(r.icon, (counts.get(r.icon) ?? 0) + 1);
+
+  return {
+    id: m.id,
+    author: m.author.name,
+    mbti: toMbti(m.author.mbti),
+    isMine: m.author.id === meId,
+    text: m.text,
+    time: m.whenLabel,
+    status: "sent",
+    viaCushion: m.viaCushion,
+    reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
+  };
 }
 
-export async function getTeamMessages(teamId: string): Promise<ChatMessage[]> {
+/**
+ * 최신 쪽부터 `limit` 개(+ 더 있는지 보려고 1개 더).
+ *
+ * `cursor` 를 주면 그 메시지보다 **오래된** 것부터 이어서 가져온다 — 위로 스크롤해
+ * 과거를 불러올 때 쓴다. `createdAt` 만으로는 같은 순간에 여러 메시지가 생기면 순서가
+ * 흔들릴 수 있어 `id` 를 함께 정렬 기준으로 둔다.
+ */
+async function loadMessages(
+  teamId: string,
+  threadKey: string,
+  meId: string | null,
+  cursor?: string | null,
+  limit: number = MESSAGE_PAGE_SIZE,
+): Promise<MessagePage> {
+  const rows = await db.message.findMany({
+    where: { teamId, threadKey },
+    include: MESSAGE_INCLUDE,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? page[page.length - 1].id : null;
+
+  const messages = page.map((m) => toChatMessage(m, meId)).reverse();
+
+  return { messages, nextCursor };
+}
+
+export async function getTeamMessages(teamId: string): Promise<MessagePage> {
   const session = await getSessionMember();
   return loadMessages(teamId, "team", session?.id ?? null);
 }
 
-export async function getDmMessages(teamId: string, threadId: string): Promise<ChatMessage[]> {
+export async function getDmMessages(teamId: string, threadId: string): Promise<MessagePage> {
   const session = await getSessionMember();
-  if (!session) return [];
+  if (!session) return { messages: [], nextCursor: null };
   return loadMessages(teamId, dmThreadKey(session.id, threadId), session.id);
 }
 
-/** 1:1 대화 목록 — 나를 뺀 팀원 한 명당 하나씩. */
+/** 위로 스크롤해 불러오는 과거 메시지 한 장. `threadKey` 는 서버 액션이 접근 권한을 확인한 뒤 넘긴다. */
+export async function getOlderMessages(
+  teamId: string,
+  threadKey: string,
+  meId: string,
+  cursor: string,
+): Promise<MessagePage> {
+  return loadMessages(teamId, threadKey, meId, cursor);
+}
+
+/**
+ * 1:1 대화 목록 — 나를 뺀 팀원 한 명당 하나씩.
+ *
+ * 팀원 한 명당 "마지막 메시지"·"안 읽은 수"를 따로 쿼리하면 팀원이 늘어난 만큼
+ * DB 요청도 늘어난다(실제로 그렇게 늘어나고 있었다). 팀원 수와 무관하게 쿼리 4개로
+ * 고정한다: 마지막 메시지는 `distinct`로 스레드당 한 줄만, 안 읽은 수는 스레드마다
+ * 다른 기준 시각을 하나의 `groupBy` 안에 OR 조건으로 넣어 한 번에 센다.
+ */
 export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   const session = await getSessionMember();
   if (!session) return [];
 
-  const [others, readMarks] = await Promise.all([
-    db.member.findMany({
-      where: { teamId, ...ACTIVE, id: { not: session.id } },
-      orderBy: { joinedAt: "asc" },
+  const others = await db.member.findMany({
+    where: { teamId, ...ACTIVE, id: { not: session.id } },
+    orderBy: { joinedAt: "asc" },
+  });
+  if (others.length === 0) return [];
+
+  const threadKeyOf = new Map(others.map((other) => [other.id, dmThreadKey(session.id, other.id)]));
+  const threadKeys = [...threadKeyOf.values()];
+
+  // 안 읽은 수는 스레드마다 다른 기준 시각(마지막으로 읽은 때)을 써야 해서, 그 시각을
+  // 먼저 받아 온 뒤에 물어야 한다.
+  const [readMarks, lastMessages] = await Promise.all([
+    db.readMark.findMany({ where: { memberId: session.id, threadKey: { in: threadKeys } } }),
+    db.message.findMany({
+      where: { teamId, threadKey: { in: threadKeys } },
+      orderBy: [{ threadKey: "asc" }, { createdAt: "desc" }],
+      distinct: ["threadKey"],
     }),
-    db.readMark.findMany({ where: { memberId: session.id } }),
   ]);
-  const readAt = new Map(readMarks.map((r) => [r.threadKey, r.readAt]));
 
-  return Promise.all(
-    others.map(async (other) => {
-      const threadKey = dmThreadKey(session.id, other.id);
-      const [last, unread] = await Promise.all([
-        db.message.findFirst({ where: { teamId, threadKey }, orderBy: { createdAt: "desc" } }),
-        db.message.count({
-          where: {
-            teamId,
-            threadKey,
-            authorId: { not: session.id },
-            createdAt: { gt: readAt.get(threadKey) ?? new Date(0) },
-          },
-        }),
-      ]);
+  const unreadCounts = await db.message.groupBy({
+    by: ["threadKey"],
+    where: {
+      teamId,
+      authorId: { not: session.id },
+      OR: threadKeys.map((threadKey) => ({
+        threadKey,
+        createdAt: { gt: readAtByThreadKey(readMarks, threadKey) },
+      })),
+    },
+    _count: { _all: true },
+  });
 
-      return {
-        id: other.id,
-        name: other.name,
-        mbti: toMbti(other.mbti),
-        lastMessage: last?.text ?? "아직 대화가 없습니다",
-        time: last?.whenLabel ?? "",
-        unread,
-      };
-    }),
-  );
+  const lastByThreadKey = new Map(lastMessages.map((m) => [m.threadKey, m]));
+  const unreadByThreadKey = new Map(unreadCounts.map((row) => [row.threadKey, row._count._all]));
+
+  return others.map((other) => {
+    const threadKey = threadKeyOf.get(other.id)!;
+    const last = lastByThreadKey.get(threadKey);
+
+    return {
+      id: other.id,
+      name: other.name,
+      mbti: toMbti(other.mbti),
+      lastMessage: last?.text ?? "아직 대화가 없습니다",
+      time: last?.whenLabel ?? "",
+      unread: unreadByThreadKey.get(threadKey) ?? 0,
+    };
+  });
+}
+
+function readAtByThreadKey(readMarks: { threadKey: string; readAt: Date }[], threadKey: string): Date {
+  return readMarks.find((r) => r.threadKey === threadKey)?.readAt ?? new Date(0);
 }
 
 export async function getDmThread(teamId: string, threadId: string): Promise<DmThread | null> {

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { softenProfanity } from "@/lib/profanity";
@@ -12,8 +13,12 @@ import type { ChatMessage } from "@/lib/types";
  * 같은 대화라는 감각이 깨지므로, 규격을 바꿀 일이 있으면 여기만 고친다.
  *
  * 차이는 하나뿐이다: 단톡방은 상대 이름을 말풍선 위에 붙이고, DM 은 상대가 한 명뿐이라 붙이지 않는다.
+ *
+ * `memo` 를 붙였다 — 메시지 하나를 보내면 배열이 새로 만들어지지만, 바뀌지 않은
+ * 말풍선까지 매번 다시 그릴 이유는 없다. `onRetry` 를 메시지별 클로저 대신 `retry`
+ * 자체(안정된 참조)로 받아야 이 `memo` 가 실제로 걸린다 — 호출부를 함께 보라.
  */
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   showAuthor,
   onRetry,
@@ -21,10 +26,10 @@ export function MessageBubble({
   message: ChatMessage;
   /** 여러 사람이 있는 방에서만 상대 이름을 보여 준다. */
   showAuthor: boolean;
-  onRetry: () => void;
+  onRetry: (message: ChatMessage) => void;
 }) {
   const mine = message.isMine;
-  const { text: displayText, masked } = softenProfanity(message.text);
+  const { text: displayText, masked } = useMemo(() => softenProfanity(message.text), [message.text]);
 
   return (
     <div className={cn("flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
@@ -62,7 +67,7 @@ export function MessageBubble({
           {message.status === "failed" ? (
             <button
               type="button"
-              onClick={onRetry}
+              onClick={() => onRetry(message)}
               className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-bold text-[11.5px] leading-none text-err"
             >
               <Icon name="circle-alert" size={12} />
@@ -70,7 +75,7 @@ export function MessageBubble({
             </button>
           ) : (
             <span className="font-medium text-[11.5px] leading-none text-txt-faint">
-              {message.time}
+              {message.status === "sending" ? "보내는 중…" : message.time}
             </span>
           )}
         </div>
@@ -91,4 +96,4 @@ export function MessageBubble({
       </div>
     </div>
   );
-}
+});

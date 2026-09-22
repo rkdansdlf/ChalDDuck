@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { dmThreadKey } from "@/data/api";
+import { dmThreadKey, getOlderMessages, type MessagePage } from "@/data/api";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 
@@ -41,7 +41,11 @@ function nowLabel() {
   }).format(new Date());
 }
 
-export async function sendChatMessage(threadId: string, text: string): Promise<{ ok: boolean }> {
+export type SendChatMessageResult =
+  | { ok: true; message: { id: string; time: string } }
+  | { ok: false };
+
+export async function sendChatMessage(threadId: string, text: string): Promise<SendChatMessageResult> {
   const me = await requireSessionMember();
   const trimmed = text.trim();
   if (!trimmed) return { ok: false };
@@ -49,7 +53,7 @@ export async function sendChatMessage(threadId: string, text: string): Promise<{
 
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
 
-  await db.message.create({
+  const created = await db.message.create({
     data: {
       teamId: me.teamId,
       threadKey,
@@ -59,8 +63,17 @@ export async function sendChatMessage(threadId: string, text: string): Promise<{
     },
   });
 
-  revalidatePath("/chat", "layout");
-  return { ok: true };
+  // 화면은 낙관적으로 이미 보여 줬으니, 여기서는 그 방 경로만 다시 유효하게 만든다 —
+  // `/chat` 레이아웃(팀원 목록·최근 자료)까지 매 메시지마다 다시 부를 필요는 없다.
+  revalidatePath(threadId === "team" ? "/chat/team" : `/chat/dm/${threadId}`);
+  return { ok: true, message: { id: created.id, time: created.whenLabel } };
+}
+
+/** 위로 스크롤해 더 불러오기. `threadId` 가 실제로 내 방인지는 `resolveThread` 가 확인한다. */
+export async function loadOlderMessages(threadId: string, cursor: string): Promise<MessagePage> {
+  const me = await requireSessionMember();
+  const threadKey = await resolveThread(threadId, me.id, me.teamId);
+  return getOlderMessages(me.teamId, threadKey, me.id, cursor);
 }
 
 /** 대화를 열었으면 읽은 것이다 — 목록과 탭 배지의 안 읽음 수가 함께 내려간다. */
@@ -68,11 +81,14 @@ export async function markThreadRead(threadId: string): Promise<void> {
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
 
-  await db.readMark.upsert({
-    where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    update: { readAt: new Date() },
-    create: { memberId: me.id, threadKey },
-  });
-
+  await touchReadMark(me.id, threadKey);
   revalidatePath("/chat", "layout");
+}
+
+async function touchReadMark(memberId: string, threadKey: string): Promise<void> {
+  await db.readMark.upsert({
+    where: { memberId_threadKey: { memberId, threadKey } },
+    update: { readAt: new Date() },
+    create: { memberId, threadKey },
+  });
 }

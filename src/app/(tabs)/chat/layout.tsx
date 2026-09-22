@@ -24,7 +24,12 @@ export default async function ChatLayout({ children }: LayoutProps<"/chat">) {
   return (
     <div className="flex min-h-0 flex-1">
       <aside className="hidden w-[280px] flex-none border-r border-line bg-card lg:flex lg:flex-col">
-        <ChatThreadList team={team} teamMessages={teamMessages} threads={threads} variant="pane" />
+        <ChatThreadList
+          team={team}
+          teamMessages={teamMessages.messages}
+          threads={threads}
+          variant="pane"
+        />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>

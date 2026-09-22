@@ -18,7 +18,7 @@ export default async function ChatPage() {
   return (
     <>
       <NarrowOnly>
-        <ChatHubScreen team={team} teamMessages={teamMessages} threads={threads} />
+        <ChatHubScreen team={team} teamMessages={teamMessages.messages} threads={threads} />
       </NarrowOnly>
       <WideOnly>
         <ChatEmptyPane />

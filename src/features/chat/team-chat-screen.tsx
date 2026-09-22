@@ -8,7 +8,7 @@ import { TEAM_THREAD_ID } from "@/lib/types";
 import { useMe } from "@/features/onboarding/use-me";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
-import { useChatThread } from "./use-chat-thread";
+import { useChatThread, useLoadOlderOnScroll } from "./use-chat-thread";
 
 /**
  * 19 팀플 단톡방.
@@ -19,23 +19,35 @@ import { useChatThread } from "./use-chat-thread";
 export function TeamChatScreen({
   team,
   messages: fromServer,
+  initialCursor,
   me: fromRoster,
 }: {
   team: Team;
   messages: ChatMessage[];
+  initialCursor: string | null;
   me: Member | undefined;
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
-  const { messages, send, retry } = useChatThread(TEAM_THREAD_ID, fromServer, me);
+  const { messages, send, retry, hasMore, isLoadingMore, loadOlder } = useChatThread(
+    TEAM_THREAD_ID,
+    fromServer,
+    initialCursor,
+    me,
+  );
   const [toast, setToast] = useState<string | null>(null);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 새 말이 오면 맨 아래로 — 대화는 마지막 줄이 기준점이다.
+  useLoadOlderOnScroll(scrollRef, topRef, hasMore, loadOlder);
+
+  // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때는 움직이지 않는다.
+  const lastMessageId = messages.at(-1)?.id;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+  }, [lastMessageId]);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -54,14 +66,16 @@ export function TeamChatScreen({
         onAction={() => router.push("/team")}
       />
 
-      <Body dense className="flex flex-col gap-3">
+      <Body ref={scrollRef} dense className="flex flex-col gap-3">
+        <div ref={topRef} />
+        {isLoadingMore ? (
+          <div className="pb-1 text-center font-medium text-[12px] leading-none text-txt-faint">
+            이전 대화 불러오는 중…
+          </div>
+        ) : null}
+
         {messages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            showAuthor
-            onRetry={() => retry(message)}
-          />
+          <MessageBubble key={message.id} message={message} showAuthor onRetry={retry} />
         ))}
 
         <Note tone="info" icon="wand-sparkles" className="mt-2">
