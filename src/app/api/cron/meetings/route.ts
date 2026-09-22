@@ -1,3 +1,4 @@
+import { sweepAttempts } from "@/server/auth/attempts";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
 
 /**
@@ -34,5 +35,10 @@ export async function GET(request: Request) {
   }
 
   const confirmed = await confirmDueMeetings();
-  return Response.json({ confirmed });
+
+  // 창이 지난 재입장 시도 기록도 함께 치운다. 하루 한 번이면 충분하고 늦어도 틀리지
+  // 않는 일이라, 예약 작업이 이미 있는 이 자리에 붙인다.
+  const attempts = await sweepAttempts();
+
+  return Response.json({ confirmed, swept: { attempts } });
 }

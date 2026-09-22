@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { attemptKey, clearAttempts, countFailure, isLocked } from "@/server/auth/attempts";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
@@ -27,30 +28,6 @@ import { describeDevice, requireLeader, requireSessionMember, startSession } fro
 const CLAIM_COOKIE = "cd_claim";
 const CLAIM_MAX_AGE = 60 * 60 * 24; // 하루
 
-/** 같은 브라우저가 코드를 계속 찍어 보지 못하게. 간단한 메모리 카운터다. */
-const attempts = new Map<string, { count: number; until: number }>();
-const MAX_ATTEMPTS = 5;
-const LOCK_MS = 10 * 60 * 1000;
-
-function tooManyAttempts(key: string): boolean {
-  const seen = attempts.get(key);
-  if (!seen) return false;
-  if (Date.now() > seen.until) {
-    attempts.delete(key);
-    return false;
-  }
-  return seen.count >= MAX_ATTEMPTS;
-}
-
-function countAttempt(key: string) {
-  const seen = attempts.get(key);
-  if (!seen || Date.now() > seen.until) {
-    attempts.set(key, { count: 1, until: Date.now() + LOCK_MS });
-    return;
-  }
-  seen.count += 1;
-}
-
 async function findMember(teamCode: string, name: string) {
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return null;
@@ -65,23 +42,23 @@ export async function rejoinWithCode(
   name: string,
   code: string,
 ): Promise<"ok" | "wrong" | "locked" | "no-code"> {
-  const key = `${teamCode}:${name}`;
-  if (tooManyAttempts(key)) return "locked";
+  const key = attemptKey(teamCode, name);
+  if (await isLocked(key)) return "locked";
 
   const member = await findMember(teamCode, name);
   if (!member) {
-    countAttempt(key);
+    await countFailure(key);
     return "wrong";
   }
   // 코드를 아직 받지 못한 옛 기록. 팀장 승인으로 보내야 한다.
   if (!member.rejoinCodeHash) return "no-code";
 
   if (!verifyRejoinCode(normalizeRejoinCode(code), member.rejoinCodeHash)) {
-    countAttempt(key);
+    await countFailure(key);
     return "wrong";
   }
 
-  attempts.delete(key);
+  await clearAttempts(key);
   // 나갔던 사람이 돌아오는 경우 — 재입장 문(코드·승인)을 거쳤으니 명단에 되돌린다.
   if (member.leftAt) await db.member.update({ where: { id: member.id }, data: { leftAt: null } });
   await startSession(member.id);
