@@ -3,6 +3,7 @@
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar, Icon, Rows, SecTitle } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage, DmThread, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { useThreadMessages } from "./messages-state";
@@ -52,7 +53,9 @@ export function ChatThreadList({
       title={team.name}
       time={lastTeamMessage?.time ?? ""}
       preview={
-        lastTeamMessage ? `${lastTeamMessage.author}: ${lastTeamMessage.text}` : "아직 대화가 없습니다"
+        lastTeamMessage
+          ? `${lastTeamMessage.author}: ${softenProfanity(lastTeamMessage.text).text}`
+          : "아직 대화가 없습니다"
       }
       onClick={() => router.push("/chat/team")}
     />
@@ -65,7 +68,7 @@ export function ChatThreadList({
       leading={<Avatar name={thread.name} mbti={thread.mbti} size={42} />}
       title={thread.name}
       time={thread.time}
-      preview={thread.lastMessage}
+      preview={softenProfanity(thread.lastMessage).text}
       unread={thread.unread}
       onClick={() => router.push(`/chat/dm/${thread.id}`)}
     />

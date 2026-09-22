@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { AppBar, Avatar, Body, Note, Rows, SecTitle, Undecided } from "@/components/ui";
+import { softenProfanity } from "@/lib/profanity";
 import type { DmThread } from "@/lib/types";
 import { ThreadRow } from "./thread-row";
 
@@ -27,7 +28,7 @@ export function DmListScreen({ threads }: { threads: DmThread[] }) {
               leading={<Avatar name={thread.name} mbti={thread.mbti} size={42} />}
               title={thread.name}
               time={thread.time}
-              preview={thread.lastMessage}
+              preview={softenProfanity(thread.lastMessage).text}
               unread={thread.unread}
               onClick={() => router.push(`/chat/dm/${thread.id}`)}
             />
