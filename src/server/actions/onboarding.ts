@@ -210,13 +210,19 @@ export async function joinTeam(
     return { status: "requested" };
   }
 
-  const member = await db.member.create({
-    data: { teamId: team.id, name, isLeader: true, ...values },
+  // 멤버를 만드는 것과 재입장 코드를 붙이는 것을 한 트랜잭션으로 묶는다 — 둘 중 하나만
+  // 성공하면 이름은 있는데 재입장 코드가 없는 사람이 생기고, 팀장이 자신뿐이면 그
+  // 상태에서 영영 못 돌아온다(실제로 한 번 있었다).
+  const { member, rejoinCode } = await db.$transaction(async (tx) => {
+    const member = await tx.member.create({
+      data: { teamId: team.id, name, isLeader: true, ...values },
+    });
+    const rejoinCode = await issueRejoinCode(member.id, tx);
+    return { member, rejoinCode };
   });
 
   if (createdHere) store.delete(CREATOR_COOKIE);
 
-  const rejoinCode = await issueRejoinCode(member.id);
   await startSession(member.id);
 
   // 여기서 redirect 하지 않는다 — 화면이 재입장 코드를 한 번 보여 준 뒤에 넘어간다.
@@ -243,15 +249,21 @@ export async function checkJoinApproval(): Promise<
   store.delete(JOIN_COOKIE);
   if (request.status !== "approved") return { status: "rejected" };
 
-  const member = await db.member.create({
-    data: {
-      teamId: request.teamId,
-      name: request.name,
-      mbti: request.mbti,
-      mbtiFromQuiz: request.mbtiFromQuiz,
-      wantRole: request.wantRole,
-      vetoRole: request.vetoRole,
-    },
+  // 멤버를 만드는 것과 재입장 코드를 붙이는 것을 한 트랜잭션으로 묶는다 — joinTeam 과
+  // 같은 이유다.
+  const { member, rejoinCode } = await db.$transaction(async (tx) => {
+    const member = await tx.member.create({
+      data: {
+        teamId: request.teamId,
+        name: request.name,
+        mbti: request.mbti,
+        mbtiFromQuiz: request.mbtiFromQuiz,
+        wantRole: request.wantRole,
+        vetoRole: request.vetoRole,
+      },
+    });
+    const rejoinCode = await issueRejoinCode(member.id, tx);
+    return { member, rejoinCode };
   });
 
   // 인원이 늘면 "몇 명 가능"이 달라진다.
@@ -259,7 +271,6 @@ export async function checkJoinApproval(): Promise<
 
   await db.joinRequest.delete({ where: { token } });
 
-  const rejoinCode = await issueRejoinCode(member.id);
   await startSession(member.id, token);
   return { status: "approved", rejoinCode };
 }

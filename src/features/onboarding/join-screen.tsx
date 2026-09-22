@@ -71,7 +71,11 @@ export function JoinScreen({ team, requestedCode }: { team: Team | null; request
               <Note tone="err" icon="circle-alert" className="mt-3">
                 <b>{requestedCode}</b> 코드의 팀을 찾을 수 없습니다. 코드를 다시 확인해 주세요.
               </Note>
-            ) : null}
+            ) : (
+              <Note tone="info" icon="info" className="mt-3">
+                이미 팀에 들어가 있었다면, 같은 초대 코드와 이름으로 다시 입력하면 됩니다.
+              </Note>
+            )}
           </Panel>
         )}
       </Body>
