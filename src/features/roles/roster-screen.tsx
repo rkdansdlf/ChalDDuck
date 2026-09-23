@@ -57,6 +57,7 @@ export function RosterScreen({
 
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   /** 서버 응답을 기다리는 동안 고른 도구 — 다 오면 바로 연출로 넘어간다. */
   const [rollingTool, setRollingTool] = useState<RandomTool | null>(null);
@@ -83,6 +84,36 @@ export function RosterScreen({
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
+  };
+
+  const inviteUrl =
+    typeof window === "undefined" ? "" : `${window.location.origin}/join?code=${team.code}`;
+
+  const copyInviteCode = async () => {
+    try {
+      await navigator.clipboard.writeText(team.code);
+      flash("초대 코드를 복사했습니다");
+    } catch {
+      flash("복사하지 못했습니다. 화면의 코드를 직접 옮겨 적어 주세요.");
+    }
+  };
+
+  const shareInviteLink = async () => {
+    const payload = { title: "찰떡 팀 초대", text: `${team.name} 팀에 초대합니다`, url: inviteUrl };
+    if (navigator.share) {
+      try {
+        await navigator.share(payload);
+        return;
+      } catch {
+        // 사용자가 공유 시트를 닫은 경우 — 복사로 넘어간다
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      flash("초대 링크를 복사했습니다");
+    } catch {
+      flash("공유하지 못했습니다. 초대 코드를 대신 알려 주세요.");
+    }
   };
 
   /** 같은 역할을 1순위로 고른 사람 중 이미 거절한 사람을 뺀 후보 — 서버의 후보 계산과 같은 규칙. */
@@ -121,7 +152,13 @@ export function RosterScreen({
 
   return (
     <>
-      <AppBar title="역할 조율" sub={team.name} action="user-plus" actionLabel="팀원 초대하기" />
+      <AppBar
+        title="역할 조율"
+        sub={team.name}
+        action="user-plus"
+        actionLabel="팀원 초대하기"
+        onAction={() => setInviteOpen(true)}
+      />
       <Body dense>
         <SecTitle note="희망자 수와 조율 상태입니다">역할별 현황</SecTitle>
 
@@ -368,6 +405,25 @@ export function RosterScreen({
             </div>
           </>
         )}
+      </Sheet>
+
+      <Sheet open={inviteOpen} title="팀원 초대하기" onClose={() => setInviteOpen(false)}>
+        <Panel s="yellow" pad={20} className="mb-4 text-center">
+          <div className="t-cap-strong mb-2.5 text-yellow-700" style={{ letterSpacing: ".04em" }}>
+            초대 코드
+          </div>
+          <div className="font-mono font-extrabold text-[28px] leading-[1.2] tracking-[.03em] text-ink-900">
+            {team.code}
+          </div>
+        </Panel>
+        <div className="flex flex-col gap-2">
+          <Btn full icon="copy" onClick={copyInviteCode}>
+            코드 복사하기
+          </Btn>
+          <Btn full v="outline" icon="share-2" onClick={shareInviteLink}>
+            초대 링크 공유하기
+          </Btn>
+        </div>
       </Sheet>
 
       <Toast msg={toast} />
