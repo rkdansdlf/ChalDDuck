@@ -31,3 +31,32 @@ export function Progress({
     </div>
   );
 }
+
+/**
+ * 연속 진행률 막대(0~1). 단계가 아니라 **얼마나 왔는지**를 보일 때 — 파일 올리기 같은.
+ *
+ * 막대만으로 끝내지 않는다. 옆에 숫자(%)를 함께 두는 건 부르는 쪽의 몫이다.
+ */
+export function ProgressBar({
+  value,
+  label,
+  className,
+}: {
+  value: number;
+  label: string;
+  className?: string;
+}) {
+  const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      className={cn("h-1 overflow-hidden rounded-sm bg-cr-200", className)}
+    >
+      <div className="h-full rounded-sm bg-yellow-400 transition-[width] duration-200" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}

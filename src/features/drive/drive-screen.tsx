@@ -9,12 +9,14 @@ import {
   Icon,
   Note,
   Rows,
+  SecTitle,
   Sheet,
   StatusBadge,
+  Toast,
 } from "@/components/ui";
-import { SecTitle } from "@/components/ui";
 import type { DriveLimits, SubmissionBox, Team } from "@/lib/types";
-import { UploadButton } from "./upload-button";
+import { UploadButton, uploadSummary } from "./upload-button";
+import type { UploadDone } from "./use-uploads";
 
 /**
  * 12 드라이브 — 역할별 제출함.
@@ -35,6 +37,29 @@ export function DriveScreen({
 }) {
   const router = useRouter();
   const [picking, setPicking] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  /**
+   * 시트에서 올리기가 끝났을 때.
+   *
+   * 전부 됐으면 시트를 닫고 **그 제출함으로 들어가 방금 올린 파일을 강조**한다 — 예전에는
+   * 시트가 열린 채 남아 뒤에서 목록이 바뀌어도 보이지 않았다. 실패가 남았으면 시트를
+   * 그대로 두어 이유와 "다시 시도"가 보이게 한다.
+   */
+  const afterUpload = (boxId: string) => (done: UploadDone[], failedCount: number) => {
+    if (failedCount > 0) {
+      const msg = uploadSummary(done);
+      if (msg) {
+        setToast(msg);
+        window.setTimeout(() => setToast(null), 3000);
+      }
+      return;
+    }
+    if (done.length === 0) return;
+    setPicking(false);
+    const ids = done.map((d) => d.fileId).join(",");
+    router.push(`/drive/${boxId}?uploaded=${encodeURIComponent(ids)}`);
+  };
 
   return (
     <>
@@ -126,12 +151,14 @@ export function DriveScreen({
                     {box.owner ?? "담당자 미정"} · {box.due} 마감
                   </span>
                 </span>
-                <UploadButton boxId={box.id} label="여기에 올리기" />
+                <UploadButton boxId={box.id} label="여기에 올리기" onFinished={afterUpload(box.id)} />
               </div>
             ))}
           </Rows>
         )}
       </Sheet>
+
+      <Toast msg={toast} />
     </>
   );
 }

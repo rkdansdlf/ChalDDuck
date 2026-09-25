@@ -18,7 +18,7 @@ export { SideNav } from "./side-nav";
 export { Icon, type IconName } from "./icon";
 export { Note, Undecided, type NoteTone } from "./note";
 export { Panel, Rows, SecTitle } from "./panel";
-export { Progress } from "./progress";
+export { Progress, ProgressBar } from "./progress";
 export { Sheet } from "./sheet";
 export { SURFACE, type SurfaceVariant } from "./surface";
 export { TABS, TabBar, type TabKey, type TabPending } from "./tab-bar";

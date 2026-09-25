@@ -16,27 +16,6 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 /** 제출 파일이 들어가는 버킷. 비공개이고, 내려받기는 서명된 주소로만 한다. */
 export const BUCKET = "submissions";
 
-/** 한 파일의 크기 상한. 팀플 발표 자료 기준이고, 넘으면 올리기 전에 막는다. */
-export const MAX_BYTES = 50 * 1024 * 1024;
-
-/**
- * 받을 형식.
- *
- * 화면이 안내하는 것과 같다(문서·이미지·PPT·PDF). 실행 파일이 팀 드라이브를 타고
- * 도는 일을 막으려는 것이기도 하다.
- */
-export const ALLOWED_MIME: Record<string, "pptx" | "docx" | "pdf" | "image"> = {
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
-  "application/vnd.ms-powerpoint": "pptx",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-  "application/msword": "docx",
-  "application/pdf": "pdf",
-  "image/png": "image",
-  "image/jpeg": "image",
-  "image/gif": "image",
-  "image/webp": "image",
-};
-
 /**
  * 저장소에 쓸 비밀 키.
  *
@@ -67,11 +46,4 @@ export function storage() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return cached.storage.from(BUCKET);
-}
-
-/** 사람이 읽을 크기. 표시용이고 계산에는 `bytes` 를 쓴다. */
-export function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }

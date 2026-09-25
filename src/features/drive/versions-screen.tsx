@@ -149,7 +149,8 @@ export function VersionsScreen({
         )}
 
         <div className="mt-3.5">
-          <UploadButton boxId={box.id} label="이 파일의 새 버전 올리기" />
+          {/* 이름이 달라도 이 파일의 새 버전으로 쌓인다 — 버튼이 그렇게 약속하므로. */}
+          <UploadButton boxId={box.id} fileId={file.id} label="이 파일의 새 버전 올리기" dropzone />
         </div>
 
         <Note tone="info" icon="clipboard-list" className="mt-3.5">

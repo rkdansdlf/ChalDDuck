@@ -1,70 +1,80 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
-import { Btn, Note, Toast } from "@/components/ui";
-import { uploadSubmission } from "@/server/actions/drive";
+import { useRef, useState, type DragEvent } from "react";
+import { Btn, Icon, ProgressBar, Rows, StatusBadge, Toast, type StatusKey } from "@/components/ui";
+import { cn } from "@/lib/cn";
+import { ACCEPT, humanSize } from "./file-rules";
+import { useUploads, type UploadDone, type UploadItem, type UploadStage } from "./use-uploads";
 
 /**
  * 파일 올리기.
  *
  * 보이는 것은 버튼 하나지만 실제로는 숨은 `<input type="file">` 을 연다 — 기본 파일
- * 입력은 브라우저마다 생김새가 달라 앱의 버튼 규격에 맞지 않는다.
+ * 입력은 브라우저마다 생김새가 달라 앱의 버튼 규격에 맞지 않는다. 넓은 화면에서는
+ * `dropzone` 을 주면 끌어다 놓을 자리가 함께 생긴다(휴대폰에는 끌어다 놓기가 없다).
  *
  * **같은 이름으로 올리면 새 파일이 아니라 그 파일의 새 버전이 된다.** 서버가 그렇게
  * 정하고, 결과 문구로 어느 쪽이었는지 알려 준다 — 덮어쓴 것처럼 보이면 안 되기 때문이다.
+ *
+ * 올리는 동안에는 파일마다 진행률이, 실패하면 이유와 "다시 시도"가 남는다. 조용히
+ * 원래 버튼으로 돌아가는 일이 없어야 한다 — 그게 "올라간 건지 모르겠다"의 원인이었다.
  */
 export function UploadButton({
   boxId,
+  fileId,
   label,
+  dropzone,
+  onFinished,
+  className,
 }: {
   boxId: string;
+  /** 버전 기록 화면 — 올리는 파일이 이름과 상관없이 이 파일의 새 버전이 된다. 한 번에 하나만. */
+  fileId?: string;
   label: string;
+  dropzone?: boolean;
+  /**
+   * 대기열이 끝났을 때. 주면 알림을 부르는 쪽이 띄운다(시트를 닫고 이동하는 경우 등).
+   * 안 주면 이 버튼이 직접 알림을 띄운다.
+   */
+  onFinished?: (done: UploadDone[], failedCount: number) => void;
+  className?: string;
 }) {
-  const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
-  const [working, setWorking] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 3000);
   };
 
-  const send = async (file: File) => {
-    setWorking(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      const result = await uploadSubmission(boxId, form);
+  const { items, busy, add, retry, dismiss } = useUploads({
+    boxId,
+    fileId,
+    onFinished: (done, failedCount) => {
+      if (onFinished) return onFinished(done, failedCount);
+      const msg = uploadSummary(done);
+      if (msg) flash(msg);
+    },
+  });
 
-      if (result.status === "ok") {
-        router.refresh();
-        flash(
-          result.isNewFile
-            ? `${result.fileName} 을 올렸습니다`
-            : `${result.fileName} 의 새 버전 ${result.label} 으로 쌓였습니다`,
-        );
-        return;
-      }
-
-      setError(
-        result.status === "too-big"
-          ? "50MB 가 넘는 파일은 올릴 수 없습니다."
-          : result.status === "bad-type"
-            ? "문서·이미지·PPT·PDF 만 올릴 수 있습니다."
-            : result.status === "not-configured"
-              ? "파일 저장소가 아직 연결되지 않았습니다(SUPABASE_SECRET_KEY)."
-              : "빈 파일은 올릴 수 없습니다.",
-      );
-    } finally {
-      setWorking(false);
-      // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 두 번째 선택이 무시된다.
-      if (input.current) input.current.value = "";
-    }
+  const pick = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    // 버전 기록 화면에서 여러 개를 놓으면 모두 같은 파일의 버전이 돼 버린다 — 첫 것만 받는다.
+    add(fileId ? [list[0]] : Array.from(list));
   };
+
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault();
+    setDragging(false);
+    pick(event.dataTransfer.files);
+  };
+
+  const button = (
+    <Btn v="outline" size="sm" icon="paperclip" disabled={busy} onClick={() => input.current?.click()}>
+      {busy ? "올리는 중" : label}
+    </Btn>
+  );
 
   return (
     <>
@@ -72,32 +82,111 @@ export function UploadButton({
         ref={input}
         type="file"
         hidden
-        accept=".pptx,.ppt,.docx,.doc,.pdf,image/png,image/jpeg,image/gif,image/webp"
+        multiple={!fileId}
+        accept={ACCEPT}
         onChange={(event) => {
-          const picked = event.target.files?.[0];
-          if (picked) void send(picked);
+          pick(event.target.files);
+          // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 두 번째 선택이 무시된다.
+          event.target.value = "";
         }}
       />
 
-      <Btn
-        v="outline"
-        size="sm"
-        icon="paperclip"
-        disabled={working}
-        onClick={() => input.current?.click()}
-      >
-        {working ? "올리는 중" : label}
-      </Btn>
+      {dropzone ? (
+        <>
+          <div className="lg:hidden">{button}</div>
+          <div
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={cn(
+              "hidden flex-col items-center gap-2.5 rounded-[18px] border-2 border-dashed px-5 py-6 text-center lg:flex",
+              dragging ? "border-yellow-500 bg-yellow-50" : "border-line-strong bg-transparent",
+            )}
+          >
+            <span className="text-txt-muted">
+              <Icon name="upload" size={22} />
+            </span>
+            <span className="t-note keep-all text-txt-muted">
+              {fileId ? "파일을 여기로 끌어다 놓거나" : "파일을 여기로 끌어다 놓거나(여러 개 가능)"}
+            </span>
+            {button}
+          </div>
+        </>
+      ) : (
+        button
+      )}
 
-      {/* 가로로 늘어선 줄(드라이브의 제출함 고르기 시트) 안에 놓여도 안내는 버튼 옆이
-          아니라 줄 아래에 한 줄을 다 쓰도록 한다. */}
-      {error ? (
-        <Note tone="warn" icon="circle-alert" title="올리지 못했습니다" className="mt-3 basis-full">
-          {error}
-        </Note>
+      {items.length > 0 ? (
+        // 가로로 늘어선 줄(드라이브의 제출함 고르기 시트) 안에 놓여도 한 줄을 다 쓴다.
+        <Rows className={cn("mt-3 basis-full", className)}>
+          {items.map((item) => (
+            <UploadRow key={item.id} item={item} onRetry={() => retry(item.id)} onDismiss={() => dismiss(item.id)} />
+          ))}
+        </Rows>
       ) : null}
 
       <Toast msg={toast} />
     </>
+  );
+}
+
+/** 끝난 대기열을 한 문장으로. 부르는 쪽이 알림을 직접 띄울 때도 쓴다. */
+export function uploadSummary(done: UploadDone[]): string | null {
+  if (done.length === 0) return null;
+  if (done.length > 1) return `파일 ${done.length}개를 올렸습니다`;
+  const [one] = done;
+  return one.isNewFile ? `${one.fileName} 을 올렸습니다` : `${one.fileName} 의 새 버전 ${one.label} 으로 쌓였습니다`;
+}
+
+/** 단계마다 상태 어휘. 새 상태를 지어내지 않고 `STATUS` 를 쓴다. */
+const STAGE: Record<UploadStage, { status: StatusKey; text: string }> = {
+  waiting: { status: "waiting", text: "대기" },
+  uploading: { status: "doing", text: "올리는 중" },
+  saving: { status: "doing", text: "기록하는 중" },
+  done: { status: "done", text: "올림" },
+  failed: { status: "failed", text: "실패" },
+};
+
+function UploadRow({ item, onRetry, onDismiss }: { item: UploadItem; onRetry: () => void; onDismiss: () => void }) {
+  const stage = STAGE[item.stage];
+  const pct = Math.round(item.progress * 100);
+
+  return (
+    <div className="px-[15px] py-3">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-semibold text-[14px] leading-[1.4] text-txt-strong">
+          {item.name}
+        </span>
+        <StatusBadge status={stage.status}>{stage.text}</StatusBadge>
+      </div>
+
+      {item.stage === "uploading" ? (
+        <div className="mt-2 flex items-center gap-2.5">
+          <ProgressBar value={item.progress} label={`${item.name} 올리는 중`} className="flex-1" />
+          <span className="t-note flex-none tabular-nums text-txt-muted">
+            {pct}% · {humanSize(item.bytes)}
+          </span>
+        </div>
+      ) : null}
+
+      {item.stage === "failed" ? (
+        <>
+          <p className="t-note keep-all m-0 mt-1.5 text-txt-muted">{item.error}</p>
+          <div className="mt-2 flex gap-2">
+            {item.retryable ? (
+              <Btn v="outline" size="sm" icon="rotate-ccw" onClick={onRetry}>
+                다시 시도
+              </Btn>
+            ) : null}
+            <Btn v="ghost" size="sm" icon="x" onClick={onDismiss}>
+              목록에서 지우기
+            </Btn>
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }

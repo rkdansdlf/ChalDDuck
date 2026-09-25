@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { nextVersionLabel } from "@/features/drive/version-label";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
-import { ALLOWED_MIME, MAX_BYTES, humanSize, isStorageConfigured, storage } from "@/server/storage/client";
+import { MAX_BYTES, humanSize, resolveFileType } from "@/features/drive/file-rules";
+import { isStorageConfigured, storage } from "@/server/storage/client";
 
 /**
  * 22 파일 복원 서버 액션.
@@ -59,68 +60,147 @@ export async function restoreFileVersion(fileId: string, versionId: string): Pro
   return label;
 }
 
-/** 올리기 결과 — 화면이 무엇이 일어났는지 정확히 말할 수 있게 구분해 준다. */
-export type UploadResult =
-  | { status: "ok"; fileName: string; label: string; isNewFile: boolean }
-  | { status: "too-big" | "bad-type" | "empty" | "not-configured" };
+/** 올리기를 거절한 이유 — 화면이 무엇이 잘못됐는지 정확히 말할 수 있게 나눠 준다. */
+export type UploadRejection =
+  | "too-big"
+  | "bad-type"
+  | "empty"
+  | "not-configured"
+  /** 버전 기록 화면에서 다른 형식을 그 파일의 새 버전으로 올리려 했다. */
+  | "kind-mismatch";
+
+export type PrepareUploadResult =
+  | { status: "ok"; path: string; signedUrl: string; contentType: string }
+  | { status: UploadRejection };
 
 /**
- * 제출함에 파일을 올린다.
+ * 올리기 1단계 — 브라우저가 저장소에 **직접** 올릴 수 있는 주소를 발급한다.
  *
- * **같은 이름이면 새 파일이 아니라 그 파일의 새 버전이 된다.** 덮어쓰지 않는다 —
- * 이전 버전은 저장소에 그대로 남고 목록에도 남는다. 이것이 드라이브의 약속이다.
+ * 파일 본문은 이 앱 서버를 거치지 않는다. 서버 액션은 요청 본문이 1MB 로 막혀 있고
+ * (Vercel 함수도 4.5MB), 발표 자료는 대개 그보다 크다. 예전에는 파일을 서버 액션으로
+ * 보내서 1MB 가 넘으면 아무 안내 없이 실패했다.
  *
- * 저장소 객체는 **버전마다 하나**다. 같은 경로에 덮어쓰면 옛 버전을 내려받을 때
- * 새 내용이 나와, 목록만 역사이고 내용은 하나인 가짜 버전 기록이 된다.
+ * 여기서는 **누가 어느 칸에 무엇을 올리려는지**만 확인하고, 저장소 경로를 서버가 정한다.
+ * 올라온 내용은 `finishUpload` 가 저장소에서 다시 확인한다 — 이 단계의 크기·형식은
+ * 브라우저가 알려 준 값이라 믿을 수 없다.
+ *
+ * @param fileId 버전 기록 화면에서 올릴 때 — 이름이 달라도 **그 파일의** 새 버전이 된다.
  */
-export async function uploadSubmission(boxId: string, form: FormData): Promise<UploadResult> {
+export async function prepareUpload(
+  boxId: string,
+  meta: { name: string; size: number; type: string },
+  fileId?: string,
+): Promise<PrepareUploadResult> {
   const me = await requireSessionMember();
   if (!isStorageConfigured()) return { status: "not-configured" };
 
   const box = await db.submissionBox.findFirst({ where: { id: boxId, teamId: me.teamId } });
   if (!box) throw new Error("제출함을 찾을 수 없습니다.");
 
-  const blob = form.get("file");
-  if (!(blob instanceof File) || blob.size === 0) return { status: "empty" };
-  if (blob.size > MAX_BYTES) return { status: "too-big" };
+  if (meta.size <= 0) return { status: "empty" };
+  if (meta.size > MAX_BYTES) return { status: "too-big" };
 
-  const kind = ALLOWED_MIME[blob.type];
-  if (!kind) return { status: "bad-type" };
+  const type = resolveFileType(meta.name, meta.type);
+  if (!type) return { status: "bad-type" };
 
-  // 같은 이름이면 그 파일의 새 버전이다.
-  const name = blob.name.trim().slice(0, 200);
-  const existing = await db.submittedFile.findFirst({ where: { boxId: box.id, name } });
-  const file =
-    existing ??
-    (await db.submittedFile.create({ data: { boxId: box.id, name, kind } }));
+  if (fileId) {
+    const target = await db.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } });
+    if (!target) throw new Error("파일을 찾을 수 없습니다.");
+    if (target.kind !== type.kind) return { status: "kind-mismatch" };
+  }
 
+  // 경로에 임의값을 넣는다 — 파일 이름으로 만들면 같은 이름의 다음 버전이 앞 버전을
+  // 덮어쓰고, 이름을 아는 사람이 경로를 찍어 볼 수도 있다. 저장소 객체는 **버전마다
+  // 하나**다(같은 경로에 덮어쓰면 옛 버전을 내려받을 때 새 내용이 나온다).
+  const path = `${box.teamId}/${box.id}/${randomUUID()}`;
+
+  const { data, error } = await storage().createSignedUploadUrl(path);
+  if (error) {
+    console.error("[storage] 올리기 주소 발급 실패:", error);
+    throw new Error("저장소가 응답하지 않습니다.");
+  }
+  return { status: "ok", path, signedUrl: data.signedUrl, contentType: type.contentType };
+}
+
+export type FinishUploadResult =
+  | { status: "ok"; fileId: string; fileName: string; label: string; isNewFile: boolean }
+  | { status: UploadRejection | "missing" };
+
+/**
+ * 올리기 2단계 — 저장소에 들어온 파일을 버전 기록에 남긴다.
+ *
+ * **같은 이름이면 새 파일이 아니라 그 파일의 새 버전이 된다.** 덮어쓰지 않는다 —
+ * 이전 버전은 저장소에 그대로 남고 목록에도 남는다. 이것이 드라이브의 약속이다.
+ *
+ * 크기·형식은 브라우저가 1단계에서 말한 값이 아니라 **저장소에 실제로 들어온 객체**로
+ * 다시 본다. 서명 주소로는 무엇이든 올릴 수 있기 때문이다. 규칙에 어긋나면 객체를 지우고
+ * 기록을 남기지 않는다.
+ */
+export async function finishUpload(
+  boxId: string,
+  upload: { path: string; name: string },
+  fileId?: string,
+): Promise<FinishUploadResult> {
+  const me = await requireSessionMember();
+  if (!isStorageConfigured()) return { status: "not-configured" };
+
+  const box = await db.submissionBox.findFirst({ where: { id: boxId, teamId: me.teamId } });
+  if (!box) throw new Error("제출함을 찾을 수 없습니다.");
+
+  // 1단계에서 서버가 정해 준 모양의 경로만 받는다 — 다른 팀·다른 칸의 객체를 제 것처럼
+  // 기록에 붙이지 못하게.
+  const prefix = `${box.teamId}/${box.id}/`;
+  const rest = upload.path.startsWith(prefix) ? upload.path.slice(prefix.length) : "";
+  if (!/^[0-9a-f-]{36}$/.test(rest)) throw new Error("올린 파일의 경로가 올바르지 않습니다.");
+
+  const name = upload.name.trim().slice(0, 200);
+  if (!name) return { status: "empty" };
+
+  // 응답이 늦어 화면이 한 번 더 보냈을 때 같은 버전이 둘 생기지 않게.
+  const already = await db.fileVersion.findFirst({
+    where: { storagePath: upload.path },
+    include: { file: { select: { id: true, name: true } } },
+  });
+  if (already) {
+    return { status: "ok", fileId: already.file.id, fileName: already.file.name, label: already.label, isNewFile: false };
+  }
+
+  const { data: info, error } = await storage().info(upload.path);
+  if (error || !info) return { status: "missing" };
+
+  const bytes = info.size ?? 0;
+  const type = resolveFileType(name, info.contentType ?? "");
+  const rejection: UploadRejection | null =
+    bytes <= 0 ? "empty" : bytes > MAX_BYTES ? "too-big" : !type ? "bad-type" : null;
+
+  const target = fileId
+    ? await db.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } })
+    : await db.submittedFile.findFirst({ where: { boxId: box.id, name } });
+  if (fileId && !target) throw new Error("파일을 찾을 수 없습니다.");
+
+  const mismatch = target && type && target.kind !== type.kind;
+  if (rejection || mismatch || !type) {
+    await storage().remove([upload.path]);
+    return { status: rejection ?? "kind-mismatch" };
+  }
+
+  const file = target ?? (await db.submittedFile.create({ data: { boxId: box.id, name, kind: type.kind } }));
   const versions = await db.fileVersion.findMany({ where: { fileId: file.id } });
   const label = nextVersionLabel(versions);
-
-  // 경로에 임의값을 넣는다 — 파일 이름만으로 만들면 같은 이름의 다음 버전이 앞 버전을
-  // 덮어쓰고, 이름을 아는 사람이 경로를 찍어 볼 수도 있다.
-  const path = `${box.teamId}/${box.id}/${file.id}/${randomUUID()}`;
-
-  const { error } = await storage().upload(path, blob, {
-    contentType: blob.type,
-    upsert: false,
-  });
-  if (error) {
-    console.error("[storage] 업로드 실패:", error);
-    throw new Error("파일을 올리지 못했습니다. 잠시 후 다시 시도해 주세요.");
-  }
 
   await db.fileVersion.create({
     data: {
       fileId: file.id,
       label,
       authorId: me.id,
-      note: existing ? `${name} 새 버전` : `${name} 최초 업로드`,
-      size: humanSize(blob.size),
-      kind,
-      storagePath: path,
-      bytes: blob.size,
-      mimeType: blob.type,
+      // 버전 기록 화면에서 이름이 다른 파일을 올렸으면 원래 이름을 남긴다 — 무엇으로
+      // 바꿨는지 기록에서 알 수 있어야 한다.
+      note: !target ? `${name} 최초 업로드` : name === file.name ? `${name} 새 버전` : `${name} 으로 새 버전`,
+      size: humanSize(bytes),
+      kind: type.kind,
+      storagePath: upload.path,
+      bytes,
+      mimeType: type.contentType,
       // 마감을 지나도 제출함을 잠그지 않는다 — 늦게라도 내는 편이 낫고, 대신 라벨이 붙는다.
       isLate: false,
       whenLabel: "방금",
@@ -129,7 +209,7 @@ export async function uploadSubmission(boxId: string, form: FormData): Promise<U
 
   revalidatePath("/drive", "layout");
   revalidatePath("/home");
-  return { status: "ok", fileName: name, label, isNewFile: !existing };
+  return { status: "ok", fileId: file.id, fileName: file.name, label, isNewFile: !target };
 }
 
 /**
