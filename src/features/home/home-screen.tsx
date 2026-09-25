@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AppBar,
   Body,
@@ -81,7 +81,27 @@ export function HomeScreen({
 
   // 종은 내비게이션 배지와 **같은 값**을 본다 — 탭바에 "새 알림"이 떠 있는데 종은
   // 비어 있으면 어느 쪽을 믿어야 할지 알 수 없다. 아직 다시 세기 전이면 서버가 준 값.
-  const unread = useNavBadges()?.notifications ?? unreadNotifications;
+  const polled = useNavBadges();
+  const unread = polled?.notifications ?? unreadNotifications;
+
+  useRefreshWhenStale(
+    // 이 화면이 그려질 때의 몫. **서버가 준 값으로만** 센다 — 온보딩 중 로컬에 남은
+    // 선택을 얹은 `members` 로 세면 서버의 몫과 영영 맞지 않을 수 있다.
+    homeFingerprint({
+      clashes: unresolvedClashes(roles, roster, negotiation.draws).length,
+      cal: meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0,
+      contribAwaitingMe: awaitingMyConfirm,
+      approvals: rejoinRequests,
+    }),
+    polled
+      ? homeFingerprint({
+          clashes: polled.parts.clashes,
+          cal: polled.cal,
+          contribAwaitingMe: polled.parts.contribAwaitingMe,
+          approvals: polled.parts.approvals,
+        })
+      : null,
+  );
 
   /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
   const remainingTasks = tasks.filter((t) => t.status !== "done").length;
@@ -300,6 +320,47 @@ export function HomeScreen({
       <Toast msg={toast} />
     </>
   );
+}
+
+/**
+ * "내 확인이 필요한 일"을 만드는 몫들을 한 줄로.
+ *
+ * 목록의 네 줄(겹친 역할·회의 응답·기여 확인·승인 대기)은 내비게이션 배지가 30초마다
+ * 이미 세고 있는 것과 같은 것이다. 그래서 홈을 위해 따로 묻지 않고, 배지가 세어 온
+ * 몫과 이 화면이 그려질 때의 몫을 **견주기만** 한다.
+ */
+function homeFingerprint(parts: {
+  clashes: number;
+  cal: number;
+  contribAwaitingMe: number;
+  approvals: number;
+}): string {
+  return `${parts.clashes}:${parts.cal}:${parts.contribAwaitingMe}:${parts.approvals}`;
+}
+
+/**
+ * 홈이 그려진 뒤로 목록의 몫이 바뀌었으면 한 번 새로 받아 온다.
+ *
+ * 왜 필요한가: 배지와 종은 스스로 따라오는데 목록은 서버가 그린 그대로라, 종에
+ * "알림 1건"이 떠서 홈을 봐도 "지금 확인할 일이 없습니다"가 남아 있었다. 배지가
+ * 가리키는 곳에 갔는데 아무것도 없으면 배지를 믿지 않게 된다.
+ *
+ * **바뀌었을 때만** 부른다. 아무 일 없는 동안에는 추가 요청이 0이다 — 주기적으로
+ * `router.refresh()` 를 걸면 홈의 읽기 11개가 그 주기마다 돈다.
+ *
+ * 같은 값으로는 두 번 부르지 않는다. 새로 받아 왔는데도 몫이 맞지 않으면(두 쪽의 세는
+ * 조건이 어긋난 경우) 30초마다 새로고침이 이어지는데, 그건 고칠 대상이지 반복할 일이 아니다.
+ */
+function useRefreshWhenStale(rendered: string, polled: string | null) {
+  const router = useRouter();
+  const refreshedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (polled === null || polled === rendered) return;
+    if (refreshedFor.current === polled) return;
+    refreshedFor.current = polled;
+    router.refresh();
+  }, [rendered, polled, router]);
 }
 
 /** 가까운 회의 한 칸 — 09/10 화면의 제안 상태를 그대로 비춘다. */

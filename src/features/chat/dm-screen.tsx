@@ -58,6 +58,10 @@ export function DmScreen({
         hideBackOnWide
       />
 
+      <Note tone="info" icon="lock" className="mx-4 mt-3">
+        이 대화는 <b>{thread.name}님과 나만</b> 봅니다. 팀 전체 단톡방과는 분리되어 있습니다.
+      </Note>
+
       <Body ref={scrollRef} dense className="flex flex-col gap-3">
         <div ref={topRef} />
         {isLoadingMore ? (
@@ -69,10 +73,6 @@ export function DmScreen({
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} showAuthor={false} onRetry={retry} />
         ))}
-
-        <Note tone="info" icon="lock" className="mt-2">
-          이 대화는 <b>{thread.name}님과 나만</b> 봅니다. 팀 전체 단톡방과는 분리되어 있습니다.
-        </Note>
 
         <div ref={bottomRef} />
       </Body>

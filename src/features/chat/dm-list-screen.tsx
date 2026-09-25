@@ -4,11 +4,16 @@ import { useRouter } from "next/navigation";
 import { AppBar, Avatar, Body, Note, Rows, SecTitle, Undecided } from "@/components/ui";
 import { softenProfanity } from "@/lib/profanity";
 import type { DmThread } from "@/lib/types";
+import { useSidebarThreadPoll } from "./thread-list-poll";
 import { ThreadRow } from "./thread-row";
 
 /** 30 1:1 DM 목록 — 단톡방과 별도로 팀원마다 하나씩 열린다. */
-export function DmListScreen({ threads }: { threads: DmThread[] }) {
+export function DmListScreen({ threads: fromServer }: { threads: DmThread[] }) {
   const router = useRouter();
+  // 좁은 화면에서는 이 화면이 DM 목록의 전부다(넓은 화면의 왼쪽 기둥은 숨어 있다).
+  // 기둥과 같은 폴링을 구독해야 새 DM·안 읽음 수가 새로고침 없이 따라온다 — 타이머는
+  // 구독자가 몇이든 하나뿐이다. 팀 대화 미리보기는 이 화면에 없어 쓰지 않는다.
+  const { threads } = useSidebarThreadPoll({ teamLast: null, threads: fromServer });
 
   return (
     <>

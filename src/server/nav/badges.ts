@@ -27,6 +27,21 @@ export type NavBadges = {
   chat: number;
   /** 홈의 종 — 안 읽은 알림 수. */
   notifications: number;
+  /**
+   * 팀 배지를 이루는 몫들.
+   *
+   * 배지에는 합만 보이지만, 홈의 "내 확인이 필요한 일"은 이 몫을 한 줄씩 펼친 것이다.
+   * 홈은 자기가 그려질 때의 값과 이 몫을 견줘 **달라졌을 때만** 새로 받아 온다 —
+   * 그래서 홈을 위해 따로 묻는 요청이 없다.
+   */
+  parts: {
+    clashes: number;
+    /** 내가 넣었는데 아직 팀원 확인을 못 받은 기록. 홈 목록에는 없는 몫이다. */
+    contribMine: number;
+    /** 내가 확인해 줘야 하는 팀원 기록. */
+    contribAwaitingMe: number;
+    approvals: number;
+  };
 };
 
 export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
@@ -39,7 +54,18 @@ export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
     db.notification.count({ where: { memberId: me.id, readAt: null } }),
   ]);
 
-  return { team: clashes + contrib + approvals, cal, chat, notifications };
+  return {
+    team: clashes + contrib.mine + contrib.awaitingMe + approvals,
+    cal,
+    chat,
+    notifications,
+    parts: {
+      clashes,
+      contribMine: contrib.mine,
+      contribAwaitingMe: contrib.awaitingMe,
+      approvals,
+    },
+  };
 }
 
 /**
@@ -69,15 +95,21 @@ async function countRoleClashes(teamId: string): Promise<number> {
 /**
  * 기여 기록으로 떠 있는 건수 — 내 기록의 확인 대기 + 내가 확인해 줘야 하는 팀원 기록.
  *
- * 둘을 더하는 이유는 배지가 "내가 뭔가 해야 한다"는 뜻이기 때문이다. 팀원 기록은
+ * 배지에서는 둘을 더한다 — 배지는 "내가 뭔가 해야 한다"는 뜻이기 때문이다. 나눠서
+ * 돌려주는 이유는 홈 목록이 뒤쪽 몫만 한 줄로 보여 주기 때문이다. 팀원 기록은
  * 내가 아직 확인하지 않은 것만 센다 — 이미 눌렀는데 숫자가 남아 있으면 안 된다.
  */
-async function countContribPending(me: SessionMember): Promise<number> {
+async function countContribPending(
+  me: SessionMember,
+): Promise<{ mine: number; awaitingMe: number }> {
   const [mine, awaitingMe] = await Promise.all([
     db.contribRecord.count({ where: { memberId: me.id, state: "pending" } }),
     db.contribRecord.count({
       where: {
-        member: { teamId: me.teamId, leftAt: null },
+        // 나간 팀원의 기록도 센다. 기여 기록은 성적 근거라 사람이 나가도 남고, 17 화면
+        // (`getTeamCheck`)도 그 기록을 확인 대기로 보여 준다 — 배지가 화면보다 적게
+        // 세면 "배지는 0인데 화면엔 대기 1건"이 된다.
+        member: { teamId: me.teamId },
         memberId: { not: me.id },
         state: "pending",
         confirms: { none: { memberId: me.id } },
@@ -85,7 +117,7 @@ async function countContribPending(me: SessionMember): Promise<number> {
     }),
   ]);
 
-  return mine + awaitingMe;
+  return { mine, awaitingMe };
 }
 
 /** 팀장이 열어 줘야 하는 문 — 새로 들어오려는 사람과 기기를 바꾼 팀원. 팀장이 아니면 0. */

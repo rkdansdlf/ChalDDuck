@@ -65,6 +65,10 @@ export function TeamChatScreen({
         onAction={() => router.push("/team")}
       />
 
+      <Note tone="info" icon="wand-sparkles" className="mx-4 mt-3">
+        쿠션 번역기로 다듬은 말은 <b>표시가 남습니다</b>. 원문을 숨기지 않습니다.
+      </Note>
+
       <Body ref={scrollRef} dense className="flex flex-col gap-3">
         <div ref={topRef} />
         {isLoadingMore ? (
@@ -76,10 +80,6 @@ export function TeamChatScreen({
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} showAuthor onRetry={retry} />
         ))}
-
-        <Note tone="info" icon="wand-sparkles" className="mt-2">
-          쿠션 번역기로 다듬은 말은 <b>표시가 남습니다</b>. 원문을 숨기지 않습니다.
-        </Note>
 
         <Undecided>
           채널을 여러 개 두는지, 메시지 삭제가 되는지는 기획안에 없어 팀 전체가 보는 단일 채팅방으로만

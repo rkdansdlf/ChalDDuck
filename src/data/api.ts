@@ -649,6 +649,22 @@ export async function getTeamMessages(teamId: string): Promise<MessagePage> {
   return loadMessages(teamId, "team", session?.id ?? null);
 }
 
+/**
+ * 팀 대화의 마지막 한 줄만.
+ *
+ * 사이드바 미리보기는 전체 이력이 필요 없다 — `getTeamMessages` 로 40개를 통째로
+ * 받아 오는 대신, 색인을 그대로 타는 단건 조회 하나로 끝낸다.
+ */
+export async function getTeamLastMessage(teamId: string): Promise<ChatMessage | null> {
+  const session = await getSessionMember();
+  const row = await db.message.findFirst({
+    where: { teamId, threadKey: "team" },
+    include: MESSAGE_INCLUDE,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+  return row ? toChatMessage(row, session?.id ?? null) : null;
+}
+
 export async function getDmMessages(teamId: string, threadId: string): Promise<MessagePage> {
   const session = await getSessionMember();
   if (!session) return { messages: [], nextCursor: null };

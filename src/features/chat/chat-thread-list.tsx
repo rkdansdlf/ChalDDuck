@@ -7,6 +7,7 @@ import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage, DmThread, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { useThreadMessages } from "./messages-state";
+import { useSidebarThreadPoll } from "./thread-list-poll";
 import { ThreadRow } from "./thread-row";
 
 /**
@@ -34,8 +35,13 @@ export function ChatThreadList({
   const router = useRouter();
   const pathname = usePathname();
 
-  const threads = fromServer;
-  const messages = useThreadMessages(TEAM_THREAD_ID, teamMessages);
+  // 서버 렌더 값으로 시작해, 몇 초마다 폴링한 값으로 갈아끼운다 — 다른 사람이 보낸
+  // 말이나 DM 목록의 안 읽음 수는 내가 그 방을 열기 전까지 저절로 알 길이 없었다.
+  const { teamLast, threads } = useSidebarThreadPoll({
+    teamLast: teamMessages.findLast((m) => m.status === "sent") ?? null,
+    threads: fromServer,
+  });
+  const messages = useThreadMessages(TEAM_THREAD_ID, teamLast ? [teamLast] : []);
   // 전송에 실패한 말은 아직 아무도 못 봤으므로 목록의 미리보기가 되면 안 된다.
   const lastTeamMessage = messages.findLast((m) => m.status === "sent");
 

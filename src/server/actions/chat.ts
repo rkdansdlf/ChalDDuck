@@ -1,8 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { dmThreadKey, getNewerMessages, getOlderMessages, type MessagePage } from "@/data/api";
-import type { ChatMessage } from "@/lib/types";
+import {
+  dmThreadKey,
+  getDmThreads,
+  getNewerMessages,
+  getOlderMessages,
+  getTeamLastMessage,
+  type MessagePage,
+} from "@/data/api";
+import type { ChatMessage, DmThread } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 
@@ -105,6 +112,27 @@ export async function pollNewMessages(
 
   await touchReadMark(me.id, threadKey);
   return fresh;
+}
+
+export type SidebarThreads = { teamLast: ChatMessage | null; threads: DmThread[] };
+
+/**
+ * 채팅 사이드바(목록)가 몇 초마다 부른다.
+ *
+ * 방을 열어 둔 화면과 달리 여기는 **어느 방을 보고 있는지 모른다** — 팀 대화
+ * 미리보기와 DM 목록 전체(마지막 말·안 읽음 수)를 한 번에 받아 간다. 쿼리는
+ * `getTeamLastMessage`(단건) + `getDmThreads`(팀원 수와 무관하게 고정 4개)뿐이라
+ * 목록이 길어도 비용이 늘지 않는다.
+ */
+export async function pollSidebarThreads(): Promise<SidebarThreads> {
+  const me = await requireSessionMember();
+
+  const [teamLast, threads] = await Promise.all([
+    getTeamLastMessage(me.teamId),
+    getDmThreads(me.teamId),
+  ]);
+
+  return { teamLast, threads };
 }
 
 /** 대화를 열었으면 읽은 것이다 — 목록과 탭 배지의 안 읽음 수가 함께 내려간다. */

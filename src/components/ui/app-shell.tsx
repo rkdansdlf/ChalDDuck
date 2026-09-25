@@ -44,12 +44,14 @@ export function AppShell({
       <div className="flex min-w-0 flex-1 justify-center">
         <div
           className={cn(
-            "relative flex h-dvh w-full flex-col overflow-hidden bg-page lg:border-x lg:border-line",
+            "group relative flex h-dvh w-full flex-col overflow-hidden bg-page lg:border-x lg:border-line",
             wide ? "max-w-[1400px]" : "max-w-[860px]",
           )}
         >
           {children}
-          <div className="lg:hidden">{tabBar}</div>
+          {/* 입력창에 포커스가 있는 동안은 숨긴다 — 키보드가 뜬 좁은 화면에서 탭바까지
+              자리를 차지하면 그 위의 대화 내용이 가려진다. */}
+          <div className="group-has-[[data-composer-input]:focus]:hidden lg:hidden">{tabBar}</div>
         </div>
       </div>
     </div>

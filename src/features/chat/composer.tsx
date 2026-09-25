@@ -77,6 +77,11 @@ export function Composer({
         placeholder={placeholder}
         aria-label={placeholder}
         maxLength={MAX_MESSAGE}
+        name="chat-message"
+        // 폼 안의 유일한 텍스트 필드라 크롬이 "아이디 한 칸짜리 로그인 폼"으로 오인해
+        // 비밀번호 관리자 제안 줄을 키보드 위에 띄운다. off 로 그 휴리스틱을 끈다.
+        autoComplete="off"
+        data-composer-input
         className="t-input min-h-11 min-w-0 flex-1 rounded-full border-[1.5px] border-input-border bg-card px-3.5 text-txt-strong outline-none"
       />
 
