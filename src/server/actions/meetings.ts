@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
+import { membersBlockedAt } from "@/features/schedule/meeting-slots";
 import { db } from "@/server/db";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -54,6 +55,43 @@ export async function proposeMeeting(slotId: string): Promise<void> {
 
   revalidatePath("/schedule", "layout");
   revalidatePath("/home");
+}
+
+/**
+ * 10 전원 불가한 주 — 고른 후보에 못 오는 팀원에게 회의 전에 의견을 남겨 달라고 알린다.
+ *
+ * 받는 사람은 화면이 보낸 목록이 아니라 **서버가 시간표에서 다시 센다.** 돌려주는 값은
+ * 실제로 알림이 간 사람 수 — 화면은 이 숫자로만 "보냈다"고 말한다.
+ */
+export async function requestRemoteInput(slotId: string): Promise<number> {
+  const me = await requireSessionMember();
+
+  const slot = await db.meetingSlot.findFirst({ where: { id: slotId, teamId: me.teamId } });
+  if (!slot) throw new Error("회의 시간 후보를 찾을 수 없습니다.");
+
+  const members = await db.member.findMany({
+    where: { teamId: me.teamId, leftAt: null },
+    select: {
+      id: true,
+      name: true,
+      busyBlocks: { select: { day: true, startHour: true, hours: true, kind: true } },
+    },
+  });
+  // 나도 빠지는 시간일 수 있지만, 나에게 부탁하는 알림은 보내지 않는다.
+  const missing = membersBlockedAt(members, slot.day, slot.time)
+    .map((m) => m.id)
+    .filter((id) => id !== me.id);
+
+  await notify({
+    to: missing,
+    kind: "meeting",
+    title: `${me.name}님이 회의 전 의견을 부탁했습니다`,
+    body: `${slot.day} ${slot.time} 회의에 오기 어렵다면 팀 채팅에 의견을 남겨 주세요`,
+    href: "/chat/team",
+    actorId: me.id,
+  });
+
+  return missing.length;
 }
 
 /**

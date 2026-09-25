@@ -20,6 +20,7 @@ import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
   proposeMeeting,
+  requestRemoteInput,
   respondToMeeting,
 } from "@/server/actions/meetings";
 
@@ -52,6 +53,7 @@ export function SlotsScreen({
   const { stage, slot: proposed } = proposal;
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
 
   const picked = week.slots.find((s) => s.id === pickedId) ?? null;
   /**
@@ -262,13 +264,31 @@ export function SlotsScreen({
             <div className="mt-3.5 flex flex-wrap gap-[7px]">
               {noFullWeek ? (
                 <>
+                  {/* 누가 빠지는지는 후보마다 다르다 — 시간을 고른 뒤에야 보낼 곳이 정해진다.
+                      예전에는 고르지 않아도 "보냈습니다"가 떴지만 아무에게도 가지 않았다. */}
                   <Btn
                     v="outline"
                     size="sm"
                     icon="user-round"
-                    onClick={() => flash("빠진 팀원에게 비대면 의견 요청을 보냈습니다")}
+                    disabled={!picked || requesting}
+                    onClick={async () => {
+                      if (!picked) return;
+                      setRequesting(true);
+                      try {
+                        const sent = await requestRemoteInput(picked.id);
+                        flash(
+                          sent > 0
+                            ? `이 시간에 못 오는 ${sent}명에게 의견 요청을 보냈습니다`
+                            : "이 시간에 빠지는 다른 팀원이 없습니다",
+                        );
+                      } catch {
+                        flash("요청을 보내지 못했습니다. 잠시 뒤 다시 눌러 주세요.");
+                      } finally {
+                        setRequesting(false);
+                      }
+                    }}
                   >
-                    비대면 참여 요청 보내기
+                    {picked ? "빠진 팀원에게 의견 요청하기" : "시간을 고른 뒤 요청할 수 있습니다"}
                   </Btn>
                   <Btn
                     v="ghost"

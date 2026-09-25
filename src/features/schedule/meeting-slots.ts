@@ -98,3 +98,23 @@ export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
 
   return picked;
 }
+
+/**
+ * 후보 한 칸에 못 오는 사람들.
+ *
+ * 후보 행에는 못 오는 사람이 문장으로만 남아 있어(`blockedBy`) 사람을 가리킬 수 없다.
+ * 알림처럼 **누구에게** 보낼지가 필요할 때는 시간표에서 다시 센다 — `computeMeetingSlots`
+ * 와 같은 규칙(요일·시간대 칸 하나에 걸친 안 되는 시간)이다.
+ */
+export function membersBlockedAt<M extends SlotSource>(members: M[], day: string, time: string): M[] {
+  const dayIndex = SCHEDULE_DAYS.indexOf(day);
+  // "09:00 – 10:00" 의 시작 시각. 시간표의 칸 번호로 바꿔 busyBlocks 와 견준다.
+  const hourIndex = SCHEDULE_HOURS.findIndex((h) => Number(h) === Number(time.slice(0, 2)));
+  if (dayIndex < 0 || hourIndex < 0) return [];
+
+  return members.filter((m) =>
+    m.busyBlocks.some(
+      (b) => b.day === dayIndex && hourIndex >= b.startHour && hourIndex < b.startHour + b.hours,
+    ),
+  );
+}

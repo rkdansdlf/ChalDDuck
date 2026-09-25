@@ -10,9 +10,9 @@ import {
   Icon,
   Input,
   Note,
+  StatusBadge,
   Undecided,
 } from "@/components/ui";
-import { cn } from "@/lib/cn";
 import type { ContribKind } from "@/lib/types";
 import { addContribRecord } from "@/server/actions/contrib";
 
@@ -26,14 +26,13 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
-  const [hasEvidence, setHasEvidence] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
     if (!title.trim() || saving) return;
     setSaving(true);
     try {
-      await addContribRecord({ kind: kind.key, title: title.trim(), hasEvidence });
+      await addContribRecord({ kind: kind.key, title: title.trim() });
       router.push("/team/contrib");
       router.refresh();
     } finally {
@@ -62,24 +61,20 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
           )}
         </Field>
 
-        <Field label="근거" hint="스크린샷·링크가 있으면 팀원이 확인하기 쉬워집니다.">
+        {/* 근거 첨부는 아직 파일을 받지 않는다. 예전에는 누르면 "첨부됨"으로 바뀌고 기록에도
+            "근거 첨부됨"이 남았는데, 실제 파일은 없어서 확인하는 팀원이 볼 것이 없었다.
+            기여 기록은 성적 근거라, 없는 근거를 있다고 적는 쪽이 더 나쁘다.
+            TODO(서버): 실제 파일 첨부는 드라이브 업로드와 같은 경로를 쓴다. */}
+        <Field label="근거" hint="지금은 무슨 일을 했는지만 적어 주세요. 팀원이 확인합니다.">
           {(props) => (
-            <button
-              {...props}
-              type="button"
-              aria-pressed={hasEvidence}
-              // TODO(서버): 실제 파일 첨부는 드라이브 업로드와 같은 경로를 쓴다.
-              onClick={() => setHasEvidence((v) => !v)}
-              className={cn(
-                "box-border flex min-h-[50px] w-full cursor-pointer items-center justify-center gap-2 rounded-control border-[1.5px] border-dashed font-semibold text-[14px] leading-none",
-                hasEvidence
-                  ? "border-yellow-500 bg-yellow-100 text-yellow-700"
-                  : "border-line-strong bg-card text-txt-muted",
-              )}
+            <div
+              id={props.id}
+              className="box-border flex min-h-[50px] w-full items-center justify-center gap-2 rounded-control border-[1.5px] border-dashed border-line-strong bg-card font-semibold text-[14px] leading-none text-txt-muted"
             >
-              <Icon name={hasEvidence ? "check" : "paperclip"} size={16} />
-              {hasEvidence ? "근거 파일 1개 첨부됨" : "스크린샷·링크 등 근거 첨부(선택)"}
-            </button>
+              <Icon name="paperclip" size={16} />
+              근거 파일 첨부
+              <StatusBadge status="ready" />
+            </div>
           )}
         </Field>
 

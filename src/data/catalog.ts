@@ -275,14 +275,17 @@ export const ICE_GAMES: IceGame[] = [
     icon: "link",
     desc: "숫자 칸을 지워 합을 맞추는 게임 — 링크로 공유해 같이 합니다",
     playable: true,
+    // 어느 주소로 연결할지 정해지지 않았다(화면의 <Undecided> 참고).
+    url: null,
   },
-  { key: "liar", name: "라이어 게임", icon: "drama", desc: "제시어를 모르는 한 명을 찾는 게임", playable: false },
+  { key: "liar", name: "라이어 게임", icon: "drama", desc: "제시어를 모르는 한 명을 찾는 게임", playable: false, url: null },
   {
     key: "gartic",
     name: "갈틱폰",
     icon: "pencil-ruler",
     desc: "그림과 설명을 돌려가며 잇는 게임",
     playable: false,
+    url: null,
   },
 ];
 

@@ -19,9 +19,10 @@ import type { IceGame } from "@/lib/types";
 /**
  * 28 아이스브레이킹.
  *
- * 셋 중 **사과게임만 실제로 연결된다** — 공유 링크형이라 앱 안에 게임 화면을 만들지 않아도 된다.
- * 나머지 둘은 "준비 중"이라고 말하고 설명만 보여 준다. 열리지 않는 버튼을 열린 것처럼
- * 두는 것보다 낫다.
+ * 사과게임은 공유 링크형이라 앱 안에 게임 화면을 만들지 않아도 된다 — **연결할 주소만
+ * 있으면** 된다. 그 주소(`IceGame.url`)가 기획안에 없어 지금은 셋 다 "준비 중"이라고
+ * 말하고 설명만 보여 준다. 예전에는 가짜 주소(`chaldduck.app/apple/…`)를 복사해 줬는데,
+ * 받은 팀원이 열 수 없는 링크라 열리지 않는 버튼을 열린 것처럼 두는 것과 같았다.
  */
 export function IceBreakScreen({ games }: { games: IceGame[] }) {
   const router = useRouter();
@@ -31,7 +32,8 @@ export function IceBreakScreen({ games }: { games: IceGame[] }) {
   const [toast, setToast] = useState<string | null>(null);
 
   const game = games.find((g) => g.key === picked) ?? null;
-  const shareUrl = "chaldduck.app/apple/x92k";
+  /** 실제로 열 수 있는 주소가 있을 때만 링크를 만든다. */
+  const shareUrl = game?.playable ? game.url : null;
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -39,6 +41,7 @@ export function IceBreakScreen({ games }: { games: IceGame[] }) {
   };
 
   const copyLink = async () => {
+    if (!shareUrl) return;
     try {
       await navigator.clipboard.writeText(shareUrl);
       flash("링크를 복사했습니다");
@@ -90,7 +93,7 @@ export function IceBreakScreen({ games }: { games: IceGame[] }) {
           })}
         </div>
 
-        {game?.playable ? (
+        {game && shareUrl ? (
           linkMade ? (
             <Panel s="yellow" pad={18} r={18} className="text-center">
               <div className="t-cap-strong mb-2 text-yellow-700">공유 링크</div>
@@ -109,7 +112,7 @@ export function IceBreakScreen({ games }: { games: IceGame[] }) {
         ) : game ? (
           <>
             <Note tone="warn" icon="hammer" className="mb-2.5">
-              {game.name}은 <b>실행 화면이 준비 중</b>입니다. 지금은 설명만 볼 수 있습니다.
+              {game.name}은 <b>같이 하는 연결이 준비 중</b>입니다. 지금은 설명만 볼 수 있습니다.
             </Note>
             <Btn full v="outline" icon="info" onClick={() => flash(game.desc)}>
               게임 설명 보기
@@ -118,8 +121,9 @@ export function IceBreakScreen({ games }: { games: IceGame[] }) {
         ) : null}
 
         <Undecided>
-          세 게임 모두를 이번 범위에서 만들지, 어떤 순서로 우선할지가 기획안에 없어 사과게임만 먼저
-          연결했습니다.
+          세 게임 모두를 이번 범위에서 만들지, 어떤 순서로 우선할지가 기획안에 없습니다. 먼저 연결하기로
+          한 사과게임도 <b>어느 주소로 보낼지</b>가 정해지지 않아(ICE_GAMES 의 url) 링크를 만들지
+          않습니다.
         </Undecided>
       </Body>
 

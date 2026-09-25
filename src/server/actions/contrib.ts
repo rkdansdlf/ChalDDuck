@@ -39,7 +39,6 @@ async function teamRecord(recordId: string, teamId: string) {
 export async function addContribRecord(input: {
   kind: ContribKindKey;
   title: string;
-  hasEvidence: boolean;
 }): Promise<void> {
   const me = await requireSessionMember();
 
@@ -51,11 +50,12 @@ export async function addContribRecord(input: {
       memberId: me.id,
       kind: input.kind,
       title,
-      detail: `직접 추가한 기록${input.hasEvidence ? " · 근거 첨부됨" : ""}`,
+      detail: "직접 추가한 기록",
       whenLabel: "방금",
       source: "self",
       state: "pending",
-      hasEvidence: input.hasEvidence,
+      // 근거 파일을 실제로 받기 전까지는 false 로 둔다(기본값). 화면이 true 를 보내도
+      // 파일이 없으니 "근거 첨부됨"이라고 남길 수 없다.
     },
   });
 

@@ -203,7 +203,9 @@ export function RosterScreen({
                     <Btn
                       size="sm"
                       icon="messages-square"
-                      onClick={() => flash("팀 채팅에 조율 안내를 올렸습니다")}
+                      // 이야기는 단톡방에서 한다. 앱이 대신 안내문을 올리지는 않는다 —
+                      // 예전에는 "올렸습니다" 토스트만 뜨고 실제로는 아무것도 올라가지 않았다.
+                      onClick={() => router.push("/chat/team")}
                     >
                       이야기해서 정하기
                     </Btn>

@@ -112,8 +112,9 @@ export function ContribReportScreen({
           full
           size="lg"
           icon="file-down"
-          // TODO(서버): 실제 PDF 생성과 전원 동의 요청은 서버가 한다.
-          onClick={() => setToast(`팀원 ${team.memberCount}명에게 제출 동의를 요청했습니다`)}
+          // TODO(서버): 실제 PDF 생성과 전원 동의 요청은 서버가 한다. 그때까지는 된 척하지
+          // 않는다 — 예전에는 "동의를 요청했습니다"라고 떴지만 아무에게도 가지 않았다.
+          onClick={() => setToast("PDF 만들기와 제출 동의 요청은 아직 준비 중입니다")}
         >
           PDF 만들기
         </Btn>
