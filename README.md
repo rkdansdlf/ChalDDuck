@@ -26,11 +26,40 @@ npm install
 `.env` 를 만들고 Supabase 대시보드 > Connect 의 값으로 채웁니다
 (`.env.example` 참고 — 커밋되지 않습니다).
 
+#### 로컬 DB 로 개발하기 (권장)
+
+`.env` 는 **운영(배포본)과 같은 Supabase** 를 가리킵니다. 개발 중에 누르는 버튼이
+실제 팀의 데이터를 바꾸지 않도록, 로컬 Postgres 를 따로 두고 `.env.development.local` 로
+덮어씁니다(커밋되지 않습니다).
+
 ```bash
-npx prisma migrate dev --name init   # 표 만들기
+createdb chalddeok_dev               # Homebrew Postgres 기준
+```
+
+```bash
+# .env.development.local
+DATABASE_URL="postgresql://<사용자>@localhost:5432/chalddeok_dev"
+DIRECT_URL="postgresql://<사용자>@localhost:5432/chalddeok_dev"
+SUPABASE_URL=""                      # 파일 저장소를 끈다 — 운영 버킷에 쌓이지 않게
+```
+
+```bash
+npx prisma migrate deploy            # 표 만들기
 npm run db:seed                      # 데모 팀 한 개 넣기
 npm run dev
 ```
+
+이 파일은 `next dev` 뿐 아니라 **Prisma CLI 와 시드도 먼저 읽습니다**
+([`scripts/load-env.mjs`](scripts/load-env.mjs)). 그래서 파일이 있는 동안에는
+`prisma migrate` 가 운영 DB 로 가지 않습니다. 운영에 직접 마이그레이션해야 할 때만
+잠시 치우세요(평소에는 배포가 `prisma migrate deploy` 를 돌립니다).
+
+시드는 로컬이 아닌 DB 를 가리키면 멈춥니다(같은 초대 코드의 팀을 지우고 다시 넣기
+때문입니다). 정말 원격에 넣으려면 `ALLOW_REMOTE_SEED=1` 을 붙입니다.
+
+로컬 시드에는 데모 팀원 네 명이 같은 재입장 코드를 받습니다 — `/join/rejoin` 에서
+초대 코드 `CD3-7F2Q`, 이름(김민준·이서연·박지호·최유나), 재입장 코드 `DEMO-DEMO-DEMO`.
+원격에 넣을 때는 코드를 넣지 않습니다(누구나 아는 코드는 뒷문이 됩니다).
 
 `DATABASE_URL` 은 런타임용 **트랜잭션 풀러(6543)**, `DIRECT_URL` 은 마이그레이션·시드용
 **직결(5432)** 입니다. 풀러로는 prepared statement 와 DDL 잠금을 못 버텨 마이그레이션이 깨집니다.
@@ -162,16 +191,15 @@ npm run build && npx tsc --noEmit && npm run lint
 | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` | 파일 업로드만 막히고 앱은 돕니다 |
 | `OPENROUTER_KEY` | AI 도구가 샘플만 돌려주고 앱은 돕니다 |
 
-⚠️ **배포본과 로컬이 같은 Supabase 프로젝트를 씁니다.** 배포본에서 누가 무엇을 바꾸면
-로컬에서도 바뀝니다. 실제 팀에게 써 보게 할 때 나누려면 Supabase 프로젝트를 하나 더 만들고
-`DATABASE_URL`·`DIRECT_URL`·`SUPABASE_*` 만 갈아 끼우면 됩니다.
+⚠️ **`.env` 는 배포본과 같은 Supabase 프로젝트입니다.** `.env.development.local` 없이
+`npm run dev` 를 띄우면 로컬에서 누른 것이 그대로 실제 팀의 데이터가 됩니다 — 위의
+"로컬 DB 로 개발하기"를 먼저 해 두세요.
 
 빌드 명령은 `vercel.json` 에 있습니다 — `prisma migrate deploy && next build`.
 **배포할 때마다 마이그레이션이 먼저 돕니다.**
 
-버킷은 한 번만 만들면 됩니다(로컬에서 `npm run db:storage`). 데이터베이스와 저장소는
-로컬과 배포본이 **같은 Supabase 프로젝트**를 씁니다 — 나눠야 할 때가 오면 `DATABASE_URL`
-계열만 갈아 끼우면 됩니다.
+버킷은 한 번만 만들면 됩니다(`npm run db:storage`). 이 명령은 일부러 `.env`(운영)만
+읽습니다 — 버킷은 Supabase 에만 있고 로컬 Postgres 에는 `storage` 스키마가 없습니다.
 
 ⚠️ **Vercel Hobby 는 예약 작업이 하루 한 번까지**입니다. `vercel.json` 의 schedule 을
 그보다 잦게 적으면 **배포가 실패합니다**. 지금은 하루 한 번(00:00 KST)이고, 화면이

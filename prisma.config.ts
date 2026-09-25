@@ -1,5 +1,6 @@
 // Prisma CLI 는 Next.js 밖에서 돌기 때문에 .env 를 스스로 읽지 않는다.
-import "dotenv/config";
+// `.env.development.local`(로컬 DB)을 먼저 본다 — scripts/load-env.mjs 참고.
+import "./scripts/load-env.mjs";
 
 import { defineConfig, env } from "@prisma/config";
 

@@ -1,8 +1,11 @@
-import "dotenv/config";
+import "../scripts/load-env.mjs";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
+// 앱과 같은 함수로 해시한다 — 형식이 어긋나면 로그인이 안 된다. 이 파일은 `server-only` 를
+// 불러오는데, `db:seed` 가 `--conditions=react-server` 로 돌아 그 import 가 빈 모듈이 된다.
+import { hashRejoinCode } from "../src/server/auth/rejoin-code.js";
 
 /**
  * 데모 팀 한 개를 넣는다.
@@ -18,9 +21,27 @@ if (!connectionString) {
   throw new Error("DIRECT_URL 이 없습니다. `.env.example` 을 참고해 채워 주세요.");
 }
 
+// 시드는 같은 초대 코드의 팀을 **지우고** 다시 넣는다. 운영 DB 에서 잘못 돌면 실제 팀의
+// 기록이 사라지므로, 로컬이 아니면 명시적으로 허락했을 때만 돈다.
+const host = new URL(connectionString).hostname;
+const isLocal = ["localhost", "127.0.0.1", "::1"].includes(host);
+if (!isLocal && process.env.ALLOW_REMOTE_SEED !== "1") {
+  throw new Error(
+    `시드가 로컬이 아닌 DB(${host})를 가리킵니다. 정말 그곳에 넣으려면 ALLOW_REMOTE_SEED=1 을 붙여 실행하세요.`,
+  );
+}
+
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const TEAM_CODE = "CD3-7F2Q";
+
+/**
+ * 로컬에서 데모 팀원으로 들어가는 재입장 코드(/join/rejoin — 초대 코드 + 이름 + 이 코드).
+ *
+ * 네 사람이 같은 코드를 쓴다. 누구로 들어갈지는 이름이 정한다. **로컬 DB 에만 넣는다** —
+ * 모두가 아는 코드가 운영 DB 에 들어가면 누구나 데모 팀원이 될 수 있는 뒷문이 된다.
+ */
+const DEMO_REJOIN_CODE = "DEMO-DEMO-DEMO";
 
 async function main() {
   await prisma.team.deleteMany({ where: { code: TEAM_CODE } });
@@ -41,7 +62,11 @@ async function main() {
       { name: "이서연", mbti: "ENFP", wantRole: "deck", vetoRole: "manage", isLeader: false },
       { name: "박지호", mbti: "ISTJ", wantRole: "manage", vetoRole: "present", isLeader: false },
       { name: "최유나", mbti: null, wantRole: "research", vetoRole: null, isLeader: false },
-    ].map((m) => prisma.member.create({ data: { ...m, teamId: team.id } })),
+    ].map((m) =>
+      prisma.member.create({
+        data: { ...m, teamId: team.id, rejoinCodeHash: isLocal ? hashRejoinCode(DEMO_REJOIN_CODE) : null },
+      }),
+    ),
   );
 
   /* ── 08 내 시간표 ──────────────────────────────────────── */
@@ -367,6 +392,9 @@ async function main() {
   }
 
   console.log(`데모 팀을 넣었습니다 — ${team.name} (초대 코드 ${team.code})`);
+  if (isLocal) {
+    console.log(`로컬 로그인: /join/rejoin 에서 초대 코드 ${team.code} · 이름(김민준 등) · 재입장 코드 ${DEMO_REJOIN_CODE}`);
+  }
 }
 
 main()
