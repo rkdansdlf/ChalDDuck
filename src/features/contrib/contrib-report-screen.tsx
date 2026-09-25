@@ -1,7 +1,6 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import {
   AppBar,
   Body,
@@ -9,7 +8,6 @@ import {
   Chip,
   Dock,
   Note,
-  Toast,
   Undecided,
 } from "@/components/ui";
 import type { ContribReportRow, Team } from "@/lib/types";
@@ -35,7 +33,6 @@ export function ContribReportScreen({
   issuedOn: string;
 }) {
   const router = useRouter();
-  const [toast, setToast] = useState<string | null>(null);
 
   return (
     <>
@@ -43,9 +40,6 @@ export function ContribReportScreen({
         title="리포트 미리 보기"
         sub="4 / 4단계"
         onBack={() => router.push("/team/contrib/members")}
-        action="share-2"
-        actionLabel="공유"
-        onAction={() => setToast("공유는 아직 준비 중입니다")}
       />
 
       <Body dense>
@@ -54,7 +48,10 @@ export function ContribReportScreen({
         {/* 제출물 미리 보기 — 앱 색이 아니라 문서 색을 쓴다.
             넓은 화면에서는 A4 비율(1:1.414)을 최소 높이로 잡아 인쇄했을 때의 모습에 가깝게 보여 준다.
             내용이 더 길면 늘어난다 — 비율을 지키려고 내용을 자르지는 않는다. */}
-        <div className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10">
+        <div
+          data-print-doc
+          className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10"
+        >
           <div className="mb-3 border-b-[1.5px] border-ink-900 pb-3">
             <div className="keep-all font-extrabold text-[17px] leading-[1.3] tracking-[-.025em] text-ink-900">
               팀 기여 기록
@@ -103,24 +100,37 @@ export function ContribReportScreen({
 
         <Undecided>
           교수 제출용과 팀 내부용을 나눌지, 미확인 항목을 제출본에 넣을지가 정해지지 않았습니다. 제출 전{" "}
-          <b>팀원 전원 동의</b>를 받을지도 확인이 필요합니다.
+          <b>팀원 전원 동의</b>를 받을지도 확인이 필요합니다 — 정해지기 전이라 동의 요청은 만들지 않았고,
+          “PDF로 저장”은 지금 보이는 문서를 그대로 저장만 합니다. 팀 밖(교수)에게 보낼 공개 링크도 같은
+          이유로 두지 않았습니다.
         </Undecided>
       </Body>
 
       <Dock>
+        {/* 브라우저 인쇄의 "PDF로 저장"을 쓴다 — 무엇이 종이에 남는지는 globals.css 의
+            인쇄 규칙(data-print-doc)이 정한다. 저장된 PDF 가 곧 공유 수단이다. */}
         <Btn
           full
           size="lg"
           icon="file-down"
-          // TODO(서버): 실제 PDF 생성과 전원 동의 요청은 서버가 한다. 그때까지는 된 척하지
-          // 않는다 — 예전에는 "동의를 요청했습니다"라고 떴지만 아무에게도 가지 않았다.
-          onClick={() => setToast("PDF 만들기와 제출 동의 요청은 아직 준비 중입니다")}
+          onClick={() => printAs(`팀 기여 기록 - ${team.name} - ${issuedOn}`)}
         >
-          PDF 만들기
+          PDF로 저장
         </Btn>
       </Dock>
-
-      <Toast msg={toast} />
     </>
   );
+}
+
+/**
+ * 문서 제목을 잠깐 바꿔 인쇄한다.
+ *
+ * 브라우저는 PDF 파일 이름을 `document.title` 로 제안한다 — 그대로 두면 모든 팀의 리포트가
+ * "찰떡.pdf" 로 저장된다. 인쇄 창이 닫히면 되돌린다.
+ */
+function printAs(title: string) {
+  const previous = document.title;
+  document.title = title;
+  window.addEventListener("afterprint", () => (document.title = previous), { once: true });
+  window.print();
 }
