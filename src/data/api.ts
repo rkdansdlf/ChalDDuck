@@ -38,6 +38,7 @@ import type {
   TaskKind,
   Team,
   TeamCheckRecord,
+  TeamTimetable,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
 import { effectiveStage } from "@/features/schedule/meeting-model";
@@ -45,12 +46,14 @@ import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { contribByLabel } from "@/server/contrib/state";
 import { iceViewFor } from "@/server/ice/view";
+import { askedTodayBy } from "@/server/meetings/schedule-ask";
 import { currentSessionToken, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
   AI_TOOLS,
   BUSY_KINDS,
   CLERK_SAMPLE_INPUT,
+  CUSTOM_BUSY_KIND,
   CONTRIB_KINDS,
   CUSHION_SAMPLE_INPUT,
   CUSHION_SAMPLE_OUTPUT,
@@ -207,10 +210,17 @@ export async function getMenuOptions(_teamId: string): Promise<string[]> {
 }
 export async function getScheduleOptions(): Promise<{
   kinds: BusyKind[];
+  /** 직접 입력 사유의 색·대체 이름. 칩에는 본인이 붙인 이름이 보인다. */
+  customKind: BusyKind;
   days: string[];
   hours: string[];
 }> {
-  return { kinds: BUSY_KINDS, days: SCHEDULE_DAYS, hours: SCHEDULE_HOURS };
+  return {
+    kinds: BUSY_KINDS,
+    customKind: CUSTOM_BUSY_KIND,
+    days: SCHEDULE_DAYS,
+    hours: SCHEDULE_HOURS,
+  };
 }
 
 /* ── 07 역할 조율 ───────────────────────────────────────────── */
@@ -351,6 +361,45 @@ export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
     startHour: b.startHour,
     hours: b.hours,
     kind: b.kind as BusyBlock["kind"],
+    label: b.label,
+  }));
+}
+
+/**
+ * 팀 겹쳐보기 — 팀원마다 안 되는 시간.
+ *
+ * 사유는 **여기서 뺀다.** 화면에서 가리면 네트워크 응답에는 남아 개발자 도구로 보인다.
+ */
+export async function getTeamTimetables(teamId: string): Promise<TeamTimetable[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const [members, asked] = await Promise.all([
+    db.member.findMany({
+      where: { teamId, ...ACTIVE },
+      orderBy: { joinedAt: "asc" },
+      select: {
+        id: true,
+        name: true,
+        mbti: true,
+        busyBlocks: {
+          select: { day: true, startHour: true, hours: true },
+          orderBy: [{ day: "asc" }, { startHour: "asc" }],
+        },
+      },
+    }),
+    askedTodayBy(session.id),
+  ]);
+
+  return members.map((m) => ({
+    id: m.id,
+    name: m.name,
+    isMe: m.id === session.id,
+    mbti: toMbti(m.mbti),
+    // `getMeetingWeek` 의 "제출" 과 같은 기준이다 — 안 되는 시간을 하나라도 적은 사람.
+    submitted: m.busyBlocks.length > 0,
+    busy: m.busyBlocks,
+    askedToday: asked.has(m.id),
   }));
 }
 

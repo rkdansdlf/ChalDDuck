@@ -1,4 +1,4 @@
-import { BUSY_KINDS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
+import { BUSY_KINDS, CUSTOM_BUSY_KIND, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 
 /**
  * 시간표에서 회의 시간 후보를 만드는 규칙.
@@ -8,8 +8,16 @@ import { BUSY_KINDS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
  * 다른 규칙으로 만들어진다.
  */
 
-/** 사유는 시간표 화면과 같은 말로 보여 준다 — 화면마다 다른 어휘를 만들지 않는다. */
-const BUSY_LABEL = new Map<string, string>(BUSY_KINDS.map((k) => [k.key, k.name]));
+/**
+ * 사유는 시간표 화면과 같은 말로 보여 준다 — 화면마다 다른 어휘를 만들지 않는다.
+ *
+ * 직접 입력한 사유는 본인이 붙인 이름("병원")이 아니라 "개인 일정"으로만 나간다. 여기서 만든
+ * 문구는 팀 전원이 보는 09 화면에 그대로 뜬다. 이름은 애초에 이 계산에 들어오지도 않는다
+ * (`SlotSource` 에 label 이 없다).
+ */
+const BUSY_LABEL = new Map<string, string>(
+  [...BUSY_KINDS, CUSTOM_BUSY_KIND].map((k) => [k.key, k.name]),
+);
 
 /** 아무도 못 오는 시간을 후보라고 부르지 않는다. 둘은 모여야 회의다. */
 export const MIN_ATTENDEES = 2;
@@ -39,10 +47,8 @@ export type ComputedSlot = {
   blockedBy: string | null;
 };
 
-export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
-  if (members.length < MIN_ATTENDEES) return [];
-
-  /** 칸(`요일:시간대`) 마다 그 시간에 못 오는 사람들. */
+/** 칸(`요일:시간대`) 마다 그 시간에 못 오는 사람들. */
+function blockedMap(members: SlotSource[]) {
   const blockedAt = new Map<string, Array<{ name: string; kind: string }>>();
   for (const m of members) {
     for (const b of m.busyBlocks) {
@@ -55,7 +61,34 @@ export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
       }
     }
   }
+  return blockedAt;
+}
 
+/** 칸 하나를 후보 모양으로. 목록 후보와 팀 겹쳐보기에서 직접 고른 칸이 같은 모양이어야 한다. */
+function toSlot(day: number, hour: number, total: number, blocked: Array<{ name: string; kind: string }>) {
+  // "9:00" 이 아니라 "09:00" — 목록에서 자릿수가 흔들리면 줄이 들쭉날쭉해 보인다.
+  const at = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  const start = Number(SCHEDULE_HOURS[hour]);
+  return {
+    day: SCHEDULE_DAYS[day],
+    time: `${at(start)} – ${at(start + 1)}`,
+    available: total - blocked.length,
+    total,
+    blockedBy: blocked.length
+      ? blocked.map((x) => `${x.name} · ${BUSY_LABEL.get(x.kind) ?? x.kind}`).join(", ")
+      : null,
+  };
+}
+
+/** 요일·시간대 칸 하나의 후보. 팀 겹쳐보기에서 칸을 골라 제안할 때 쓴다. */
+export function slotAt(members: SlotSource[], day: number, hour: number): ComputedSlot {
+  return toSlot(day, hour, members.length, blockedMap(members).get(`${day}:${hour}`) ?? []);
+}
+
+export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
+  if (members.length < MIN_ATTENDEES) return [];
+
+  const blockedAt = blockedMap(members);
   const total = members.length;
   const found: Array<ComputedSlot & { order: number }> = [];
 
@@ -63,20 +96,10 @@ export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
     // 기본 회의 길이가 60분이라 시간표 한 칸이 곧 후보 하나다.
     for (let hour = 0; hour < SCHEDULE_HOURS.length; hour += 1) {
       const blocked = blockedAt.get(`${day}:${hour}`) ?? [];
-      const available = total - blocked.length;
-      if (available < MIN_ATTENDEES) continue;
+      if (total - blocked.length < MIN_ATTENDEES) continue;
 
-      // "9:00" 이 아니라 "09:00" — 목록에서 자릿수가 흔들리면 줄이 들쭉날쭉해 보인다.
-      const at = (h: number) => `${String(h).padStart(2, "0")}:00`;
-      const start = Number(SCHEDULE_HOURS[hour]);
       found.push({
-        day: SCHEDULE_DAYS[day],
-        time: `${at(start)} – ${at(start + 1)}`,
-        available,
-        total,
-        blockedBy: blocked.length
-          ? blocked.map((x) => `${x.name} · ${BUSY_LABEL.get(x.kind) ?? x.kind}`).join(", ")
-          : null,
+        ...toSlot(day, hour, total, blocked),
         // 주 초반·이른 시간이 먼저 오도록 하는 정렬용 값. 표에는 넣지 않는다.
         order: day * SCHEDULE_HOURS.length + hour,
       });

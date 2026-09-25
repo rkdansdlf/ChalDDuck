@@ -184,7 +184,7 @@ model Notification {
   id        String    @id @default(cuid())
   /// 받는 사람.
   memberId  String
-  /// poke | meeting | contrib-dispute | contrib-confirm | join-request | rejoin-request
+  /// poke | meeting | schedule-ask | contrib-dispute | contrib-confirm | join-request | rejoin-request
   kind      String
   title     String
   body      String
@@ -210,8 +210,10 @@ model BusyBlock {
   /// `SCHEDULE_HOURS` 의 인덱스.
   startHour Int
   hours     Int
-  /// class | work | exam — 사유는 본인에게만 보인다.
+  /// class | work | exam | custom — 사유는 본인에게만 보인다.
   kind      String
+  /// `custom` 일 때 본인이 적은 이름("동아리"). 팀원에게는 어디서도 보이지 않는다.
+  label     String?
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 

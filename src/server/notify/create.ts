@@ -14,6 +14,7 @@ import { db } from "@/server/db";
 export type NotifyKind =
   | "poke"
   | "meeting"
+  | "schedule-ask"
   | "contrib-dispute"
   | "contrib-confirm"
   | "join-request"

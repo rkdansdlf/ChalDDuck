@@ -40,8 +40,11 @@ export type Member = {
   veto: RoleKey | null;
 };
 
-/** 시간표를 막는 사유. 기획안에 적힌 세 종류뿐이다. */
-export type BusyKindKey = "class" | "work" | "exam";
+/**
+ * 시간표를 막는 사유. 기획안에 적힌 세 종류에 더해, 본인이 이름을 붙이는 `custom` 이 있다.
+ * `custom` 의 이름은 `BusyBlock.label` 에 있다.
+ */
+export type BusyKindKey = "class" | "work" | "exam" | "custom";
 
 export type BusyKind = {
   key: BusyKindKey;
@@ -65,6 +68,26 @@ export type BusyBlock = {
   /** 몇 시간짜리인지. */
   hours: number;
   kind: BusyKindKey;
+  /** `kind` 가 `custom` 일 때 본인이 붙인 이름. 그 밖에는 null. 본인에게만 보인다. */
+  label: string | null;
+};
+
+/**
+ * 팀 겹쳐보기의 팀원 한 명.
+ *
+ * **사유(`kind`)는 싣지 않는다** — 수업·아르바이트·시험은 본인에게만 보이는 값이라,
+ * 화면에서 가리는 게 아니라 서버가 애초에 보내지 않는다.
+ */
+export type TeamTimetable = {
+  id: string;
+  name: string;
+  isMe: boolean;
+  mbti: MbtiType | null;
+  /** 안 되는 시간을 하나라도 적었는지. 안 적은 사람은 모든 시간이 가능한 것으로 센다. */
+  submitted: boolean;
+  busy: Array<{ day: number; startHour: number; hours: number }>;
+  /** 오늘 내가 이 사람에게 시간표를 이미 부탁했는지. */
+  askedToday: boolean;
 };
 
 /** 회의 시간 후보. 적합도 점수는 만들지 않는다 — 몇 명이 되는지와 사유만 보여 준다. */
@@ -147,7 +170,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 푸시는 아직 없다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "meeting" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak";
+  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak";
   title: string;
   body: string;
   href: string | null;

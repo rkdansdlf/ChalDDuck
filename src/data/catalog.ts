@@ -47,6 +47,16 @@ export const BUSY_KINDS: BusyKind[] = [
   { key: "exam", name: "시험 기간", color: "var(--busy-exam)" },
 ];
 
+/**
+ * 직접 입력한 사유. 칩 줄에는 본인이 붙인 이름으로 보이고, 이 `name` 은 이름을 밝히지 않는
+ * 자리(09 회의 후보의 "못 오는 사람 · 사유")에서만 쓴다 — "병원" 같은 이름이 팀에 새지 않게.
+ */
+export const CUSTOM_BUSY_KIND: BusyKind = {
+  key: "custom",
+  name: "개인 일정",
+  color: "var(--busy-custom)",
+};
+
 export const SCHEDULE_DAYS = ["월", "화", "수", "목", "금"];
 
 export const SCHEDULE_HOURS = ["9", "10", "11", "12", "13", "14", "15", "16", "17", "18"];

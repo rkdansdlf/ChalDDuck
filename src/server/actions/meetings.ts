@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
-import { membersBlockedAt } from "@/features/schedule/meeting-slots";
+import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
+import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { db } from "@/server/db";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -30,6 +31,60 @@ export async function proposeMeeting(slotId: string): Promise<void> {
   const slot = await db.meetingSlot.findFirst({ where: { id: slotId, teamId: me.teamId } });
   if (!slot) throw new Error("회의 시간 후보를 찾을 수 없습니다.");
 
+  await startProposal(me, slot);
+}
+
+/**
+ * 팀 겹쳐보기에서 고른 칸 하나를 제안한다.
+ *
+ * 추천 후보 다섯 개 밖의 시간도 팀이 고를 수 있어야 한다. 제안은 후보 행을 가리키므로
+ * 그 칸을 후보로 만든 뒤 `proposeMeeting` 과 같은 길로 보낸다. 몇 명이 되는지는 화면이
+ * 보낸 값이 아니라 **서버가 시간표에서 다시 센다.**
+ *
+ * 09 화면과 같이 **올라온 제안이 없을 때만** 받는다 — 확정된 회의를 칸 하나 눌러
+ * 덮어쓸 수 있으면 확정이라는 말이 무의미해진다.
+ */
+export async function proposeMeetingAt(day: number, hour: number): Promise<void> {
+  const me = await requireSessionMember();
+
+  if (
+    !Number.isInteger(day) ||
+    !Number.isInteger(hour) ||
+    day < 0 ||
+    day >= SCHEDULE_DAYS.length ||
+    hour < 0 ||
+    hour >= SCHEDULE_HOURS.length
+  ) {
+    throw new Error("시간표 밖의 시간입니다.");
+  }
+
+  if (await currentProposal(me.teamId)) throw new Error("이미 올라온 회의 제안이 있습니다.");
+
+  const members = await db.member.findMany({
+    where: { teamId: me.teamId, leftAt: null },
+    select: {
+      name: true,
+      busyBlocks: { select: { day: true, startHour: true, hours: true, kind: true } },
+    },
+  });
+  const computed = slotAt(members, day, hour);
+  if (computed.available < MIN_ATTENDEES) throw new Error("이 시간에는 두 명 이상 모일 수 없습니다.");
+
+  // 추천 후보에 이미 있는 칸이면 그 행을 쓴다 — 같은 시간이 목록에 두 번 보이지 않게.
+  const existing = await db.meetingSlot.findFirst({
+    where: { teamId: me.teamId, weekKey: "this", day: computed.day, time: computed.time },
+  });
+  const slot =
+    existing ??
+    (await db.meetingSlot.create({ data: { ...computed, teamId: me.teamId, weekKey: "this" } }));
+
+  await startProposal(me, slot);
+}
+
+async function startProposal(
+  me: { id: string; name: string; teamId: string },
+  slot: { id: string; day: string; time: string },
+): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
 
   await db.$transaction(async (tx) => {
