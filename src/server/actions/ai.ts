@@ -3,7 +3,7 @@
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
 import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
 import { isAiConfigured } from "@/server/ai/model";
-import { consumeAiQuota, type AiToolKey } from "@/server/ai/limit";
+import { aiUsageCsv, consumeAiQuota, type AiToolKey } from "@/server/ai/limit";
 import * as ai from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
 
@@ -70,6 +70,18 @@ export async function refineScript(raw: string): Promise<AiResult<PresentDraft>>
 
 export async function convertSentence(text: string, mode: string): Promise<AiResult<string>> {
   return runTool("sentence", () => ai.convertSentence(text, mode));
+}
+
+/**
+ * 14 허브의 "AI 사용 내역 내려받기".
+ *
+ * 팀 전체의 내역이다 — 한도도 팀 단위로 세고, 수업에 낼 기록이라면 팀 것이어야 한다.
+ * 한 사람 몫만 받을지는 기획안에 없다(허브의 `<Undecided>`).
+ */
+export async function exportAiUsage(): Promise<{ filename: string; csv: string }> {
+  const me = await requireSessionMember();
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  return { filename: `찰떡-AI-사용내역-${day}.csv`, csv: await aiUsageCsv(me.teamId) };
 }
 
 /** 모델을 부르지 않는다 — 미리 적어 둔 예시 문장이라 한도와 무관하다. */

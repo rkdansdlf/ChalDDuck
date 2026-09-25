@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Toast, Undecided, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
+import { exportAiUsage } from "@/server/actions/ai";
 import { SampleNote } from "./ai-state-notes";
 
 /**
@@ -28,6 +29,25 @@ export function AiHubScreen({
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2400);
+  };
+
+  const [exporting, setExporting] = useState(false);
+
+  const downloadUsage = async () => {
+    setExporting(true);
+    try {
+      const { filename, csv } = await exportAiUsage();
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      flash("내역을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -107,15 +127,14 @@ export function AiHubScreen({
             수업에서 실제로 얼마나 쓰는지 보고 확정할 것.
           </Undecided>
           <span className="mt-2.5 block">
-            <Btn
-              size="sm"
-              v="outline"
-              icon="download"
-              onClick={() => flash("AI 사용 내역 내려받기는 아직 준비 중입니다")}
-            >
-              AI 사용 내역 내려받기
+            <Btn size="sm" v="outline" icon="download" disabled={exporting} onClick={downloadUsage}>
+              {exporting ? "내역 만드는 중…" : "AI 사용 내역 내려받기"}
             </Btn>
           </span>
+          <Undecided>
+            내려받는 내역은 팀 전체 것이다(한도도 팀 단위로 센다). 수업에 기록을 내야 하는지, 한 사람
+            몫만 받아야 하는지는 기획안에 없다.
+          </Undecided>
         </Note>
       </Body>
 

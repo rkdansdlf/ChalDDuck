@@ -1,6 +1,6 @@
 import "server-only";
 
-import { AI_POLICY } from "@/data/catalog";
+import { AI_POLICY, AI_TOOLS } from "@/data/catalog";
 import { db } from "@/server/db";
 import type { SessionMember } from "@/server/session";
 
@@ -73,9 +73,53 @@ export async function consumeAiQuota(
  * 그 문장이 참이 된다. `day` 는 `YYYY-MM-DD` 라 문자열로 비교해도 날짜 순서와 같다.
  */
 export async function sweepAiUsage(): Promise<number> {
-  const cutoff = new Date(Date.now() - AI_POLICY.retentionDays * 24 * 60 * 60 * 1000);
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(cutoff);
-
-  const { count } = await db.aiUsage.deleteMany({ where: { day: { lt: day } } });
+  const { count } = await db.aiUsage.deleteMany({ where: { day: { lt: retentionCutoffDay() } } });
   return count;
+}
+
+/** 보관 기간의 첫날(한국 날짜). 이날보다 앞선 기록은 지워졌어야 한다. */
+function retentionCutoffDay(): string {
+  const cutoff = new Date(Date.now() - AI_POLICY.retentionDays * 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(cutoff);
+}
+
+/**
+ * 팀의 AI 사용 내역을 CSV 로.
+ *
+ * 남아 있는 것이 누가·언제·어떤 도구를 썼는지뿐이라 내보낼 것도 그것뿐이다 — 입력한 글과
+ * 결과는 처음부터 저장하지 않는다. 예약 작업이 하루 한 번 지우므로 그사이에 기한을 넘긴
+ * 줄이 남아 있을 수 있어, 여기서도 보관 기간으로 한 번 더 거른다.
+ *
+ * 엑셀이 한글을 깨뜨리지 않도록 BOM 을 붙인다.
+ */
+export async function aiUsageCsv(teamId: string): Promise<string> {
+  const rows = await db.aiUsage.findMany({
+    where: { teamId, day: { gte: retentionCutoffDay() } },
+    include: { member: { select: { name: true } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  const toolName = new Map(AI_TOOLS.map((tool) => [tool.key, tool.name]));
+  const clock = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const lines = [
+    ["날짜", "시각(한국)", "팀원", "도구"],
+    ...rows.map((row) => [
+      row.day,
+      clock.format(row.createdAt),
+      row.member.name,
+      toolName.get(row.tool) ?? row.tool,
+    ]),
+  ];
+  return "﻿" + lines.map((cells) => cells.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+/** 쉼표·따옴표·줄바꿈이 든 칸만 따옴표로 감싼다. 이름에 쉼표가 들어가도 칸이 밀리지 않는다. */
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
