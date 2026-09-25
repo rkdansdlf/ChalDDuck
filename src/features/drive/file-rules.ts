@@ -73,6 +73,16 @@ export function resolveFileType(name: string, mime: string): { kind: FileKind; c
   return byExt ? { kind: byExt.kind, contentType: byExt.mime } : null;
 }
 
+/**
+ * 앱 안에서 바로 그릴 수 있는 형식.
+ *
+ * 이미지는 그대로, PDF 는 브라우저 내장 뷰어로 연다(2026-09-25 결정 — 핸드오프 정책표의
+ * "파일 뷰어 범위" 항목). PPT·DOCX 는 브라우저가 못 그려 내려받기 안내만 한다.
+ */
+export function canOpenInApp(kind: FileKind): boolean {
+  return kind === "image" || kind === "pdf";
+}
+
 /** 사람이 읽을 크기. 표시용이고 계산에는 바이트 수를 쓴다. */
 export function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;

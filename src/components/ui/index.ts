@@ -6,7 +6,7 @@
  * 없으면 화면 안에서 임시로 만들지 말고 이 폴더에 추가한다.
  */
 export { Avatar } from "./avatar";
-export { Btn, type ButtonSize, type ButtonVariant } from "./button";
+export { Btn, IconButton, type ButtonSize, type ButtonVariant } from "./button";
 export { Chip, STATUS, StatusBadge, type ChipTone, type StatusKey } from "./chip";
 export { CompareCard } from "./compare-card";
 export { DrawGame, type DrawCandidate } from "./draw-game";

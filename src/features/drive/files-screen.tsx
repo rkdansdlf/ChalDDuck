@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, Body, Chip, Icon, Note, Panel, Rows, SecTitle, StatusBadge, Toast } from "@/components/ui";
+import { AppBar, Body, Chip, Icon, IconButton, Note, Panel, Rows, SecTitle, StatusBadge, Toast } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { SubmissionBox, SubmittedFile } from "@/lib/types";
+import { KIND_ICON, downloadVersion } from "./file-display";
 import { UploadButton, uploadSummary } from "./upload-button";
 
 /**
@@ -36,56 +37,80 @@ export function FilesScreen({
   const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set(justUploaded));
   const [toast, setToast] = useState<string | null>(null);
 
+  const flash = (msg: string | null) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 3000);
+  };
+
+  const download = async (versionId: string) => {
+    if (!(await downloadVersion(versionId))) flash("이 버전에는 내려받을 파일이 없습니다");
+  };
+
   return (
     <>
       <AppBar title={box.name} sub={`${box.owner ?? "담당자 미정"} · ${box.due} 마감`} onBack={() => router.push("/drive")} />
 
       <Body dense>
-        <SecTitle note="파일을 누르면 버전 기록이 열립니다">파일 {files.length}개</SecTitle>
+        <SecTitle note="이름을 누르면 버전 기록, 오른쪽에서 바로 열기·내려받기">파일 {files.length}개</SecTitle>
 
         {files.length > 0 ? (
           <Rows className="mb-3.5">
             {files.map((file) => (
-              <button
+              // 줄 전체를 버튼 하나로 두면 안에 "열기"·"내려받기"를 넣을 수 없다(버튼 안의 버튼).
+              // 그래서 이름 쪽은 버전 기록으로 가는 버튼, 오른쪽은 따로 누르는 버튼 둘이다.
+              <div
                 key={file.id}
-                type="button"
-                onClick={() => router.push(`/drive/${box.id}/${file.id}`)}
-                className={cn(
-                  "box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 border-none px-[15px] py-[13px] text-left",
-                  fresh.has(file.id) ? "bg-yellow-50" : "bg-transparent",
-                )}
+                className={cn("flex min-h-[56px] items-center gap-1 pr-1.5", fresh.has(file.id) ? "bg-yellow-50" : "")}
               >
-                <span className="grid size-[38px] flex-none place-items-center rounded-xl bg-fill text-txt-muted">
-                  <Icon name={file.kind === "image" ? "file-check-2" : "file-x"} size={18} />
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="text-pretty-keep block font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
-                    {file.name}
+                <button
+                  type="button"
+                  onClick={() => router.push(`/drive/${box.id}/${file.id}`)}
+                  aria-label={`${file.name} 버전 기록`}
+                  className="box-border flex min-w-0 flex-1 cursor-pointer items-center gap-3 border-none bg-transparent py-[13px] pl-[15px] text-left"
+                >
+                  <span className="grid size-[38px] flex-none place-items-center rounded-xl bg-fill text-txt-muted">
+                    <Icon name={KIND_ICON[file.kind]} size={18} />
                   </span>
-                  <span className="mt-1 flex flex-wrap gap-[5px]">
-                    {fresh.has(file.id) ? <StatusBadge status="done">방금 올림</StatusBadge> : null}
-                    {file.latestLabel ? (
-                      <>
-                        <Chip icon="file-check-2">
-                          {file.latestLabel} · 버전 {file.versionCount}개
+
+                  <span className="min-w-0 flex-1">
+                    <span className="text-pretty-keep block font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
+                      {file.name}
+                    </span>
+                    <span className="mt-1 flex flex-wrap gap-[5px]">
+                      {fresh.has(file.id) ? <StatusBadge status="done">방금 올림</StatusBadge> : null}
+                      {file.latestLabel ? (
+                        <>
+                          <Chip icon="history">
+                            {file.latestLabel} · 버전 {file.versionCount}개
+                          </Chip>
+                          <Chip icon="user-round">{file.latestBy}</Chip>
+                          <Chip icon="calendar-clock">{file.latestWhen}</Chip>
+                        </>
+                      ) : (
+                        <Chip tone="warn" icon="circle-dashed">
+                          아직 올라온 버전이 없습니다
                         </Chip>
-                        <Chip icon="user-round">{file.latestBy}</Chip>
-                        <Chip icon="calendar-clock">{file.latestWhen}</Chip>
-                      </>
-                    ) : (
-                      <Chip tone="warn" icon="circle-dashed">
-                        아직 올라온 버전이 없습니다
-                      </Chip>
-                    )}
-                    {file.hasLate ? <StatusBadge status="late">마감 후 제출</StatusBadge> : null}
+                      )}
+                      {file.hasLate ? <StatusBadge status="late">마감 후 제출</StatusBadge> : null}
+                    </span>
                   </span>
-                </span>
+                </button>
 
-                <span className="flex-none text-txt-muted">
-                  <Icon name="chevron-right" size={17} />
-                </span>
-              </button>
+                {file.latestVersionId ? (
+                  <>
+                    <IconButton
+                      icon="eye"
+                      label={`${file.name} 최신 버전 바로 열기`}
+                      onClick={() => router.push(`/drive/${box.id}/${file.id}/${file.latestVersionId}`)}
+                    />
+                    <IconButton
+                      icon="download"
+                      label={`${file.name} 최신 버전 내려받기`}
+                      onClick={() => download(file.latestVersionId!)}
+                    />
+                  </>
+                ) : null}
+              </div>
             ))}
           </Rows>
         ) : (
@@ -104,8 +129,7 @@ export function FilesScreen({
           onFinished={(done) => {
             if (done.length === 0) return;
             setFresh(new Set(done.map((d) => d.fileId)));
-            setToast(uploadSummary(done));
-            window.setTimeout(() => setToast(null), 3000);
+            flash(uploadSummary(done));
           }}
         />
 

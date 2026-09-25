@@ -304,6 +304,7 @@ export type SubmittedFile = {
   kind: FileKind;
   versionCount: number;
   /** 최신 버전 정보. 아직 아무것도 올라오지 않았으면 전부 null. */
+  latestVersionId: string | null;
   latestLabel: string | null;
   latestBy: string | null;
   latestWhen: string | null;

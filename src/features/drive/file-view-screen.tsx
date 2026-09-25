@@ -17,15 +17,20 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
-import { getDownloadUrl, restoreFileVersion } from "@/server/actions/drive";
+import { restoreFileVersion } from "@/server/actions/drive";
+import { downloadVersion } from "./file-display";
+import { canOpenInApp } from "./file-rules";
 import { nextVersionLabel } from "./version-label";
 
 /**
  * 22 파일 열람·복원.
  *
- * 실제로 열리는 건 이미지뿐이다. PPT·PDF 등은 뷰어를 만들지 않고 "미지원 형식 · 다운로드"
- * 안내만 한다 — **열리는 척하는 빈 화면보다 못 연다고 말하는 편이 낫다.**
- * (PDF.js 등으로 PDF 를 지원할지는 아직 확정되지 않은 정책)
+ * 앱 안에서 열리는 건 이미지와 PDF 다. PDF 는 뷰어를 만들지 않고 **브라우저 내장 뷰어**에
+ * 맡긴다(2026-09-25 결정). 휴대폰 사파리는 iframe 안의 PDF 를 첫 장만 보여 주기도 해서
+ * "새 탭에서 열기"를 늘 함께 둔다. PPT·DOCX 는 "미지원 형식 · 다운로드" 안내만 한다 —
+ * **열리는 척하는 빈 화면보다 못 연다고 말하는 편이 낫다.**
+ *
+ * 옛 버전도 내려받을 수 있다. 복원하지 않고 내용만 확인하고 싶을 때가 더 많다.
  *
  * 복원은 **덮어쓰기가 아니라 새 버전 추가**다. 되돌려도 그 사이 작업이 사라지지 않는다.
  */
@@ -72,6 +77,8 @@ export function FileViewScreen({
 
   const isLatest = versions[0]?.id === current.id;
   const canPreview = previewUrl !== null;
+  // 열 수 있는 형식인데 주소가 없으면 형식 탓이 아니라 파일이 없는 것이다(시드 데이터·저장소 미연결).
+  const noFile = !canPreview && canOpenInApp(current.kind);
   const nextLabel = nextVersionLabel(versions);
 
   const restore = async () => {
@@ -82,9 +89,20 @@ export function FileViewScreen({
       setConfirming(false);
       setRestoredAs(label);
       router.refresh();
+    } catch {
+      setConfirming(false);
+      flash("복원하지 못했습니다. 잠시 후 다시 시도해 주세요");
     } finally {
       setRestoring(false);
     }
+  };
+
+  const download = async () => {
+    if (!(await downloadVersion(current.id))) flash("이 버전에는 내려받을 파일이 없습니다");
+  };
+
+  const openInNewTab = () => {
+    if (previewUrl) window.open(previewUrl, "_blank", "noopener");
   };
 
   const flash = (msg: string) => {
@@ -121,7 +139,15 @@ export function FileViewScreen({
           </Panel>
         ) : (
           <>
-            {canPreview ? (
+            {canPreview && current.kind === "pdf" ? (
+              <div className="mb-4 overflow-hidden rounded-[18px] border border-line bg-fill">
+                <iframe
+                  src={previewUrl}
+                  title={`${file.name} ${current.label}`}
+                  className="block h-[50vh] min-h-[320px] w-full border-none lg:h-[68vh]"
+                />
+              </div>
+            ) : canPreview ? (
               <div className="mb-4 overflow-hidden rounded-[18px] border border-line bg-fill">
                 <Image
                   src={previewUrl}
@@ -143,10 +169,12 @@ export function FileViewScreen({
                   <Icon name="file-x" size={30} />
                 </span>
                 <span className="font-bold text-[13px] leading-[1.4] text-ink-600">
-                  미지원 형식(.{current.kind})
+                  {noFile ? "열 수 있는 파일이 없습니다" : `미지원 형식(.${current.kind})`}
                 </span>
                 <span className="keep-all px-6 text-center font-medium text-[12px] leading-[1.5] text-txt-faint">
-                  앱에서 열 수 없는 형식입니다 · 내려받아서 열어 주세요
+                  {noFile
+                    ? "이 버전에는 저장된 파일이 없어 미리 볼 수 없습니다"
+                    : "앱에서 열 수 없는 형식입니다 · 내려받아서 열어 주세요"}
                 </span>
               </div>
             )}
@@ -164,8 +192,10 @@ export function FileViewScreen({
                   {isLatest ? <StatusBadge status="done">현재 최신 버전</StatusBadge> : null}
                   {canPreview ? (
                     <Chip tone="ok" icon="eye">
-                      이미지 · 앱에서 열람
+                      {current.kind === "pdf" ? "PDF" : "이미지"} · 앱에서 열람
                     </Chip>
+                  ) : noFile ? (
+                    <Chip icon="file-x">파일 없음</Chip>
                   ) : (
                     <Chip icon="file-x">미지원 형식</Chip>
                   )}
@@ -179,28 +209,22 @@ export function FileViewScreen({
               </div>
             </Rows>
 
+            {/* 채운 버튼은 복원 하나뿐이다. 내려받기·새 탭은 옛 버전에서도 보조 동작으로 둔다. */}
             {!isLatest ? (
               <Btn full size="lg" icon="rotate-ccw" onClick={() => setConfirming(true)}>
                 이 버전으로 복원하기
               </Btn>
-            ) : (
-              <Btn
-                full
-                size="lg"
-                v="outline"
-                icon="download"
-                onClick={async () => {
-                  const url = await getDownloadUrl(current.id);
-                  if (!url) {
-                    flash("이 버전에는 내려받을 파일이 없습니다");
-                    return;
-                  }
-                  window.location.href = url;
-                }}
-              >
-                다운로드
+            ) : null}
+            <div className={`flex gap-2 ${isLatest ? "" : "mt-2"}`}>
+              <Btn full size={isLatest ? "lg" : "md"} v="outline" icon="download" onClick={download}>
+                {isLatest ? "다운로드" : "이 버전 내려받기"}
               </Btn>
-            )}
+              {canPreview ? (
+                <Btn full size={isLatest ? "lg" : "md"} v="outline" icon="external-link" onClick={openInNewTab}>
+                  새 탭에서 열기
+                </Btn>
+              ) : null}
+            </div>
 
             <Undecided>
               복원 권한이 올린 사람에게만 있는지가 기획안에 없어 누구나 할 수 있게 열어뒀습니다.

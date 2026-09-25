@@ -3,9 +3,10 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { nextVersionLabel } from "@/features/drive/version-label";
+import type { FileKind } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
-import { MAX_BYTES, humanSize, resolveFileType } from "@/features/drive/file-rules";
+import { MAX_BYTES, canOpenInApp, humanSize, resolveFileType } from "@/features/drive/file-rules";
 import { isStorageConfigured, storage } from "@/server/storage/client";
 
 /**
@@ -240,7 +241,15 @@ export async function getDownloadUrl(versionId: string): Promise<string | null> 
   return data.signedUrl;
 }
 
-/** 이미지 미리보기용 주소. 내려받기가 아니라 화면에 그리기 위한 것이다. */
+/**
+ * 앱 안에서 그리기 위한 주소 — 이미지와 PDF. 내려받기가 아니라 화면에 여는 것이다.
+ *
+ * 내려받기 주소보다 오래 살린다. 브라우저 PDF 뷰어는 큰 파일을 한 번에 받지 않고
+ * 넘길 때마다 필요한 부분을 다시 요청해서, 60초짜리 주소로는 읽던 중에 끊긴다.
+ * 이 주소로는 "새 탭에서 열기"도 한다.
+ */
+const PREVIEW_URL_SECONDS = 10 * 60;
+
 export async function getPreviewUrl(versionId: string): Promise<string | null> {
   const me = await requireSessionMember();
 
@@ -251,8 +260,8 @@ export async function getPreviewUrl(versionId: string): Promise<string | null> {
   if (!version) return null;
   // 시드 이미지는 앱 안에 들어 있다.
   if (version.previewUrl) return version.previewUrl;
-  if (version.kind !== "image" || !version.storagePath || !isStorageConfigured()) return null;
+  if (!canOpenInApp(version.kind as FileKind) || !version.storagePath || !isStorageConfigured()) return null;
 
-  const { data } = await storage().createSignedUrl(version.storagePath, SIGNED_URL_SECONDS);
+  const { data } = await storage().createSignedUrl(version.storagePath, PREVIEW_URL_SECONDS);
   return data?.signedUrl ?? null;
 }

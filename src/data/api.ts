@@ -516,6 +516,7 @@ export async function getSubmittedFiles(
       name: f.name,
       kind: f.kind as FileKind,
       versionCount: f.versions.length,
+      latestVersionId: latest?.id ?? null,
       latestLabel: latest?.label ?? null,
       latestBy: latest?.author.name ?? null,
       latestWhen: latest?.whenLabel ?? null,

@@ -6,6 +6,7 @@ import {
   AppBar,
   Body,
   Icon,
+  IconButton,
   Note,
   Panel,
   Rows,
@@ -14,7 +15,7 @@ import {
   Toast,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
-import { getDownloadUrl } from "@/server/actions/drive";
+import { downloadVersion } from "./file-display";
 import { UploadButton } from "./upload-button";
 
 /**
@@ -44,19 +45,8 @@ export function VersionsScreen({
     window.setTimeout(() => setToast(null), 2400);
   };
 
-  /**
-   * 내려받기.
-   *
-   * 버킷이 비공개라 주소를 미리 들고 있을 수 없다 — 누를 때마다 서버에서 짧게 사는
-   * 서명된 주소를 받아 연다.
-   */
   const download = async (version: FileVersion) => {
-    const url = await getDownloadUrl(version.id);
-    if (!url) {
-      flash("이 버전에는 내려받을 파일이 없습니다");
-      return;
-    }
-    window.location.href = url;
+    if (!(await downloadVersion(version.id))) flash("이 버전에는 내려받을 파일이 없습니다");
   };
 
   return (
@@ -120,22 +110,12 @@ export function VersionsScreen({
                     </span>
                   </span>
 
-                  <button
-                    type="button"
+                  <IconButton
+                    icon="eye"
+                    label={`${version.label} 열기`}
                     onClick={() => router.push(`/drive/${box.id}/${file.id}/${version.id}`)}
-                    aria-label={`${version.label} 열기`}
-                    className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted"
-                  >
-                    <Icon name="eye" size={17} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => download(version)}
-                    aria-label={`${version.label} 내려받기`}
-                    className="grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted"
-                  >
-                    <Icon name="download" size={17} />
-                  </button>
+                  />
+                  <IconButton icon="download" label={`${version.label} 내려받기`} onClick={() => download(version)} />
                 </div>
               );
             })}

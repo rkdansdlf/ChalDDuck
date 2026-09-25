@@ -73,3 +73,36 @@ export function Btn({
     </button>
   );
 }
+
+/**
+ * 아이콘만 있는 44px 버튼 — 목록 줄 끝의 "열기"·"내려받기" 같은 보조 동작.
+ *
+ * 글자가 없으니 `label` 을 반드시 받는다. 스크린 리더가 읽고(`aria-label`), 마우스를 올리면
+ * 보인다(`title`). 눌리는 면은 아이콘보다 넓게 44px 을 지킨다.
+ */
+export function IconButton({
+  icon,
+  label,
+  onClick,
+  className,
+}: {
+  icon: IconName;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted",
+        className,
+      )}
+    >
+      <Icon name={icon} size={17} />
+    </button>
+  );
+}
