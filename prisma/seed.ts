@@ -128,6 +128,9 @@ async function main() {
   });
 
   /* ── 12 / 13 / 22 드라이브 ─────────────────────────────── */
+  // 드라이브의 시각은 저장된 문자열이 아니라 createdAt 으로 화면이 만든다. 그래서 시드도
+  // 실제 시각을 넣는다 — 한국 시간으로 읽는다.
+  const kstAt = (local: string) => new Date(`${local}:00+09:00`);
   const researchBox = await prisma.submissionBox.create({
     data: {
       teamId: team.id,
@@ -135,6 +138,7 @@ async function main() {
       name: "자료조사 제출함",
       ownerId: minjun.id,
       due: "9/15",
+      dueAt: kstAt("2026-09-15T23:59"),
       files: { create: { name: "자료조사 정리.docx", kind: "docx" } },
     },
     include: { files: true },
@@ -146,6 +150,7 @@ async function main() {
       name: "PPT 제출함",
       ownerId: seoyeon.id,
       due: "9/20",
+      dueAt: kstAt("2026-09-20T23:59"),
       files: { create: { name: "발표 자료.pptx", kind: "pptx" } },
     },
     include: { files: true },
@@ -157,14 +162,15 @@ async function main() {
       name: "발표 대본 제출함",
       ownerId: yuna.id,
       due: "9/22",
+      dueAt: kstAt("2026-09-22T23:59"),
       // 아직 아무것도 올라오지 않은 제출함 — 빈 상태 화면을 보기 위해 파일도 두지 않는다.
     },
   });
 
   // 맨 앞이 최신이 되도록 오래된 것부터 넣는다(정렬은 createdAt 내림차순).
   const deckVersions = [
-    { label: "v1", authorId: seoyeon.id, note: "템플릿 최초 업로드", size: "6.8MB", kind: "pptx", whenLabel: "9/11 14:20" },
-    { label: "v2", authorId: seoyeon.id, note: "본문 폰트 통일", size: "7.1MB", kind: "pptx", whenLabel: "9/12 23:40" },
+    { label: "v1", authorId: seoyeon.id, note: "템플릿 최초 업로드", size: "6.8MB", kind: "pptx", at: "2026-09-11T14:20" },
+    { label: "v2", authorId: seoyeon.id, note: "본문 폰트 통일", size: "7.1MB", kind: "pptx", at: "2026-09-12T23:40" },
     {
       label: "img1",
       authorId: minjun.id,
@@ -172,29 +178,30 @@ async function main() {
       size: "1.1MB",
       kind: "image",
       previewUrl: "/assets/logo-app-icon.png",
-      whenLabel: "9/13 15:40",
+      at: "2026-09-13T15:40",
     },
-    { label: "v3", authorId: minjun.id, note: "설문 결과 그래프 3개 추가", size: "7.9MB", kind: "pptx", whenLabel: "9/13 16:02" },
-    { label: "v4", authorId: seoyeon.id, note: "표지·간지 레이아웃 교체", size: "8.4MB", kind: "pptx", whenLabel: "어제 21:14" },
+    { label: "v3", authorId: minjun.id, note: "설문 결과 그래프 3개 추가", size: "7.9MB", kind: "pptx", at: "2026-09-13T16:02" },
+    { label: "v4", authorId: seoyeon.id, note: "표지·간지 레이아웃 교체", size: "8.4MB", kind: "pptx", at: "2026-09-19T21:14" },
   ];
-  for (const [i, v] of deckVersions.entries()) {
+  for (const { at, ...v } of deckVersions) {
     await prisma.fileVersion.create({
-      data: { ...v, fileId: deckBox.files[0].id, createdAt: new Date(Date.now() - (deckVersions.length - i) * 60_000) },
+      data: { ...v, fileId: deckBox.files[0].id, createdAt: kstAt(at) },
     });
   }
 
   const researchVersions = [
-    { label: "v1", note: "논문 5편 요약 정리", size: "1.1MB", whenLabel: "9/14 22:05", isLate: false },
-    { label: "v2", note: "통계청 자료 표 추가", size: "1.4MB", whenLabel: "9/16 09:12", isLate: true },
+    // v2 는 마감(9/15 23:59)을 넘겨 올라왔다 — "마감 후 제출" 라벨을 보기 위한 것이다.
+    { label: "v1", note: "논문 5편 요약 정리", size: "1.1MB", at: "2026-09-14T22:05" },
+    { label: "v2", note: "통계청 자료 표 추가", size: "1.4MB", at: "2026-09-16T09:12" },
   ];
-  for (const [i, v] of researchVersions.entries()) {
+  for (const { at, ...v } of researchVersions) {
     await prisma.fileVersion.create({
       data: {
         ...v,
         kind: "docx",
         fileId: researchBox.files[0].id,
         authorId: minjun.id,
-        createdAt: new Date(Date.now() - (researchVersions.length - i) * 60_000),
+        createdAt: kstAt(at),
       },
     });
   }

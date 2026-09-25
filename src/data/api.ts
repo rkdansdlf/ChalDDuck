@@ -3,6 +3,9 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
+import { formatDue, formatWhen, toKstInputValue } from "@/lib/when";
+import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
+import { teamUsedBytes } from "@/server/drive/usage";
 import type {
   AiPolicy,
   AiTool,
@@ -508,21 +511,11 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
 
 /** 용량 한도는 아직 확정되지 않은 정책이라 코드에 둔다 — 팀별로 다르게 줄 값이 아니다. */
 export async function getDriveLimits(teamId: string): Promise<DriveLimits> {
-  const versions = await db.fileVersion.findMany({
-    where: { file: { box: { teamId } } },
-    select: { size: true, bytes: true },
-  });
-
-  // 실제로 올라온 파일은 바이트 수가 있다. 시드 데이터는 "8.4MB" 같은 표시 문자열뿐이라
-  // 그때만 문자열에서 대략을 읽는다.
-  const usedMB = versions.reduce(
-    (sum, v) => sum + (v.bytes !== null ? v.bytes / (1024 * 1024) : Number.parseFloat(v.size) || 0),
-    0,
-  );
-
+  const used = await teamUsedBytes(teamId);
+  const GB = 1024 * 1024 * 1024;
   return {
-    capGB: 2,
-    usedGB: Math.round((usedMB / 1024) * 100) / 100,
+    capGB: TEAM_CAP_BYTES / GB,
+    usedGB: Math.round((used / GB) * 100) / 100,
     types: ["문서", "이미지", "PPT", "PDF"],
   };
 }
@@ -532,7 +525,7 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     where: { teamId },
     include: {
       owner: { select: { name: true } },
-      files: { include: { versions: { select: { isLate: true } } } },
+      files: { include: { versions: { select: { createdAt: true, restoredFromId: true } } } },
     },
     orderBy: { id: "asc" },
   });
@@ -545,8 +538,10 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세서, 같은 파일을 네 번 고치면
     // "4개"로 보였다.
     fileCount: b.files.length,
-    due: b.due,
-    hasLate: b.files.some((f) => f.versions.some((v) => v.isLate)),
+    // 마감 시각이 있으면 그걸로 만든다. 예전 팀은 "미정" 같은 문자열만 있다.
+    due: b.dueAt ? formatDue(b.dueAt) : b.due,
+    dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
+    hasLate: b.files.some((f) => f.versions.some((v) => isLateVersion(v, b.dueAt))),
   }));
 }
 
@@ -558,6 +553,7 @@ export async function getSubmittedFiles(
   const files = await db.submittedFile.findMany({
     where: { boxId, box: { teamId } },
     include: {
+      box: { select: { dueAt: true } },
       versions: {
         include: { author: { select: { name: true } } },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -576,9 +572,9 @@ export async function getSubmittedFiles(
       latestVersionId: latest?.id ?? null,
       latestLabel: latest?.label ?? null,
       latestBy: latest?.author.name ?? null,
-      latestWhen: latest?.whenLabel ?? null,
+      latestWhen: latest ? formatWhen(latest.createdAt) : null,
       size: latest?.size ?? null,
-      hasLate: f.versions.some((v) => v.isLate),
+      hasLate: f.versions.some((v) => isLateVersion(v, f.box.dueAt)),
     };
   });
 }
@@ -609,7 +605,7 @@ export async function getSubmissionBox(
 export async function getFileVersions(teamId: string, fileId: string): Promise<FileVersion[]> {
   const versions = await db.fileVersion.findMany({
     where: { fileId, file: { box: { teamId } } },
-    include: { author: { select: { name: true } } },
+    include: { author: { select: { name: true } }, file: { select: { box: { select: { dueAt: true } } } } },
     // 같은 초에 올라온 버전이 있으면 정렬이 흔들려 "맨 앞이 최신"이 깨진다.
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
@@ -618,11 +614,12 @@ export async function getFileVersions(teamId: string, fileId: string): Promise<F
     id: v.id,
     label: v.label,
     author: v.author.name,
-    when: v.whenLabel,
+    when: formatWhen(v.createdAt),
     note: v.note,
     size: v.size,
     kind: v.kind as FileVersion["kind"],
     previewUrl: v.previewUrl,
+    isLate: isLateVersion(v, v.file.box.dueAt),
   }));
 }
 
@@ -644,6 +641,10 @@ type MessageRow = {
   text: string;
   whenLabel: string;
   viaCushion: boolean;
+  attachPath: string | null;
+  attachName: string | null;
+  attachBytes: number | null;
+  attachMime: string | null;
   author: { id: string; name: string; mbti: string | null };
   reactions: { icon: string }[];
 };
@@ -667,6 +668,10 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     status: "sent",
     viaCushion: m.viaCushion,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
+    attachment:
+      m.attachPath && m.attachName
+        ? { name: m.attachName, size: humanSize(m.attachBytes ?? 0), image: m.attachMime?.startsWith("image/") ?? false }
+        : undefined,
   };
 }
 
@@ -1022,7 +1027,7 @@ export async function getRecentItems(teamId: string): Promise<RecentItem[]> {
     items.push({
       id: latest.id,
       title: `${latest.file.name.replace(/\.[^.]+$/, "")} ${latest.label}`,
-      note: `${latest.whenLabel} · ${latest.author.name}`,
+      note: `${formatWhen(latest.createdAt)} · ${latest.author.name}`,
       icon: "file-check-2",
       href: `/drive/${latest.file.boxId}/${latest.file.id}`,
     });

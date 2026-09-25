@@ -61,6 +61,8 @@ export function Field({
 
 export type InputProps = {
   id?: string;
+  /** 기본은 글자. 마감처럼 날짜·시각을 받을 때만 `datetime-local` — 휴대폰에서 달력이 뜬다. */
+  type?: "text" | "datetime-local";
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;

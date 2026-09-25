@@ -107,6 +107,7 @@ export function VersionsScreen({
                         {version.author} · {version.when} · {version.size}
                       </span>
                       {isLatest ? <StatusBadge status="done">최신 버전</StatusBadge> : null}
+                      {version.isLate ? <StatusBadge status="late" /> : null}
                     </span>
                   </span>
 
@@ -130,7 +131,7 @@ export function VersionsScreen({
 
         <div className="mt-3.5">
           {/* 이름이 달라도 이 파일의 새 버전으로 쌓인다 — 버튼이 그렇게 약속하므로. */}
-          <UploadButton boxId={box.id} fileId={file.id} label="이 파일의 새 버전 올리기" dropzone />
+          <UploadButton boxId={box.id} fileId={file.id} label="이 파일의 새 버전 올리기" dropzone askNote />
         </div>
 
         <Note tone="info" icon="clipboard-list" className="mt-3.5">

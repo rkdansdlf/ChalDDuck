@@ -306,8 +306,10 @@ export type SubmissionBox = {
   owner: string | null;
   /** 안에 들어 있는 파일 수. */
   fileCount: number;
-  /** "9/15" 같은 표시 문자열. 서버가 날짜를 주면 화면에서 계산하도록 바꿀 것. */
+  /** 화면에 보일 마감("9/15 23:59"). 정하지 않았으면 "미정". 서버가 한국 시간으로 만든다. */
   due: string;
+  /** 마감 입력칸의 값("2026-09-15T23:59", 한국 시간). 정하지 않았으면 null. */
+  dueAt: string | null;
   /** 마감을 지나 올라온 파일이 있는지. */
   hasLate: boolean;
 };
@@ -356,6 +358,8 @@ export type FileVersion = {
   kind: FileKind;
   /** 실제로 열리는 형식만 미리보기 주소를 갖는다. 그 외는 다운로드 안내만. */
   previewUrl: string | null;
+  /** 마감을 지나 올라왔는지. 복원으로 생긴 버전은 세지 않는다. */
+  isLate: boolean;
 };
 
 /* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
@@ -390,6 +394,15 @@ export type ChatMessage = {
    */
   viaCushion?: boolean;
   reactions?: MessageReaction[];
+  /** 첨부 파일(단톡방만). 여는 주소는 볼 때마다 서버가 새로 만든다(`getChatAttachmentUrl`). */
+  attachment?: ChatAttachment;
+};
+
+export type ChatAttachment = {
+  name: string;
+  size: string;
+  /** 이미지면 말풍선 안에 바로 그린다. 그 밖의 형식은 파일 줄로 보이고 누르면 연다. */
+  image: boolean;
 };
 
 /** 1:1 대화 목록의 한 줄. 팀원 한 명당 하나씩 열린다. */

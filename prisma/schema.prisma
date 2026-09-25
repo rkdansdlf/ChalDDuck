@@ -316,7 +316,10 @@ model SubmissionBox {
   /// 이 칸을 맡은 사람. **역할이 정해지기 전에는 비어 있다** — 팀을 만들면 제출함부터
   /// 생기고, 역할 추첨을 수락하면 그 사람이 주인이 된다.
   ownerId  String?
-  /// "9/15" 같은 표시 문자열.
+  /// 마감 시각. **"마감 후 제출" 라벨은 이 값과 버전의 `createdAt` 으로 그때그때 계산한다** —
+  /// 마감을 옮기면 라벨도 따라 바뀐다. 정하지 않았으면 null 이고 라벨이 붙지 않는다.
+  dueAt    DateTime?
+  /// 예전 표시 문자열("9/15", "미정"). `dueAt` 이 없을 때만 화면에 보인다.
   due      String
 
   team  Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -365,11 +368,16 @@ model FileVersion {
   bytes      Int?
   /// 내려받을 때 브라우저에 알려 줄 형식.
   mimeType   String?
-  /// 마감을 지나 올라왔는지.
+  /// 쓰지 않는다 — 올릴 때 한 번 적어 두면 마감을 옮겨도 라벨이 안 바뀌었다.
+  /// 이제 `SubmissionBox.dueAt` 과 `createdAt` 으로 계산한다. 다음 정리 때 지운다.
   isLate     Boolean  @default(false)
   createdAt  DateTime @default(now())
-  /// 화면에 보이는 시각 문자열("어제 21:14"). 서버가 날짜를 포맷하게 되면 지운다.
-  whenLabel  String
+  /// 쓰지 않는다 — 저장된 "방금"이 영원히 "방금"으로 보였다. 화면 시각은 `createdAt` 으로
+  /// 서버가 만든다. 다음 정리 때 지운다.
+  whenLabel  String?
+  /// 복원으로 생긴 버전이면 원본 버전 id. 복원은 마감과 무관한 작업이라 늦은 제출로 세지
+  /// 않고, 같은 저장소 객체를 가리키므로 용량에도 두 번 세지 않는다.
+  restoredFromId String?
 
   file   SubmittedFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
   author Member        @relation(fields: [authorId], references: [id], onDelete: Cascade)
@@ -387,6 +395,12 @@ model Message {
   text       String
   /// 쿠션 번역기로 다듬어 보낸 말. **표시가 남는다.**
   viaCushion Boolean  @default(false)
+  /// 첨부 파일(단톡방만). 저장소 경로는 `{teamId}/chat/{uuid}` — 드라이브와 같은 버킷·형식·용량 규칙.
+  /// 파일만 보낸 말은 `text` 가 빈 문자열이다.
+  attachPath  String?
+  attachName  String?
+  attachBytes Int?
+  attachMime  String?
   createdAt  DateTime @default(now())
   /// 화면에 보이는 시각 문자열("14:02").
   whenLabel  String

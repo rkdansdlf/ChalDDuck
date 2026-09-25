@@ -12,6 +12,12 @@ import type { FileKind } from "@/lib/types";
 export const MAX_BYTES = 50 * 1024 * 1024;
 
 /**
+ * 팀 한 곳의 저장 용량. 핸드오프 정책표의 "드라이브 이용 제한"(2GB) 값이다 — 충분한지는
+ * 아직 확정되지 않았다. 넘으면 올리기 전에 막는다.
+ */
+export const TEAM_CAP_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
  * 받을 형식.
  *
  * 화면이 안내하는 것과 같다(문서·이미지·PPT·PDF). 실행 파일이 팀 드라이브를 타고
@@ -81,6 +87,19 @@ export function resolveFileType(name: string, mime: string): { kind: FileKind; c
  */
 export function canOpenInApp(kind: FileKind): boolean {
   return kind === "image" || kind === "pdf";
+}
+
+/**
+ * 이 버전이 마감을 지나 올라왔는지.
+ *
+ * 저장해 두지 않고 그때그때 계산한다 — 마감을 옮기면 라벨도 따라와야 한다. 복원으로 생긴
+ * 버전은 마감과 무관한 작업이라 세지 않는다.
+ */
+export function isLateVersion(
+  version: { createdAt: Date; restoredFromId: string | null },
+  dueAt: Date | null,
+): boolean {
+  return dueAt !== null && version.restoredFromId === null && version.createdAt > dueAt;
 }
 
 /** 사람이 읽을 크기. 표시용이고 계산에는 바이트 수를 쓴다. */

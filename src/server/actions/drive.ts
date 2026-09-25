@@ -6,7 +6,9 @@ import { nextVersionLabel } from "@/features/drive/version-label";
 import type { FileKind } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
-import { MAX_BYTES, canOpenInApp, humanSize, resolveFileType } from "@/features/drive/file-rules";
+import { MAX_BYTES, TEAM_CAP_BYTES, canOpenInApp, humanSize, resolveFileType } from "@/features/drive/file-rules";
+import { fromKstInputValue } from "@/lib/when";
+import { teamUsedBytes } from "@/server/drive/usage";
 import { isStorageConfigured, storage } from "@/server/storage/client";
 
 /**
@@ -51,8 +53,8 @@ export async function restoreFileVersion(fileId: string, versionId: string): Pro
       bytes: source.bytes,
       mimeType: source.mimeType,
       // 복원은 마감과 무관한 작업이다 — 원본이 지각 제출이었어도 늦은 제출로 세지 않는다.
-      isLate: false,
-      whenLabel: "방금",
+      // 같은 객체를 가리키므로 용량에도 다시 세지 않는다. 둘 다 이 표시로 가려낸다.
+      restoredFromId: source.id,
     },
   });
 
@@ -67,6 +69,8 @@ export type UploadRejection =
   | "bad-type"
   | "empty"
   | "not-configured"
+  /** 팀 저장 용량(2GB)을 넘는다. */
+  | "over-quota"
   /** 버전 기록 화면에서 다른 형식을 그 파일의 새 버전으로 올리려 했다. */
   | "kind-mismatch";
 
@@ -104,6 +108,8 @@ export async function prepareUpload(
   const type = resolveFileType(meta.name, meta.type);
   if (!type) return { status: "bad-type" };
 
+  if ((await teamUsedBytes(me.teamId)) + meta.size > TEAM_CAP_BYTES) return { status: "over-quota" };
+
   if (fileId) {
     const target = await db.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } });
     if (!target) throw new Error("파일을 찾을 수 없습니다.");
@@ -139,7 +145,7 @@ export type FinishUploadResult =
  */
 export async function finishUpload(
   boxId: string,
-  upload: { path: string; name: string },
+  upload: { path: string; name: string; note?: string },
   fileId?: string,
 ): Promise<FinishUploadResult> {
   const me = await requireSessionMember();
@@ -171,8 +177,18 @@ export async function finishUpload(
 
   const bytes = info.size ?? 0;
   const type = resolveFileType(name, info.contentType ?? "");
+  // 용량은 1단계에서도 봤지만 그사이 다른 팀원이 올렸을 수 있어 실제 크기로 다시 본다.
+  const overQuota = (await teamUsedBytes(me.teamId)) + bytes > TEAM_CAP_BYTES;
   const rejection: UploadRejection | null =
-    bytes <= 0 ? "empty" : bytes > MAX_BYTES ? "too-big" : !type ? "bad-type" : null;
+    bytes <= 0
+      ? "empty"
+      : bytes > MAX_BYTES
+        ? "too-big"
+        : !type
+          ? "bad-type"
+          : overQuota
+            ? "over-quota"
+            : null;
 
   const target = fileId
     ? await db.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } })
@@ -194,23 +210,52 @@ export async function finishUpload(
       fileId: file.id,
       label,
       authorId: me.id,
-      // 버전 기록 화면에서 이름이 다른 파일을 올렸으면 원래 이름을 남긴다 — 무엇으로
-      // 바꿨는지 기록에서 알 수 있어야 한다.
-      note: !target ? `${name} 최초 업로드` : name === file.name ? `${name} 새 버전` : `${name} 으로 새 버전`,
+      // 올린 사람이 적은 메모가 먼저다 — "3장 그래프 수정" 같은 말이 기여도 리포트의 근거가
+      // 된다. 없으면 무엇을 올렸는지만 남긴다(이름이 다르면 원래 이름도).
+      note:
+        upload.note?.trim().slice(0, 200) ||
+        (!target ? `${name} 최초 업로드` : name === file.name ? `${name} 새 버전` : `${name} 으로 새 버전`),
       size: humanSize(bytes),
       kind: type.kind,
       storagePath: upload.path,
       bytes,
       mimeType: type.contentType,
       // 마감을 지나도 제출함을 잠그지 않는다 — 늦게라도 내는 편이 낫고, 대신 라벨이 붙는다.
-      isLate: false,
-      whenLabel: "방금",
+      // 라벨은 저장하지 않고 제출함 마감과 올린 시각으로 그때그때 계산한다.
     },
   });
 
   revalidatePath("/drive", "layout");
   revalidatePath("/home");
   return { status: "ok", fileId: file.id, fileName: file.name, label, isNewFile: !target };
+}
+
+/**
+ * 제출함 마감을 정하거나 바꾼다. `null` 이면 마감을 없앤다.
+ *
+ * 마감을 옮기면 "마감 후 제출" 라벨도 따라 바뀐다 — 라벨을 저장하지 않고 이 값으로
+ * 계산하기 때문이다. 마감이 지나도 제출함은 잠기지 않는다.
+ *
+ * @param value `<input type="datetime-local">` 값("2026-09-15T23:59"). 한국 시간으로 읽는다.
+ */
+export async function setBoxDeadline(boxId: string, value: string | null): Promise<{ ok: boolean }> {
+  const me = await requireSessionMember();
+
+  const box = await db.submissionBox.findFirst({ where: { id: boxId, teamId: me.teamId } });
+  if (!box) throw new Error("제출함을 찾을 수 없습니다.");
+
+  const dueAt = value === null ? null : fromKstInputValue(value);
+  if (value !== null && !dueAt) return { ok: false };
+
+  await db.submissionBox.update({
+    where: { id: box.id },
+    // 예전 표시 문자열도 맞춰 둔다 — 마감을 없애면 "미정"으로 보여야 한다.
+    data: { dueAt, ...(dueAt === null ? { due: "미정" } : {}) },
+  });
+
+  revalidatePath("/drive", "layout");
+  revalidatePath("/home");
+  return { ok: true };
 }
 
 /**

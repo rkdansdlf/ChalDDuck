@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AppBar, Body, Chip, Icon, IconButton, Note, Panel, Rows, SecTitle, StatusBadge, Toast } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { SubmissionBox, SubmittedFile } from "@/lib/types";
+import { DeadlineRow } from "./deadline-row";
 import { KIND_ICON, downloadVersion } from "./file-display";
 import { UploadButton, uploadSummary } from "./upload-button";
 
@@ -51,6 +52,8 @@ export function FilesScreen({
       <AppBar title={box.name} sub={`${box.owner ?? "담당자 미정"} · ${box.due} 마감`} onBack={() => router.push("/drive")} />
 
       <Body dense>
+        <DeadlineRow box={box} />
+
         <SecTitle note="이름을 누르면 버전 기록, 오른쪽에서 바로 열기·내려받기">파일 {files.length}개</SecTitle>
 
         {files.length > 0 ? (

@@ -190,6 +190,7 @@ export function FileViewScreen({
                     {current.label}
                   </span>
                   {isLatest ? <StatusBadge status="done">현재 최신 버전</StatusBadge> : null}
+                  {current.isLate ? <StatusBadge status="late" /> : null}
                   {canPreview ? (
                     <Chip tone="ok" icon="eye">
                       {current.kind === "pdf" ? "PDF" : "이미지"} · 앱에서 열람

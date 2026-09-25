@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type DragEvent } from "react";
-import { Btn, Icon, ProgressBar, Rows, StatusBadge, Toast, type StatusKey } from "@/components/ui";
+import { Btn, Field, Icon, Input, ProgressBar, Rows, Sheet, StatusBadge, Toast, type StatusKey } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { ACCEPT, humanSize } from "./file-rules";
 import { useUploads, type UploadDone, type UploadItem, type UploadStage } from "./use-uploads";
@@ -24,6 +24,7 @@ export function UploadButton({
   fileId,
   label,
   dropzone,
+  askNote,
   onFinished,
   className,
 }: {
@@ -32,6 +33,11 @@ export function UploadButton({
   fileId?: string;
   label: string;
   dropzone?: boolean;
+  /**
+   * 고른 뒤 올리기 전에 "무엇을 바꿨나요"를 묻는다(비워도 된다). 버전 기록 화면에서 쓴다 —
+   * 이 메모가 기여도 리포트의 근거가 되는데, 자동 문구("새 버전")로는 아무것도 말해 주지 않는다.
+   */
+  askNote?: boolean;
   /**
    * 대기열이 끝났을 때. 주면 알림을 부르는 쪽이 띄운다(시트를 닫고 이동하는 경우 등).
    * 안 주면 이 버튼이 직접 알림을 띄운다.
@@ -42,6 +48,9 @@ export function UploadButton({
   const input = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  // 메모를 묻는 동안 기다리는 파일.
+  const [pending, setPending] = useState<File[] | null>(null);
+  const [note, setNote] = useState("");
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -61,7 +70,15 @@ export function UploadButton({
   const pick = (list: FileList | null) => {
     if (!list || list.length === 0) return;
     // 버전 기록 화면에서 여러 개를 놓으면 모두 같은 파일의 버전이 돼 버린다 — 첫 것만 받는다.
-    add(fileId ? [list[0]] : Array.from(list));
+    const picked = fileId ? [list[0]] : Array.from(list);
+    if (!askNote) return add(picked);
+    setNote("");
+    setPending(picked);
+  };
+
+  const confirm = () => {
+    if (pending) add(pending, note);
+    setPending(null);
   };
 
   const onDrop = (event: DragEvent) => {
@@ -127,6 +144,25 @@ export function UploadButton({
           ))}
         </Rows>
       ) : null}
+
+      <Sheet open={pending !== null} title="무엇을 바꿨나요" onClose={() => setPending(null)}>
+        <p className="t-note keep-all m-0 mb-3 text-txt-muted">
+          {pending?.map((f) => f.name).join(", ")} · 버전 기록과 기여도 리포트에 이 메모가 남습니다.
+        </p>
+        <Field label="바꾼 내용" hint="비워 두면 “새 버전”으로만 남습니다.">
+          {(props) => (
+            <Input {...props} value={note} onChange={setNote} maxLength={200} placeholder="예: 3장 그래프 수정" autoFocus />
+          )}
+        </Field>
+        <div className="flex gap-2">
+          <Btn full v="outline" onClick={() => setPending(null)}>
+            취소
+          </Btn>
+          <Btn full icon="upload" onClick={confirm}>
+            올리기
+          </Btn>
+        </div>
+      </Sheet>
 
       <Toast msg={toast} />
     </>

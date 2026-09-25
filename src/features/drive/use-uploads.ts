@@ -38,11 +38,19 @@ export const REJECTION_TEXT: Record<UploadRejection | "missing", string> = {
   empty: "빈 파일은 올릴 수 없습니다.",
   "not-configured": "파일 저장소가 아직 연결되지 않았습니다(SUPABASE_SECRET_KEY).",
   "kind-mismatch": "이 파일과 같은 형식만 새 버전으로 올릴 수 있습니다.",
+  "over-quota": "팀 저장 용량(2GB)이 모자랍니다. 팀장에게 알려 주세요.",
   missing: "저장소에 파일이 들어오지 않았습니다. 다시 시도해 주세요.",
 };
 
 /** 다시 해도 결과가 같은 거절. */
-const FINAL: ReadonlySet<string> = new Set(["too-big", "bad-type", "empty", "kind-mismatch", "not-configured"]);
+const FINAL: ReadonlySet<string> = new Set([
+  "too-big",
+  "bad-type",
+  "empty",
+  "kind-mismatch",
+  "not-configured",
+  "over-quota",
+]);
 
 class UploadFailure extends Error {
   constructor(
@@ -96,6 +104,8 @@ export function useUploads({
 }) {
   const [items, setItems] = useState<UploadItem[]>([]);
   const files = useRef(new Map<string, File>());
+  // 줄마다 올린 사람이 적은 메모. 다시 시도해도 같은 메모로 기록한다.
+  const notes = useRef(new Map<string, string>());
   const queue = useRef<string[]>([]);
   const running = useRef(false);
   // 대기열 한 바퀴 동안 성공한 것. 끝날 때 한꺼번에 알린다.
@@ -127,13 +137,18 @@ export function useUploads({
       await putToStorage(prep.signedUrl, file, prep.contentType, (ratio) => patch(id, { progress: ratio }));
       patch(id, { stage: "saving", progress: 1 });
 
-      const result = await finishUpload(boxId, { path: prep.path, name: file.name }, fileId).catch(() => {
+      const result = await finishUpload(
+        boxId,
+        { path: prep.path, name: file.name, note: notes.current.get(id) },
+        fileId,
+      ).catch(() => {
         throw new UploadFailure("올렸지만 기록하지 못했습니다. 다시 시도해 주세요.", true);
       });
       if (result.status !== "ok") throw new UploadFailure(REJECTION_TEXT[result.status], !FINAL.has(result.status));
 
       patch(id, { stage: "done" });
       files.current.delete(id);
+      notes.current.delete(id);
       batch.current.push(result);
     } catch (err) {
       const failure =
@@ -164,11 +179,13 @@ export function useUploads({
     finished.current?.(done, failedCount);
   };
 
-  const add = (picked: Iterable<File>) => {
+  /** @param note 이번에 고른 파일 모두에 붙일 메모("3장 그래프 수정"). 비우면 서버가 채운다. */
+  const add = (picked: Iterable<File>, note?: string) => {
     const fresh: UploadItem[] = [];
     for (const file of picked) {
       const id = `upload-${(seq.current += 1)}`;
       files.current.set(id, file);
+      if (note?.trim()) notes.current.set(id, note.trim());
       queue.current.push(id);
       fresh.push({
         id,
@@ -194,6 +211,7 @@ export function useUploads({
 
   const dismiss = (id: string) => {
     files.current.delete(id);
+    notes.current.delete(id);
     setItems((list) => list.filter((item) => item.id !== id));
   };
 
