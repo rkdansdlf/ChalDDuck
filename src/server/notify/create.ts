@@ -17,7 +17,8 @@ export type NotifyKind =
   | "contrib-dispute"
   | "contrib-confirm"
   | "join-request"
-  | "rejoin-request";
+  | "rejoin-request"
+  | "icebreak";
 
 export async function notify(input: {
   /** 받는 사람들. 비어 있으면 아무 일도 하지 않는다. */

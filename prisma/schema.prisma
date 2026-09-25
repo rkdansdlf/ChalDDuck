@@ -35,6 +35,7 @@ model Team {
   messages       Message[]
   tasks          Task[]
   aiUsage        AiUsage[]
+  iceRounds      IceRound[]
 }
 
 /// 팀원. 신원은 **초대 코드 + 이름**이라 팀 안에서 이름이 유일해야 한다.
@@ -81,6 +82,8 @@ model Member {
   roleDraws       RoleDraw[]
   roleRejections  RoleRejection[]
   aiUsage         AiUsage[]
+  iceHosted       IceRound[]        @relation("IceHost")
+  iceSeats        IceSeat[]         @relation("IceSeatOf")
 
   @@unique([teamId, name])
 }
@@ -534,4 +537,56 @@ model AiUsage {
 
   @@index([teamId, day])
   @@index([memberId, day])
+}
+
+/// 28 아이스브레이킹의 한 판 — 라이어 게임·마피아.
+///
+/// 비밀(제시어·역할)은 **서버가 나누고 서버에만 있다.** 화면에는 각자 자기 카드만 내려간다 —
+/// 폰에서 나누면 개발자 도구로 남의 카드를 볼 수 있다.
+///
+/// 팀마다 진행 중인 판은 하나다. `activeKey` 는 진행 중일 때만 `teamId` 를 담고 끝나면
+/// 비운다 — 여기에 unique 가 걸려 있어 두 사람이 동시에 "시작"을 눌러도 판이 둘 생기지 않는다.
+/// (Postgres 의 unique 는 NULL 을 여럿 허용하므로 끝난 판은 얼마든지 쌓인다.)
+model IceRound {
+  id        String    @id @default(cuid())
+  teamId    String
+  activeKey String?   @unique
+  /// liar | mafia
+  game      String
+  /// play = 진행 중(투표 받는 중) / revealed = 결과 공개
+  phase     String    @default("play")
+  /// 라이어 게임의 주제와 제시어. 제시어는 결과 공개 전에는 라이어가 아닌 사람에게만 보인다.
+  topic     String?
+  word      String?
+  /// 마피아의 결과 문구("시민 승리"). 끝나기 전에는 null.
+  outcome   String?
+  /// 판을 연 사람 = 사회자. 결과 공개·투표 마감·끝내기를 할 수 있다(팀장도 할 수 있다).
+  hostId    String
+  createdAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  team  Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  host  Member    @relation("IceHost", fields: [hostId], references: [id], onDelete: Cascade)
+  seats IceSeat[]
+
+  @@index([teamId, createdAt])
+}
+
+/// 한 판의 자리. 시작할 때 있던 팀원만 앉는다 — 중간에 들어온 사람은 구경만 한다.
+model IceSeat {
+  roundId   String
+  memberId  String
+  /// 라이어: liar | citizen / 마피아: mafia | police | doctor | citizen
+  role      String
+  /// 마피아에서 탈락한 시각과 방법(vote = 낮 투표 / night = 사회자가 밤 결과로 표시).
+  /// 라이어 게임은 늘 null. 탈락 순서는 `outAt` 으로 정한다.
+  outAt     DateTime?
+  outHow    String?
+  /// 지금 투표에서 고른 사람. 투표를 마감하면 비운다.
+  voteForId String?
+
+  round  IceRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  member Member   @relation("IceSeatOf", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([roundId, memberId])
 }

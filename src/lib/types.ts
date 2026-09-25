@@ -147,7 +147,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 푸시는 아직 없다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "meeting" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request";
+  kind: "poke" | "meeting" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak";
   title: string;
   body: string;
   href: string | null;
@@ -496,19 +496,64 @@ export type Task = {
 
 /* ── 28 / 29 팀 친목 ────────────────────────────────────────── */
 
+export type IceGameKey = "liar" | "mafia";
+
 export type IceGame = {
-  key: string;
+  key: IceGameKey;
   name: string;
   /** `IconName` 과 같은 kebab-case 어휘. */
   icon: string;
   desc: string;
+  /** "게임 방법" 칸에 차례대로 보이는 줄. */
+  howTo: string[];
+  /** 이보다 적으면 시작하지 않는다. 서버도 같은 값으로 막는다. */
+  minPlayers: number;
   /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
   playable: boolean;
-  /**
-   * 같이 하려고 팀원에게 보낼 게임 주소. 기획안에 없어 아직 `null` 이다.
-   * `null` 이면 공유 링크를 만들지 않는다 — 가짜 주소를 복사해 주면 받은 사람이 열 수 없다.
-   */
-  url: string | null;
+};
+
+/** 라이어: liar | citizen / 마피아: mafia | police | doctor | citizen */
+export type IceRole = "liar" | "citizen" | "mafia" | "police" | "doctor";
+
+/**
+ * 한 판을 **내 눈으로 본 모습.** 서버가 보는 사람마다 따로 만든다.
+ *
+ * 남의 역할·제시어는 결과가 공개되기 전에는 여기 들어오지 않는다 — 화면에서 가리는 것이
+ * 아니라 애초에 내려보내지 않는다.
+ */
+export type IceView = {
+  roundId: string;
+  /** 보는 사람의 팀원 id. 명단에서 "나"를 찾는 데 쓴다. */
+  meId: string;
+  game: IceGameKey;
+  phase: "play" | "revealed";
+  hostName: string;
+  /** 사회자(판을 연 사람)이거나 팀장이면 공개·마감·끝내기를 할 수 있다. */
+  canHost: boolean;
+  /** 내 자리. 판이 시작된 뒤에 들어온 사람은 null — 구경만 한다. */
+  me: {
+    role: IceRole;
+    alive: boolean;
+    voteForId: string | null;
+    /** 라이어 게임의 주제. 라이어도 주제는 안다. */
+    topic: string | null;
+    /** 제시어. 라이어에게는 null. */
+    word: string | null;
+    /** 마피아끼리는 서로를 안다. 그 밖의 역할에는 빈 배열. */
+    allies: string[];
+  } | null;
+  players: { id: string; name: string; alive: boolean }[];
+  /** 지금 투표에 참여한 사람 수 / 투표할 수 있는 사람 수. 누가 누구를 골랐는지는 공개 전까지 모른다. */
+  votes: { cast: number; total: number };
+  /** 마피아에서 지금까지 탈락한 순서. 라이어 게임은 빈 배열. */
+  eliminated: { name: string; how: "vote" | "night" }[];
+  /** 결과 공개 뒤에만 있다. */
+  result: {
+    roles: { name: string; role: IceRole }[];
+    word: string | null;
+    tally: { name: string; votes: number }[];
+    outcome: string;
+  } | null;
 };
 
 /* ── 07 역할 조율 ───────────────────────────────────────────── */

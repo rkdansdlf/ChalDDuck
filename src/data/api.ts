@@ -19,6 +19,7 @@ import type {
   FileKind,
   FileVersion,
   IceGame,
+  IceView,
   Member,
   MeetingProposal,
   MeetingWeek,
@@ -43,6 +44,7 @@ import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { contribByLabel } from "@/server/contrib/state";
+import { iceViewFor } from "@/server/ice/view";
 import { currentSessionToken, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
@@ -194,6 +196,11 @@ export async function getTaskKinds(): Promise<TaskKind[]> {
 }
 export async function getIceGames(): Promise<IceGame[]> {
   return ICE_GAMES;
+}
+/** 진행 중인 아이스브레이킹 판을 내 눈으로 본 모습. 없으면 null. */
+export async function getIceView(): Promise<IceView | null> {
+  const session = await getSessionMember();
+  return session ? iceViewFor(session) : null;
 }
 export async function getMenuOptions(_teamId: string): Promise<string[]> {
   return MENU_OPTIONS;
