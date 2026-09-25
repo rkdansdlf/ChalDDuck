@@ -17,6 +17,9 @@ const eslintConfig = defineConfig([
     // 디자인 핸드오프 원본 — 참고 자료이지 이 앱의 소스가 아니다.
     // (React UMD + Babel 환경을 전제로 쓰인 코드라 이 프로젝트 규칙으로 검사할 수 없다)
     "docs/handoff/**",
+    // 에이전트 작업용 git worktree — 저장소 전체 사본이 들어 있어, 검사하면 그 안의
+    // 생성물(src/generated)까지 잡혀 오류가 만 건 넘게 나온다.
+    ".claude/**",
   ]),
   {
     rules: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 
 /**
  * 하단에서 올라오는 모달.
@@ -22,13 +22,15 @@ export function Sheet({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // 부르는 쪽은 대개 `onClose` 를 매 렌더 새로 만든다. 그 값을 effect 의존성에 넣으면
+  // 입력할 때마다 effect 가 다시 돌아 포커스가 시트 판으로 튀어 키보드가 꺼진다(43 커밋).
+  // effect 이벤트는 늘 최신 `onClose` 를 부르면서도 effect 를 다시 돌리지 않는다.
+  const closeOnEscape = useEffectEvent(() => onClose());
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCloseRef.current();
+      if (e.key === "Escape") closeOnEscape();
     };
     document.addEventListener("keydown", onKey);
     panelRef.current?.focus();
