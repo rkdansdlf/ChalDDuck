@@ -185,15 +185,20 @@
 /* ────────────────────────────────────────────────────────────── */
 @layer base {
   html {
+    height: 100%;
     background: var(--page);
+    overscroll-behavior: none;
   }
   body {
+    height: 100%;
     margin: 0;
     background: var(--page);
     color: var(--txt);
     font-family: var(--font-sans);
     word-break: keep-all;
     -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
   button {
     font-family: var(--font-sans);
