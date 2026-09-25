@@ -436,7 +436,11 @@ export type ContribRecord = {
   when: string;
   source: "auto" | "self";
   state: "ok" | "pending";
+  evidence: ContribEvidence | null;
 };
+
+/** 기록에 붙은 근거 파일. 여는 주소는 볼 때마다 서버가 새로 만든다(`getEvidenceUrl`). */
+export type ContribEvidence = { name: string; size: string };
 
 /**
  * 팀원이 확인해야 하는 기록.
@@ -457,6 +461,8 @@ export type TeamCheckRecord = {
   iConfirmed: boolean;
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
+  /** 확인할 때 열어 볼 근거 파일. 없으면 null. */
+  evidence: ContribEvidence | null;
   /** 의견 차이가 적힌 경우 그 내용. 정리된 뒤에도 지우지 않는다. */
   dispute: string | null;
   /**

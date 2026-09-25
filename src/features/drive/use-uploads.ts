@@ -32,7 +32,7 @@ export type UploadItem = {
 
 export type UploadDone = { fileId: string; fileName: string; label: string; isNewFile: boolean };
 
-const REJECTION_TEXT: Record<UploadRejection | "missing", string> = {
+export const REJECTION_TEXT: Record<UploadRejection | "missing", string> = {
   "too-big": "50MB 가 넘는 파일은 올릴 수 없습니다.",
   "bad-type": "문서·이미지·PPT·PDF 만 올릴 수 있습니다.",
   empty: "빈 파일은 올릴 수 없습니다.",
@@ -60,7 +60,7 @@ class UploadFailure extends Error {
  * 보내고 형식은 헤더로 준다 — 저장소는 이 헤더를 객체의 형식으로 적고, 서버는 3단계에서
  * 그 값을 다시 확인한다.
  */
-function putToStorage(url: string, file: File, contentType: string, onProgress: (ratio: number) => void) {
+export function putToStorage(url: string, file: File, contentType: string, onProgress: (ratio: number) => void) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url);

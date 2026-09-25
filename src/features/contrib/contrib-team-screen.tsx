@@ -21,6 +21,7 @@ import {
 } from "@/components/ui";
 import type { Member, TeamCheckRecord } from "@/lib/types";
 import { confirmContribRecord, disputeContribRecord } from "@/server/actions/contrib";
+import { EvidenceLink } from "./evidence-link";
 import { StepRail } from "./step-rail";
 
 /**
@@ -146,6 +147,12 @@ export function ContribTeamScreen({
                       </Chip>
                     )}
                   </div>
+
+                  {record.evidence ? (
+                    <div className="mt-[9px]">
+                      <EvidenceLink recordId={record.id} evidence={record.evidence} />
+                    </div>
+                  ) : null}
 
                   {/* 자기 기록은 확인할 수도, 정정을 적을 수도 없다 — 본인 말만으로
                       확정되면 기록이 근거가 되지 못한다는 것이 이 절차의 전부다. */}

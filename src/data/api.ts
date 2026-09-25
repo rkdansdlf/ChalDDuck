@@ -41,6 +41,7 @@ import type {
   TeamTimetable,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
+import { humanSize } from "@/features/drive/file-rules";
 import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
@@ -858,7 +859,15 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
     when: r.whenLabel,
     source: r.source as ContribRecord["source"],
     state: r.state === "ok" ? "ok" : "pending",
+    evidence: toEvidence(r),
   }));
+}
+
+/** 근거 파일이 실제로 저장소에 있을 때만 "근거 있음"으로 본다. */
+function toEvidence(r: { evidencePath: string | null; evidenceName: string | null; evidenceBytes: number | null }) {
+  return r.evidencePath && r.evidenceName
+    ? { name: r.evidenceName, size: humanSize(r.evidenceBytes ?? 0) }
+    : null;
 }
 
 /** 팀 전체의 기록. 내 화면(16)과 **같은 표**를 본다. */
@@ -893,6 +902,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
         confirms: r.confirms.length,
         disputedBy: r.disputedBy?.name ?? null,
       }),
+      evidence: toEvidence(r),
       dispute: r.dispute,
       resolution: r.resolution,
       dmWith: other && other.leftAt === null && other.id !== session?.id ? other.id : null,

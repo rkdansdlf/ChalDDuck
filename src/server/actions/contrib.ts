@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { MAX_BYTES, resolveFileType } from "@/features/drive/file-rules";
 import type { ContribKindKey } from "@/lib/types";
 import { refreshContribState } from "@/server/contrib/state";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
+import { isStorageConfigured, storage } from "@/server/storage/client";
+import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
 /**
  * 16 / 17 / 18 / 23 기여 기록 서버 액션.
@@ -31,36 +35,119 @@ async function teamRecord(recordId: string, teamId: string) {
 }
 
 /**
+ * 23 근거 파일 올리기 1단계 — 저장소에 직접 올릴 주소를 발급한다.
+ *
+ * 드라이브 올리기(`prepareUpload`)와 같은 규칙이다. 파일 본문은 이 서버를 거치지 않고,
+ * 크기·형식은 브라우저가 말한 값이라 기록을 만들 때(`addContribRecord`) 저장소에서 다시 본다.
+ * 경로는 서버가 정한다 — `{teamId}/evidence/{uuid}`.
+ */
+export async function prepareEvidenceUpload(meta: {
+  name: string;
+  size: number;
+  type: string;
+}): Promise<PrepareUploadResult> {
+  const me = await requireSessionMember();
+  if (!isStorageConfigured()) return { status: "not-configured" };
+
+  if (meta.size <= 0) return { status: "empty" };
+  if (meta.size > MAX_BYTES) return { status: "too-big" };
+  const type = resolveFileType(meta.name, meta.type);
+  if (!type) return { status: "bad-type" };
+
+  const path = `${me.teamId}/evidence/${randomUUID()}`;
+  const { data, error } = await storage().createSignedUploadUrl(path);
+  if (error) {
+    console.error("[storage] 근거 올리기 주소 발급 실패:", error);
+    throw new Error("저장소가 응답하지 않습니다.");
+  }
+  return { status: "ok", path, signedUrl: data.signedUrl, contentType: type.contentType };
+}
+
+/**
  * 앱 밖에서 한 일을 기록에 넣는다.
  *
  * **`pending` 으로 들어간다.** 본인이 넣은 기록이 바로 확정되면 기록이 근거가 되지 못한다 —
  * 팀원 확인을 거쳐야 `ok` 가 된다. 서버가 상태를 정하므로 화면이 우회할 수 없다.
+ *
+ * 근거 파일은 저장소에 **실제로 들어온 객체**로 다시 확인한다. 규칙에 어긋나면 객체를 지우고
+ * 기록도 만들지 않는다 — "근거 첨부됨"이 남았는데 열 것이 없던 일(44 커밋)을 되풀이하지 않는다.
  */
 export async function addContribRecord(input: {
   kind: ContribKindKey;
   title: string;
-}): Promise<void> {
+  evidence?: { path: string; name: string };
+}): Promise<{ status: "ok" } | { status: UploadRejection | "missing" }> {
   const me = await requireSessionMember();
 
   const title = input.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("무슨 일을 했는지 적어 주세요.");
+
+  let evidence: { evidencePath: string; evidenceName: string; evidenceBytes: number; evidenceMime: string } | null =
+    null;
+  if (input.evidence) {
+    if (!isStorageConfigured()) return { status: "not-configured" };
+
+    // 1단계에서 서버가 정해 준 모양의 경로만 받는다 — 다른 팀의 객체를 제 근거로 붙이지 못하게.
+    const { path } = input.evidence;
+    const prefix = `${me.teamId}/evidence/`;
+    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : "";
+    if (!/^[0-9a-f-]{36}$/.test(rest)) throw new Error("올린 근거 파일의 경로가 올바르지 않습니다.");
+
+    const name = input.evidence.name.trim().slice(0, 200);
+    const { data: info, error } = await storage().info(path);
+    if (error || !info) return { status: "missing" };
+
+    const bytes = info.size ?? 0;
+    const type = resolveFileType(name, info.contentType ?? "");
+    const rejection: UploadRejection | null =
+      !name || bytes <= 0 ? "empty" : bytes > MAX_BYTES ? "too-big" : !type ? "bad-type" : null;
+    if (rejection || !type) {
+      await storage().remove([path]);
+      return { status: rejection ?? "bad-type" };
+    }
+    evidence = { evidencePath: path, evidenceName: name, evidenceBytes: bytes, evidenceMime: type.contentType };
+  }
 
   await db.contribRecord.create({
     data: {
       memberId: me.id,
       kind: input.kind,
       title,
-      detail: "직접 추가한 기록",
+      detail: evidence ? "직접 추가한 기록 · 근거 첨부" : "직접 추가한 기록",
       whenLabel: "방금",
       source: "self",
       state: "pending",
-      // 근거 파일을 실제로 받기 전까지는 false 로 둔다(기본값). 화면이 true 를 보내도
-      // 파일이 없으니 "근거 첨부됨"이라고 남길 수 없다.
+      ...evidence,
     },
   });
 
   revalidatePath("/team", "layout");
   revalidatePath("/home");
+  return { status: "ok" };
+}
+
+/**
+ * 근거 파일을 여는 주소. 확인하는 팀원이 누른다.
+ *
+ * 드라이브처럼 짧게 사는 서명 주소를 볼 때마다 새로 만든다. 이미지·PDF 는 브라우저가
+ * 바로 보여 주고, 그 밖의 형식은 내려받는다.
+ */
+export async function getEvidenceUrl(recordId: string): Promise<string | null> {
+  const me = await requireSessionMember();
+  const record = await teamRecord(recordId, me.teamId);
+  if (!record?.evidencePath || !isStorageConfigured()) return null;
+
+  const inline = record.evidenceMime === "application/pdf" || record.evidenceMime?.startsWith("image/");
+  const { data, error } = await storage().createSignedUrl(
+    record.evidencePath,
+    10 * 60,
+    inline ? undefined : { download: record.evidenceName ?? "근거" },
+  );
+  if (error) {
+    console.error("[storage] 근거 서명 주소 실패:", error);
+    return null;
+  }
+  return data.signedUrl;
 }
 
 /**

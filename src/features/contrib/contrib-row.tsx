@@ -1,5 +1,6 @@
 import { Chip, Icon, type IconName } from "@/components/ui";
 import type { ContribKind, ContribRecord } from "@/lib/types";
+import { EvidenceLink } from "./evidence-link";
 
 /**
  * 내 기여 기록 한 줄.
@@ -42,6 +43,12 @@ export function ContribRow({ record, kinds }: { record: ContribRecord; kinds: Co
             </Chip>
           )}
         </div>
+
+        {record.evidence ? (
+          <div className="mt-[9px]">
+            <EvidenceLink recordId={record.id} evidence={record.evidence} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
