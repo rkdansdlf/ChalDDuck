@@ -8,11 +8,13 @@ import {
   Chip,
   Icon,
   Note,
+  Rows,
+  Sheet,
   StatusBadge,
-  Toast,
 } from "@/components/ui";
 import { SecTitle } from "@/components/ui";
 import type { DriveLimits, SubmissionBox, Team } from "@/lib/types";
+import { UploadButton } from "./upload-button";
 
 /**
  * 12 드라이브 — 역할별 제출함.
@@ -32,12 +34,7 @@ export function DriveScreen({
   limits: DriveLimits;
 }) {
   const router = useRouter();
-  const [toast, setToast] = useState<string | null>(null);
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2400);
-  };
+  const [picking, setPicking] = useState(false);
 
   return (
     <>
@@ -46,8 +43,9 @@ export function DriveScreen({
         sub={team.name}
         action="upload"
         actionLabel="파일 올리기"
-        // TODO(업로드): 서버가 붙어야 실제 업로드를 붙일 수 있다.
-        onAction={() => flash("파일 올리기는 아직 준비 중입니다")}
+        // 파일은 제출함에 들어가므로 먼저 어느 칸인지 고른다. 업로드 자체는 제출함 화면과
+        // 같은 `UploadButton` 이다 — 예전에는 여기만 "준비 중"이라고 떴다.
+        onAction={() => setPicking(true)}
       />
 
       <Body dense>
@@ -113,7 +111,27 @@ export function DriveScreen({
         </Note>
       </Body>
 
-      <Toast msg={toast} />
+      <Sheet open={picking} title="어느 제출함에 올릴까요" onClose={() => setPicking(false)}>
+        {boxes.length === 0 ? (
+          <Note tone="warn" icon="folder" title="아직 제출함이 없습니다">
+            역할이 정해지면 역할별 제출함이 생깁니다.
+          </Note>
+        ) : (
+          <Rows>
+            {boxes.map((box) => (
+              <div key={box.id} className="flex flex-wrap items-center gap-x-3 px-[15px] py-3">
+                <span className="min-w-0 flex-1">
+                  <span className="t-sec keep-all block text-txt-strong">{box.name}</span>
+                  <span className="t-note mt-0.5 block text-txt-muted">
+                    {box.owner ?? "담당자 미정"} · {box.due} 마감
+                  </span>
+                </span>
+                <UploadButton boxId={box.id} label="여기에 올리기" />
+              </div>
+            ))}
+          </Rows>
+        )}
+      </Sheet>
     </>
   );
 }

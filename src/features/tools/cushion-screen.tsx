@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AppBar,
   Body,
@@ -14,6 +14,9 @@ import {
   Undecided,
 } from "@/components/ui";
 import { rewriteWithCushion } from "@/server/actions/ai";
+import { sendChatMessage } from "@/server/actions/chat";
+import { TEAM_THREAD_ID } from "@/lib/types";
+import { clearCushionDraft, peekCushionDraft } from "./cushion-handoff";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
@@ -41,9 +44,16 @@ export function CushionScreen({
   const router = useRouter();
 
   const initialTone = tones[0]?.key ?? "soft";
-  const [text, setText] = useState(sample);
+  // 단톡방에서 쓰던 글을 들고 왔으면 그 글로 시작한다. 서버 렌더에는 늘 없으므로
+  // (모듈 변수는 브라우저에만 있다) 첫 화면이 서로 어긋나지 않는다.
+  const [text, setText] = useState(() => peekCushionDraft() ?? sample);
   const [tone, setTone] = useState(initialTone);
   const [toast, setToast] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    clearCushionDraft();
+  }, []);
 
   // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다 — 입력이 멎은 뒤 한 번만.
   const run = useCallback(
@@ -60,6 +70,26 @@ export function CushionScreen({
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2400);
+  };
+
+  /**
+   * 단톡방에 보내고 그 방으로 간다. 다듬은 말이면 `viaCushion` 표시가 남는다 —
+   * 원문을 그대로 보낼 때는 남지 않는다(다듬지 않았으니까).
+   */
+  const sendToTeam = async (message: string, viaCushion: boolean) => {
+    if (!message.trim() || sending) return;
+    setSending(true);
+    try {
+      const sent = await sendChatMessage(TEAM_THREAD_ID, message, { viaCushion });
+      if (sent.ok) {
+        router.push("/chat/team");
+        return;
+      }
+      flash("보내지 못했습니다. 2,000자 이하인지 확인해 주세요.");
+    } catch {
+      flash("보내지 못했습니다. 잠시 뒤 다시 눌러 주세요.");
+    }
+    setSending(false);
   };
 
   return (
@@ -124,9 +154,8 @@ export function CushionScreen({
           <Btn
             size="sm"
             icon="send"
-            disabled={!result}
-            // TODO(19 단톡방): 다듬은 말을 들고 대화방으로 넘어가 바로 보내야 한다.
-            onClick={() => flash("다듬은 말을 단톡방으로 보내는 연결은 준비 중입니다")}
+            disabled={!result || working || sending}
+            onClick={() => sendToTeam(result, true)}
           >
             이대로 보내기
           </Btn>
@@ -142,7 +171,13 @@ export function CushionScreen({
           >
             고쳐서 보내기
           </Btn>
-          <Btn size="sm" v="ghost" onClick={() => router.push("/chat/team")}>
+          <Btn
+            size="sm"
+            v="ghost"
+            disabled={!text.trim() || sending}
+            // 예전에는 빈 단톡방만 열고 원문은 두고 갔다.
+            onClick={() => sendToTeam(text, false)}
+          >
             원문으로 보내기
           </Btn>
         </div>

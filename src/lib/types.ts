@@ -442,6 +442,13 @@ export type TeamCheckRecord = {
    * 한쪽 말로 덮는 것이 되어 정정을 요구한 사람이 기록을 믿을 수 없게 된다.
    */
   resolution: string | null;
+  /**
+   * 의견 차이를 1:1 로 이야기할 상대의 id(= DM 스레드 id).
+   *
+   * 내 기록이면 의견을 적은 사람, 아니면 기록 주인이다. 그 사람이 팀을 나갔거나
+   * 나 자신이면 `null` — 열리지 않을 대화방으로 보내지 않는다.
+   */
+  dmWith: string | null;
 };
 
 /**

@@ -6,6 +6,7 @@ import { AppBar, Body, Note, Toast, Undecided } from "@/components/ui";
 import type { ChatMessage, Member, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { useMe } from "@/features/onboarding/use-me";
+import { handOffToCushion } from "@/features/tools/cushion-handoff";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
@@ -96,8 +97,11 @@ export function TeamChatScreen({
           send(text);
         }}
         onAttach={() => flash("첨부는 아직 준비 중입니다")}
-        // TODO(15 쿠션 번역기): 입력 중이던 글을 들고 넘어가야 한다. 지금은 빈 화면으로 연다.
-        onCushion={() => router.push("/tools/cushion")}
+        // 입력 중이던 글을 들고 넘어간다. 비어 있으면 쿠션 번역기는 예시 문장으로 열린다.
+        onCushion={(draft) => {
+          handOffToCushion(draft);
+          router.push("/tools/cushion");
+        }}
       />
 
       <Toast msg={toast} />

@@ -29,7 +29,8 @@ export function Composer({
   onSend: (text: string) => void;
   /** 단톡방에만 있는 첨부·쿠션 번역기 버튼. 주지 않으면 그리지 않는다. */
   onAttach?: () => void;
-  onCushion?: () => void;
+  /** 입력 중이던 글을 넘긴다 — 쿠션 번역기가 그 글을 다듬는다. */
+  onCushion?: (draft: string) => void;
 }) {
   const [text, setText] = useState("");
 
@@ -82,7 +83,7 @@ export function Composer({
       {onCushion ? (
         <button
           type="button"
-          onClick={onCushion}
+          onClick={() => onCushion(text)}
           aria-label="쿠션 번역기로 다듬기"
           className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-yellow-200 text-yellow-700"
         >

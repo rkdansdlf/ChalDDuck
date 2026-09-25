@@ -197,14 +197,17 @@ export function ContribTeamScreen({
                         </div>
                       ) : (
                         <div className="mt-[9px] flex flex-wrap gap-1.5">
-                          <Btn
-                            size="sm"
-                            v="outline"
-                            icon="messages-square"
-                            onClick={() => router.push("/chat/dm")}
-                          >
-                            1:1 DM
-                          </Btn>
+                          {/* 목록이 아니라 이 기록을 두고 이야기할 사람과의 대화방으로 간다. */}
+                          {record.dmWith ? (
+                            <Btn
+                              size="sm"
+                              v="outline"
+                              icon="messages-square"
+                              onClick={() => router.push(`/chat/dm/${record.dmWith}`)}
+                            >
+                              1:1 DM
+                            </Btn>
+                          ) : null}
                           <Btn
                             size="sm"
                             v="ghost"

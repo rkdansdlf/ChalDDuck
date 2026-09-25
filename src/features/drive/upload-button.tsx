@@ -89,8 +89,10 @@ export function UploadButton({
         {working ? "올리는 중" : label}
       </Btn>
 
+      {/* 가로로 늘어선 줄(드라이브의 제출함 고르기 시트) 안에 놓여도 안내는 버튼 옆이
+          아니라 줄 아래에 한 줄을 다 쓰도록 한다. */}
       {error ? (
-        <Note tone="warn" icon="circle-alert" title="올리지 못했습니다" className="mt-3">
+        <Note tone="warn" icon="circle-alert" title="올리지 못했습니다" className="mt-3 basis-full">
           {error}
         </Note>
       ) : null}

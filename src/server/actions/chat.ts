@@ -46,7 +46,12 @@ export type SendChatMessageResult =
   | { ok: true; message: { id: string; time: string } }
   | { ok: false };
 
-export async function sendChatMessage(threadId: string, text: string): Promise<SendChatMessageResult> {
+export async function sendChatMessage(
+  threadId: string,
+  text: string,
+  /** 쿠션 번역기로 다듬은 말이면 true — 말풍선에 표시가 남는다(19 화면의 약속). */
+  options: { viaCushion?: boolean } = {},
+): Promise<SendChatMessageResult> {
   const me = await requireSessionMember();
   const trimmed = text.trim();
   if (!trimmed) return { ok: false };
@@ -60,6 +65,7 @@ export async function sendChatMessage(threadId: string, text: string): Promise<S
       threadKey,
       authorId: me.id,
       text: trimmed,
+      viaCushion: options.viaCushion === true,
       whenLabel: nowLabel(),
     },
   });

@@ -795,8 +795,8 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   const rows = await db.contribRecord.findMany({
     where: { member: { teamId } },
     include: {
-      member: { select: { id: true, name: true } },
-      disputedBy: { select: { name: true } },
+      member: { select: { id: true, name: true, leftAt: true } },
+      disputedBy: { select: { id: true, name: true, leftAt: true } },
       confirms: { select: { memberId: true } },
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -804,6 +804,8 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
 
   return rows.map((r) => {
     const state = r.state as TeamCheckRecord["state"];
+    // 내 기록이면 의견을 적은 사람과, 아니면 기록 주인과 이야기한다.
+    const other = r.member.id === session?.id ? r.disputedBy : r.member;
     return {
       id: r.id,
       who: r.member.name,
@@ -820,6 +822,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
       }),
       dispute: r.dispute,
       resolution: r.resolution,
+      dmWith: other && other.leftAt === null && other.id !== session?.id ? other.id : null,
     };
   });
 }

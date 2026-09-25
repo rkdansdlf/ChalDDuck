@@ -286,8 +286,8 @@ export function RosterScreen({
                 type="button"
                 disabled={member.isMe}
                 aria-label={member.isMe ? undefined : `${member.name}님과 대화하기`}
-                // TODO(31 DM 화면): 구현되면 여기서 해당 대화로 이동한다
-                onClick={() => flash("1:1 대화는 아직 준비 중입니다")}
+                // DM 스레드 id 는 상대 팀원의 id 다(`getDmThreads`).
+                onClick={() => router.push(`/chat/dm/${member.id}`)}
                 className={`flex-none border-none bg-transparent p-0 ${
                   member.isMe ? "cursor-default" : "cursor-pointer"
                 }`}
