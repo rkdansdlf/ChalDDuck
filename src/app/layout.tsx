@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { PwaBridge } from "@/lib/pwa";
 import { ReviewModeBridge } from "@/lib/review-mode";
 import "./globals.css";
 
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="ko" className={`${pretendard.variable} h-full`}>
       <body className="min-h-full">
         <ReviewModeBridge />
+        <PwaBridge />
         {children}
       </body>
     </html>
