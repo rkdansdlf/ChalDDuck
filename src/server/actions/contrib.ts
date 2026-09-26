@@ -1,14 +1,12 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { MAX_BYTES, resolveFileType } from "@/features/drive/file-rules";
 import type { ContribKindKey } from "@/lib/types";
 import { refreshContribState } from "@/server/contrib/state";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
-import { isStorageConfigured, storage } from "@/server/storage/client";
+import { signTeamFileUrl, signTeamUpload, verifyTeamUpload } from "@/server/storage/team-upload";
 import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
 /**
@@ -47,20 +45,7 @@ export async function prepareEvidenceUpload(meta: {
   type: string;
 }): Promise<PrepareUploadResult> {
   const me = await requireSessionMember();
-  if (!isStorageConfigured()) return { status: "not-configured" };
-
-  if (meta.size <= 0) return { status: "empty" };
-  if (meta.size > MAX_BYTES) return { status: "too-big" };
-  const type = resolveFileType(meta.name, meta.type);
-  if (!type) return { status: "bad-type" };
-
-  const path = `${me.teamId}/evidence/${randomUUID()}`;
-  const { data, error } = await storage().createSignedUploadUrl(path);
-  if (error) {
-    console.error("[storage] 근거 올리기 주소 발급 실패:", error);
-    throw new Error("저장소가 응답하지 않습니다.");
-  }
-  return { status: "ok", path, signedUrl: data.signedUrl, contentType: type.contentType };
+  return signTeamUpload(`${me.teamId}/evidence/`, meta);
 }
 
 /**
@@ -85,27 +70,14 @@ export async function addContribRecord(input: {
   let evidence: { evidencePath: string; evidenceName: string; evidenceBytes: number; evidenceMime: string } | null =
     null;
   if (input.evidence) {
-    if (!isStorageConfigured()) return { status: "not-configured" };
-
-    // 1단계에서 서버가 정해 준 모양의 경로만 받는다 — 다른 팀의 객체를 제 근거로 붙이지 못하게.
-    const { path } = input.evidence;
-    const prefix = `${me.teamId}/evidence/`;
-    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : "";
-    if (!/^[0-9a-f-]{36}$/.test(rest)) throw new Error("올린 근거 파일의 경로가 올바르지 않습니다.");
-
-    const name = input.evidence.name.trim().slice(0, 200);
-    const { data: info, error } = await storage().info(path);
-    if (error || !info) return { status: "missing" };
-
-    const bytes = info.size ?? 0;
-    const type = resolveFileType(name, info.contentType ?? "");
-    const rejection: UploadRejection | null =
-      !name || bytes <= 0 ? "empty" : bytes > MAX_BYTES ? "too-big" : !type ? "bad-type" : null;
-    if (rejection || !type) {
-      await storage().remove([path]);
-      return { status: rejection ?? "bad-type" };
-    }
-    evidence = { evidencePath: path, evidenceName: name, evidenceBytes: bytes, evidenceMime: type.contentType };
+    const checked = await verifyTeamUpload(`${me.teamId}/evidence/`, input.evidence);
+    if (checked.status !== "ok") return checked;
+    evidence = {
+      evidencePath: checked.path,
+      evidenceName: checked.name,
+      evidenceBytes: checked.bytes,
+      evidenceMime: checked.mime,
+    };
   }
 
   await db.contribRecord.create({
@@ -135,19 +107,8 @@ export async function addContribRecord(input: {
 export async function getEvidenceUrl(recordId: string): Promise<string | null> {
   const me = await requireSessionMember();
   const record = await teamRecord(recordId, me.teamId);
-  if (!record?.evidencePath || !isStorageConfigured()) return null;
-
-  const inline = record.evidenceMime === "application/pdf" || record.evidenceMime?.startsWith("image/");
-  const { data, error } = await storage().createSignedUrl(
-    record.evidencePath,
-    10 * 60,
-    inline ? undefined : { download: record.evidenceName ?? "근거" },
-  );
-  if (error) {
-    console.error("[storage] 근거 서명 주소 실패:", error);
-    return null;
-  }
-  return data.signedUrl;
+  if (!record?.evidencePath) return null;
+  return signTeamFileUrl(record.evidencePath, record.evidenceName ?? "근거", record.evidenceMime);
 }
 
 /**

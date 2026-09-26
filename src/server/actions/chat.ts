@@ -12,6 +12,8 @@ import {
 import type { ChatMessage, DmThread } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
+import { signTeamFileUrl, signTeamUpload, verifyTeamUpload } from "@/server/storage/team-upload";
+import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
 /**
  * 채팅 서버 액션.
@@ -51,20 +53,50 @@ function nowLabel() {
 
 export type SendChatMessageResult =
   | { ok: true; message: { id: string; time: string } }
-  | { ok: false };
+  | { ok: false; rejected?: UploadRejection | "missing" };
+
+/**
+ * 첨부 올리기 1단계 — 저장소에 직접 올릴 주소. **단톡방만** 받는다.
+ *
+ * DM 첨부는 기획안에 없다. 경로는 `{teamId}/chat/{uuid}` 이고 드라이브와 같은 규칙이다.
+ */
+export async function prepareChatAttachment(meta: {
+  name: string;
+  size: number;
+  type: string;
+}): Promise<PrepareUploadResult> {
+  const me = await requireSessionMember();
+  return signTeamUpload(`${me.teamId}/chat/`, meta);
+}
 
 export async function sendChatMessage(
   threadId: string,
   text: string,
   /** 쿠션 번역기로 다듬은 말이면 true — 말풍선에 표시가 남는다(19 화면의 약속). */
-  options: { viaCushion?: boolean } = {},
+  options: { viaCushion?: boolean; attachment?: { path: string; name: string } } = {},
 ): Promise<SendChatMessageResult> {
   const me = await requireSessionMember();
   const trimmed = text.trim();
-  if (!trimmed) return { ok: false };
+  // 파일만 보내는 말은 글이 비어도 된다.
+  if (!trimmed && !options.attachment) return { ok: false };
   if (trimmed.length > MAX_MESSAGE) return { ok: false };
+  if (options.attachment && threadId !== "team") return { ok: false };
 
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
+
+  // 저장소에 실제로 들어온 객체를 확인한다 — 규칙에 어긋나면 지우고 말도 남기지 않는다.
+  let attach: { attachPath: string; attachName: string; attachBytes: number; attachMime: string } | null = null;
+  if (options.attachment) {
+    const checked = await verifyTeamUpload(`${me.teamId}/chat/`, options.attachment);
+    if (checked.status !== "ok") return { ok: false, rejected: checked.status };
+    attach = { attachPath: checked.path, attachName: checked.name, attachBytes: checked.bytes, attachMime: checked.mime };
+  }
+
+  // 응답이 늦어 화면이 다시 보냈을 때 같은 파일의 말이 둘 생기지 않게.
+  if (attach) {
+    const already = await db.message.findFirst({ where: { attachPath: attach.attachPath } });
+    if (already) return { ok: true, message: { id: already.id, time: already.whenLabel } };
+  }
 
   const created = await db.message.create({
     data: {
@@ -74,6 +106,7 @@ export async function sendChatMessage(
       text: trimmed,
       viaCushion: options.viaCushion === true,
       whenLabel: nowLabel(),
+      ...attach,
     },
   });
 
@@ -81,6 +114,17 @@ export async function sendChatMessage(
   // `/chat` 레이아웃(팀원 목록·최근 자료)까지 매 메시지마다 다시 부를 필요는 없다.
   revalidatePath(threadId === "team" ? "/chat/team" : `/chat/dm/${threadId}`);
   return { ok: true, message: { id: created.id, time: created.whenLabel } };
+}
+
+/** 첨부를 여는 주소. 우리 팀 단톡방의 말인지 서버가 확인한다. */
+export async function getChatAttachmentUrl(messageId: string): Promise<string | null> {
+  const me = await requireSessionMember();
+  const message = await db.message.findFirst({
+    where: { id: messageId, teamId: me.teamId, threadKey: "team" },
+    select: { attachPath: true, attachName: true, attachMime: true },
+  });
+  if (!message?.attachPath) return null;
+  return signTeamFileUrl(message.attachPath, message.attachName ?? "첨부", message.attachMime);
 }
 
 /** 위로 스크롤해 더 불러오기. `threadId` 가 실제로 내 방인지는 `resolveThread` 가 확인한다. */

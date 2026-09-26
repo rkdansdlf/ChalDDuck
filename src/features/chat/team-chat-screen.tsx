@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { AppBar, Body, Note, Toast, Undecided } from "@/components/ui";
 import type { ChatMessage, Member, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
+import { ACCEPT } from "@/features/drive/file-rules";
 import { useMe } from "@/features/onboarding/use-me";
 import { handOffToCushion } from "@/features/tools/cushion-handoff";
 import { Composer } from "./composer";
@@ -30,7 +31,7 @@ export function TeamChatScreen({
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
-  const { messages, send, retry, hasMore, isLoadingMore, loadOlder } = useChatThread(
+  const { messages, send, sendFile, retry, hasMore, isLoadingMore, loadOlder } = useChatThread(
     TEAM_THREAD_ID,
     fromServer,
     initialCursor,
@@ -41,6 +42,7 @@ export function TeamChatScreen({
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
 
   useLoadOlderOnScroll(scrollRef, topRef, hasMore, loadOlder);
 
@@ -83,7 +85,8 @@ export function TeamChatScreen({
 
         <Undecided>
           채널을 여러 개 두는지, 메시지 삭제가 되는지는 기획안에 없어 팀 전체가 보는 단일 채팅방으로만
-          구성했습니다.
+          구성했습니다. 첨부는 드라이브와 같은 규칙(문서·이미지·PPT·PDF, 50MB)이고 1:1 대화에는 두지
+          않았습니다. 첨부가 팀 드라이브 용량(2GB)에 들어가는지도 정해지지 않았습니다.
         </Undecided>
 
         <div ref={bottomRef} />
@@ -96,11 +99,26 @@ export function TeamChatScreen({
           stick();
           send(text);
         }}
-        onAttach={() => flash("첨부는 아직 준비 중입니다")}
+        // 드라이브와 같은 형식·용량(문서·이미지·PPT·PDF, 50MB)만 받는다.
+        onAttach={() => picker.current?.click()}
         // 입력 중이던 글을 들고 넘어간다. 비어 있으면 쿠션 번역기는 예시 문장으로 열린다.
         onCushion={(draft) => {
           handOffToCushion(draft);
           router.push("/tools/cushion");
+        }}
+      />
+
+      <input
+        ref={picker}
+        type="file"
+        accept={ACCEPT}
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          stick();
+          void sendFile(file).then((refused) => refused && flash(refused));
         }}
       />
 

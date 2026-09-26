@@ -5,6 +5,7 @@ import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage } from "@/lib/types";
+import { ChatAttachment } from "./chat-attachment";
 
 /**
  * 말풍선 하나.
@@ -42,14 +43,27 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         ) : null}
 
-        <div
-          className={cn(
-            "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong",
-            mine ? "bg-yellow-300" : "border border-line bg-card",
-          )}
-        >
-          {displayText}
-        </div>
+        {message.attachment ? (
+          <ChatAttachment
+            messageId={message.id}
+            attachment={message.attachment}
+            sent={message.status === "sent"}
+            mine={mine}
+          />
+        ) : null}
+
+        {/* 파일만 보낸 말은 글이 비어 있다 — 빈 말풍선을 그리지 않는다. */}
+        {displayText ? (
+          <div
+            className={cn(
+              "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong",
+              mine ? "bg-yellow-300" : "border border-line bg-card",
+              message.attachment && "mt-1",
+            )}
+          >
+            {displayText}
+          </div>
+        ) : null}
 
         <div className="mt-1 flex items-center gap-1.5">
           {message.viaCushion ? (

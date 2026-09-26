@@ -60,6 +60,11 @@ export function markPendingFailed(threadId: string, tempId: string) {
   update(threadId, (thread) => thread.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m)));
 }
 
+/** 보내 봐야 소용없는 말(형식·크기로 거절된 파일)은 말풍선을 거둔다. 이유는 화면이 알린다. */
+export function removePendingMessage(threadId: string, tempId: string) {
+  update(threadId, (thread) => thread.filter((m) => m.id !== tempId));
+}
+
 /** 서버가 준 기록 뒤에 로컬에만 있는 말을 이어 붙인다. 서버에도 같은 id 가 있으면 로컬 쪽은 뺀다. */
 export function useThreadMessages(threadId: string, fromServer: ChatMessage[]): ChatMessage[] {
   const all = useSyncExternalStore(

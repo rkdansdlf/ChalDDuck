@@ -60,7 +60,12 @@ export function ChatThreadList({
       time={lastTeamMessage?.time ?? ""}
       preview={
         lastTeamMessage
-          ? `${lastTeamMessage.author}: ${softenProfanity(lastTeamMessage.text).text}`
+          ? `${lastTeamMessage.author}: ${
+              // 파일만 보낸 말은 글이 비어 있다 — 무엇을 보냈는지 이름으로 적는다.
+              lastTeamMessage.text
+                ? softenProfanity(lastTeamMessage.text).text
+                : `파일 · ${lastTeamMessage.attachment?.name ?? ""}`
+            }`
           : "아직 대화가 없습니다"
       }
       onClick={() => router.push("/chat/team")}

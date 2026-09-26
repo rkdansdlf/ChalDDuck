@@ -1,11 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { loadOlderMessages, pollNewMessages, sendChatMessage } from "@/server/actions/chat";
+import { humanSize } from "@/features/drive/file-rules";
+import { putToStorage, REJECTION_TEXT } from "@/features/drive/use-uploads";
+import { loadOlderMessages, pollNewMessages, prepareChatAttachment, sendChatMessage } from "@/server/actions/chat";
 import type { ChatMessage } from "@/lib/types";
 import type { MbtiType } from "@/lib/mbti";
 import { usePoll } from "@/lib/use-poll";
-import { addPendingMessage, markPendingFailed, resolvePendingMessage, useThreadMessages } from "./messages-state";
+import {
+  addPendingMessage,
+  markPendingFailed,
+  removePendingMessage,
+  resolvePendingMessage,
+  useThreadMessages,
+} from "./messages-state";
 
 /**
  * 새 말을 확인하는 주기.
@@ -105,8 +113,73 @@ export function useChatThread(
     [threadId, me.name, me.mbti],
   );
 
+  /**
+   * 파일 보내기(단톡방만). 저장소에 직접 올린 뒤 그 경로로 말을 남긴다.
+   *
+   * 올리는 동안에도 말풍선을 먼저 얹는다 — 큰 파일은 몇 초 걸린다. 실패하면 그 말풍선에
+   * "다시 보내기"가 붙고, 다시 보낼 때는 **남은 단계만** 한다(이미 올렸으면 다시 올리지 않는다).
+   *
+   * @returns 다시 해도 소용없는 거절(형식·크기)이면 사람에게 보일 문장. 그때는 말풍선을 남기지 않는다.
+   */
+  const pendingFiles = useRef(new Map<string, { file: File; path: string | null }>());
+
+  const deliverFile = useCallback(
+    async (tempId: string): Promise<string | null> => {
+      const job = pendingFiles.current.get(tempId);
+      if (!job) return null;
+      if (!job.path) {
+        const ticket = await prepareChatAttachment({ name: job.file.name, size: job.file.size, type: job.file.type });
+        if (ticket.status !== "ok") return REJECTION_TEXT[ticket.status];
+        await putToStorage(ticket.signedUrl, job.file, ticket.contentType, () => {});
+        job.path = ticket.path;
+      }
+      const result = await sendChatMessage(threadId, "", { attachment: { path: job.path, name: job.file.name } });
+      if (result.ok) {
+        pendingFiles.current.delete(tempId);
+        resolvePendingMessage(threadId, tempId, result.message);
+        return null;
+      }
+      if (result.rejected && result.rejected !== "missing") return REJECTION_TEXT[result.rejected];
+      throw new Error("send failed");
+    },
+    [threadId],
+  );
+
+  const sendFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      const tempId = addPendingMessage(threadId, {
+        author: me.name,
+        mbti: me.mbti,
+        isMine: true,
+        text: "",
+        attachment: { name: file.name, size: humanSize(file.size), image: file.type.startsWith("image/") },
+      });
+      pendingFiles.current.set(tempId, { file, path: null });
+      try {
+        const refused = await deliverFile(tempId);
+        if (refused) {
+          pendingFiles.current.delete(tempId);
+          removePendingMessage(threadId, tempId);
+        }
+        return refused;
+      } catch {
+        markPendingFailed(threadId, tempId);
+        return null;
+      }
+    },
+    [threadId, me.name, me.mbti, deliverFile],
+  );
+
   const retry = useCallback(
     async (message: ChatMessage) => {
+      if (pendingFiles.current.has(message.id)) {
+        try {
+          await deliverFile(message.id);
+        } catch {
+          // 여전히 실패 — 말풍선은 그대로 두고 다시 누를 수 있게 한다
+        }
+        return;
+      }
       try {
         const result = await sendChatMessage(threadId, message.text);
         if (result.ok) {
@@ -117,10 +190,10 @@ export function useChatThread(
         // 여전히 실패 — 말풍선은 그대로 두고 다시 누를 수 있게 한다
       }
     },
-    [threadId],
+    [threadId, deliverFile],
   );
 
-  return { messages, send, retry, hasMore: cursor !== null, isLoadingMore, loadOlder };
+  return { messages, send, sendFile, retry, hasMore: cursor !== null, isLoadingMore, loadOlder };
 }
 
 /** 이만큼 아래에 있으면 "맨 아래를 보고 있다"로 친다. 한 줄 정도의 여유. */
