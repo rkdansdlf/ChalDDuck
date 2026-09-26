@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   AppBar,
   Body,
@@ -9,7 +9,6 @@ import {
   Panel,
   Rows,
   SecTitle,
-  Toast,
   type IconName,
 } from "@/components/ui";
 import { useNavBadges } from "@/components/nav-badges-store";
@@ -105,13 +104,6 @@ export function HomeScreen({
 
   /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
   const remainingTasks = tasks.filter((t) => t.status !== "done").length;
-
-  const [toast, setToast] = useState<string | null>(null);
-
-  const notReady = (what: string) => {
-    setToast(`${what}은 아직 준비 중입니다`);
-    window.setTimeout(() => setToast(null), 2400);
-  };
 
   const members = useMemo(
     () =>
@@ -270,7 +262,7 @@ export function HomeScreen({
             <button
               key={item.id}
               type="button"
-              onClick={() => (item.href ? router.push(item.href) : notReady(item.title))}
+              onClick={() => router.push(item.href)}
               className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-[13px] text-left"
             >
               <span className="grid size-[34px] flex-none place-items-center rounded-[11px] bg-fill text-txt-muted">
@@ -299,25 +291,28 @@ export function HomeScreen({
           AI 도구 바로가기
         </SecTitle>
         <div className="flex flex-wrap gap-2">
-          {aiTools.slice(0, 4).map((tool) => (
-            <button
-              key={tool.key}
-              type="button"
-              onClick={() => (tool.href ? router.push(tool.href) : notReady(tool.name))}
-              className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5"
-            >
-              <Icon name={tool.icon as IconName} size={17} className="text-info" />
-              <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
-                {tool.name}
-              </span>
-            </button>
-          ))}
+          {/* 열 수 있는 도구만 바로가기에 둔다 — 누르면 "준비 중"만 뜨는 칸은 자리만 차지한다. */}
+          {aiTools
+            .filter((tool): tool is typeof tool & { href: string } => tool.ready && tool.href !== null)
+            .slice(0, 4)
+            .map((tool) => (
+              <button
+                key={tool.key}
+                type="button"
+                onClick={() => router.push(tool.href)}
+                className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5"
+              >
+                <Icon name={tool.icon as IconName} size={17} className="text-info" />
+                <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
+                  {tool.name}
+                </span>
+              </button>
+            ))}
         </div>
         </div>
         </div>
       </Body>
 
-      <Toast msg={toast} />
     </>
   );
 }

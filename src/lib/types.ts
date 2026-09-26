@@ -290,8 +290,8 @@ export type RecentItem = {
   note: string;
   /** `IconName` 과 같은 kebab-case 어휘. */
   icon: string;
-  /** 눌렀을 때 갈 곳. 아직 없는 화면이면 null 이고 화면이 안내만 한다. */
-  href: string | null;
+  /** 눌렀을 때 갈 곳. 갈 곳이 없는 줄은 만들지 않는다(`getRecentItems`). */
+  href: string;
 };
 
 /* ── 12 / 13 / 22 드라이브 ──────────────────────────────────── */
