@@ -1,7 +1,23 @@
 import "server-only";
 
 import { computeMeetingSlots } from "@/features/schedule/meeting-slots";
+import { scheduleWeeks, type WeekKey } from "@/features/schedule/week";
 import { db } from "@/server/db";
+
+/**
+ * 한 주에 걸리는 안 되는 시간 — 매주 반복하는 것과 그 주에만 있는 것.
+ *
+ * 회의 후보·제안·"못 오는 사람" 계산이 모두 이 조건으로 읽어야 같은 사람을 같은 시간에
+ * "안 됨"으로 센다.
+ */
+export function busyInWeek(week: WeekKey) {
+  return { OR: [{ weekOf: null }, { weekOf: week }] };
+}
+
+/** 회의 후보를 계산하는 주 — 볼 수 있는 주 가운데 첫 주. */
+export function candidateWeek(): WeekKey {
+  return scheduleWeeks()[0];
+}
 
 /**
  * 회의 시간 후보를 팀원들의 시간표에서 다시 만든다.
@@ -23,11 +39,15 @@ export async function rebuildMeetingCandidates(teamId: string): Promise<void> {
   });
   if (live) return;
 
+  const week = candidateWeek();
   const members = await db.member.findMany({
     where: { teamId, leftAt: null },
     select: {
       name: true,
-      busyBlocks: { select: { day: true, startHour: true, hours: true, kind: true } },
+      busyBlocks: {
+        where: busyInWeek(week),
+        select: { day: true, startHour: true, hours: true, kind: true },
+      },
     },
   });
 
@@ -38,5 +58,18 @@ export async function rebuildMeetingCandidates(teamId: string): Promise<void> {
     db.meetingSlot.createMany({
       data: slots.map((s) => ({ ...s, teamId, weekKey: "this" })),
     }),
+    db.team.update({ where: { id: teamId }, data: { candidatesWeek: week } }),
   ]);
+}
+
+/**
+ * 후보를 만든 주가 지나갔으면 다시 만든다.
+ *
+ * 후보는 시간표를 저장할 때 만들어지는데, **주가 바뀌는 건 아무도 저장하지 않아도 온다.**
+ * 그대로 두면 지난주에만 있던 시험 기간이 이번 주 후보까지 막는다. 그래서 후보를 보여 주기
+ * 직전에 확인한다(09 화면). 올라온 제안이 있으면 `rebuildMeetingCandidates` 가 건너뛴다.
+ */
+export async function refreshStaleCandidates(teamId: string): Promise<void> {
+  const team = await db.team.findUnique({ where: { id: teamId }, select: { candidatesWeek: true } });
+  if (team && team.candidatesWeek !== candidateWeek()) await rebuildMeetingCandidates(teamId);
 }

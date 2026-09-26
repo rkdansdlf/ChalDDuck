@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { Icon } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { BusyBlock } from "@/lib/types";
 import { blockAt } from "./busy-blocks";
@@ -25,6 +26,7 @@ type Drag = { day: number; anchor: number; current: number };
  */
 export function WeekGrid({
   days,
+  dayNotes,
   hours,
   blocks,
   lookFor,
@@ -33,6 +35,8 @@ export function WeekGrid({
   onEdit,
 }: {
   days: string[];
+  /** 요일 아래 작은 글씨 — 보고 있는 주의 날짜("9/28"). */
+  dayNotes?: string[];
   hours: string[];
   blocks: BusyBlock[];
   /** 블록의 이름·배경. 기본 사유와 직접 입력 사유가 같은 규칙으로 그려지도록 부르는 쪽이 넘긴다. */
@@ -178,12 +182,17 @@ export function WeekGrid({
       }}
     >
       <span />
-      {days.map((day) => (
+      {days.map((day, i) => (
         <span
           key={day}
           className="pb-1.5 text-center font-bold text-[13px] leading-none text-txt-muted"
         >
           {day}
+          {dayNotes ? (
+            <span className="mt-1 block font-mono font-medium text-[10.5px] text-txt-faint">
+              {dayNotes[i]}
+            </span>
+          ) : null}
         </span>
       ))}
 
@@ -228,10 +237,12 @@ export function WeekGrid({
         }),
       )}
 
-      {/* 칠해진 블록. 여러 시간이 한 덩어리로 보여야 목록과 같은 단위로 읽힌다. */}
-      {blocks.map((block) => {
+      {/* 칠해진 블록. 여러 시간이 한 덩어리로 보여야 목록과 같은 단위로 읽힌다.
+          "이 주만" 블록은 매주 블록 위에 그린다(뒤에 그리고 z 를 한 칸 높인다). */}
+      {[...blocks].sort((a, b) => Number(a.weekOf !== null) - Number(b.weekOf !== null)).map((block) => {
         const look = lookFor(block);
         const from = Number(hours[block.startHour]);
+        const once = block.weekOf !== null;
         return (
           <button
             key={block.id}
@@ -244,9 +255,11 @@ export function WeekGrid({
               if (suppressClickRef.current) return;
               onEdit(block);
             }}
-            aria-label={`${days[block.day]} ${from}시부터 ${block.hours}시간 · ${look.name} — 고치기`}
+            aria-label={`${days[block.day]} ${from}시부터 ${block.hours}시간 · ${look.name}${once ? " · 이 주만" : ""} — 고치기`}
             className={cn(
-              "relative z-10 flex cursor-pointer items-start justify-center overflow-hidden rounded-md border-none p-1",
+              "relative flex cursor-pointer items-start justify-center overflow-hidden rounded-md border-none p-1",
+              // "이 주만"은 점선 테두리 + 달력 아이콘. 색만으로 매주/이 주만을 나누지 않는다.
+              once ? "z-[11] outline-2 outline-ink-900 outline-dashed -outline-offset-2" : "z-10",
               // 칠하는 중에는 블록을 지나가도 아래 칸이 포인터를 받아야 한다(elementFromPoint).
               drag && "pointer-events-none",
             )}
@@ -259,6 +272,11 @@ export function WeekGrid({
             {/* 색만으로 사유를 구분하지 않는다 — 이름을 함께 둔다. 글자는 밝은 바탕 위에 올려 대비를 지킨다. */}
             {/* 좁은 화면의 칸(약 55px)에 "아르바이트"가 한 줄로 안 들어간다 — 말줄임 대신 두 줄로 접는다. */}
             <span className="t-cap-strong line-clamp-2 max-w-full break-all rounded-[5px] bg-card px-1 py-0.5 text-center text-txt-strong">
+              {once ? (
+                <span className="mr-0.5 inline-block align-[-1px]">
+                  <Icon name="calendar-clock" size={10} />
+                </span>
+              ) : null}
               {look.name}
             </span>
           </button>

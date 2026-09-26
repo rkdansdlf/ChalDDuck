@@ -18,14 +18,31 @@ import {
 } from "@/components/ui";
 import { saveMyBusyBlocks } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
-import type { BusyBlock, BusyKind } from "@/lib/types";
-import { blocksShape, customLabels, nextBlockId, placeBlock, sortBlocks } from "./busy-blocks";
+import type { BusyBlock, BusyKind, ScheduleWeek } from "@/lib/types";
+import {
+  blocksInWeek,
+  blocksShape,
+  customLabels,
+  nextBlockId,
+  placeBlock,
+  sortBlocks,
+} from "./busy-blocks";
 import { lookOf, type Reason } from "./reason";
 import { ReasonPicker } from "./reason-picker";
 import { ScheduleTabs } from "./schedule-tabs";
+import { dateOfDay } from "./week";
 import { WeekGrid } from "./week-grid";
+import { WeekPicker } from "./week-picker";
 
 const LENGTHS = [1, 2, 3, 4];
+
+type Repeat = "weekly" | "once";
+
+/**
+ * 사유마다 처음 골라 둘 반복 방식. 시험 기간은 끝나는 일정이라 "이 주만", 나머지는 매주.
+ * 고른 뒤에는 사용자가 바꿀 수 있다 — 기본값일 뿐 규칙이 아니다.
+ */
+const DEFAULT_REPEAT: Record<string, Repeat> = { exam: "once" };
 
 type Draft = Omit<BusyBlock, "id">;
 
@@ -43,23 +60,31 @@ type Editing = { mode: "add"; draft: Draft } | { mode: "edit"; id: string; draft
  * 탭·끌기로 바로 칠한다. HANDOFF 08 의 "목록으로 담기"(작은 화면·확대 설정 대안)는
  * 토글 대신 `시간 추가` 시트로 옮겼다 — 요일 → 시간 → 길이 순서는 그대로이고,
  * 키보드·스크린리더도 이 길로 들어온다.
+ *
+ * 블록은 **매주** 반복하거나 **그 주에만** 있다. 격자는 한 번에 한 주를 보여 주고
+ * (매주 + 그 주에만), 저장은 볼 수 있는 모든 주의 블록을 한꺼번에 한다.
  */
 export function MyTimeScreen({
   kinds,
   customKind,
   days,
   hours,
+  weeks,
   initialBlocks,
 }: {
   kinds: BusyKind[];
   customKind: BusyKind;
   days: string[];
   hours: string[];
+  /** 고를 수 있는 주. 첫 주가 기본. */
+  weeks: ScheduleWeek[];
   initialBlocks: BusyBlock[];
 }) {
   const router = useRouter();
 
   const [reason, setReason] = useState<Reason>({ kind: "class", label: null });
+  const [repeat, setRepeat] = useState<Repeat>("weekly");
+  const [week, setWeek] = useState(weeks[0].key);
   const [blocks, setBlocks] = useState<BusyBlock[]>(initialBlocks);
   // 방금 만들고 아직 칠하지 않은 사유 이름. 블록에 쓰이기 전에도 칩으로 남아 있어야 한다.
   const [newLabels, setNewLabels] = useState<string[]>([]);
@@ -84,11 +109,19 @@ export function MyTimeScreen({
   const pickReason = (r: Reason) => {
     remember(r);
     setReason(r);
+    setRepeat(DEFAULT_REPEAT[r.kind] ?? "weekly");
   };
+
+  const weekNameOf = (key: string) => weeks.find((w) => w.key === key)?.name ?? key;
+  const viewed = weeks.find((w) => w.key === week) ?? weeks[0];
+
+  /** "월 10시~12시", 그 주에만이면 "수(10/1) 10시~12시". */
   const rangeText = (b: Draft) => {
     const from = Number(hours[b.startHour]);
-    return `${days[b.day]} ${from}시~${from + b.hours}시`;
+    const day = b.weekOf ? `${days[b.day]}(${dateOfDay(b.weekOf, b.day)})` : days[b.day];
+    return `${day} ${from}시~${from + b.hours}시`;
   };
+  const repeatText = (b: Draft) => (b.weekOf ? `${weekNameOf(b.weekOf)}만` : "매주");
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -97,12 +130,22 @@ export function MyTimeScreen({
 
   const paint = (day: number, startHour: number, length: number) => {
     setBlocks((prev) =>
-      placeBlock(prev, { id: nextBlockId(), day, startHour, hours: length, ...reason }),
+      placeBlock(prev, {
+        id: nextBlockId(),
+        day,
+        startHour,
+        hours: length,
+        ...reason,
+        weekOf: repeat === "once" ? week : null,
+      }),
     );
   };
 
   const openAdd = () =>
-    setEditing({ mode: "add", draft: { day: 0, startHour: 1, hours: 2, ...reason } });
+    setEditing({
+      mode: "add",
+      draft: { day: 0, startHour: 1, hours: 2, ...reason, weekOf: repeat === "once" ? week : null },
+    });
 
   const openEdit = (block: BusyBlock) => {
     const { id, ...draft } = block;
@@ -140,6 +183,7 @@ export function MyTimeScreen({
   /** 등록한 불가 시간의 총 칸 수. */
   const filled = useMemo(() => blocks.reduce((sum, b) => sum + b.hours, 0), [blocks]);
   const sorted = useMemo(() => sortBlocks(blocks), [blocks]);
+  const visible = useMemo(() => blocksInWeek(blocks, week), [blocks, week]);
 
   const dirty = useMemo(
     () => blocksShape(blocks) !== blocksShape(initialBlocks),
@@ -186,14 +230,27 @@ export function MyTimeScreen({
           labels={labels}
           value={reason}
           onChange={pickReason}
-          className="mb-3"
+          className="mb-2"
         />
+        <ChoiceRow
+          label="반복"
+          options={[
+            { value: "weekly", text: "매주 반복" },
+            { value: "once", text: `${viewed.name}만` },
+          ]}
+          value={repeat}
+          onChange={setRepeat}
+          stretch
+        />
+
+        <WeekPicker weeks={weeks} value={week} onChange={setWeek} />
 
         <Panel s="card" pad={12} r={16} className="mb-2">
           <WeekGrid
             days={days}
+            dayNotes={days.map((_, i) => dateOfDay(week, i))}
             hours={hours}
-            blocks={blocks}
+            blocks={visible}
             lookFor={look}
             paintLook={look(reason)}
             onPaint={paint}
@@ -202,7 +259,7 @@ export function MyTimeScreen({
         </Panel>
         <p className="t-cap keep-all m-0 mb-3 text-txt-muted">
           빈 칸을 누르면 1시간, 누른 채 위아래로 끌면 여러 시간이 한 번에 들어갑니다(터치는 길게 누른 뒤
-          끌기). 칠한 시간을 누르면 고치거나 지울 수 있습니다.
+          끌기). 칠한 시간을 누르면 고치거나 지울 수 있습니다. 점선 테두리는 그 주에만 있는 시간입니다.
         </p>
 
         <Btn full v="outline" icon="plus" onClick={openAdd} className="mb-3.5">
@@ -245,7 +302,7 @@ export function MyTimeScreen({
                   key={block.id}
                   type="button"
                   onClick={() => openEdit(block)}
-                  aria-label={`${rangeText(block)} · ${k.name} 고치기`}
+                  aria-label={`${rangeText(block)} · ${k.name} · ${repeatText(block)} 고치기`}
                   className="box-border flex min-h-12 w-full cursor-pointer items-center gap-2.5 border-none bg-transparent px-[15px] py-3 text-left"
                 >
                   <span
@@ -254,6 +311,14 @@ export function MyTimeScreen({
                   />
                   <span className="min-w-0 flex-1 font-semibold text-[14px] leading-[1.4] text-txt-strong">
                     {rangeText(block)} · {k.name}
+                  </span>
+                  <span
+                    className={cn(
+                      "t-cap-strong flex-none rounded-full px-2 py-0.5",
+                      block.weekOf ? "bg-yellow-100 text-yellow-700" : "bg-fill text-txt-muted",
+                    )}
+                  >
+                    {repeatText(block)}
                   </span>
                   <span className="flex-none text-txt-faint">
                     <Icon name="chevron-right" size={15} />
@@ -282,6 +347,9 @@ export function MyTimeScreen({
           <b>09 회의 후보에는 기본 사유가 그대로 보입니다</b>(예: “박지호 · 아르바이트”, 핸드오프 원본 그대로).
           08의 “사유는 본인에게만”과 어긋나는데, 직접 입력 사유만은 이름 대신 “개인 일정”으로 내보내
           민감한 이름이 새지 않게 했습니다. 기본 사유까지 가릴지는 팀 확인이 필요합니다.
+          <br />
+          <b>볼 수 있는 주는 2주</b>이고, <b>토요일부터는 다음 주가 첫 주</b>입니다(격자가 월~금이라).
+          회의 후보는 첫 주 기준입니다. 시험 기간을 고르면 반복이 “이 주만”으로 먼저 골라집니다.
         </Undecided>
       </Body>
 
@@ -311,10 +379,26 @@ export function MyTimeScreen({
               className="mb-3"
             />
 
+            <Label>반복</Label>
+            <ChoiceRow
+              label="반복"
+              options={[
+                { value: "", text: "매주" },
+                ...weeks.map((w) => ({ value: w.key, text: `${w.name}만` })),
+              ]}
+              value={draft.weekOf ?? ""}
+              onChange={(v) => setDraft({ weekOf: v || null })}
+              stretch
+            />
+
             <Label>요일</Label>
             <ChoiceRow
               label="요일"
-              options={days.map((d, i) => ({ value: i, text: d }))}
+              options={days.map((d, i) => ({
+                value: i,
+                // 그 주에만이면 날짜가 있어야 어느 날인지 안다.
+                text: draft.weekOf ? `${d} ${dateOfDay(draft.weekOf, i)}` : d,
+              }))}
               value={draft.day}
               onChange={(day) => setDraft({ day })}
               stretch
@@ -364,7 +448,7 @@ function Label({ children }: { children: string }) {
   return <div className="t-cap-strong mb-2 font-bold text-txt-muted">{children}</div>;
 }
 
-function ChoiceRow({
+function ChoiceRow<T extends string | number>({
   label,
   options,
   value,
@@ -373,9 +457,9 @@ function ChoiceRow({
   mono,
 }: {
   label: string;
-  options: Array<{ value: number; text: string }>;
-  value: number;
-  onChange: (value: number) => void;
+  options: Array<{ value: T; text: string }>;
+  value: T;
+  onChange: (value: T) => void;
   /** 선택지가 적어 한 줄을 나눠 채울 때. 많으면 가로로 스크롤한다. */
   stretch?: boolean;
   mono?: boolean;
@@ -384,7 +468,7 @@ function ChoiceRow({
     <div role="radiogroup" aria-label={label} className="mb-3 flex gap-[5px] overflow-x-auto">
       {options.map((o) => (
         <button
-          key={o.value}
+          key={String(o.value)}
           type="button"
           role="radio"
           aria-checked={value === o.value}

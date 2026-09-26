@@ -5,6 +5,7 @@ import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
 import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { db } from "@/server/db";
+import { busyInWeek, candidateWeek } from "@/server/meetings/candidates";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
@@ -64,7 +65,11 @@ export async function proposeMeetingAt(day: number, hour: number): Promise<void>
     where: { teamId: me.teamId, leftAt: null },
     select: {
       name: true,
-      busyBlocks: { select: { day: true, startHour: true, hours: true, kind: true } },
+      // 후보와 같은 주의 시간표로 센다.
+      busyBlocks: {
+        where: busyInWeek(candidateWeek()),
+        select: { day: true, startHour: true, hours: true, kind: true },
+      },
     },
   });
   const computed = slotAt(members, day, hour);
@@ -129,7 +134,11 @@ export async function requestRemoteInput(slotId: string): Promise<number> {
     select: {
       id: true,
       name: true,
-      busyBlocks: { select: { day: true, startHour: true, hours: true, kind: true } },
+      // 후보와 같은 주의 시간표로 센다.
+      busyBlocks: {
+        where: busyInWeek(candidateWeek()),
+        select: { day: true, startHour: true, hours: true, kind: true },
+      },
     },
   });
   // 나도 빠지는 시간일 수 있지만, 나에게 부탁하는 알림은 보내지 않는다.

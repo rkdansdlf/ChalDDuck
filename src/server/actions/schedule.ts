@@ -8,6 +8,7 @@ import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 import { BUSY_KINDS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { normalizeBusyLabel } from "@/features/schedule/busy-blocks";
+import { isWeekKey, scheduleWeeks } from "@/features/schedule/week";
 import type { BusyBlock } from "@/lib/types";
 
 const PRESET_KINDS = new Set<string>(BUSY_KINDS.map((k) => k.key));
@@ -16,7 +17,7 @@ const PRESET_KINDS = new Set<string>(BUSY_KINDS.map((k) => k.key));
  * 화면이 보낸 블록 하나를 저장할 행으로. 시간표 밖이거나 사유가 이상하면 거절한다 —
  * 서버 액션은 화면을 거치지 않고 바로 불릴 수 있다.
  */
-function toRow(b: BusyBlock) {
+function toRow(b: BusyBlock, weeks: string[]) {
   const inGrid =
     Number.isInteger(b.day) &&
     Number.isInteger(b.startHour) &&
@@ -28,14 +29,20 @@ function toRow(b: BusyBlock) {
     b.startHour + b.hours <= SCHEDULE_HOURS.length;
   if (!inGrid) throw new Error("시간표 밖의 시간이 있습니다.");
 
+  // "이 주만"은 지금 볼 수 있는 주에만 적을 수 있다.
+  const weekOf = b.weekOf ?? null;
+  if (weekOf !== null && (!isWeekKey(weekOf) || !weeks.includes(weekOf))) {
+    throw new Error("적을 수 없는 주입니다.");
+  }
+
   if (b.kind === "custom") {
     const label = normalizeBusyLabel(b.label ?? "");
     if (!label) throw new Error("직접 입력한 사유의 이름을 확인해 주세요.");
-    return { day: b.day, startHour: b.startHour, hours: b.hours, kind: "custom", label };
+    return { day: b.day, startHour: b.startHour, hours: b.hours, kind: "custom", label, weekOf };
   }
   if (!PRESET_KINDS.has(b.kind)) throw new Error("알 수 없는 사유입니다.");
   // 기본 사유에는 이름이 붙지 않는다 — 화면이 보낸 값이 있어도 버린다.
-  return { day: b.day, startHour: b.startHour, hours: b.hours, kind: b.kind, label: null };
+  return { day: b.day, startHour: b.startHour, hours: b.hours, kind: b.kind, label: null, weekOf };
 }
 
 /**
@@ -47,7 +54,12 @@ function toRow(b: BusyBlock) {
  */
 export async function saveMyBusyBlocks(blocks: BusyBlock[]): Promise<void> {
   const me = await requireSessionMember();
-  const rows = blocks.map(toRow);
+  const weeks = scheduleWeeks();
+  const rows = blocks
+    // 화면을 연 사이에 주가 넘어가(금요일 밤 → 토요일) 지나간 주가 된 것은 조용히 버린다 —
+    // 이미 끝난 주라 적을 이유가 없고, 거절하면 저장 자체가 실패한다.
+    .filter((b) => !b.weekOf || b.weekOf >= weeks[0])
+    .map((b) => toRow(b, weeks));
 
   await db.$transaction([
     db.busyBlock.deleteMany({ where: { memberId: me.id } }),

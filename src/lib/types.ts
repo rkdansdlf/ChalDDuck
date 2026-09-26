@@ -70,6 +70,17 @@ export type BusyBlock = {
   kind: BusyKindKey;
   /** `kind` 가 `custom` 일 때 본인이 붙인 이름. 그 밖에는 null. 본인에게만 보인다. */
   label: string | null;
+  /** null = 매주. 값이 있으면 그 주에만(그 주 월요일, "2026-09-28"). */
+  weekOf: string | null;
+};
+
+/** 시간표에서 고를 수 있는 한 주. 이름·기간은 서버가 만든다(화면과 서버의 "오늘"이 어긋나지 않게). */
+export type ScheduleWeek = {
+  key: string;
+  /** "이번 주" / "다음 주" */
+  name: string;
+  /** "9/28–10/2" */
+  range: string;
 };
 
 /**
@@ -85,7 +96,8 @@ export type TeamTimetable = {
   mbti: MbtiType | null;
   /** 안 되는 시간을 하나라도 적었는지. 안 적은 사람은 모든 시간이 가능한 것으로 센다. */
   submitted: boolean;
-  busy: Array<{ day: number; startHour: number; hours: number }>;
+  /** `weekOf` 가 null 이면 매주, 아니면 그 주에만. */
+  busy: Array<{ day: number; startHour: number; hours: number; weekOf: string | null }>;
   /** 오늘 내가 이 사람에게 시간표를 이미 부탁했는지. */
   askedToday: boolean;
 };

@@ -21,9 +21,11 @@ import {
 import { proposeMeetingAt } from "@/server/actions/meetings";
 import { askForTimetable } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
-import type { MeetingProposal, Team, TeamTimetable } from "@/lib/types";
+import type { MeetingProposal, ScheduleWeek, Team, TeamTimetable } from "@/lib/types";
 import { MIN_ATTENDEES } from "./meeting-slots";
 import { ScheduleTabs } from "./schedule-tabs";
+import { dateOfDay } from "./week";
+import { WeekPicker } from "./week-picker";
 
 /** 칸의 진하기. 숫자와 함께 보여 준다 — 색만으로 몇 명인지 읽게 하지 않는다. */
 type Level = "all" | "most" | "some" | "few";
@@ -55,12 +57,15 @@ export function TeamTimeScreen({
   team,
   days,
   hours,
+  weeks,
   members,
   proposal,
 }: {
   team: Team;
   days: string[];
   hours: string[];
+  /** 고를 수 있는 주. 첫 주가 회의 후보·제안의 주다. */
+  weeks: ScheduleWeek[];
   members: TeamTimetable[];
   proposal: MeetingProposal;
 }) {
@@ -69,6 +74,9 @@ export function TeamTimeScreen({
   // 골라 보는 팀원. 기본은 전원이다.
   const [picked, setPicked] = useState<Set<string>>(() => new Set(members.map((m) => m.id)));
   const [cell, setCell] = useState<{ day: number; hour: number } | null>(null);
+  const [week, setWeek] = useState(weeks[0].key);
+  /** 회의 제안은 첫 주 것만 — 후보와 확정 흐름(09)이 그 주를 기준으로 돈다. */
+  const proposable = week === weeks[0].key;
   const [asked, setAsked] = useState<Set<string>>(
     () => new Set(members.filter((m) => m.askedToday).map((m) => m.id)),
   );
@@ -89,6 +97,8 @@ export function TeamTimeScreen({
     const map = new Map<string, Set<string>>();
     for (const m of shown) {
       for (const b of m.busy) {
+        // 매주 반복하는 것과 이 주에만 있는 것.
+        if (b.weekOf !== null && b.weekOf !== week) continue;
         for (let h = b.startHour; h < b.startHour + b.hours; h += 1) {
           const key = `${b.day}:${h}`;
           const set = map.get(key) ?? new Set<string>();
@@ -98,19 +108,20 @@ export function TeamTimeScreen({
       }
     }
     return map;
-  }, [shown]);
+  }, [shown, week]);
 
   const availableAt = (day: number, hour: number) =>
     shown.length - (busyAt.get(`${day}:${hour}`)?.size ?? 0);
 
   /** 올라와 있는 제안이 가리키는 칸. 격자에서 테두리로 짚어 준다. */
   const proposedCell = useMemo(() => {
-    const slot = proposal.stage === "idle" ? null : proposal.slot;
+    // 제안은 첫 주의 것이라 다른 주를 볼 때는 짚지 않는다.
+    const slot = proposal.stage === "idle" || !proposable ? null : proposal.slot;
     if (!slot) return null;
     const day = days.indexOf(slot.day);
     const hour = hours.findIndex((h) => Number(h) === Number(slot.time.slice(0, 2)));
     return day >= 0 && hour >= 0 ? { day, hour } : null;
-  }, [proposal, days, hours]);
+  }, [proposal, proposable, days, hours]);
 
   const toggleMember = (id: string) =>
     setPicked((prev) => {
@@ -165,6 +176,7 @@ export function TeamTimeScreen({
       <AppBar title="팀 시간표" sub={team.name} />
       <Body dense>
         <ScheduleTabs current="team" />
+        <WeekPicker weeks={weeks} value={week} onChange={setWeek} />
 
         <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">
           칸의 숫자는 그 시간에 <b>되는 사람 수</b>입니다. 칸을 누르면 누가 되는지 보입니다.
@@ -229,12 +241,15 @@ export function TeamTimeScreen({
               }}
             >
               <span />
-              {days.map((day) => (
+              {days.map((day, i) => (
                 <span
                   key={day}
                   className="pb-1.5 text-center font-bold text-[13px] leading-none text-txt-muted"
                 >
                   {day}
+                  <span className="mt-1 block font-mono font-medium text-[10.5px] text-txt-faint">
+                    {dateOfDay(week, i)}
+                  </span>
                 </span>
               ))}
               {hours.map((hour, hourIndex) => (
@@ -357,7 +372,11 @@ export function TeamTimeScreen({
 
       <Sheet
         open={cell !== null}
-        title={cell ? `${days[cell.day]} ${hourText(cell.hour)}` : undefined}
+        title={
+          cell
+            ? `${days[cell.day]}(${dateOfDay(week, cell.day)}) ${hourText(cell.hour)}`
+            : undefined
+        }
         onClose={() => setCell(null)}
       >
         {cell && sheet ? (
@@ -373,6 +392,8 @@ export function TeamTimeScreen({
             <MemberList title="안 되는 사람" icon="x" people={sheet.busy} />
 
             <SheetAction
+              proposable={proposable}
+              firstWeekName={weeks[0].name}
               everyone={everyone}
               available={sheet.free.length}
               proposal={proposal}
@@ -427,6 +448,8 @@ function MemberList({
 
 /** 시트 맨 아래 — 이 칸으로 무엇을 할 수 있는지. 할 수 없으면 왜 안 되는지를 말한다. */
 function SheetAction({
+  proposable,
+  firstWeekName,
   everyone,
   available,
   proposal,
@@ -435,6 +458,8 @@ function SheetAction({
   onSeeProposal,
   onShowEveryone,
 }: {
+  proposable: boolean;
+  firstWeekName: string;
   everyone: boolean;
   available: number;
   proposal: MeetingProposal;
@@ -454,6 +479,14 @@ function SheetAction({
           회의 시간 화면에서 보기
         </Btn>
       </>
+    );
+  }
+
+  if (!proposable) {
+    return (
+      <Note tone="info" icon="calendar-clock">
+        회의 제안은 {firstWeekName} 시간으로만 할 수 있습니다. 이 주는 미리 보기입니다.
+      </Note>
     );
   }
 

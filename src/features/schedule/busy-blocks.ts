@@ -11,6 +11,10 @@ import type { BusyBlock } from "@/lib/types";
  * 2. 같은 요일·같은 사유로 맞닿은 블록은 하나로 합친다 — 10시, 11시를 차례로 누르면
  *    "10시~12시" 한 건이 된다. 직접 입력한 사유는 **이름까지** 같아야 같은 사유다
  *    ("동아리"와 "통학"이 붙어 있어도 합치지 않는다).
+ *
+ * 두 규칙 모두 **같은 층 안에서만** 적용된다. 층은 "매주"(`weekOf` null) 와 "그 주에만"
+ * (주마다 하나)이다. 이번 주에만 시험을 적는다고 매주 있는 수업이 잘려 나가면, 다음 주에
+ * 수업이 사라진다. 그래서 "그 주에만" 블록은 매주 블록 **위에 얹힌다**(`blockAt`).
  */
 
 /** 직접 입력한 사유 이름의 최대 길이. 격자 칸(좁은 화면 약 55px)의 이름표에 두 줄로 들어가는 정도. */
@@ -47,7 +51,16 @@ export const nextBlockId = () => `local-${(blockSeq += 1)}`;
 
 /** 요일·시간대 좌표를 덮고 있는 블록. */
 export function blockAt(blocks: BusyBlock[], day: number, hour: number): BusyBlock | undefined {
-  return blocks.find((b) => b.day === day && hour >= b.startHour && hour < b.startHour + b.hours);
+  const here = blocks.filter(
+    (b) => b.day === day && hour >= b.startHour && hour < b.startHour + b.hours,
+  );
+  // "그 주에만" 블록이 위에 있다.
+  return here.find((b) => b.weekOf !== null) ?? here[0];
+}
+
+/** 그 주에 보이는 블록 — 매주 반복하는 것과 그 주에만 있는 것. */
+export function blocksInWeek(blocks: BusyBlock[], week: string): BusyBlock[] {
+  return blocks.filter((b) => b.weekOf === null || b.weekOf === week);
 }
 
 /** `block` 에서 [from, to) 구간을 빼고 남는 조각들. */
@@ -75,13 +88,17 @@ function subtract(block: BusyBlock, from: number, to: number): BusyBlock[] {
 function merge(blocks: BusyBlock[]): BusyBlock[] {
   const sorted = [...blocks].sort(
     (a, b) =>
-      a.day - b.day || reasonKey(a).localeCompare(reasonKey(b)) || a.startHour - b.startHour,
+      (a.weekOf ?? "").localeCompare(b.weekOf ?? "") ||
+      a.day - b.day ||
+      reasonKey(a).localeCompare(reasonKey(b)) ||
+      a.startHour - b.startHour,
   );
   const out: BusyBlock[] = [];
   for (const b of sorted) {
     const last = out.at(-1);
     if (
       last &&
+      last.weekOf === b.weekOf &&
       last.day === b.day &&
       reasonKey(last) === reasonKey(b) &&
       b.startHour <= last.startHour + last.hours
@@ -101,18 +118,25 @@ export function placeBlock(blocks: BusyBlock[], next: BusyBlock): BusyBlock[] {
   const to = next.startHour + next.hours;
   const rest = blocks
     .filter((b) => b.id !== next.id)
-    .flatMap((b) => (b.day === next.day ? subtract(b, from, to) : [b]));
+    .flatMap((b) =>
+      b.day === next.day && b.weekOf === next.weekOf ? subtract(b, from, to) : [b],
+    );
   return merge([...rest, next]);
 }
 
-/** 요일 → 시작 시간 순. 등록 순서는 의미가 없다. */
+/** 매주 → 주 순, 그 안에서 요일 → 시작 시간 순. 등록 순서는 의미가 없다. */
 export function sortBlocks(blocks: BusyBlock[]): BusyBlock[] {
-  return [...blocks].sort((a, b) => a.day - b.day || a.startHour - b.startHour);
+  return [...blocks].sort(
+    (a, b) =>
+      (a.weekOf ?? "").localeCompare(b.weekOf ?? "") ||
+      a.day - b.day ||
+      a.startHour - b.startHour,
+  );
 }
 
 /** 블록 모양만 담은 문자열. id 는 합치고 쪼갤 때마다 바뀌어 "바뀌었나" 비교에 쓸 수 없다. */
 export function blocksShape(blocks: BusyBlock[]): string {
   return sortBlocks(blocks)
-    .map((b) => `${b.day}:${b.startHour}:${b.hours}:${reasonKey(b)}`)
+    .map((b) => `${b.weekOf ?? "*"}:${b.day}:${b.startHour}:${b.hours}:${reasonKey(b)}`)
     .join(",");
 }

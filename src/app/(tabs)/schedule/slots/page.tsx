@@ -1,5 +1,6 @@
 import { getCurrentTeam, getMeetingProposal, getMeetingWeek } from "@/data/api";
 import { SlotsScreen } from "@/features/schedule/slots-screen";
+import { refreshStaleCandidates } from "@/server/meetings/candidates";
 
 /**
  * 09 회의 시간 추천 / 10 전원 불가한 주.
@@ -14,6 +15,8 @@ export const dynamic = "force-dynamic";
 
 export default async function SlotsPage() {
   const team = await getCurrentTeam();
+  // 주가 바뀌었으면 후보를 새 주의 시간표로 다시 만든 뒤 읽는다.
+  await refreshStaleCandidates(team.id);
   const [week, proposal] = await Promise.all([
     getMeetingWeek(team.id),
     getMeetingProposal(team.id),

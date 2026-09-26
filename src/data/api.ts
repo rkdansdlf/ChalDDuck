@@ -40,12 +40,14 @@ import type {
   Task,
   TaskKind,
   Team,
+  ScheduleWeek,
   TeamCheckRecord,
   TeamTimetable,
 } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
 import { humanSize } from "@/features/drive/file-rules";
 import { effectiveStage } from "@/features/schedule/meeting-model";
+import { scheduleWeeks, weekName, weekRange } from "@/features/schedule/week";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { contribByLabel } from "@/server/contrib/state";
@@ -218,12 +220,15 @@ export async function getScheduleOptions(): Promise<{
   customKind: BusyKind;
   days: string[];
   hours: string[];
+  /** 고를 수 있는 주. 첫 주가 기본이고 회의 후보도 그 주로 계산한다. */
+  weeks: ScheduleWeek[];
 }> {
   return {
     kinds: BUSY_KINDS,
     customKind: CUSTOM_BUSY_KIND,
     days: SCHEDULE_DAYS,
     hours: SCHEDULE_HOURS,
+    weeks: scheduleWeeks().map((key) => ({ key, name: weekName(key), range: weekRange(key) })),
   };
 }
 
@@ -355,7 +360,7 @@ export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
   if (!session) return [];
 
   const blocks = await db.busyBlock.findMany({
-    where: { memberId: session.id },
+    where: { memberId: session.id, ...notExpired() },
     orderBy: [{ day: "asc" }, { startHour: "asc" }],
   });
 
@@ -366,7 +371,18 @@ export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
     hours: b.hours,
     kind: b.kind as BusyBlock["kind"],
     label: b.label,
+    weekOf: b.weekOf,
   }));
+}
+
+/**
+ * 지나간 주의 "이 주만" 블록을 뺀다.
+ *
+ * 지우지 않고 읽을 때 거르는 이유: 지우는 건 저장이 맡는다(내 시간표 저장은 내 블록을 전부
+ * 다시 쓴다). 읽기에서 행을 지우면 "읽기만 한다"는 이 모듈의 약속이 깨진다.
+ */
+function notExpired() {
+  return { OR: [{ weekOf: null }, { weekOf: { gte: scheduleWeeks()[0] } }] };
 }
 
 /**
@@ -387,7 +403,8 @@ export async function getTeamTimetables(teamId: string): Promise<TeamTimetable[]
         name: true,
         mbti: true,
         busyBlocks: {
-          select: { day: true, startHour: true, hours: true },
+          where: notExpired(),
+          select: { day: true, startHour: true, hours: true, weekOf: true },
           orderBy: [{ day: "asc" }, { startHour: "asc" }],
         },
       },
@@ -400,7 +417,8 @@ export async function getTeamTimetables(teamId: string): Promise<TeamTimetable[]
     name: m.name,
     isMe: m.id === session.id,
     mbti: toMbti(m.mbti),
-    // `getMeetingWeek` 의 "제출" 과 같은 기준이다 — 안 되는 시간을 하나라도 적은 사람.
+    // 안 되는 시간을 하나라도 적은 사람 — `getMeetingWeek` 의 "제출" 과 거의 같은 기준이다
+    // (저쪽은 지나간 "이 주만" 블록까지 센다. 다음 저장 때 지워진다).
     submitted: m.busyBlocks.length > 0,
     busy: m.busyBlocks,
     askedToday: asked.has(m.id),
