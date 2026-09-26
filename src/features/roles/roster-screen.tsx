@@ -81,6 +81,9 @@ export function RosterScreen({
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
+  /** 서버 명단의 내 이름. 당첨자(서버가 준 이름)와 견줄 때는 로컬 선택을 얹지 않은 값을 쓴다. */
+  const myName = roster.find((m) => m.isMe)?.name ?? null;
+
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
@@ -134,8 +137,14 @@ export function RosterScreen({
     setRollingTool(tool);
     const result = await drawForRole(drawingFor, tool.name);
     setRollingTool(null);
-    if (!result) {
-      flash("추첨할 사람이 없습니다");
+    if (result.status !== "ok") {
+      setDrawingFor(null);
+      router.refresh();
+      flash(
+        result.status === "empty"
+          ? "추첨할 사람이 없습니다"
+          : "이미 추첨 결과가 나와 있습니다 — 당첨자가 거절해야 다시 뽑을 수 있습니다",
+      );
       return;
     }
     setDrawResult({ tool, pool, winner: result.winner });
@@ -227,33 +236,42 @@ export function RosterScreen({
                         </Chip>
                       ))}
                     </div>
-                    <div className="flex flex-wrap gap-[7px]">
-                      <Btn
-                        size="sm"
-                        icon="check"
-                        onClick={async () => {
-                          await acceptRoleDraw(role.key);
-                          router.refresh();
-                          flash("확정되었습니다");
-                        }}
-                      >
-                        {result.winner}님이 수락
-                      </Btn>
-                      <Btn
-                        size="sm"
-                        v="ghost"
-                        icon="x"
-                        onClick={async () => {
-                          const rejectedMember = await rejectRoleDraw(role.key);
-                          router.refresh();
-                          if (rejectedMember) {
-                            flash(`${rejectedMember.winner}님을 다음 추첨에서 제외합니다 — 다시 추첨해 주세요`);
-                          }
-                        }}
-                      >
-                        {result.winner}님이 거절
-                      </Btn>
-                    </div>
+                    {/* 수락·거절은 당첨자 본인만 한다 — 서버도 같은 규칙으로 막는다. */}
+                    {result.winner === myName ? (
+                      <div className="flex flex-wrap gap-[7px]">
+                        <Btn
+                          size="sm"
+                          icon="check"
+                          onClick={async () => {
+                            const answer = await acceptRoleDraw(role.key);
+                            router.refresh();
+                            flash(answer === "ok" ? "확정되었습니다" : "이미 정리된 추첨입니다");
+                          }}
+                        >
+                          수락하기
+                        </Btn>
+                        <Btn
+                          size="sm"
+                          v="ghost"
+                          icon="x"
+                          onClick={async () => {
+                            const answer = await rejectRoleDraw(role.key);
+                            router.refresh();
+                            flash(
+                              answer === "ok"
+                                ? "다음 추첨에서 제외됩니다 — 팀원이 다시 추첨할 수 있습니다"
+                                : "이미 정리된 추첨입니다",
+                            );
+                          }}
+                        >
+                          거절하기
+                        </Btn>
+                      </div>
+                    ) : (
+                      <p className="t-note m-0 text-txt-muted">
+                        {result.winner}님이 수락하거나 거절하면 정해집니다.
+                      </p>
+                    )}
                   </div>
                 ) : null}
 

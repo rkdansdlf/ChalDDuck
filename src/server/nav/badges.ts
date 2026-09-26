@@ -25,6 +25,8 @@ export type NavBadges = {
   cal: number;
   /** 채팅 탭 — 안 읽은 DM 수. */
   chat: number;
+  /** 드라이브 탭 — 내가 마지막으로 드라이브를 연 뒤 팀원이 올린 버전 수. */
+  drive: number;
   /** 홈의 종 — 안 읽은 알림 수. */
   notifications: number;
   /**
@@ -45,12 +47,13 @@ export type NavBadges = {
 };
 
 export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
-  const [clashes, contrib, approvals, cal, chat, notifications] = await Promise.all([
+  const [clashes, contrib, approvals, cal, chat, drive, notifications] = await Promise.all([
     countRoleClashes(me.teamId),
     countContribPending(me),
     countApprovalsWaiting(me),
     countMeetingWaiting(me),
     countUnreadDms(me),
+    countNewDriveVersions(me),
     db.notification.count({ where: { memberId: me.id, readAt: null } }),
   ]);
 
@@ -58,6 +61,7 @@ export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
     team: clashes + contrib.mine + contrib.awaitingMe + approvals,
     cal,
     chat,
+    drive,
     notifications,
     parts: {
       clashes,
@@ -196,5 +200,29 @@ async function countUnreadDms(me: SessionMember): Promise<number> {
         ...(unseen.length > 0 ? [{ threadKey: { in: unseen } }] : []),
       ],
     },
+  });
+}
+
+/** 드라이브를 마지막으로 연 때를 적어 두는 읽음 표시의 키. DM 과 같은 표(`ReadMark`)를 쓴다. */
+export const DRIVE_READ_KEY = "drive";
+
+/**
+ * 내가 드라이브를 마지막으로 연 뒤 팀원이 올린 버전 수(복원 포함 — 내용이 바뀐 건 같다).
+ *
+ * 한 번도 열지 않았으면 **팀에 들어온 때부터** 센다. 처음부터 세면 새로 들어온 사람의
+ * 배지에 팀의 지난 기록 전부가 뜬다.
+ */
+async function countNewDriveVersions(me: SessionMember): Promise<number> {
+  const [mark, member] = await Promise.all([
+    db.readMark.findUnique({
+      where: { memberId_threadKey: { memberId: me.id, threadKey: DRIVE_READ_KEY } },
+      select: { readAt: true },
+    }),
+    db.member.findUnique({ where: { id: me.id }, select: { joinedAt: true } }),
+  ]);
+  const since = mark?.readAt ?? member?.joinedAt ?? new Date();
+
+  return db.fileVersion.count({
+    where: { file: { box: { teamId: me.teamId } }, authorId: { not: me.id }, createdAt: { gt: since } },
   });
 }

@@ -3,6 +3,7 @@ import "../scripts/load-env.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
+import { candidateDates } from "../src/features/schedule/week.js";
 // 앱과 같은 함수로 해시한다 — 형식이 어긋나면 로그인이 안 된다. 이 파일은 `server-only` 를
 // 불러오는데, `db:seed` 가 `--conditions=react-server` 로 돌아 그 import 가 빈 모듈이 된다.
 import { hashRejoinCode } from "../src/server/auth/rejoin-code.js";
@@ -123,7 +124,12 @@ async function main() {
   const members = [minjun, seoyeon, jiho, yuna];
   await prisma.meetingSlot.createMany({
     data: computeMeetingSlots(
-      members.map((m, i) => ({ name: m.name, busyBlocks: timetables[i][1] })),
+      // 시드의 시간표는 모두 매주 반복이다.
+      members.map((m, i) => ({
+        name: m.name,
+        busyBlocks: timetables[i][1].map((b) => ({ ...b, weekOf: null })),
+      })),
+      candidateDates(),
     ).map((s) => ({ ...s, teamId: team.id, weekKey: "this" })),
   });
 

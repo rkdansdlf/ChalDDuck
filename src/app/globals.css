@@ -168,6 +168,11 @@
 @utility t-tab-on {
   font: var(--w-bold) 11px / 1.2 var(--font-sans);
 }
+/* 시간표 격자 블록의 이름표 — 주말까지 7열이면 좁은 화면의 칸이 약 42px 이라
+   13px 로는 "아르바이트"가 잘린다. 11px 이면 세 글자씩 두 줄에 들어간다. */
+@utility t-grid-tag {
+  font: var(--w-semibold) 11px / 1.2 var(--font-sans);
+}
 /* 입력창 — 16px 미만이면 iOS 사파리가 포커스 시 확대한다 */
 @utility t-input {
   font: var(--w-regular) 16px / 1 var(--font-sans);

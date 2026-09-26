@@ -6,10 +6,40 @@ import { nextVersionLabel } from "@/features/drive/version-label";
 import type { FileKind } from "@/lib/types";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
-import { MAX_BYTES, TEAM_CAP_BYTES, canOpenInApp, humanSize, resolveFileType } from "@/features/drive/file-rules";
+import {
+  MAX_BYTES,
+  TEAM_CAP_BYTES,
+  canOpenInApp,
+  humanSize,
+  isLateVersion,
+  resolveFileType,
+} from "@/features/drive/file-rules";
 import { fromKstInputValue } from "@/lib/when";
 import { teamUsedBytes } from "@/server/drive/usage";
+import { DRIVE_READ_KEY, readNavBadges, type NavBadges } from "@/server/nav/badges";
+import { notify, teamMemberIds } from "@/server/notify/create";
 import { isStorageConfigured, storage } from "@/server/storage/client";
+
+type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+
+/**
+ * 제출함 하나를 잠그고 그 안에서 일한다.
+ *
+ * 버전 이름은 "지금 가장 큰 v번호 + 1"이다. 두 사람이 같은 파일을 동시에 올리면 둘 다
+ * v3 을 보고 v4 를 만들어 **같은 이름이 둘** 생긴다. 같은 이름의 새 파일을 동시에 올려도
+ * 파일이 둘 생긴다. 그래서 이름을 고르고 기록을 만드는 동안은 제출함 행을 잠가 한 명씩
+ * 지나가게 한다(`FOR UPDATE`). 한 제출함에 동시에 올리는 사람은 많아야 몇 명이라 기다림은
+ * 눈에 띄지 않는다.
+ *
+ * 유일 제약(@@unique)으로 막지 않은 이유: 운영 DB 에 이미 겹친 이름이 있으면 배포 때
+ * 마이그레이션이 실패해 배포 전체가 멈춘다. 그 데이터를 확인할 수 없어 잠금으로 막는다.
+ */
+async function withBoxLock<T>(boxId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "SubmissionBox" WHERE "id" = ${boxId} FOR UPDATE`;
+    return work(tx);
+  });
+}
 
 /**
  * 22 파일 복원 서버 액션.
@@ -30,17 +60,18 @@ export async function restoreFileVersion(fileId: string, versionId: string): Pro
   // 화면이 보낸 파일이 정말 우리 팀 것인지 서버에서 확인한다.
   const file = await db.submittedFile.findFirst({
     where: { id: fileId, box: { teamId: me.teamId } },
+    include: { box: { select: { name: true } } },
   });
   if (!file) throw new Error("파일을 찾을 수 없습니다.");
 
-  const versions = await db.fileVersion.findMany({ where: { fileId: file.id } });
-  const source = versions.find((v) => v.id === versionId);
-  if (!source) throw new Error("복원할 버전을 찾을 수 없습니다.");
+  const { label, sourceLabel } = await withBoxLock(file.boxId, async (tx) => {
+    const versions = await tx.fileVersion.findMany({ where: { fileId: file.id } });
+    const source = versions.find((v) => v.id === versionId);
+    if (!source) throw new Error("복원할 버전을 찾을 수 없습니다.");
 
-  const label = nextVersionLabel(versions);
-
-  await db.fileVersion.create({
-    data: {
+    const label = nextVersionLabel(versions);
+    await tx.fileVersion.create({
+      data: {
       fileId: file.id,
       label,
       authorId: me.id,
@@ -55,7 +86,19 @@ export async function restoreFileVersion(fileId: string, versionId: string): Pro
       // 복원은 마감과 무관한 작업이다 — 원본이 지각 제출이었어도 늦은 제출로 세지 않는다.
       // 같은 객체를 가리키므로 용량에도 다시 세지 않는다. 둘 다 이 표시로 가려낸다.
       restoredFromId: source.id,
-    },
+      },
+    });
+    return { label, sourceLabel: source.label };
+  });
+
+  // 되돌린 것도 팀이 알아야 한다 — 방금 받은 최신 버전이 다른 내용으로 바뀐 것이기 때문이다.
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    actorId: me.id,
+    kind: "drive",
+    title: `${me.name}님이 ${file.name}을 ${sourceLabel}로 되돌렸습니다`,
+    body: `${file.box.name} · ${label}으로 추가됐고 기존 버전은 그대로 있습니다`,
+    href: `/drive/${file.boxId}/${file.id}`,
   });
 
   revalidatePath("/drive", "layout");
@@ -163,15 +206,6 @@ export async function finishUpload(
   const name = upload.name.trim().slice(0, 200);
   if (!name) return { status: "empty" };
 
-  // 응답이 늦어 화면이 한 번 더 보냈을 때 같은 버전이 둘 생기지 않게.
-  const already = await db.fileVersion.findFirst({
-    where: { storagePath: upload.path },
-    include: { file: { select: { id: true, name: true } } },
-  });
-  if (already) {
-    return { status: "ok", fileId: already.file.id, fileName: already.file.name, label: already.label, isNewFile: false };
-  }
-
   const { data: info, error } = await storage().info(upload.path);
   if (error || !info) return { status: "missing" };
 
@@ -190,44 +224,128 @@ export async function finishUpload(
             ? "over-quota"
             : null;
 
-  const target = fileId
-    ? await db.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } })
-    : await db.submittedFile.findFirst({ where: { boxId: box.id, name } });
-  if (fileId && !target) throw new Error("파일을 찾을 수 없습니다.");
-
-  const mismatch = target && type && target.kind !== type.kind;
-  if (rejection || mismatch || !type) {
+  if (rejection || !type) {
     await storage().remove([upload.path]);
-    return { status: rejection ?? "kind-mismatch" };
+    return { status: rejection ?? "bad-type" };
   }
 
-  const file = target ?? (await db.submittedFile.create({ data: { boxId: box.id, name, kind: type.kind } }));
-  const versions = await db.fileVersion.findMany({ where: { fileId: file.id } });
-  const label = nextVersionLabel(versions);
+  // 같은 이름 찾기 → 새 파일 만들기 → 다음 버전 이름 고르기 → 기록은 한 사람씩.
+  const result = await withBoxLock(box.id, async (tx): Promise<FinishUploadResult> => {
+    // 응답이 늦어 화면이 한 번 더 보냈을 때 같은 버전이 둘 생기지 않게. 잠금 안에서 봐야
+    // 두 요청이 동시에 "아직 없다"고 보지 않는다.
+    const already = await tx.fileVersion.findFirst({
+      where: { storagePath: upload.path },
+      include: { file: { select: { id: true, name: true } } },
+    });
+    if (already) {
+      return { status: "ok", fileId: already.file.id, fileName: already.file.name, label: already.label, isNewFile: false };
+    }
 
-  await db.fileVersion.create({
-    data: {
-      fileId: file.id,
-      label,
-      authorId: me.id,
-      // 올린 사람이 적은 메모가 먼저다 — "3장 그래프 수정" 같은 말이 기여도 리포트의 근거가
-      // 된다. 없으면 무엇을 올렸는지만 남긴다(이름이 다르면 원래 이름도).
-      note:
-        upload.note?.trim().slice(0, 200) ||
-        (!target ? `${name} 최초 업로드` : name === file.name ? `${name} 새 버전` : `${name} 으로 새 버전`),
-      size: humanSize(bytes),
-      kind: type.kind,
-      storagePath: upload.path,
-      bytes,
-      mimeType: type.contentType,
-      // 마감을 지나도 제출함을 잠그지 않는다 — 늦게라도 내는 편이 낫고, 대신 라벨이 붙는다.
-      // 라벨은 저장하지 않고 제출함 마감과 올린 시각으로 그때그때 계산한다.
-    },
+    const target = fileId
+      ? await tx.submittedFile.findFirst({ where: { id: fileId, boxId: box.id } })
+      : await tx.submittedFile.findFirst({ where: { boxId: box.id, name } });
+    if (fileId && !target) throw new Error("파일을 찾을 수 없습니다.");
+    if (target && target.kind !== type.kind) return { status: "kind-mismatch" };
+
+    const file = target ?? (await tx.submittedFile.create({ data: { boxId: box.id, name, kind: type.kind } }));
+    const versions = await tx.fileVersion.findMany({ where: { fileId: file.id }, select: { label: true } });
+    const label = nextVersionLabel(versions);
+
+    await tx.fileVersion.create({
+      data: {
+        fileId: file.id,
+        label,
+        authorId: me.id,
+        // 올린 사람이 적은 메모가 먼저다 — "3장 그래프 수정" 같은 말이 기여도 리포트의 근거가
+        // 된다. 없으면 무엇을 올렸는지만 남긴다(이름이 다르면 원래 이름도).
+        note:
+          upload.note?.trim().slice(0, 200) ||
+          (!target ? `${name} 최초 업로드` : name === file.name ? `${name} 새 버전` : `${name} 으로 새 버전`),
+        size: humanSize(bytes),
+        kind: type.kind,
+        storagePath: upload.path,
+        bytes,
+        mimeType: type.contentType,
+        // 마감을 지나도 제출함을 잠그지 않는다 — 늦게라도 내는 편이 낫고, 대신 라벨이 붙는다.
+        // 라벨은 저장하지 않고 제출함 마감과 올린 시각으로 그때그때 계산한다.
+      },
+    });
+    return { status: "ok", fileId: file.id, fileName: file.name, label, isNewFile: !target };
   });
+
+  if (result.status !== "ok") {
+    await storage().remove([upload.path]);
+    return result;
+  }
 
   revalidatePath("/drive", "layout");
   revalidatePath("/home");
-  return { status: "ok", fileId: file.id, fileName: file.name, label, isNewFile: !target };
+  return result;
+}
+
+/**
+ * 한 번의 올리기가 끝났음을 팀에 알린다.
+ *
+ * 파일마다 알리지 않고 **화면의 대기열이 끝날 때 한 번** 부른다 — 다섯 개를 올렸는데 종이
+ * 다섯 번 울리면 아무도 알림을 읽지 않게 된다. 여러 개면 "발표 자료.pptx 외 2개"로 묶는다.
+ *
+ * 화면이 보낸 id 를 그대로 믿지 않는다. **내가 방금(30분 안에) 이 제출함에 올린 버전이 있는
+ * 파일**만 알린다 — 남의 파일을 내가 올린 것처럼 알리게 하지 않기 위해서다.
+ */
+const ANNOUNCE_WINDOW_MS = 30 * 60 * 1000;
+
+export async function announceUploads(boxId: string, fileIds: string[]): Promise<void> {
+  const me = await requireSessionMember();
+
+  const box = await db.submissionBox.findFirst({
+    where: { id: boxId, teamId: me.teamId },
+    select: { id: true, name: true, dueAt: true },
+  });
+  if (!box || fileIds.length === 0) return;
+
+  const recent = await db.fileVersion.findMany({
+    where: {
+      authorId: me.id,
+      fileId: { in: fileIds.slice(0, 50) },
+      file: { boxId: box.id },
+      createdAt: { gt: new Date(Date.now() - ANNOUNCE_WINDOW_MS) },
+    },
+    include: { file: { select: { id: true, name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  // 같은 파일을 여러 번 올렸으면 가장 최근 것 하나로.
+  const latestByFile = [...new Map(recent.map((v) => [v.fileId, v])).values()];
+  if (latestByFile.length === 0) return;
+
+  const [first] = latestByFile;
+  const late = latestByFile.some((v) => isLateVersion(v, box.dueAt));
+  const what =
+    latestByFile.length === 1 ? `${first.file.name} ${first.label}` : `${first.file.name} 외 ${latestByFile.length - 1}개`;
+
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    actorId: me.id,
+    kind: "drive",
+    title: `${me.name}님이 ${box.name}에 올렸습니다`,
+    body: late ? `${what} · 마감 후 제출` : what,
+    href: latestByFile.length === 1 ? `/drive/${box.id}/${first.file.id}` : `/drive/${box.id}`,
+  });
+  revalidatePath("/home");
+}
+
+/**
+ * 드라이브를 열었다고 적는다 — 드라이브 탭 배지("새로 올라온 버전")가 여기서부터 다시 센다.
+ *
+ * @returns 새로 센 배지. 화면이 바로 탭 숫자를 고친다(다음 폴링까지 30초를 기다리지 않게).
+ */
+export async function markDriveSeen(): Promise<NavBadges> {
+  const me = await requireSessionMember();
+  await db.readMark.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey: DRIVE_READ_KEY } },
+    update: { readAt: new Date() },
+    create: { memberId: me.id, threadKey: DRIVE_READ_KEY },
+  });
+  return readNavBadges(me);
 }
 
 /**

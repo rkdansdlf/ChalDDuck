@@ -1,22 +1,34 @@
 import "server-only";
 
+import { SCHEDULE_DAYS } from "@/data/catalog";
 import { computeMeetingSlots } from "@/features/schedule/meeting-slots";
-import { scheduleWeeks, type WeekKey } from "@/features/schedule/week";
+import {
+  candidateDates,
+  scheduleWeeks,
+  todayInSeoul,
+  type CandidateDate,
+} from "@/features/schedule/week";
 import { db } from "@/server/db";
 
 /**
- * 한 주에 걸리는 안 되는 시간 — 매주 반복하는 것과 그 주에만 있는 것.
+ * 아직 지나가지 않은 안 되는 시간 — 매주 반복하는 것과, 오늘이 속한 주 이후의 "그 주에만".
  *
- * 회의 후보·제안·"못 오는 사람" 계산이 모두 이 조건으로 읽어야 같은 사람을 같은 시간에
- * "안 됨"으로 센다.
+ * 회의 후보·제안·"못 오는 사람" 계산이 모두 이 조건으로 읽는다. 날마다 어느 주의 블록을
+ * 쓸지는 계산(`meeting-slots.ts`)이 `weekOf` 를 보고 고른다.
  */
-export function busyInWeek(week: WeekKey) {
-  return { OR: [{ weekOf: null }, { weekOf: week }] };
+export function liveBusy() {
+  return { OR: [{ weekOf: null }, { weekOf: { gte: scheduleWeeks()[0] } }] };
 }
 
-/** 회의 후보를 계산하는 주 — 볼 수 있는 주 가운데 첫 주. */
-export function candidateWeek(): WeekKey {
-  return scheduleWeeks()[0];
+/** 계산에 쓰는 안 되는 시간의 모양. */
+export const BUSY_FOR_SLOTS = {
+  where: liveBusy(),
+  select: { day: true, startHour: true, hours: true, kind: true, weekOf: true },
+} as const;
+
+/** 후보 기간 안에서 그 요일("수")이 가리키는 날. 기간이 7일이라 하나로 정해진다. */
+export function candidateDateOf(dayLetter: string): CandidateDate | null {
+  return candidateDates().find((d) => SCHEDULE_DAYS[d.day] === dayLetter) ?? null;
 }
 
 /**
@@ -39,37 +51,35 @@ export async function rebuildMeetingCandidates(teamId: string): Promise<void> {
   });
   if (live) return;
 
-  const week = candidateWeek();
   const members = await db.member.findMany({
     where: { teamId, leftAt: null },
-    select: {
-      name: true,
-      busyBlocks: {
-        where: busyInWeek(week),
-        select: { day: true, startHour: true, hours: true, kind: true },
-      },
-    },
+    select: { name: true, busyBlocks: BUSY_FOR_SLOTS },
   });
 
-  const slots = computeMeetingSlots(members);
+  const from = todayInSeoul();
+  const slots = computeMeetingSlots(members, candidateDates());
 
   await db.$transaction([
     db.meetingSlot.deleteMany({ where: { teamId } }),
     db.meetingSlot.createMany({
       data: slots.map((s) => ({ ...s, teamId, weekKey: "this" })),
     }),
-    db.team.update({ where: { id: teamId }, data: { candidatesWeek: week } }),
+    db.team.update({ where: { id: teamId }, data: { candidatesFrom: from } }),
   ]);
 }
 
 /**
- * 후보를 만든 주가 지나갔으면 다시 만든다.
+ * 후보를 만든 날이 지났으면 다시 만든다.
  *
- * 후보는 시간표를 저장할 때 만들어지는데, **주가 바뀌는 건 아무도 저장하지 않아도 온다.**
- * 그대로 두면 지난주에만 있던 시험 기간이 이번 주 후보까지 막는다. 그래서 후보를 보여 주기
- * 직전에 확인한다(09 화면). 올라온 제안이 있으면 `rebuildMeetingCandidates` 가 건너뛴다.
+ * 후보는 시간표를 저장할 때 만들어지는데, **날이 바뀌는 건 아무도 저장하지 않아도 온다.**
+ * 그대로 두면 어제가 후보에 남고, 지난주에만 있던 시험 기간이 이번 주 후보까지 막는다.
+ * 그래서 후보를 보여 주기 직전에 확인한다(09 화면). 올라온 제안이 있으면
+ * `rebuildMeetingCandidates` 가 건너뛴다.
+ *
+ * 하루에 한 번만 다시 만든다 — 다시 만들면 후보 행의 id 가 바뀌어, 고르고 있던 후보로
+ * 제안하는 순간 "후보를 찾을 수 없습니다"가 난다. 시간 단위로 만들면 그 일이 잦아진다.
  */
 export async function refreshStaleCandidates(teamId: string): Promise<void> {
-  const team = await db.team.findUnique({ where: { id: teamId }, select: { candidatesWeek: true } });
-  if (team && team.candidatesWeek !== candidateWeek()) await rebuildMeetingCandidates(teamId);
+  const team = await db.team.findUnique({ where: { id: teamId }, select: { candidatesFrom: true } });
+  if (team && team.candidatesFrom !== todayInSeoul()) await rebuildMeetingCandidates(teamId);
 }

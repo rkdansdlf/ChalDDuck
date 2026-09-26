@@ -47,13 +47,19 @@ import type {
 import { TASKS_RECENT_ID } from "@/lib/types";
 import { humanSize } from "@/features/drive/file-rules";
 import { effectiveStage } from "@/features/schedule/meeting-model";
-import { scheduleWeeks, weekName, weekRange } from "@/features/schedule/week";
+import {
+  candidateDates,
+  scheduleWeeks,
+  weekName,
+  weekRange,
+  type CandidateDate,
+} from "@/features/schedule/week";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { contribByLabel } from "@/server/contrib/state";
 import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
-import { currentSessionToken, getSessionMember } from "@/server/session";
+import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
   AI_TOOLS,
@@ -220,8 +226,10 @@ export async function getScheduleOptions(): Promise<{
   customKind: BusyKind;
   days: string[];
   hours: string[];
-  /** 고를 수 있는 주. 첫 주가 기본이고 회의 후보도 그 주로 계산한다. */
+  /** 고를 수 있는 주. 첫 주(오늘이 속한 주)가 기본이다. */
   weeks: ScheduleWeek[];
+  /** 회의 후보·제안을 받는 날 — 오늘부터 7일. */
+  candidateDays: CandidateDate[];
 }> {
   return {
     kinds: BUSY_KINDS,
@@ -229,6 +237,7 @@ export async function getScheduleOptions(): Promise<{
     days: SCHEDULE_DAYS,
     hours: SCHEDULE_HOURS,
     weeks: scheduleWeeks().map((key) => ({ key, name: weekName(key), range: weekRange(key) })),
+    candidateDays: candidateDates(),
   };
 }
 
@@ -327,7 +336,8 @@ export async function getJoinRequests(teamId: string): Promise<JoinRequestRow[]>
 
 /** 내 이름으로 열려 있는 기기 목록. 내 것만 보인다. */
 export type MyDevice = {
-  token: string;
+  /** 토큰의 해시(`deviceIdOf`). 토큰 원문은 화면에 내보내지 않는다. */
+  id: string;
   label: string;
   lastSeen: string;
   isCurrent: boolean;
@@ -346,7 +356,7 @@ export async function getMyDevices(): Promise<MyDevice[]> {
   ]);
 
   return sessions.map((s) => ({
-    token: s.token,
+    id: deviceIdOf(s.token),
     label: s.label ?? "알 수 없는 기기",
     lastSeen: formatDeadline(s.lastSeenAt),
     isCurrent: s.token === current,

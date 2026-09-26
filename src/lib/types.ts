@@ -182,7 +182,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 푸시는 아직 없다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak";
+  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "drive";
   title: string;
   body: string;
   href: string | null;

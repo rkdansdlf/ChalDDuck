@@ -15,8 +15,6 @@ import { setNavBadges, useNavBadges } from "./nav-badges-store";
  * 건수는 서버가 센다 — 화면마다 따로 세면 같은 값이 서로 어긋난다. 처음 숫자는 탭 셸이
  * 서버에서 그려 주고, 그 뒤로는 **스스로 다시 세어 온다**: 팀원이 방금 한 일(가입 요청·
  * 회의 제안·기여 기록·DM)이 내가 아무것도 누르지 않아도 배지에 나타나야 한다.
- *
- * TODO(서버): 드라이브 마감 배지는 같은 방식으로 더한다.
  */
 
 /**
@@ -50,6 +48,7 @@ export function AppNav({
     team: badges.team || undefined,
     cal: badges.cal || undefined,
     chat: badges.chat || undefined,
+    drive: badges.drive || undefined,
   };
 
   return as === "side" ? <SideNav pending={pending} /> : <TabBar pending={pending} />;

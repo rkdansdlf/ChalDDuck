@@ -229,7 +229,7 @@ export function AccessScreen({
         <Rows className="mb-3.5">
           {devices.map((device) => (
             <div
-              key={device.token}
+              key={device.id}
               className="flex min-h-[56px] items-center gap-3 px-[15px] py-[13px]"
             >
               <span className="grid size-[34px] flex-none place-items-center rounded-xl bg-fill text-txt-muted">
@@ -256,7 +256,7 @@ export function AccessScreen({
                   onClick={async () => {
                     setWorking(true);
                     try {
-                      await revokeDevice(device.token);
+                      await revokeDevice(device.id);
                       router.refresh();
                       flash("그 기기에서 내보냈습니다");
                     } finally {

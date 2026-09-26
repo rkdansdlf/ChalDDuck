@@ -56,7 +56,7 @@ export async function saveMyBusyBlocks(blocks: BusyBlock[]): Promise<void> {
   const me = await requireSessionMember();
   const weeks = scheduleWeeks();
   const rows = blocks
-    // 화면을 연 사이에 주가 넘어가(금요일 밤 → 토요일) 지나간 주가 된 것은 조용히 버린다 —
+    // 화면을 연 사이에 주가 넘어가(일요일 밤 → 월요일) 지나간 주가 된 것은 조용히 버린다 —
     // 이미 끝난 주라 적을 이유가 없고, 거절하면 저장 자체가 실패한다.
     .filter((b) => !b.weekOf || b.weekOf >= weeks[0])
     .map((b) => toRow(b, weeks));

@@ -24,7 +24,8 @@ import { cn } from "@/lib/cn";
 import type { MeetingProposal, ScheduleWeek, Team, TeamTimetable } from "@/lib/types";
 import { MIN_ATTENDEES } from "./meeting-slots";
 import { ScheduleTabs } from "./schedule-tabs";
-import { dateOfDay } from "./week";
+import { dateOfDay, shortDate, type CandidateDate } from "./week";
+import { GRID_COLUMNS, dayTone } from "./week-grid";
 import { WeekPicker } from "./week-picker";
 
 /** 칸의 진하기. 숫자와 함께 보여 준다 — 색만으로 몇 명인지 읽게 하지 않는다. */
@@ -58,14 +59,17 @@ export function TeamTimeScreen({
   days,
   hours,
   weeks,
+  candidateDays,
   members,
   proposal,
 }: {
   team: Team;
   days: string[];
   hours: string[];
-  /** 고를 수 있는 주. 첫 주가 회의 후보·제안의 주다. */
+  /** 고를 수 있는 주. */
   weeks: ScheduleWeek[];
+  /** 회의를 제안할 수 있는 날 — 오늘부터 7일(후보와 같은 기간). */
+  candidateDays: CandidateDate[];
   members: TeamTimetable[];
   proposal: MeetingProposal;
 }) {
@@ -75,8 +79,12 @@ export function TeamTimeScreen({
   const [picked, setPicked] = useState<Set<string>>(() => new Set(members.map((m) => m.id)));
   const [cell, setCell] = useState<{ day: number; hour: number } | null>(null);
   const [week, setWeek] = useState(weeks[0].key);
-  /** 회의 제안은 첫 주 것만 — 후보와 확정 흐름(09)이 그 주를 기준으로 돈다. */
-  const proposable = week === weeks[0].key;
+  /**
+   * 이 주의 그 요일로 회의를 제안할 수 있는지 — 오늘부터 7일 안의 날만.
+   * 제안은 요일("수")로만 남아서, 7일을 넘으면 어느 수요일인지 알 수 없다.
+   */
+  const proposableDay = (day: number) => candidateDays.some((d) => d.week === week && d.day === day);
+  const windowText = `${shortDate(candidateDays[0].date)}–${shortDate(candidateDays[candidateDays.length - 1].date)}`;
   const [asked, setAsked] = useState<Set<string>>(
     () => new Set(members.filter((m) => m.askedToday).map((m) => m.id)),
   );
@@ -116,12 +124,13 @@ export function TeamTimeScreen({
   /** 올라와 있는 제안이 가리키는 칸. 격자에서 테두리로 짚어 준다. */
   const proposedCell = useMemo(() => {
     // 제안은 첫 주의 것이라 다른 주를 볼 때는 짚지 않는다.
-    const slot = proposal.stage === "idle" || !proposable ? null : proposal.slot;
+    const slot = proposal.stage === "idle" ? null : proposal.slot;
     if (!slot) return null;
-    const day = days.indexOf(slot.day);
+    // 제안의 요일이 가리키는 날(오늘부터 7일 안). 보고 있는 주의 날일 때만 짚는다.
+    const at = candidateDays.find((d) => days[d.day] === slot.day);
     const hour = hours.findIndex((h) => Number(h) === Number(slot.time.slice(0, 2)));
-    return day >= 0 && hour >= 0 ? { day, hour } : null;
-  }, [proposal, proposable, days, hours]);
+    return at && at.week === week && hour >= 0 ? { day: at.day, hour } : null;
+  }, [proposal, candidateDays, week, days, hours]);
 
   const toggleMember = (id: string) =>
     setPicked((prev) => {
@@ -147,7 +156,7 @@ export function TeamTimeScreen({
     if (!cell || working) return;
     setWorking(true);
     try {
-      await proposeMeetingAt(cell.day, cell.hour);
+      await proposeMeetingAt(week, cell.day, cell.hour);
       router.push("/schedule/slots");
     } catch (e) {
       flash(e instanceof Error ? e.message : "제안하지 못했습니다");
@@ -227,16 +236,16 @@ export function TeamTimeScreen({
           </div>
         ) : null}
 
-        <Panel s="card" pad={12} r={16} className="mb-2">
+        <Panel s="card" pad={8} r={16} className="mb-2">
           {shown.length === 0 ? (
             <p className="t-note keep-all m-0 py-6 text-center text-txt-muted">
               겹쳐 볼 팀원을 한 명 이상 골라 주세요.
             </p>
           ) : (
             <div
-              className="grid gap-[3px]"
+              className="grid gap-[2px]"
               style={{
-                gridTemplateColumns: `26px repeat(${days.length},minmax(0,1fr))`,
+                gridTemplateColumns: GRID_COLUMNS(days.length),
                 gridTemplateRows: `auto repeat(${hours.length},44px)`,
               }}
             >
@@ -244,7 +253,10 @@ export function TeamTimeScreen({
               {days.map((day, i) => (
                 <span
                   key={day}
-                  className="pb-1.5 text-center font-bold text-[13px] leading-none text-txt-muted"
+                  className={cn(
+                    "pb-1.5 text-center font-bold text-[13px] leading-none",
+                    dayTone(i),
+                  )}
                 >
                   {day}
                   <span className="mt-1 block font-mono font-medium text-[10.5px] text-txt-faint">
@@ -392,8 +404,8 @@ export function TeamTimeScreen({
             <MemberList title="안 되는 사람" icon="x" people={sheet.busy} />
 
             <SheetAction
-              proposable={proposable}
-              firstWeekName={weeks[0].name}
+              proposable={proposableDay(cell.day)}
+              windowText={windowText}
               everyone={everyone}
               available={sheet.free.length}
               proposal={proposal}
@@ -449,7 +461,7 @@ function MemberList({
 /** 시트 맨 아래 — 이 칸으로 무엇을 할 수 있는지. 할 수 없으면 왜 안 되는지를 말한다. */
 function SheetAction({
   proposable,
-  firstWeekName,
+  windowText,
   everyone,
   available,
   proposal,
@@ -459,7 +471,8 @@ function SheetAction({
   onShowEveryone,
 }: {
   proposable: boolean;
-  firstWeekName: string;
+  /** "9/26–10/2" */
+  windowText: string;
   everyone: boolean;
   available: number;
   proposal: MeetingProposal;
@@ -485,7 +498,7 @@ function SheetAction({
   if (!proposable) {
     return (
       <Note tone="info" icon="calendar-clock">
-        회의 제안은 {firstWeekName} 시간으로만 할 수 있습니다. 이 주는 미리 보기입니다.
+        회의 제안은 오늘부터 7일({windowText}) 안의 시간만 할 수 있습니다.
       </Note>
     );
   }

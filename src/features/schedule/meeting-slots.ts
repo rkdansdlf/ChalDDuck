@@ -1,4 +1,5 @@
 import { BUSY_KINDS, CUSTOM_BUSY_KIND, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
+import type { CandidateDate, WeekKey } from "./week";
 
 /**
  * 시간표에서 회의 시간 후보를 만드는 규칙.
@@ -6,6 +7,9 @@ import { BUSY_KINDS, CUSTOM_BUSY_KIND, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/d
  * `meeting-model.ts` 의 확정 규칙과 같은 이유로 순수 함수로 떼어 둔다 — 서버 액션과
  * 시드가 같은 계산을 해야 하고, 둘이 각자 계산하면 데모 팀과 실제 팀의 후보가 서로
  * 다른 규칙으로 만들어진다.
+ *
+ * 후보는 **오늘부터 7일**(`candidateDates`)에서 찾는다. 날마다 그 날이 속한 주의
+ * 시간표(매주 + 그 주에만)로 센다 — 7일이 두 주에 걸치면 날마다 다른 "이 주만" 블록이 걸린다.
  */
 
 /**
@@ -35,7 +39,14 @@ const MAX_PER_DAY = 2;
 
 export type SlotSource = {
   name: string;
-  busyBlocks: Array<{ day: number; startHour: number; hours: number; kind: string }>;
+  busyBlocks: Array<{
+    day: number;
+    startHour: number;
+    hours: number;
+    kind: string;
+    /** null = 매주, 값 = 그 주에만. */
+    weekOf: string | null;
+  }>;
 };
 
 export type ComputedSlot = {
@@ -47,11 +58,13 @@ export type ComputedSlot = {
   blockedBy: string | null;
 };
 
-/** 칸(`요일:시간대`) 마다 그 시간에 못 오는 사람들. */
-function blockedMap(members: SlotSource[]) {
+/** 한 주의 칸(`요일:시간대`) 마다 그 시간에 못 오는 사람들. */
+function blockedMap(members: SlotSource[], week: WeekKey) {
   const blockedAt = new Map<string, Array<{ name: string; kind: string }>>();
   for (const m of members) {
     for (const b of m.busyBlocks) {
+      // 매주 반복하는 것과 이 주에만 있는 것.
+      if (b.weekOf !== null && b.weekOf !== week) continue;
       for (let h = b.startHour; h < b.startHour + b.hours; h += 1) {
         const key = `${b.day}:${h}`;
         const at = blockedAt.get(key) ?? [];
@@ -80,19 +93,21 @@ function toSlot(day: number, hour: number, total: number, blocked: Array<{ name:
   };
 }
 
-/** 요일·시간대 칸 하나의 후보. 팀 겹쳐보기에서 칸을 골라 제안할 때 쓴다. */
-export function slotAt(members: SlotSource[], day: number, hour: number): ComputedSlot {
-  return toSlot(day, hour, members.length, blockedMap(members).get(`${day}:${hour}`) ?? []);
+/** 한 주의 요일·시간대 칸 하나의 후보. 팀 겹쳐보기에서 칸을 골라 제안할 때 쓴다. */
+export function slotAt(members: SlotSource[], week: WeekKey, day: number, hour: number): ComputedSlot {
+  return toSlot(day, hour, members.length, blockedMap(members, week).get(`${day}:${hour}`) ?? []);
 }
 
-export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
+export function computeMeetingSlots(members: SlotSource[], dates: CandidateDate[]): ComputedSlot[] {
   if (members.length < MIN_ATTENDEES) return [];
 
-  const blockedAt = blockedMap(members);
+  const byWeek = new Map<WeekKey, ReturnType<typeof blockedMap>>();
   const total = members.length;
   const found: Array<ComputedSlot & { order: number }> = [];
 
-  for (let day = 0; day < SCHEDULE_DAYS.length; day += 1) {
+  dates.forEach(({ week, day }, index) => {
+    const blockedAt = byWeek.get(week) ?? blockedMap(members, week);
+    byWeek.set(week, blockedAt);
     // 기본 회의 길이가 60분이라 시간표 한 칸이 곧 후보 하나다.
     for (let hour = 0; hour < SCHEDULE_HOURS.length; hour += 1) {
       const blocked = blockedAt.get(`${day}:${hour}`) ?? [];
@@ -100,13 +115,13 @@ export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
 
       found.push({
         ...toSlot(day, hour, total, blocked),
-        // 주 초반·이른 시간이 먼저 오도록 하는 정렬용 값. 표에는 넣지 않는다.
-        order: day * SCHEDULE_HOURS.length + hour,
+        // 가까운 날·이른 시간이 먼저 오도록 하는 정렬용 값. 표에는 넣지 않는다.
+        order: index * SCHEDULE_HOURS.length + hour,
       });
     }
-  }
+  });
 
-  // 많이 되는 시간 먼저, 같으면 이른 시간 먼저.
+  // 많이 되는 시간 먼저, 같으면 가까운 시간 먼저.
   found.sort((a, b) => b.available - a.available || a.order - b.order);
 
   const perDay = new Map<string, number>();
@@ -127,9 +142,14 @@ export function computeMeetingSlots(members: SlotSource[]): ComputedSlot[] {
  *
  * 후보 행에는 못 오는 사람이 문장으로만 남아 있어(`blockedBy`) 사람을 가리킬 수 없다.
  * 알림처럼 **누구에게** 보낼지가 필요할 때는 시간표에서 다시 센다 — `computeMeetingSlots`
- * 와 같은 규칙(요일·시간대 칸 하나에 걸친 안 되는 시간)이다.
+ * 와 같은 규칙(그 주의 요일·시간대 칸 하나에 걸친 안 되는 시간)이다.
  */
-export function membersBlockedAt<M extends SlotSource>(members: M[], day: string, time: string): M[] {
+export function membersBlockedAt<M extends SlotSource>(
+  members: M[],
+  day: string,
+  time: string,
+  week: WeekKey,
+): M[] {
   const dayIndex = SCHEDULE_DAYS.indexOf(day);
   // "09:00 – 10:00" 의 시작 시각. 시간표의 칸 번호로 바꿔 busyBlocks 와 견준다.
   const hourIndex = SCHEDULE_HOURS.findIndex((h) => Number(h) === Number(time.slice(0, 2)));
@@ -137,7 +157,11 @@ export function membersBlockedAt<M extends SlotSource>(members: M[], day: string
 
   return members.filter((m) =>
     m.busyBlocks.some(
-      (b) => b.day === dayIndex && hourIndex >= b.startHour && hourIndex < b.startHour + b.hours,
+      (b) =>
+        (b.weekOf === null || b.weekOf === week) &&
+        b.day === dayIndex &&
+        hourIndex >= b.startHour &&
+        hourIndex < b.startHour + b.hours,
     ),
   );
 }

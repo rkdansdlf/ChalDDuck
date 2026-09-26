@@ -47,17 +47,37 @@ export function isWeekKey(value: unknown): value is WeekKey {
   return format(parse(value)) === value && mondayOf(value) === value;
 }
 
-/**
- * 지금 볼 수 있는 주들. 첫 주가 기본이고, 회의 후보도 이 주로 계산한다.
- *
- * 격자는 월~금이라 **토요일부터는 다음 주가 첫 주**다 — 금요일 밤이 지나면 이번 주에
- * 남은 칸이 없다. (확정되지 않은 정책이다.)
- */
+/** 지금 볼 수 있는 주들 — 오늘이 속한 주(월~일)부터. 첫 주가 기본으로 보인다. */
 export function scheduleWeeks(now: Date = new Date()): WeekKey[] {
-  const today = todayInSeoul(now);
-  const weekday = parse(today).getUTCDay();
-  const first = weekday === 6 || weekday === 0 ? addDays(mondayOf(today), 7) : mondayOf(today);
+  const first = mondayOf(todayInSeoul(now));
   return Array.from({ length: VIEWABLE_WEEKS }, (_, i) => addDays(first, i * 7));
+}
+
+/** 회의 후보를 찾는 기간(일). 7일이면 요일마다 딱 하루씩이라 "수 16:00" 이 어느 날인지 하나로 정해진다. */
+export const CANDIDATE_DAYS = 7;
+
+export type CandidateDate = {
+  /** 그 날의 한국 날짜. */
+  date: string;
+  /** 그 날이 속한 주(월요일). "이 주만" 블록을 고를 때 쓴다. */
+  week: WeekKey;
+  /** 0 = 월 … 6 = 일. `SCHEDULE_DAYS` 의 인덱스. */
+  day: number;
+};
+
+/**
+ * 회의 후보를 찾는 날들 — **오늘부터 7일.**
+ *
+ * 한 주(월~일)로 고정하면 목요일에는 이미 지난 월~수가 후보로 나오고, 일요일에는 고를 날이
+ * 하루뿐이다. 오늘부터 7일이면 늘 앞으로의 일주일이고, 요일이 겹치지 않는다.
+ */
+export function candidateDates(now: Date = new Date()): CandidateDate[] {
+  const today = todayInSeoul(now);
+  return Array.from({ length: CANDIDATE_DAYS }, (_, i) => {
+    const date = addDays(today, i);
+    const week = mondayOf(date);
+    return { date, week, day: Math.round((parse(date).getTime() - parse(week).getTime()) / DAY) };
+  });
 }
 
 /** "9/28" */
@@ -71,9 +91,9 @@ export function dateOfDay(week: WeekKey, day: number): string {
   return shortDate(addDays(week, day));
 }
 
-/** "9/28–10/2" (월~금) */
+/** "9/28–10/4" (월~일) */
 export function weekRange(week: WeekKey): string {
-  return `${shortDate(week)}–${shortDate(addDays(week, 4))}`;
+  return `${shortDate(week)}–${shortDate(addDays(week, 6))}`;
 }
 
 /** 오늘을 기준으로 부르는 이름. "이번 주" / "다음 주" / "다다음 주" */

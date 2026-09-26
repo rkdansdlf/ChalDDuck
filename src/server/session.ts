@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { db } from "./db";
@@ -162,6 +162,17 @@ export async function endSession() {
   const token = store.get(COOKIE)?.value;
   if (token) await db.session.deleteMany({ where: { token } });
   store.delete(COOKIE);
+}
+
+/**
+ * 기기 목록에서 기기를 가리키는 값.
+ *
+ * 토큰을 그대로 화면에 내보내면 안 된다 — 토큰은 그 기기의 세션 그 자체라, 쿠키를
+ * `httpOnly` 로 숨긴 뜻이 없어진다(예전에는 다른 기기들의 토큰이 목록에 실려 내려갔다).
+ * 해시로는 세션을 만들 수 없고, 서버는 내 세션들을 해시해 같은 것을 찾는다.
+ */
+export function deviceIdOf(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 /** 지금 이 브라우저의 토큰. 기기 목록에서 "이 기기"를 표시할 때 쓴다. */

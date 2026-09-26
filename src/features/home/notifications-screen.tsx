@@ -25,6 +25,7 @@ const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; lab
   "join-request": { icon: "user-plus", surface: "bg-coral-100 text-coral-700", label: "가입 요청" },
   "rejoin-request": { icon: "user-search", surface: "bg-coral-100 text-coral-700", label: "재입장 요청" },
   icebreak: { icon: "drama", surface: "bg-fill text-txt-muted", label: "아이스브레이킹" },
+  drive: { icon: "folder-open", surface: "bg-yellow-200 text-yellow-700", label: "드라이브" },
 };
 
 export function NotificationsScreen({ items }: { items: AppNotification[] }) {

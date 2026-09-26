@@ -8,7 +8,7 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
 import { leaderIds, notify } from "@/server/notify/create";
-import { describeDevice, requireLeader, requireSessionMember, startSession } from "@/server/session";
+import { describeDevice, deviceIdOf, requireLeader, requireSessionMember, startSession } from "@/server/session";
 
 /**
  * 재입장 — **이미 있는 이름으로 새 기기에서 들어오는 길.**
@@ -158,11 +158,17 @@ export async function resolveRejoinClaim(
   return "ok";
 }
 
-/** 기기 하나를 내보낸다. 본인 기기만 — 남의 기기를 끊을 수는 없다. */
-export async function revokeDevice(token: string): Promise<void> {
+/**
+ * 기기 하나를 내보낸다. 본인 기기만 — 남의 기기를 끊을 수는 없다.
+ *
+ * `deviceId` 는 토큰이 아니라 토큰의 해시다(`deviceIdOf`). 내 세션들 중에서 같은 것을 찾는다.
+ */
+export async function revokeDevice(deviceId: string): Promise<void> {
   const me = await requireSessionMember();
 
-  await db.session.deleteMany({ where: { token, memberId: me.id } });
+  const mine = await db.session.findMany({ where: { memberId: me.id }, select: { token: true } });
+  const target = mine.find((s) => deviceIdOf(s.token) === deviceId);
+  if (target) await db.session.deleteMany({ where: { token: target.token, memberId: me.id } });
   revalidatePath("/team", "layout");
 }
 

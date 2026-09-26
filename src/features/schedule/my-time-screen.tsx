@@ -245,7 +245,7 @@ export function MyTimeScreen({
 
         <WeekPicker weeks={weeks} value={week} onChange={setWeek} />
 
-        <Panel s="card" pad={12} r={16} className="mb-2">
+        <Panel s="card" pad={8} r={16} className="mb-2">
           <WeekGrid
             days={days}
             dayNotes={days.map((_, i) => dateOfDay(week, i))}
@@ -348,8 +348,8 @@ export function MyTimeScreen({
           08의 “사유는 본인에게만”과 어긋나는데, 직접 입력 사유만은 이름 대신 “개인 일정”으로 내보내
           민감한 이름이 새지 않게 했습니다. 기본 사유까지 가릴지는 팀 확인이 필요합니다.
           <br />
-          <b>볼 수 있는 주는 2주</b>이고, <b>토요일부터는 다음 주가 첫 주</b>입니다(격자가 월~금이라).
-          회의 후보는 첫 주 기준입니다. 시험 기간을 고르면 반복이 “이 주만”으로 먼저 골라집니다.
+          <b>볼 수 있는 주는 2주</b>(오늘이 속한 주부터, 월~일)입니다. <b>회의 후보는 오늘부터 7일</b>에서
+          찾습니다 — 주말도 후보에 들어갑니다. 시험 기간을 고르면 반복이 “이 주만”으로 먼저 골라집니다.
         </Undecided>
       </Body>
 

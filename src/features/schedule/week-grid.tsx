@@ -7,6 +7,17 @@ import type { BusyBlock } from "@/lib/types";
 import { blockAt } from "./busy-blocks";
 import type { ReasonLook } from "./reason";
 
+/**
+ * 격자의 열. 시간 열은 "18" 이 들어가는 만큼만(20px) 두고 나머지를 요일에 준다 — 7열이면
+ * 375px 화면에서 칸이 약 42px 이다. 높이는 44px 을 지킨다.
+ */
+export const GRID_COLUMNS = (days: number) => `20px repeat(${days},minmax(0,1fr))`;
+
+/** 요일 머리글 색. 달력 관례대로 토요일은 파랑, 일요일은 빨강 — 글자(토·일)가 함께 있어 색에만 기대지 않는다. */
+export function dayTone(day: number) {
+  return day === 5 ? "text-info" : day === 6 ? "text-coral-700" : "text-txt-muted";
+}
+
 /** 손가락을 이만큼 누르고 있어야 칠하기가 시작된다. 그보다 짧게 움직이면 스크롤이다. */
 const LONG_PRESS_MS = 320;
 /** 누른 채 이보다 멀리 움직이면 칠하기가 아니라 스크롤로 본다. */
@@ -22,7 +33,8 @@ type Drag = { day: number; anchor: number; current: number };
  *   격자가 화면 대부분을 덮어서, 터치로 바로 칠하게 하면 격자 위에서는 스크롤할 수 없다.
  * - 칠해진 블록을 누르면 `onEdit` — 바로 지우지 않는다. 잘못 눌러 지운 것은 되돌릴 방법이 없다.
  *
- * 칸은 모든 폭에서 44px 이다(최소 탭 영역). 10시간 × 44px 이라 좁은 화면에서도 한 번 스크롤이면 다 보인다.
+ * 칸 높이는 모든 폭에서 44px 이다(최소 탭 영역). 10시간 × 44px 이라 좁은 화면에서도 한 번
+ * 스크롤이면 다 보인다. 폭은 주말까지 7열이라 375px 에서 약 42px 이다.
  */
 export function WeekGrid({
   days,
@@ -175,9 +187,9 @@ export function WeekGrid({
         // 길게 누르면 뜨는 OS 메뉴가 칠하기를 가로막는다.
         if (dragRef.current || pressRef.current) e.preventDefault();
       }}
-      className="grid select-none gap-[3px] [-webkit-touch-callout:none]"
+      className="grid select-none gap-[2px] [-webkit-touch-callout:none]"
       style={{
-        gridTemplateColumns: `26px repeat(${days.length},minmax(0,1fr))`,
+        gridTemplateColumns: GRID_COLUMNS(days.length),
         gridTemplateRows: `auto repeat(${hours.length},44px)`,
       }}
     >
@@ -185,7 +197,7 @@ export function WeekGrid({
       {days.map((day, i) => (
         <span
           key={day}
-          className="pb-1.5 text-center font-bold text-[13px] leading-none text-txt-muted"
+          className={cn("pb-1.5 text-center font-bold text-[13px] leading-none", dayTone(i))}
         >
           {day}
           {dayNotes ? (
@@ -257,7 +269,7 @@ export function WeekGrid({
             }}
             aria-label={`${days[block.day]} ${from}시부터 ${block.hours}시간 · ${look.name}${once ? " · 이 주만" : ""} — 고치기`}
             className={cn(
-              "relative flex cursor-pointer items-start justify-center overflow-hidden rounded-md border-none p-1",
+              "relative flex cursor-pointer items-start justify-center overflow-hidden rounded-md border-none p-[3px]",
               // "이 주만"은 점선 테두리 + 달력 아이콘. 색만으로 매주/이 주만을 나누지 않는다.
               once ? "z-[11] outline-2 outline-ink-900 outline-dashed -outline-offset-2" : "z-10",
               // 칠하는 중에는 블록을 지나가도 아래 칸이 포인터를 받아야 한다(elementFromPoint).
@@ -270,8 +282,14 @@ export function WeekGrid({
             }}
           >
             {/* 색만으로 사유를 구분하지 않는다 — 이름을 함께 둔다. 글자는 밝은 바탕 위에 올려 대비를 지킨다. */}
-            {/* 좁은 화면의 칸(약 55px)에 "아르바이트"가 한 줄로 안 들어간다 — 말줄임 대신 두 줄로 접는다. */}
-            <span className="t-cap-strong line-clamp-2 max-w-full break-all rounded-[5px] bg-card px-1 py-0.5 text-center text-txt-strong">
+            {/* 좁은 화면의 칸(약 42px)에 "아르바이트"가 한 줄로 안 들어간다 — 말줄임 대신 줄을 접는다. */}
+            <span
+              className={cn(
+                "t-grid-tag max-w-full break-all rounded-[4px] bg-card px-0.5 py-0.5 text-center text-txt-strong",
+                // 1시간짜리 블록(44px)은 두 줄, 더 긴 블록은 세 줄까지.
+                block.hours > 1 ? "line-clamp-3" : "line-clamp-2",
+              )}
+            >
               {once ? (
                 <span className="mr-0.5 inline-block align-[-1px]">
                   <Icon name="calendar-clock" size={10} />

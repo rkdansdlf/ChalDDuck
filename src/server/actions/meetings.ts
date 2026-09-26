@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
 import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
+import { addDays, candidateDates, isWeekKey } from "@/features/schedule/week";
 import { db } from "@/server/db";
-import { busyInWeek, candidateWeek } from "@/server/meetings/candidates";
+import { BUSY_FOR_SLOTS, candidateDateOf } from "@/server/meetings/candidates";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
@@ -44,11 +45,15 @@ export async function proposeMeeting(slotId: string): Promise<void> {
  *
  * 09 화면과 같이 **올라온 제안이 없을 때만** 받는다 — 확정된 회의를 칸 하나 눌러
  * 덮어쓸 수 있으면 확정이라는 말이 무의미해진다.
+ *
+ * 후보와 같이 **오늘부터 7일 안의 날**만 받는다. 제안은 요일("수")로만 남기 때문에,
+ * 7일을 넘으면 어느 수요일인지 알 수 없다.
  */
-export async function proposeMeetingAt(day: number, hour: number): Promise<void> {
+export async function proposeMeetingAt(week: string, day: number, hour: number): Promise<void> {
   const me = await requireSessionMember();
 
   if (
+    !isWeekKey(week) ||
     !Number.isInteger(day) ||
     !Number.isInteger(hour) ||
     day < 0 ||
@@ -58,6 +63,10 @@ export async function proposeMeetingAt(day: number, hour: number): Promise<void>
   ) {
     throw new Error("시간표 밖의 시간입니다.");
   }
+  const date = addDays(week, day);
+  if (!candidateDates().some((d) => d.date === date)) {
+    throw new Error("오늘부터 7일 안의 시간만 제안할 수 있습니다.");
+  }
 
   if (await currentProposal(me.teamId)) throw new Error("이미 올라온 회의 제안이 있습니다.");
 
@@ -65,14 +74,10 @@ export async function proposeMeetingAt(day: number, hour: number): Promise<void>
     where: { teamId: me.teamId, leftAt: null },
     select: {
       name: true,
-      // 후보와 같은 주의 시간표로 센다.
-      busyBlocks: {
-        where: busyInWeek(candidateWeek()),
-        select: { day: true, startHour: true, hours: true, kind: true },
-      },
+      busyBlocks: BUSY_FOR_SLOTS,
     },
   });
-  const computed = slotAt(members, day, hour);
+  const computed = slotAt(members, week, day, hour);
   if (computed.available < MIN_ATTENDEES) throw new Error("이 시간에는 두 명 이상 모일 수 없습니다.");
 
   // 추천 후보에 이미 있는 칸이면 그 행을 쓴다 — 같은 시간이 목록에 두 번 보이지 않게.
@@ -134,15 +139,14 @@ export async function requestRemoteInput(slotId: string): Promise<number> {
     select: {
       id: true,
       name: true,
-      // 후보와 같은 주의 시간표로 센다.
-      busyBlocks: {
-        where: busyInWeek(candidateWeek()),
-        select: { day: true, startHour: true, hours: true, kind: true },
-      },
+      busyBlocks: BUSY_FOR_SLOTS,
     },
   });
+  // 후보의 요일이 가리키는 날(오늘부터 7일 안)의 주로 센다.
+  const target = candidateDateOf(slot.day);
+  if (!target) return 0;
   // 나도 빠지는 시간일 수 있지만, 나에게 부탁하는 알림은 보내지 않는다.
-  const missing = membersBlockedAt(members, slot.day, slot.time)
+  const missing = membersBlockedAt(members, slot.day, slot.time, target.week)
     .map((m) => m.id)
     .filter((id) => id !== me.id);
 

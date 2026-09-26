@@ -19,7 +19,9 @@ export type NotifyKind =
   | "contrib-confirm"
   | "join-request"
   | "rejoin-request"
-  | "icebreak";
+  | "icebreak"
+  /** 팀원이 드라이브에 올리거나 복원했다. */
+  | "drive";
 
 export async function notify(input: {
   /** 받는 사람들. 비어 있으면 아무 일도 하지 않는다. */

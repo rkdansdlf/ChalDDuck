@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ScheduleTeamPage() {
   const team = await getCurrentTeam();
-  const [{ days, hours, weeks }, members, proposal] = await Promise.all([
+  const [{ days, hours, weeks, candidateDays }, members, proposal] = await Promise.all([
     getScheduleOptions(),
     getTeamTimetables(team.id),
     getMeetingProposal(team.id),
@@ -23,6 +23,7 @@ export default async function ScheduleTeamPage() {
       days={days}
       hours={hours}
       weeks={weeks}
+      candidateDays={candidateDays}
       members={members}
       proposal={proposal}
     />

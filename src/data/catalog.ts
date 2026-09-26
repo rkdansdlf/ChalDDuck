@@ -57,7 +57,7 @@ export const CUSTOM_BUSY_KIND: BusyKind = {
   color: "var(--busy-custom)",
 };
 
-export const SCHEDULE_DAYS = ["월", "화", "수", "목", "금"];
+export const SCHEDULE_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
 
 export const SCHEDULE_HOURS = ["9", "10", "11", "12", "13", "14", "15", "16", "17", "18"];
 

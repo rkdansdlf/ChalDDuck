@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { finishUpload, prepareUpload, type UploadRejection } from "@/server/actions/drive";
+import { announceUploads, finishUpload, prepareUpload, type UploadRejection } from "@/server/actions/drive";
 
 /**
  * 파일 올리기 대기열.
@@ -177,6 +177,15 @@ export function useUploads({
     // 실패한 줄만 남겨 다시 시도할 수 있게 한다.
     setItems((list) => list.filter((item) => item.stage !== "done"));
     finished.current?.(done, failedCount);
+
+    // 팀에 한 번만 알린다(파일마다 종이 울리지 않게). 알림이 실패해도 올리기는 끝난 것이라
+    // 사람에게 오류로 보이지 않는다.
+    if (done.length > 0) {
+      announceUploads(
+        boxId,
+        done.map((d) => d.fileId),
+      ).catch((error) => console.error("[drive] 올림 알림 실패:", error));
+    }
   };
 
   /** @param note 이번에 고른 파일 모두에 붙일 메모("3장 그래프 수정"). 비우면 서버가 채운다. */
