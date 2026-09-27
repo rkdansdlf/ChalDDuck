@@ -52,7 +52,7 @@ function nowLabel() {
 }
 
 export type SendChatMessageResult =
-  | { ok: true; message: { id: string; time: string } }
+  | { ok: true; message: { id: string; time: string; sortAt: string } }
   | { ok: false; rejected?: UploadRejection | "missing" };
 
 /**
@@ -72,8 +72,19 @@ export async function prepareChatAttachment(meta: {
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  /** 쿠션 번역기로 다듬은 말이면 true — 말풍선에 표시가 남는다(19 화면의 약속). */
-  options: { viaCushion?: boolean; attachment?: { path: string; name: string } } = {},
+  /**
+   * 쿠션 번역기로 다듬은 말이면 true — 말풍선에 표시가 남는다(19 화면의 약속).
+   *
+   * `clientId` 는 **같은 내용을 두 번 저장하지 않기 위한 값**이다. 서버가 저장했는데
+   * 응답이 늦어 화면이 실패로 바꾸고 사용자가 "다시 보내기"를 누르면, 이 값이 같아서
+   * 이미 있는 말을 돌려준다. 예전에는 글이 두 개 생겼다 — 대화의 사실이 틀어지는 일이라
+   * 나중에 지우기 어렵다.
+   */
+  options: {
+    viaCushion?: boolean;
+    attachment?: { path: string; name: string };
+    clientId?: string;
+  } = {},
 ): Promise<SendChatMessageResult> {
   const me = await requireSessionMember();
   const trimmed = text.trim();
@@ -92,10 +103,24 @@ export async function sendChatMessage(
     attach = { attachPath: checked.path, attachName: checked.name, attachBytes: checked.bytes, attachMime: checked.mime };
   }
 
-  // 응답이 늦어 화면이 다시 보냈을 때 같은 파일의 말이 둘 생기지 않게.
+  // 응답이 늦어 화면이 다시 보냈을 때 같은 말이 둘 생기지 않게.
+  // 첨부는 경로로 막고, 글은 화면이 미리 만들어 둔 `clientId` 로 막는다.
+  if (options.clientId) {
+    const seen = await db.message.findFirst({
+      where: { authorId: me.id, clientId: options.clientId },
+    });
+    if (seen) {
+      return {
+        ok: true,
+        message: { id: seen.id, time: seen.whenLabel, sortAt: seen.createdAt.toISOString() },
+      };
+    }
+  }
   if (attach) {
     const already = await db.message.findFirst({ where: { attachPath: attach.attachPath } });
-    if (already) return { ok: true, message: { id: already.id, time: already.whenLabel } };
+    if (already) {
+      return { ok: true, message: { id: already.id, time: already.whenLabel, sortAt: already.createdAt.toISOString() } };
+    }
   }
 
   const created = await db.message.create({
@@ -105,6 +130,7 @@ export async function sendChatMessage(
       authorId: me.id,
       text: trimmed,
       viaCushion: options.viaCushion === true,
+      clientId: options.clientId,
       whenLabel: nowLabel(),
       ...attach,
     },
@@ -113,7 +139,7 @@ export async function sendChatMessage(
   // 화면은 낙관적으로 이미 보여 줬으니, 여기서는 그 방 경로만 다시 유효하게 만든다 —
   // `/chat` 레이아웃(팀원 목록·최근 자료)까지 매 메시지마다 다시 부를 필요는 없다.
   revalidatePath(threadId === "team" ? "/chat/team" : `/chat/dm/${threadId}`);
-  return { ok: true, message: { id: created.id, time: created.whenLabel } };
+  return { ok: true, message: { id: created.id, time: created.whenLabel, sortAt: created.createdAt.toISOString() } };
 }
 
 /** 첨부를 여는 주소. 우리 팀 단톡방의 말인지 서버가 확인한다. */

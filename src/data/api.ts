@@ -690,6 +690,8 @@ type MessageRow = {
   id: string;
   text: string;
   whenLabel: string;
+  /** 정렬용 실제 시각. `whenLabel` 은 "21:12" 라 사람이 읽는 문자열이라 비교할 수 없다. */
+  createdAt: Date;
   viaCushion: boolean;
   attachPath: string | null;
   attachName: string | null;
@@ -735,6 +737,7 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     isMine: m.author.id === meId,
     text: m.text,
     time: m.whenLabel,
+    sortAt: m.createdAt.toISOString(),
     status: "sent",
     viaCushion: m.viaCushion,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
@@ -1039,6 +1042,11 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
 
 /* ── 21 할 일 ──────────────────────────────────────────────── */
 
+/** `Task.status` 는 DB 에서 `String` 이다 — 모르는 값은 처음 상태로 되돌린다. */
+function toTaskStatus(value: string): Task["status"] {
+  return value === "doing" || value === "done" ? value : "todo";
+}
+
 export async function getTasks(teamId: string): Promise<Task[]> {
   // 담당자가 나인지 알아야 한다 — 내 업무를 나에게 찌를 수는 없고(서버가 막는다),
   // 화면에 그 버튼이 떠 있으면 실패만 눌러 보게 된다.
@@ -1059,7 +1067,7 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     assigneeLeft: t.assignee?.leftAt != null,
     isMine: t.assigneeId != null && t.assigneeId === session?.id,
     due: t.due,
-    status: t.status as Task["status"],
+    status: toTaskStatus(t.status),
     source: t.source as Task["source"],
   }));
 }

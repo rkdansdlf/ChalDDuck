@@ -426,6 +426,13 @@ model Message {
   text       String
   /// 쿠션 번역기로 다듬어 보낸 말. **표시가 남는다.**
   viaCushion Boolean  @default(false)
+  /// 화면이 보내기 전에 만들어 둔 id. **같은 값으로 두 번 도착하면 한 번만 저장한다.**
+  ///
+  /// 서버가 저장했는데 응답이 늦어 화면이 "실패"로 바꾸고 사용자가 다시 누르면, 그 말은
+  /// 이미 들어 있다 — 예전에는 그 결과 같은 말이 두 개 생겼다. 첨부는 `attachPath` 로 막고
+  /// 있었지만 글에는 그런 표가 없었으므로, 이 값으로 막는다. 두 번 저장되면 대화의 사실이
+  /// 틀어지는 것이라 되돌리기 어렵다.
+  clientId String?
   /// 첨부 파일(단톡방만). 저장소 경로는 `{teamId}/chat/{uuid}` — 드라이브와 같은 버킷·형식·용량 규칙.
   /// 파일만 보낸 말은 `text` 가 빈 문자열이다.
   attachPath  String?
@@ -450,6 +457,7 @@ model Message {
   savedVersion  FileVersion?     @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
   reactions MessageReaction[]
 
+  @@unique([authorId, clientId])
   @@index([teamId, threadKey])
 }
 

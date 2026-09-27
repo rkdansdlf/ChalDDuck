@@ -9,9 +9,12 @@ import type { MbtiType } from "@/lib/mbti";
 import { usePoll } from "@/lib/use-poll";
 import {
   addPendingMessage,
+  forgetPendingFile,
+  getPendingFile,
   markPendingFailed,
   removePendingMessage,
   resolvePendingMessage,
+  setPendingFile,
   useThreadMessages,
 } from "./messages-state";
 
@@ -22,6 +25,26 @@ import {
  * 치는 동안 이미 와 있다. 안 보이는 탭에서는 아예 부르지 않는다(`usePoll`).
  */
 const NEW_MESSAGE_POLL_MS = 3000;
+
+/**
+ * 낙관적 말풍선의 `clientId`.
+ *
+ * 임시 id(`pending-3`)에서 값을 얻는다 — 실패했다 다시 눌러도 **같은 값**이 나오므로 서버가
+ * 중복을 알아볼 수 있다. 서버가 이미 저장했는데 응답만 늦게 온 경우, 이 값이 같아서
+ * 이미 있는 말을 돌려준다.
+ */
+function clientIdOf(tempId: string): string {
+  return `msg-${tempId}`;
+}
+
+/**
+ * 되돌릴 파일이 없을 때 보여 줄 말.
+ *
+ * 파일 `File` 객체는 메모리에만 있으므로 새로고침하면 사라진다. 그래도 말풍선은 남는다 —
+ * 지우면 사용자는 "내가 보낸 게 아니라" 고 생각하니까. 대신 다시 고르라고 말하고,
+ * `onLostFile` 이 호출되면 그 자리에서 파일 고르기를 연다.
+ */
+const FILE_LOST_TEXT = "파일을 다시 골라 주세요. 브라우저를 새로 고치면 되돌릴 수 없습니다.";
 
 /**
  * 한 대화방의 메시지와 보내기·다시 보내기·과거 불러오기.
@@ -40,6 +63,14 @@ export function useChatThread(
   fromServer: ChatMessage[],
   initialCursor: string | null,
   me: { name: string; mbti: MbtiType | null },
+  /**
+   * 되돌릴 파일을 잃어버린 실패 말풍선을 받았을 때. 그 자리에서 파일 고르기를 열도록
+   * 화면이 이걸 쓴다. 안 주면 말로만 알린다.
+   *
+   * **ref 로 받는다.** 콜백을 그대로 받으면 그 콜백이 `discard` 를 쓰고, `discard` 는 이
+   * 호출에서 나온다 — 자기 자신을 역참조하게 된다. 부모는 `useRef` 로 한 번 갱신해 둔다.
+   */
+  onLostFile?: { current: (message: ChatMessage) => void },
 ) {
   const [older, setOlder] = useState<ChatMessage[]>([]);
   const [cursor, setCursor] = useState(initialCursor);
@@ -98,9 +129,12 @@ export function useChatThread(
         isMine: true,
         text,
       });
+      // **다시 눌러도 같은 값으로 보낸다.** 서버가 이미 저장했는데 응답이 늦게 온 경우,
+      // 이 값이 같으면 서버가 이미 있는 말을 돌려준다 — 같은 말이 두 개 생기지 않는다.
+      const clientId = clientIdOf(tempId);
 
       try {
-        const result = await sendChatMessage(threadId, text);
+        const result = await sendChatMessage(threadId, text, { clientId });
         if (result.ok) {
           resolvePendingMessage(threadId, tempId, result.message);
         } else {
@@ -121,12 +155,13 @@ export function useChatThread(
    *
    * @returns 다시 해도 소용없는 거절(형식·크기)이면 사람에게 보일 문장. 그때는 말풍선을 남기지 않는다.
    */
-  const pendingFiles = useRef(new Map<string, { file: File; path: string | null }>());
-
   const deliverFile = useCallback(
     async (tempId: string): Promise<string | null> => {
-      const job = pendingFiles.current.get(tempId);
-      if (!job) return null;
+      const job = getPendingFile(tempId);
+      // 되돌릴 파일이 없다. 방을 나갔다 오면 예전엔 `useRef` 가 새 것이 되어 여기서
+      // 빈 글 전송이 되고 아무 반응도 없었다. 모듈 큐로 옮겼지만, 새로고침으로 파일
+      // 객체가 사라졌다면 여기로 온다 — 그때는 화면에 "다시 골라 주세요"를 말하게 한다.
+      if (!job) return FILE_LOST_TEXT;
       if (!job.path) {
         const ticket = await prepareChatAttachment({ name: job.file.name, size: job.file.size, type: job.file.type });
         if (ticket.status !== "ok") return REJECTION_TEXT[ticket.status];
@@ -135,11 +170,17 @@ export function useChatThread(
       }
       const result = await sendChatMessage(threadId, "", { attachment: { path: job.path, name: job.file.name } });
       if (result.ok) {
-        pendingFiles.current.delete(tempId);
+        forgetPendingFile(tempId);
         resolvePendingMessage(threadId, tempId, result.message);
         return null;
       }
-      if (result.rejected && result.rejected !== "missing") return REJECTION_TEXT[result.rejected];
+      // 저장소에서 사라진 파일은 같은 경로로 다시 보내도 안 된다 — 같은 실패를 무한히 반복한다.
+      // 경로를 버려서 다시 고를 수 있게 한다.
+      if (result.rejected === "missing") {
+        forgetPendingFile(tempId);
+        return FILE_LOST_TEXT;
+      }
+      if (result.rejected) return REJECTION_TEXT[result.rejected];
       throw new Error("send failed");
     },
     [threadId],
@@ -155,12 +196,14 @@ export function useChatThread(
         // 낙관적 말풍선 — 아직 서버에 없으므로 드라이브에 올렸는지는 알 수 없다(null).
         attachment: { name: file.name, size: humanSize(file.size), image: file.type.startsWith("image/"), savedHref: null },
       });
-      pendingFiles.current.set(tempId, { file, path: null });
+      setPendingFile(tempId, { file, path: null, threadId });
       try {
         const refused = await deliverFile(tempId);
         if (refused) {
-          pendingFiles.current.delete(tempId);
-          removePendingMessage(threadId, tempId);
+          // 거절은 처음 한 번에만 말풍선을 거둔다. 되돌릴 수 없는 경우(파일이 사라짐)는
+          // 말풍선을 **남겨 두고** 고르라는 말을 한다 — 사라진 말을 조용히 지우면
+          // 사용자는 내가 보낸 게 아니라고 믿게 된다.
+          if (refused !== FILE_LOST_TEXT) removePendingMessage(threadId, tempId);
         }
         return refused;
       } catch {
@@ -173,16 +216,22 @@ export function useChatThread(
 
   const retry = useCallback(
     async (message: ChatMessage) => {
-      if (pendingFiles.current.has(message.id)) {
-        try {
-          await deliverFile(message.id);
-        } catch {
-          // 여전히 실패 — 말풍선은 그대로 두고 다시 누를 수 있게 한다
-        }
+      // **첨부가 붙은 말인데 되돌릴 파일이 없다**면 글 전송으로 넘기면 안 된다. 글은 비어
+      // 있으므로 서버가 조용히 거절하고, 사용자는 아무 일도 일어나지 않는 버튼을 본다.
+      if (message.attachment && !getPendingFile(message.id)) {
+        onLostFile?.current(message);
         return;
       }
       try {
-        const result = await sendChatMessage(threadId, message.text);
+        if (getPendingFile(message.id)) {
+          await deliverFile(message.id);
+          return;
+        }
+        // 실패했던 전송과 **같은** `clientId` 로 다시 보낸다 — 서버에 이미 있으면
+        // 그 말을 돌려주고, 없으면 새로 저장한다.
+        const result = await sendChatMessage(threadId, message.text, {
+          clientId: clientIdOf(message.id),
+        });
         if (result.ok) {
           resolvePendingMessage(threadId, message.id, result.message);
         }
@@ -191,10 +240,26 @@ export function useChatThread(
         // 여전히 실패 — 말풍선은 그대로 두고 다시 누를 수 있게 한다
       }
     },
-    [threadId, deliverFile],
+    [threadId, deliverFile, onLostFile],
   );
 
-  return { messages, send, sendFile, retry, hasMore: cursor !== null, isLoadingMore, loadOlder };
+  /** 실패한 말풍선을 버린다. 지우는 방법이 없으면 아무리 실패해도 그 말이 계속 남는다. */
+  const discard = useCallback((message: ChatMessage) => {
+    forgetPendingFile(message.id);
+    removePendingMessage(threadId, message.id);
+  }, [threadId]);
+
+  return {
+    messages,
+    send,
+    sendFile,
+    retry,
+    discard,
+    fileLostText: FILE_LOST_TEXT,
+    hasMore: cursor !== null,
+    isLoadingMore,
+    loadOlder,
+  };
 }
 
 /** 이만큼 아래에 있으면 "맨 아래를 보고 있다"로 친다. 한 줄 정도의 여유. */

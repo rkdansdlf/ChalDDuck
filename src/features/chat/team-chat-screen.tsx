@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppBar, Body, Btn, Icon, Note, Sheet, Toast, Undecided } from "@/components/ui";
 import type { ChatMessage, Member, SubmissionBox, Team } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
@@ -49,12 +49,22 @@ export function TeamChatScreen({
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
-  const { messages, send, sendFile, retry, hasMore, isLoadingMore, loadOlder } = useChatThread(
+  /**
+   * 되돌릴 파일을 잃어버린 실패 말풍선을 받는 곳.
+   *
+   * hook 에는 **ref** 를 넘긴다. 콜백을 직접 넘기면 그 콜백이 `discard` 를 쓰는데
+   * `discard` 는 같은 호출에서 나온다 — 자기 자신을 역참조하게 되고, 파일 고르기 input
+   * 도 아직 만들어지지 않은 시점의 값이 된다.
+   */
+  const lostFileRef = useRef<(message: ChatMessage) => void>(() => {});
+  const { messages, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder } =
+    useChatThread(
     TEAM_THREAD_ID,
     fromServer,
     initialCursor,
-    me,
-  );
+      me,
+      lostFileRef,
+    );
   const { toast, flash, run } = useAction();
 
   const [picking, setPicking] = useState<ChatMessage | null>(null);
@@ -69,6 +79,16 @@ export function TeamChatScreen({
   // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때나 위로 올려 읽는 중일
   // 때는 움직이지 않는다.
   const { stick } = useStickToBottom(scrollRef, bottomRef, messages.at(-1)?.id);
+
+  // 그 자리에서 파일 고르기를 연다. 말풍선을 지우면 사용자는 "내가 보낸 게 아니다"고
+  // 여길 수 있으므로 **남겨 두고** 길만 다시 열어 준다.
+  useEffect(() => {
+    lostFileRef.current = (lost) => {
+      discard(lost);
+      flash(fileLostText);
+      picker.current?.click();
+    };
+  }, [discard, flash, fileLostText]);
 
   /** 고른 제출함에 이 첨부를 올린다. 같은 첨부는 두 번 올리지 않는다(서버가 막는다). */
   const saveTo = async (box: SubmissionBox) => {
@@ -128,6 +148,7 @@ export function TeamChatScreen({
             message={message}
             showAuthor
             onRetry={retry}
+            onDiscard={discard}
             onSaveToDrive={setPicking}
           />
         ))}

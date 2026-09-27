@@ -23,12 +23,21 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   showAuthor,
   onRetry,
+  onDiscard,
   onSaveToDrive,
 }: {
   message: ChatMessage;
   /** 여러 사람이 있는 방에서만 상대 이름을 보여 준다. */
   showAuthor: boolean;
   onRetry: (message: ChatMessage) => void;
+  /**
+   * 실패한 말을 버린다.
+   *
+   * 이게 없으면 못 가는 실패 말풍선이 화면에 계속 남는다 — 저장소에서 사라진 파일은
+   * 다시 보내도 항상 실패하는데, 지우는 방법이 없어서 사용자는 새로고침할 수밖에 없고
+   * 새로고침하면 대화 내용까지 잃는다.
+   */
+  onDiscard?: (message: ChatMessage) => void;
   /** 이 첨부를 드라이브에 올린다. 단톡방에서만 넘긴다 — DM 은 첨부를 두지 않는다. */
   onSaveToDrive?: (message: ChatMessage) => void;
 }) {
@@ -85,14 +94,26 @@ export const MessageBubble = memo(function MessageBubble({
           ) : null}
 
           {message.status === "failed" ? (
-            <button
-              type="button"
-              onClick={() => onRetry(message)}
-              className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-bold text-[11.5px] leading-none text-err"
-            >
-              <Icon name="circle-alert" size={12} />
-              전송 실패 · 다시 보내기
-            </button>
+            <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+              <button
+                type="button"
+                onClick={() => onRetry(message)}
+                className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-bold text-[11.5px] leading-none text-err"
+              >
+                <Icon name="circle-alert" size={12} />
+                전송 실패 · 다시 보내기
+              </button>
+              {onDiscard ? (
+                <button
+                  type="button"
+                  onClick={() => onDiscard(message)}
+                  className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-medium text-[11.5px] leading-none text-txt-faint"
+                >
+                  <Icon name="x" size={12} />
+                  지우기
+                </button>
+              ) : null}
+            </span>
           ) : (
             <span className="font-medium text-[11.5px] leading-none text-txt-faint">
               {message.status === "sending" ? "보내는 중…" : message.time}

@@ -85,10 +85,12 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
       }
       setError(
         result === "locked"
-          ? "여러 번 틀렸습니다. 10분 뒤에 다시 시도하거나 팀장 승인으로 들어와 주세요."
+          ? "여러 번 틀렸습니다. 10분 뒤에 다시 시도하거나, 지금 바로 팀장 승인을 요청할 수 있어요."
           : result === "no-code"
             ? "이 이름에는 재입장 코드가 없습니다. 팀장 승인으로 들어와 주세요."
-            : "재입장 코드가 맞지 않습니다.",
+            : result === "unknown"
+              ? "이 이름으로는 기록을 찾지 못했습니다. 이름을 다시 확인해 주세요."
+              : "재입장 코드가 맞지 않습니다.",
       );
     } finally {
       setWorking(false);

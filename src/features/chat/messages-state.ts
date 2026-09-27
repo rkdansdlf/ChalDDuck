@@ -35,13 +35,21 @@ function update(threadId: string, transform: (thread: ChatMessage[]) => ChatMess
 
 let tempSeq = 0;
 
-/** 전송을 시작하며 즉시 화면에 얹는 말풍선. 반환값은 이후 상태를 바꿀 때 쓰는 임시 id. */
+/**
+ * 전송을 시작하며 즉시 화면에 얹는 말풍선. 반환값은 이후 상태를 바꿀 때 쓰는 임시 id.
+ *
+ * `sortAt` 은 `null` 로 둔다 — 아직 서버에 도착하지 않았으므로 순서를 정할 시각이 없다.
+ * 서버가 준 시각이 오면 `resolvePendingMessage` 가 채운다.
+ */
 export function addPendingMessage(
   threadId: string,
-  message: Omit<ChatMessage, "id" | "time" | "status">,
+  message: Omit<ChatMessage, "id" | "time" | "status" | "sortAt">,
 ): string {
   const tempId = `pending-${(tempSeq += 1)}`;
-  update(threadId, (thread) => [...thread, { ...message, id: tempId, time: null, status: "sending" }]);
+  update(threadId, (thread) => [
+    ...thread,
+    { ...message, id: tempId, time: null, sortAt: null, status: "sending" },
+  ]);
   return tempId;
 }
 
@@ -49,10 +57,12 @@ export function addPendingMessage(
 export function resolvePendingMessage(
   threadId: string,
   tempId: string,
-  sent: { id: string; time: string },
+  sent: { id: string; time: string; sortAt: string },
 ) {
   update(threadId, (thread) =>
-    thread.map((m) => (m.id === tempId ? { ...m, id: sent.id, time: sent.time, status: "sent" } : m)),
+    thread.map((m) =>
+      m.id === tempId ? { ...m, id: sent.id, time: sent.time, sortAt: sent.sortAt, status: "sent" } : m,
+    ),
   );
 }
 
@@ -62,10 +72,48 @@ export function markPendingFailed(threadId: string, tempId: string) {
 
 /** 보내 봐야 소용없는 말(형식·크기로 거절된 파일)은 말풍선을 거둔다. 이유는 화면이 알린다. */
 export function removePendingMessage(threadId: string, tempId: string) {
+  forgetPendingFile(tempId);
   update(threadId, (thread) => thread.filter((m) => m.id !== tempId));
 }
 
-/** 서버가 준 기록 뒤에 로컬에만 있는 말을 이어 붙인다. 서버에도 같은 id 가 있으면 로컬 쪽은 뺀다. */
+/**
+ * 아직 서버에 붙이지 못한 파일 작업.
+ *
+ * **메모리에 모듈로 둔다 — 컴포넌트의 `useRef` 로 두면 안 된다.** 화면을 나갔다 다시 들어오면
+ * `useRef` 는 새 것이고 말풍선은 모듈 상태라 그대로 남아 있어, "다시 보내기"를 눌렀는데
+ * 되돌릴 파일이 없어 빈 글 전송이 되고 **아무 일도 일어나지 않는** 상태가 된다. 파일 객체는
+ * 메모리에만 있으므로 새로고침 전까지는 그대로 살아 있다.
+ */
+type PendingFile = { file: File; path: string | null; threadId: string };
+const pendingFiles = new Map<string, PendingFile>();
+
+export function setPendingFile(tempId: string, job: PendingFile) {
+  pendingFiles.set(tempId, job);
+}
+
+export function getPendingFile(tempId: string): PendingFile | undefined {
+  return pendingFiles.get(tempId);
+}
+
+export function forgetPendingFile(tempId: string) {
+  pendingFiles.delete(tempId);
+}
+
+/** 서버에도 없고 로컬에도 남은 것 — 새로고침으로 잃어버린 실패 파일처럼, 되돌릴 수 없는 것. */
+export function hasPendingFile(tempId: string): boolean {
+  return pendingFiles.has(tempId);
+}
+
+/**
+ * 서버가 준 기록 뒤에 로컬에만 있는 말을 이어 붙인다. 서버에도 같은 id 가 있으면 로컬 쪽은 뺀다.
+ *
+ * **순서를 맞춘다.** 예전에는 로컬 말을 전부 뒤에 붙였으므로, 내가 보낸 "보내는 중…" 말풍선이
+ * 그 3초 뒤 도착한 상대의 말보다 **아래**에 그려졌다. 대화가 거꾸로 읽힌다.
+ *
+ * 전송 중인 말은 서버 시각이 없다(`time === null`). 그걸 임의의 시각으로 지어 비교하면 또 틀리므로,
+ * **아직 서버에 도착하지 않은 말은 지금 이 순간 이후에 생긴 것**으로 보고 맨 뒤에 둔다. 그래도
+ * 전송에 성공해 시각이 생긴 말은 서버 목록과 같은 기준으로 섞여 그 위치에 놓인다.
+ */
 export function useThreadMessages(threadId: string, fromServer: ChatMessage[]): ChatMessage[] {
   const all = useSyncExternalStore(
     subscribe,
@@ -77,5 +125,12 @@ export function useThreadMessages(threadId: string, fromServer: ChatMessage[]): 
 
   const serverIds = new Set(fromServer.map((m) => m.id));
   const extra = local.filter((m) => !serverIds.has(m.id));
-  return extra.length > 0 ? [...fromServer, ...extra] : fromServer;
+  if (extra.length === 0) return fromServer;
+
+  // **`time` 으로 정렬하지 않는다.** 그건 "21:12" 같은 표시용 문자열이라 `Date.parse` 가
+  // NaN 이고, 비교가 전부 거짓이 되어 정렬이 그대로 무시된다(대화가 뒤집힌 채로 남는다).
+  // 순서를 위한 실제 시각은 `sortAt` 에 ISO 로 실려 온다.
+  const stamp = (m: ChatMessage) =>
+    m.sortAt === null ? Number.POSITIVE_INFINITY : Date.parse(m.sortAt);
+  return [...fromServer, ...extra].sort((a, b) => stamp(a) - stamp(b));
 }

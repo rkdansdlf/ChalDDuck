@@ -50,6 +50,10 @@ export function Panel({ children, s = "card", pad = 16, r = 20, className, style
 
 /**
  * 연속된 항목은 카드를 겹겹이 쌓지 않고 한 면 + 구분선으로 표현한다.
+ *
+ * **빈 목록은 면을 그리지 않는다.** 항목이 없으면 테두리만 남은 빈 상자가 되는데, 그건
+ * "데이터가 로딩 중"이나 "화면이 깨졌다" 고 읽힌다. 빈 상태를 말하고 싶다면 화면이
+ * `empty` 문구로 직접 넣게 한다.
  */
 export function Rows({
   children,
@@ -61,6 +65,7 @@ export function Rows({
   className?: string;
 }) {
   const items = Children.toArray(children);
+  if (items.length === 0) return null;
   return (
     <div className={cn("overflow-hidden rounded-card", SURFACE[s], className)}>
       {items.map((child, i) => (

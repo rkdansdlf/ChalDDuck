@@ -42,15 +42,15 @@ export async function rejoinWithCode(
   teamCode: string,
   name: string,
   code: string,
-): Promise<"ok" | "wrong" | "locked" | "no-code"> {
+): Promise<"ok" | "wrong" | "locked" | "no-code" | "unknown"> {
   const key = attemptKey(teamCode, name);
   if (await isLocked(key)) return "locked";
 
   const member = await findMember(teamCode, name);
-  if (!member) {
-    await countFailure(key);
-    return "wrong";
-  }
+  // **그런 사람이 아니면 실패로 세지 않는다.** 맞힐 코드가 없으니 대충 아무 것이나 찍는 것과
+  // 같다. 예전에도 세었더니, 팀 코드와 이름 아무 쌍이나 알고 있는
+  // 사람이 그 쌍을 10분씩 잠글 수 있었다 — 심지어 자신이 속하지도 않은 팀의.
+  if (!member) return "unknown";
   // 코드를 아직 받지 못한 옛 기록. 팀장 승인으로 보내야 한다.
   if (!member.rejoinCodeHash) return "no-code";
 
@@ -123,12 +123,32 @@ export async function checkRejoinApproval(): Promise<"approved" | "pending" | "r
   if (!claim) return "none";
   if (claim.status === "pending") return "pending";
 
-  store.delete(CLAIM_COOKIE);
-  if (claim.status !== "approved") return "rejected";
+  if (claim.status !== "approved") {
+    store.delete(CLAIM_COOKIE);
+    return "rejected";
+  }
 
-  await db.member.update({ where: { id: claim.memberId }, data: { leftAt: null } });
-  await startSession(claim.memberId, token);
+  // **세션을 심은 다음에 쿠키를 지운다.** 예전에는 지터를 먼저 해서, 그 뒤의
+  // `startSession` 이 한 번이라도 꼬이면 토큰을 잃어버렸다. 그러면 요청은 `approved` 인데
+  // (팀장 목록에도 없으니) 아무도 다시 꺼낼 수 없고, 팀장이 두 번 승인해도 돌아올 수 없는
+  // 사람이 된다. 되돌릴 수 없는 걸 먼저 하는 순서였다.
+  try {
+    // 팀을 나갔다 온 사람 — 재입장은 명단에 다시 세우는 일이다.
+    await db.member.update({ where: { id: claim.memberId }, data: { leftAt: null } });
+    await startSession(claim.memberId, token);
+  } catch (error) {
+    // 중복 폴링이 겹치면 위에서 이미 누군가 처리했다 — 같은 사람이 두 번 만들어지지
+    // 않도록 쿠키는 치워 주고 끝낸다. 그래야 매번 재시도하지 않는다.
+    if ((error as { code?: string }).code === "P2002") {
+      store.delete(CLAIM_COOKIE);
+      return "none";
+    }
+    // 그 밖의 실패는 **토큰을 그대로 둔다.** 다음 폴링이 다시 시도할 수 있어야 한다.
+    throw error;
+  }
+
   await db.memberClaim.delete({ where: { token } });
+  store.delete(CLAIM_COOKIE);
   return "approved";
 }
 

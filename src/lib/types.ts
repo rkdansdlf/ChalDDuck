@@ -403,8 +403,14 @@ export type ChatMessage = {
   /** 내가 보낸 말인지 — 말풍선이 오른쪽에 붙고 색이 달라진다. */
   isMine: boolean;
   text: string;
-  /** 보낸 시각 표시. 아직 못 보낸 메시지는 null. */
+  /** 보낸 시각 표시. 아직 못 보낸 메시지는 null. **사람이 읽는 문자열이라 정렬에 쓸 수 없다.** */
   time: string | null;
+  /**
+   * 순서를 정하기 위한 실제 시각(ISO, UTC). `time` 은 "21:12" 같은 표시용이라
+   * `Date.parse` 가 NaN 이고, dayjs 없이도 비교할 수 있게 따로 실어 보낸다.
+   * 아직 서버에 도착하지 않은 말은 null — 그 말은 지금 이 순간 이후에 생긴 것으로 본다.
+   */
+  sortAt: string | null;
   /** `sending` 은 서버 응답을 기다리는 중인 낙관적 말풍선. */
   status: "sent" | "sending" | "failed";
   /**

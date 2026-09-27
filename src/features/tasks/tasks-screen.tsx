@@ -125,7 +125,12 @@ export function TasksScreen({
 
         <Rows>
           {shown.map((task) => {
-            const status = STATUS[task.status];
+            // **표에 없는 상태는 처음 상태로 되돌린다.** `Task.status` 는 DB 에서
+            // `String` 이고(값을 제한할 수 없어서) `api.ts` 는 그대로 형을 바꿔 붙인다.
+            // 모르는 값이 하나라도 들어오면 `STATUS[...]` 가 `undefined` 가 되고
+            // `status.icon` 을 읽는 순간 이 화면 전체가 깨진다 — 사람이 한 명만 저장한
+            // 값 때문에 할 일 목록이 통째로 못 열린다.
+            const status = STATUS[task.status] ?? STATUS.todo;
             const kind = kindOf(task.kind);
             const done = task.status === "done";
             return (

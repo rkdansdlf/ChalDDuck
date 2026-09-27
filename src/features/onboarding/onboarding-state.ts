@@ -45,33 +45,53 @@ let state: OnboardingState = EMPTY;
 let hydrated = false;
 const listeners = new Set<() => void>();
 
-function load(): OnboardingState {
+/**
+ * 저장소에 들어 있는 초안을 읽는다. **아무것도 없으면 `null`.**
+ *
+ * 빈 상태(`EMPTY`)와 "아무것도 없다" 를 구분해야 한다. 예전에는 둘을 구분하지 않고 빈 상태를
+ * 그대로 썼는데, 그래서 그 위에 이미 만들어 둔 최신 상태(예: `/join` 이 심어 둔 팀 코드)를
+ * 덮어 버렸다. 저장이 막힌 기기(시크릿 모드·저장소 차단·용량 소진)에서는 언제나 이 경로가
+ * 타는데, 그때 이름 조회가 늘 실패해 온보딩 전체가 마지막에 조용히 막혔다.
+ *
+ * 깨진 값은 **버리지 않고 남겨 둔 채** 덮어쓴다 — 값 하나가 이상하다고 팀 코드까지 잃으면
+ * 사용자는 처음부터 다시 적어야 한다. 이상한 값만 각각의 기본값으로 되돌린다.
+ */
+function loadStored(): OnboardingState | null {
+  let raw: string | null = null;
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return EMPTY;
-    const saved = JSON.parse(raw) as Partial<OnboardingState>;
-    return {
-      teamCode: typeof saved.teamCode === "string" ? saved.teamCode : null,
-      name: typeof saved.name === "string" ? saved.name : "",
-      mbti: isMbtiType(saved.mbti) ? saved.mbti : null,
-      picks:
-        Array.isArray(saved.picks) && saved.picks.length === 4
-          ? (saved.picks as QuizPicks)
-          : EMPTY_PICKS,
-      want: saved.want ?? null,
-      veto: saved.veto ?? null,
-    };
+    raw = window.sessionStorage.getItem(STORAGE_KEY);
   } catch {
-    // 저장된 값이 깨졌거나 저장소 접근이 막힌 경우 — 빈 상태로 시작한다
-    return EMPTY;
+    return null;
   }
+  if (!raw) return null;
+
+  let saved: Partial<OnboardingState>;
+  try {
+    saved = JSON.parse(raw) as Partial<OnboardingState>;
+  } catch {
+    return null;
+  }
+
+  return {
+    teamCode: typeof saved.teamCode === "string" ? saved.teamCode : null,
+    name: typeof saved.name === "string" ? saved.name : "",
+    mbti: isMbtiType(saved.mbti) ? saved.mbti : null,
+    picks:
+      Array.isArray(saved.picks) && saved.picks.length === 4
+        ? (saved.picks as QuizPicks)
+        : EMPTY_PICKS,
+    want: (saved.want ?? null) as OnboardingState["want"],
+    veto: (saved.veto ?? null) as OnboardingState["veto"],
+  };
 }
 
+/** 저장소에 쓴다. 막혀도 조용히 넘어간다 — 이번 세션 안에서는 메모리로 계속 동작한다. */
 function persist() {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // 저장이 막혀도 이번 세션 안에서는 메모리 상태로 계속 동작한다
+    // 그 사실을 기억할 필요는 없다. `loadStored()` 가 못 읽으면 `null` 로 말하고, 구독은
+    // 그때 상태를 건드리지 않는다.
   }
 }
 
@@ -84,7 +104,12 @@ function subscribe(onChange: () => void): () => void {
   // 하이드레이션이 어긋나지 않고, 복원 직후 React 가 스냅샷을 다시 읽어 간다.
   if (!hydrated) {
     hydrated = true;
-    state = load();
+    // **저장된 것이 있을 때만** 덮어쓴다. 저장이 막힌 기기(시크릿 모드·저장소 차단·용량
+    // 소진)에서는 아무것도 못 읽는다. 예전에는 여기서 빈 상태를 그대로 써서, 그 위에 이미
+    // 만들어 둔 팀 코드를 지웠다 — 이름 조회가 늘 실패하고 온보딩 전체가 마지막에 조용히
+    // 막혔다. 돌아갈 최신 상태가 있는데 비워 버릴 이유가 없다.
+    const stored = loadStored();
+    if (stored) state = { ...state, ...stored };
   }
   listeners.add(onChange);
   return () => {

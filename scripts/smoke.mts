@@ -343,6 +343,48 @@ console.log("\n기여도 의견 (DB)");
   }
 }
 
+/* ── 대화 순서 ────────────────────────────────────────────── */
+
+console.log("\n대화 순서");
+{
+  // 화면이 실제로 쓰는 규칙(`messages-state.ts` 의 `useThreadMessages` 와 같은 모양).
+  // 서버가 준 `sortAt` (ISO) 기준이고, 아직 도착하지 않은 말(전송 중·실패)은 지금 이후에
+  // 생긴 것으로 본다.
+  //
+  // **메시지 객체를 받는다는 점이 중요하다.** `sortAt` 이 아니라 메시지를 받아야 하는데,
+  // 문자열을 받도록 쓰면 `Date.parse(객체)` 가 NaN 이 되어 비교가 전부 거짓이 되고 정렬이
+  // 조용히 무시된다 — 겉보기엔 통과한 검사가 아무것도 확인하지 못하는 상태가 된다.
+  const stamp = (m: { sortAt: string | null }) =>
+    m.sortAt === null ? Number.POSITIVE_INFINITY : Date.parse(m.sortAt);
+  const order = (ms: Array<{ id: string; sortAt: string | null }>) =>
+    [...ms].sort((a, b) => stamp(a) - stamp(b)).map((m) => m.id);
+
+  const base = Date.parse("2026-09-26T12:00:00.000Z");
+  const at = (s: number) => new Date(base + s * 1000).toISOString();
+
+  check(
+    "전송 중인 말은 그때 도착한 말보다 아래에 온다",
+    order([
+      { id: "상대", sortAt: at(0) },
+      { id: "나(전송 중)", sortAt: null },
+      { id: "상대2", sortAt: at(3) },
+    ]),
+    ["상대", "상대2", "나(전송 중)"],
+  );
+  check(
+    "전송이 끝나면 서버 시각이 생겨 제자리에 놓인다",
+    order([
+      { id: "상대", sortAt: at(0) },
+      { id: "나", sortAt: at(1) },
+      { id: "상대2", sortAt: at(3) },
+    ]),
+    ["상대", "나", "상대2"],
+  );
+  // **표시 문자열("21:12")로 정렬하면 안 된다.** 파싱이 NaN 이라 비교가 전부 거짓이 되고
+  // 정렬이 조용히 무시된다 — 대화가 뒤집힌 채로 남는다.
+  check("표시 문자열은 정렬 키가 되지 못한다", Number.isNaN(Date.parse("14:02")), true);
+}
+
 await db.$disconnect();
 
 console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);

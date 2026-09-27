@@ -28,7 +28,7 @@ export function DmScreen({
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
-  const { messages, send, retry, hasMore, isLoadingMore, loadOlder } = useChatThread(
+  const { messages, send, retry, discard, hasMore, isLoadingMore, loadOlder } = useChatThread(
     thread.id,
     fromServer,
     initialCursor,
@@ -71,7 +71,13 @@ export function DmScreen({
         ) : null}
 
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} showAuthor={false} onRetry={retry} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            showAuthor={false}
+            onRetry={retry}
+            onDiscard={discard}
+          />
         ))}
 
         <div ref={bottomRef} />

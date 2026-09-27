@@ -25,8 +25,19 @@ import type { OnboardingDraft, Team } from "@/lib/types";
 
 const MIN_NAME = 2;
 
+/**
+ * 이름 길이 상한.
+ *
+ * 화면에만 `maxLength` 가 있고 서버에는 없었다. 서버 액션은 화면을 거치지 않고 POST 로
+ * 바로 불릴 수 있으므로, 그 공백으로 수천 글자짜리 이름이 저장될 수 있었다 — 그 이름이
+ * 명단 한 줄, 말풍선, DM 머리말, 알림 제목에 그대로 들어가 화면을 밀어 버린다. 저장된
+ * 이름을 **잘라서** 넣지 않는다: 조회 키(`@@unique([teamId, name])`)와 어긋나면 "같은 이름으로
+ * 온 사람이 다른 사람"이 되어 재입장 문이 영영 풀리지 않는다.
+ */
+const MAX_NAME = 20;
+
 /** `joinTeam` 이 거절한 이유. 화면이 무엇을 고쳐야 하는지 말해 준다. */
-export type JoinBlock = "no-code" | "short-name" | "no-want";
+export type JoinBlock = "no-code" | "short-name" | "long-name" | "no-want";
 
 /**
  * 팀을 만든 브라우저를 기억하는 쿠키.
@@ -67,7 +78,9 @@ export async function findMemberByName(
   name: string,
 ): Promise<{ name: string } | null> {
   const wanted = normalizeName(name);
-  if (wanted.length < MIN_NAME) return null;
+  // 상한을 넘은 이름은 저장될 수 없으므로 조회도 하지 않는다 — 조회가 다만 무의미한 일을
+  // 반복하지 않도록 여기서 끊는다.
+  if (wanted.length < MIN_NAME || wanted.length > MAX_NAME) return null;
 
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return null;
@@ -83,6 +96,9 @@ export async function findMemberByName(
 export async function createTeam(input: { name: string; course: string }): Promise<Team> {
   const name = input.name.trim();
   if (!name) throw new Error("팀 이름을 적어 주세요.");
+  // 팀 이름은 앱바·DM·알림 제목에 들어간다. 화면에만 `maxLength` 가 있고 서버엔 없으면
+  // 아무 한도가 없는 이름이 그대로 나간다.
+  if (name.length > 60) throw new Error("팀 이름이 너무 깁니다. 60자 안으로 적어 주세요.");
 
   const team = await db.team.create({
     data: {
@@ -170,6 +186,7 @@ export async function joinTeam(
 > {
   const name = normalizeName(draft.name);
   if (name.length < MIN_NAME) return { status: "invalid", reason: "short-name" };
+  if (name.length > MAX_NAME) return { status: "invalid", reason: "long-name" };
   if (!isRoleKey(draft.want)) return { status: "invalid", reason: "no-want" };
 
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });

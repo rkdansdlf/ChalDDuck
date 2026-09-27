@@ -390,5 +390,6 @@ function JoinBlockedNote({ reason }: { reason: JoinBlock }) {
 const JOIN_BLOCK_TEXT: Record<JoinBlock, string> = {
   "no-code": "초대 코드를 찾을 수 없습니다. 코드에 오타가 있는지 확인하거나, 다시 초대 코드를 받아 주세요.",
   "short-name": "이름을 두 글자 이상 적어 주세요.",
+  "long-name": "이름이 너무 깁니다. 20자 안으로 적어 주세요.",
   "no-want": "1순위 희망 역할을 골라 주세요.",
 };

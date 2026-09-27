@@ -68,8 +68,22 @@ export function SlotsScreen({
   const noSlots = week.slots.length === 0;
   /** 아직 나 혼자인 팀. 시간표를 더 내도 후보가 생기지 않는다 — 부를 사람이 먼저다. */
   const alone = week.total < 2;
-  /** 전원 가능한 후보가 없는 주 — 10번 화면 흐름. */
+  /**
+   * 전원 가능한 후보가 없는 주 — 10번 화면 흐름.
+   *
+   * **후보가 하나도 없는 경우도 여기에 들어간다.** 예전에는 `!noSlots` 를 요구해서
+   * 후보가 아예 없을 때 이 조건이 거짓이 되었다 — 그러면 "이번 주에 회의가 불가능하다"는
+   * 판단이 가장 확실한 순간에 이 화면이 사라지고, 다음 주로 넘길 수도, 누구에게 물을 수도
+   * 없는 자리가 되게 했다.
+   */
   const noFullWeek = !noSlots && !week.hasFullAvailability;
+  /**
+   * 이번 주에 회의를 잡을 수 없는 상태인가.
+   *
+   * 후보가 하나도 없는 경우를 **반드시 포함**한다. 후보가 없는 가장 확실한 순간에 이
+   * 판단이 거짓이 되면, 다음 주로 넘기는 결정조차 할 수 없는 자리가 된다.
+   */
+  const cannotMeetThisWeek = noSlots || !week.hasFullAvailability;
   const bestAvailable = noSlots ? 0 : Math.max(...week.slots.map((s) => s.available));
 
   /**
@@ -107,7 +121,7 @@ export function SlotsScreen({
               {week.submitted}명 시간표 제출
             </Chip>
             {noSlots ? (
-              <Chip tone="warn" icon="circle-dashed">
+              <Chip tone={cannotMeetThisWeek ? "warn" : "n"} icon="circle-dashed">
                 {alone ? "팀원이 아직 없습니다" : "후보를 아직 만들지 못했습니다"}
               </Chip>
             ) : (
@@ -230,6 +244,29 @@ export function SlotsScreen({
                     </>
                   )}
                 </Note>
+                {/* 후보가 아예 없더라도 이 주를 넘길 수는 있어야 한다. 전원이 겹쳐 버린
+                    가장 무거운 경우에 "다음 주로 넘기자"가 사라져 있었다. */}
+                {alone ? null : (
+                  <Btn
+                    v="ghost"
+                    size="sm"
+                    icon="arrow-right"
+                    disabled={busy.carry}
+                    onClick={() =>
+                      void run(
+                        "carry",
+                        async () => {
+                          await carryOverMeeting();
+                          router.refresh();
+                          return "이번 주 회의를 다음 주로 넘겼습니다";
+                        },
+                        "이월하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+                      )
+                    }
+                  >
+                    이번 주는 넘기고 다음 주에 잡기
+                  </Btn>
+                )}
               </>
             ) : noFullWeek ? (
               <>
@@ -337,9 +374,33 @@ export function SlotsScreen({
                 팀원 초대하러 가기
               </Btn>
             ) : (
-              <Btn full size="lg" icon="calendar-clock" onClick={() => router.push("/schedule")}>
-                내 시간표 넣으러 가기
-              </Btn>
+              /* 후보가 없는데 "넣으러 가기"만 두면, 전원이 겹쳐 버린 팀에게는 유일하게 남은
+                 결정("이번 주는 넘기자")이 화면에 없다. 둘을 함께 둔다. */
+              <div className="flex flex-col gap-2">
+                <Btn full size="lg" icon="calendar-clock" onClick={() => router.push("/schedule")}>
+                  내 시간표 넣으러 가기
+                </Btn>
+                <Btn
+                  full
+                  size="sm"
+                  v="ghost"
+                  icon="arrow-right"
+                  disabled={busy.carry}
+                  onClick={() =>
+                    void run(
+                      "carry",
+                      async () => {
+                        await carryOverMeeting();
+                        router.refresh();
+                        return "이번 주 회의를 다음 주로 넘겼습니다";
+                      },
+                      "이월하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+                    )
+                  }
+                >
+                  이번 주는 넘기고 다음 주에 잡기
+                </Btn>
+              </div>
             )
           ) : (
             <Btn full size="lg" disabled={!picked} onClick={propose} icon="calendar-check">
