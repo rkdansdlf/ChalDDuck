@@ -128,6 +128,13 @@ export type MeetingSlot = {
 export type MeetingProposal = {
   stage: "idle" | "proposed" | "confirmed" | "carried";
   slot: MeetingSlot | null;
+  /**
+   * 이 회의가 있는 날 — "2026-09-30" (`week.ts` 의 날짜 문자열과 같은 형태).
+   *
+   * 후보 행에는 요일("수")로만 남으므로, 이것이 없으면 확정된 회의가 한 달을 넘겨 살아도
+   * "언제인지"를 말할 수 없다. 예전 행은 null 이다.
+   */
+  date: string | null;
   agreed: number;
   /** 아직 응답하지 않은 사람 수. */
   pending: number;

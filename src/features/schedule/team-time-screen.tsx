@@ -22,10 +22,17 @@ import { proposeMeetingAt } from "@/server/actions/meetings";
 import { askForTimetable } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
 import type { MeetingProposal, ScheduleWeek, Team, TeamTimetable } from "@/lib/types";
+import {
+  markAside as markAsideText,
+  markCell,
+  markJump,
+  markText,
+  meetingMark,
+} from "./meeting-cell";
 import { MIN_ATTENDEES } from "./meeting-slots";
 import { ScheduleTabs } from "./schedule-tabs";
 import { dateOfDay, shortDate, type CandidateDate } from "./week";
-import { GRID_COLUMNS, dayTone } from "./week-grid";
+import { GRID_COLUMNS, dayTone, MeetingMarkCell } from "./week-grid";
 import { WeekPicker } from "./week-picker";
 
 /** 칸의 진하기. 숫자와 함께 보여 준다 — 색만으로 몇 명인지 읽게 하지 않는다. */
@@ -121,16 +128,12 @@ export function TeamTimeScreen({
   const availableAt = (day: number, hour: number) =>
     shown.length - (busyAt.get(`${day}:${hour}`)?.size ?? 0);
 
-  /** 올라와 있는 제안이 가리키는 칸. 격자에서 테두리로 짚어 준다. */
-  const proposedCell = useMemo(() => {
-    // 제안은 첫 주의 것이라 다른 주를 볼 때는 짚지 않는다.
-    const slot = proposal.stage === "idle" ? null : proposal.slot;
-    if (!slot) return null;
-    // 제안의 요일이 가리키는 날(오늘부터 7일 안). 보고 있는 주의 날일 때만 짚는다.
-    const at = candidateDays.find((d) => days[d.day] === slot.day);
-    const hour = hours.findIndex((h) => Number(h) === Number(slot.time.slice(0, 2)));
-    return at && at.week === week && hour >= 0 ? { day: at.day, hour } : null;
-  }, [proposal, candidateDays, week, days, hours]);
+  /** 올라와 있는 회의 표식 — 확정·제안 어느 쪽이든 같은 칸을 짚는다. */
+  const mark = useMemo(() => meetingMark(proposal, candidateDays, hours), [proposal, candidateDays, hours]);
+  const markAt = markCell(mark, week);
+  const markLine = markText(mark, days);
+  const markAside = markAsideText(mark, markAt);
+  const jump = markJump(mark, week, weeks);
 
   const toggleMember = (id: string) =>
     setPicked((prev) => {
@@ -272,35 +275,46 @@ export function TeamTimeScreen({
                   {days.map((day, dayIndex) => {
                     const n = availableAt(dayIndex, hourIndex);
                     const level = LEVEL[levelOf(n, shown.length)];
-                    const isProposed =
-                      proposedCell?.day === dayIndex && proposedCell.hour === hourIndex;
+                    const isMark = markAt?.day === dayIndex && markAt.hour === hourIndex;
                     return (
                       <button
                         key={`${day}-${hour}`}
                         type="button"
                         onClick={() => setCell({ day: dayIndex, hour: hourIndex })}
-                        aria-label={`${day} ${hourText(hourIndex)} — ${shown.length}명 중 ${n}명 가능${isProposed ? ", 제안된 시간" : ""}`}
+                        aria-label={`${day} ${hourText(hourIndex)} — ${shown.length}명 중 ${n}명 가능${isMark ? `, ${mark?.stage === "confirmed" ? "확정된 회의" : "제안된 회의"}` : ""}`}
                         className={cn(
                           "relative grid cursor-pointer place-items-center rounded-md border-none p-0 font-mono font-bold text-[13px] leading-none",
                           level.text,
-                          isProposed && "ring-2 ring-ink-900 ring-inset",
                         )}
                         style={{ background: level.bg }}
                       >
                         {n}
-                        {isProposed ? (
-                          <span className="absolute top-0.5 right-0.5 text-ink-900">
-                            <Icon name="calendar-check" size={11} />
-                          </span>
-                        ) : null}
                       </button>
                     );
                   })}
                 </div>
               ))}
+              {/* 회의 표식. 08 과 같은 요소라 두 격자의 표시가 달라지지 않는다. */}
+              <MeetingMarkCell cell={markAt} />
             </div>
           )}
         </Panel>
+
+        {markLine ? (
+          <div className="mb-3.5 flex flex-wrap items-center gap-x-1 gap-y-1">
+            <p className="t-cap-strong keep-all m-0 flex items-center gap-1.5 text-ink-900">
+              <Icon name={mark?.stage === "confirmed" ? "calendar-check" : "clock"} size={13} />
+              회의 {markLine}
+              {jump || !markAside ? null : <span className="text-txt-faint">{markAside}</span>}
+            </p>
+            {/* 회의가 다른 주에 있으면 그 주로 바로 간다 — "이 주가 아닙니다"로만 끝내지 않는다. */}
+            {jump ? (
+              <Btn size="sm" v="ghost" iconRight="arrow-right" onClick={() => setWeek(jump.week)}>
+                {jump.label}에서 보기
+              </Btn>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* 범례 */}
         <div className="mb-3.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
@@ -316,10 +330,10 @@ export function TeamTimeScreen({
               {LEVEL[key].label}
             </span>
           ))}
-          {proposedCell ? (
+          {mark ? (
             <span className="t-cap-strong inline-flex items-center gap-[5px] text-txt-muted">
-              <Icon name="calendar-check" size={12} />
-              제안된 시간
+              <Icon name={mark.stage === "confirmed" ? "calendar-check" : "clock"} size={12} />
+              {mark.stage === "confirmed" ? "확정된 회의" : "제안된 회의"}
             </span>
           ) : null}
         </div>

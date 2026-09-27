@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/cn";
 import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
+import { whenText } from "./meeting-cell";
 import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
@@ -130,14 +131,14 @@ export function SlotsScreen({
         {stage === "confirmed" && proposed ? (
           <ResultPanel
             icon="calendar-check"
-            title={`${proposed.day} ${proposed.time} · ${DEFAULT_MINUTES}분으로 확정`}
+            title={`${whenText(proposal.date, proposed.day, proposed.time)} · ${DEFAULT_MINUTES}분으로 확정`}
             note="응답 마감까지 반대가 없어 동의로 자동 확정됐습니다"
           />
         ) : stage === "proposed" && proposed ? (
           <>
             <Panel s="card" pad={16} r={18} className="mb-3">
               <div className="font-extrabold text-[18px] leading-[1.35] text-txt-strong">
-                {proposed.day} {proposed.time}
+                {whenText(proposal.date, proposed.day, proposed.time)}
               </div>
               <div className="t-cap-strong mt-[3px] text-txt-muted">
                 {DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감 {proposal.respondBy}

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui";
 import { saveMyBusyBlocks } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
-import type { BusyBlock, BusyKind, ScheduleWeek } from "@/lib/types";
+import type { BusyBlock, BusyKind, MeetingProposal, ScheduleWeek } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
 import {
   blocksInWeek,
@@ -28,10 +28,17 @@ import {
   placeBlock,
   sortBlocks,
 } from "./busy-blocks";
+import {
+  markAside as markAsideText,
+  markCell,
+  markJump,
+  markText,
+  meetingMark,
+} from "./meeting-cell";
 import { lookOf, type Reason } from "./reason";
 import { ReasonPicker } from "./reason-picker";
 import { ScheduleTabs } from "./schedule-tabs";
-import { dateOfDay } from "./week";
+import { dateOfDay, type CandidateDate } from "./week";
 import { WeekGrid } from "./week-grid";
 import { WeekPicker } from "./week-picker";
 
@@ -64,6 +71,10 @@ type Editing = { mode: "add"; draft: Draft } | { mode: "edit"; id: string; draft
  *
  * 블록은 **매주** 반복하거나 **그 주에만** 있다. 격자는 한 번에 한 주를 보여 주고
  * (매주 + 그 주에만), 저장은 볼 수 있는 모든 주의 블록을 한꺼번에 한다.
+ *
+ * 확정·제안된 회의는 격자 위에 표시된다 — 회의 시간에 "안 되는 시간"을 칠해 둔 것을
+ * 모른 채 두면 팀원 전체가 그 시간에 회의를 못 가는 셈이 된다. 제안이면 응답 마감도
+ * 함께 보여 준다.
  */
 export function MyTimeScreen({
   kinds,
@@ -71,6 +82,8 @@ export function MyTimeScreen({
   days,
   hours,
   weeks,
+  candidateDays,
+  meeting,
   initialBlocks,
 }: {
   kinds: BusyKind[];
@@ -79,6 +92,10 @@ export function MyTimeScreen({
   hours: string[];
   /** 고를 수 있는 주. 첫 주가 기본. */
   weeks: ScheduleWeek[];
+  /** 회의 후보·제안을 받는 날 — 오늘부터 7일. 회의가 어느 날인지 찾을 때 쓴다. */
+  candidateDays: CandidateDate[];
+  /** 지금 올라와 있는 회의 제안. 없으면 `stage: "idle"`. */
+  meeting: MeetingProposal;
   initialBlocks: BusyBlock[];
 }) {
   const router = useRouter();
@@ -180,6 +197,16 @@ export function MyTimeScreen({
   const sorted = useMemo(() => sortBlocks(blocks), [blocks]);
   const visible = useMemo(() => blocksInWeek(blocks, week), [blocks, week]);
 
+  /** 격자에 얹을 회의 — 보고 있는 주에 있는 칸으로 좁힌다. */
+  const mark = useMemo(
+    () => meetingMark(meeting, candidateDays, hours),
+    [meeting, candidateDays, hours],
+  );
+  const cell = markCell(mark, week);
+  const markLine = markText(mark, days);
+  const markAside = markAsideText(mark, cell);
+  const jump = markJump(mark, week, weeks);
+
   const dirty = useMemo(
     () => blocksShape(blocks) !== blocksShape(initialBlocks),
     [blocks, initialBlocks],
@@ -253,12 +280,28 @@ export function MyTimeScreen({
             dayNotes={days.map((_, i) => dateOfDay(week, i))}
             hours={hours}
             blocks={visible}
+            mark={cell}
             lookFor={look}
             paintLook={look(reason)}
             onPaint={paint}
             onEdit={openEdit}
           />
         </Panel>
+        {markLine ? (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-1 gap-y-1">
+            <p className="t-cap-strong keep-all m-0 flex items-center gap-1.5 text-ink-900">
+              <Icon name={mark?.stage === "confirmed" ? "calendar-check" : "clock"} size={13} />
+              회의 {markLine}
+              {jump || !markAside ? null : <span className="text-txt-faint">{markAside}</span>}
+            </p>
+            {/* 회의가 다른 주에 있으면 그 주로 바로 간다 — "이 주가 아닙니다"로만 끝내지 않는다. */}
+            {jump ? (
+              <Btn size="sm" v="ghost" iconRight="arrow-right" onClick={() => setWeek(jump.week)}>
+                {jump.label}에서 보기
+              </Btn>
+            ) : null}
+          </div>
+        ) : null}
         <p className="t-cap keep-all m-0 mb-3 text-txt-muted">
           빈 칸을 누르면 1시간, 누른 채 위아래로 끌면 여러 시간이 한 번에 들어갑니다(터치는 길게 누른 뒤
           끌기). 칠한 시간을 누르면 고치거나 지울 수 있습니다. 점선 테두리는 그 주에만 있는 시간입니다.
@@ -292,6 +335,13 @@ export function MyTimeScreen({
             <span className="size-2.5 rounded-[3px] border border-line bg-cr-100" />
             가능
           </span>
+          {/* 칸 위 아이콘이 무엇인지 — 범례에 없으면 물음표로 남는다. */}
+          {mark ? (
+            <span className="t-cap-strong inline-flex items-center gap-[5px] text-txt-muted">
+              <Icon name={mark.stage === "confirmed" ? "calendar-check" : "clock"} size={12} />
+              {mark.stage === "confirmed" ? "확정된 회의" : "제안된 회의"}
+            </span>
+          ) : null}
         </div>
 
         <SecTitle note="눌러서 고칠 수 있습니다">등록한 불가 시간 {blocks.length}건</SecTitle>

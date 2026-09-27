@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { whenText } from "@/features/schedule/meeting-cell";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
 import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
@@ -48,7 +49,9 @@ export async function proposeMeeting(slotId: string): Promise<void> {
   const slot = await db.meetingSlot.findFirst({ where: { id: slotId, teamId: me.teamId } });
   if (!slot) throw new Error("회의 시간 후보를 찾을 수 없습니다.");
 
-  await startProposal(me, slot);
+  // 후보 행에는 요일만 있다. 날짜는 후보 기간(오늘부터 7일)에서 요일로 되짚는다 —
+  // 7일 안에 각 요일은 딱 한 번이라 "수"가 어느 수요일인지 하나로 정해진다.
+  await startProposal(me, slot, candidateDateOf(slot.day)?.date ?? null);
 }
 
 /**
@@ -104,7 +107,7 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
     existing ??
     (await db.meetingSlot.create({ data: { ...computed, teamId: me.teamId, weekKey: "this" } }));
 
-  await startProposal(me, slot);
+  await startProposal(me, slot, date);
 }
 
 /**
@@ -117,10 +120,14 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
  * 방어선은 DB 다. `MeetingProposal.activeKey` 유일 인덱스가 진행 중인 결정 하나를 지킨다
  * (`IceRound.activeKey` 와 같은 방식). 여기서 먼저 확인하는 건 화면에 즉시 이해되는
  * 말을 주기 위해서이고, 실제로는 인덱스가 두 사람이 동시에 눌렀을 때를 막는다.
+ *
+ * `date` 를 함께 저장한다 — 후보 행에는 요일("수")로만 남으므로, 이때 붙여 두지 않으면
+ * 확정이 한 달을 넘겨 살아 있어도 "언제인지"를 아무 화면에서도 말할 수 없다.
  */
 async function startProposal(
   me: { id: string; name: string; teamId: string },
   slot: { id: string; day: string; time: string },
+  date: string | null,
 ): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
 
@@ -136,6 +143,7 @@ async function startProposal(
           teamId: me.teamId,
           slotId: slot.id,
           proposedById: me.id,
+          date,
           respondBy,
           activeKey: me.teamId,
         },
@@ -156,7 +164,7 @@ async function startProposal(
     to: await teamMemberIds(me.teamId),
     kind: "meeting",
     title: `${me.name}님이 회의 시간을 제안했습니다`,
-    body: `${slot.day} ${slot.time} · 마감까지 반대가 없으면 확정됩니다`,
+    body: `${whenText(date, slot.day, slot.time)} · 마감까지 반대가 없으면 확정됩니다`,
     href: "/schedule/slots",
     actorId: me.id,
   });

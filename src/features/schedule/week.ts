@@ -47,6 +47,11 @@ export function isWeekKey(value: unknown): value is WeekKey {
   return format(parse(value)) === value && mondayOf(value) === value;
 }
 
+/** 그 날짜가 월요일로부터 며칠인지 — 0 = 월 … 6 = 일. `SCHEDULE_DAYS` 의 인덱스. */
+export function dayOf(key: WeekKey): number {
+  return Math.round((parse(key).getTime() - parse(mondayOf(key)).getTime()) / DAY);
+}
+
 /** 지금 볼 수 있는 주들 — 오늘이 속한 주(월~일)부터. 첫 주가 기본으로 보인다. */
 export function scheduleWeeks(now: Date = new Date()): WeekKey[] {
   const first = mondayOf(todayInSeoul(now));
@@ -76,7 +81,7 @@ export function candidateDates(now: Date = new Date()): CandidateDate[] {
   return Array.from({ length: CANDIDATE_DAYS }, (_, i) => {
     const date = addDays(today, i);
     const week = mondayOf(date);
-    return { date, week, day: Math.round((parse(date).getTime() - parse(week).getTime()) / DAY) };
+    return { date, week, day: dayOf(date) };
   });
 }
 

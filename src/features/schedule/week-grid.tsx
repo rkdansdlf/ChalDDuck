@@ -5,6 +5,7 @@ import { Icon } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { BusyBlock } from "@/lib/types";
 import { blockAt } from "./busy-blocks";
+import type { MeetingCell } from "./meeting-cell";
 import type { ReasonLook } from "./reason";
 
 /**
@@ -20,10 +21,46 @@ export function dayTone(day: number) {
 
 /** 손가락을 이만큼 누르고 있어야 칠하기가 시작된다. 그보다 짧게 움직이면 스크롤이다. */
 const LONG_PRESS_MS = 320;
+
 /** 누른 채 이보다 멀리 움직이면 칠하기가 아니라 스크롤로 본다. */
 const MOVE_TOLERANCE = 8;
 
 type Drag = { day: number; anchor: number; current: number };
+
+/**
+ * 확정·제안된 회의를 칸 위에 얹는다.
+ *
+ * **빈칸 위에 겹쳐 그리는 요소**라 블록(안 되는 시간)보다 위에 올린다 — 회의 시간에
+ * "안 되는 시간"을 적어 둔 경우 둘 다 보여야 하기 때문이다. 그래서 08 에서도 칸 버튼이
+ * 아니라 이 요소를 겹친다(칸 버튼에 테두리를 그리면 블록에 가려진다).
+ *
+ * 기다리는 중(`proposed`)과 정해진(`confirmed`)을 **점선/실선**으로 나눈다 — 이 화면은
+ * 이미 "이 주만" 블록을 점선으로 그린다. 색이 아니라 선으로 구분하고, 아이콘과 아래 한 줄
+ * 설명이 함께 있으므로 어느 쪽인지 색 없이도 읽힌다.
+ */
+export function MeetingMarkCell({ cell }: { cell: MeetingCell | null }) {
+  if (!cell) return null;
+  const settled = cell.stage === "confirmed";
+
+  return (
+    <span
+      // 그림일 뿐이다 — 아래 한 줄 설명이 글로 말해 주고, 칸 누르기는 그대로 칠하기로 남아 있어야 한다.
+      aria-hidden
+      className={cn(
+        "pointer-events-none relative z-30 rounded-md",
+        settled
+          ? "ring-2 ring-ink-900 ring-inset"
+          : "outline-2 outline-dashed outline-ink-900 -outline-offset-2",
+      )}
+      style={{ gridRow: cell.hour + 2, gridColumn: cell.day + 2 }}
+    >
+      {/* 칸이 약 42px 라 단어는 못 넣고 아이콘만 둔다. 말은 격자 아래 한 줄에 쓴다. */}
+      <span className="absolute top-0.5 right-0.5 grid size-4 place-items-center rounded-[5px] bg-card text-ink-900 ring-1 ring-line">
+        <Icon name={settled ? "calendar-check" : "clock"} size={11} />
+      </span>
+    </span>
+  );
+}
 
 /**
  * 08 내 시간표의 주간 격자.
@@ -41,6 +78,7 @@ export function WeekGrid({
   dayNotes,
   hours,
   blocks,
+  mark,
   lookFor,
   paintLook,
   onPaint,
@@ -51,6 +89,8 @@ export function WeekGrid({
   dayNotes?: string[];
   hours: string[];
   blocks: BusyBlock[];
+  /** 확정·제안된 회의가 있는 칸. 없으면 그리지 않는다. */
+  mark?: MeetingCell | null;
   /** 블록의 이름·배경. 기본 사유와 직접 입력 사유가 같은 규칙으로 그려지도록 부르는 쪽이 넘긴다. */
   lookFor: (block: BusyBlock) => ReasonLook;
   /** 지금 칠할 사유의 모양 — 끄는 동안 미리 보여 준다. */
@@ -248,6 +288,9 @@ export function WeekGrid({
           );
         }),
       )}
+
+      {/* 회의 표식. 블록보다 위에 올려야 "회의 시간에 안 되는 시간을 적어 둔" 경우에도 둘 다 보인다. */}
+      <MeetingMarkCell cell={mark ?? null} />
 
       {/* 칠해진 블록. 여러 시간이 한 덩어리로 보여야 목록과 같은 단위로 읽힌다.
           "이 주만" 블록은 매주 블록 위에 그린다(뒤에 그리고 z 를 한 칸 높인다). */}

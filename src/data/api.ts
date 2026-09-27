@@ -516,6 +516,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     return {
       stage: "idle",
       slot: null,
+      date: null,
       agreed: 0,
       pending: 0,
       against: 0,
@@ -547,6 +548,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
           blockedBy: proposal.slot.blockedBy,
         }
       : null,
+    date: proposal.date,
     agreed,
     against,
     pending: Math.max(0, total - proposal.responses.length),
