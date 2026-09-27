@@ -21,9 +21,10 @@ import {
   type IconName,
 } from "@/components/ui";
 import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { acceptRoleDraw, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
-import { applyMyChoices, wantersOf } from "./roster-model";
+import { NO_DRAW_POOL_TEXT, applyMyChoices, drawPoolOf, wantersOf } from "./roster-model";
 
 /**
  * 07 팀 역할 조율.
@@ -54,11 +55,11 @@ export function RosterScreen({
   const router = useRouter();
   const onboarding = useOnboarding();
   const { draws, rejected } = negotiation;
+  const { toast, busy, flash, run } = useAction();
 
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
   /** 서버 응답을 기다리는 동안 고른 도구 — 다 오면 바로 연출로 넘어간다. */
   const [rollingTool, setRollingTool] = useState<RandomTool | null>(null);
   /** 연출 중인 결과 — 서버가 이미 정한 당첨자를 쥐고 있다가 연출이 끝나면 확정 대기로 넘긴다. */
@@ -83,11 +84,6 @@ export function RosterScreen({
 
   /** 서버 명단의 내 이름. 당첨자(서버가 준 이름)와 견줄 때는 로컬 선택을 얹지 않은 값을 쓴다. */
   const myName = roster.find((m) => m.isMe)?.name ?? null;
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
-  };
 
   const inviteUrl =
     typeof window === "undefined" ? "" : `${window.location.origin}/join?code=${team.code}`;
@@ -119,13 +115,21 @@ export function RosterScreen({
     }
   };
 
-  /** 같은 역할을 1순위로 고른 사람 중 이미 거절한 사람을 뺀 후보 — 서버의 후보 계산과 같은 규칙. */
-  const candidatePoolFor = (role: RoleKey): DrawCandidate[] => {
-    const wanters = wantersOf(members, role);
-    const excluded = rejected[role] ?? [];
-    const pool = wanters.filter((m) => !excluded.includes(m.name));
-    return (pool.length > 0 ? pool : wanters).map((m) => ({ name: m.name, mbti: m.mbti }));
+  /**
+   * 이미 거절한 사람. `rejected` 는 이름으로 내려오지만 규칙 함수는 id 로 비교한다 —
+   * 이름은 바꿀 수 있는 값이라 두 번 거르면 다른 사람으로 새는 이유가 된다.
+   */
+  const excludedIdsOf = (role: RoleKey) => {
+    const names = new Set(rejected[role] ?? []);
+    return members.filter((m) => names.has(m.name)).map((m) => m.id);
   };
+
+  /** 서버의 `drawPoolOf` 와 같은 규칙으로 연출에 쓸 후보를 고른다. */
+  const candidatePoolFor = (role: RoleKey): DrawCandidate[] =>
+    drawPoolOf(wantersOf(members, role), role, new Set(excludedIdsOf(role))).pool.map((m) => ({
+      name: m.name,
+      mbti: m.mbti,
+    }));
 
   /**
    * 당첨자는 서버가 고른다 — 화면에서 뽑아 보내면 누구나 자기를 적어 보낼 수 있다.
@@ -133,21 +137,31 @@ export function RosterScreen({
    */
   const handleDraw = async (tool: RandomTool) => {
     if (!drawingFor) return;
-    const pool = candidatePoolFor(drawingFor);
+    const role = drawingFor;
+    const pool = candidatePoolFor(role);
     setRollingTool(tool);
-    const result = await drawForRole(drawingFor, tool.name);
+    // 예전에는 `setRollingTool(null)` 이 `await` 밖에 있어서, 서버가 거절하면 값이
+    // 남았다. 그 상태에서 시트도 닫을 수 없고(아래 `onClose` 가 rollers 를 본다) 뒤로
+    // 가도 없어서, 스피너에서 영영 갇혔다. 이제 실패해도 반드시 풀린다.
+    await run(
+      "draw",
+      async () => {
+        const result = await drawForRole(role, tool.name);
+        if (result.status !== "ok") {
+          setDrawingFor(null);
+          router.refresh();
+          flash(
+            result.status === "empty"
+              ? NO_DRAW_POOL_TEXT[result.noPool]
+              : "이미 추첨 결과가 나와 있습니다 — 당첨자가 거절해야 다시 뽑을 수 있습니다",
+          );
+          return;
+        }
+        setDrawResult({ tool, pool, winner: result.winner });
+      },
+      "추첨하지 못했습니다. 다시 시도해 주세요.",
+    );
     setRollingTool(null);
-    if (result.status !== "ok") {
-      setDrawingFor(null);
-      router.refresh();
-      flash(
-        result.status === "empty"
-          ? "추첨할 사람이 없습니다"
-          : "이미 추첨 결과가 나와 있습니다 — 당첨자가 거절해야 다시 뽑을 수 있습니다",
-      );
-      return;
-    }
-    setDrawResult({ tool, pool, winner: result.winner });
   };
 
   /** 연출이 끝난 뒤 시트를 닫고 수락 대기 상태로 넘긴다. */
@@ -239,14 +253,23 @@ export function RosterScreen({
                     {/* 수락·거절은 당첨자 본인만 한다 — 서버도 같은 규칙으로 막는다. */}
                     {result.winner === myName ? (
                       <div className="flex flex-wrap gap-[7px]">
+                        {/* 둘 다 `disabled` 로 잠근다 — 수락과 거절이 거의 동시에 닿으면
+                            서버의 조건부 갱신 중 하나가 0 행을 맞고도 성공한 척한다. */}
                         <Btn
                           size="sm"
                           icon="check"
-                          onClick={async () => {
-                            const answer = await acceptRoleDraw(role.key);
-                            router.refresh();
-                            flash(answer === "ok" ? "확정되었습니다" : "이미 정리된 추첨입니다");
-                          }}
+                          disabled={busy.answer}
+                          onClick={() =>
+                            void run(
+                              "answer",
+                              async () => {
+                                const answer = await acceptRoleDraw(role.key);
+                                router.refresh();
+                                return answer === "ok" ? "확정되었습니다" : "이미 정리된 추첨입니다";
+                              },
+                              "수락하지 못했습니다. 다시 시도해 주세요.",
+                            )
+                          }
                         >
                           수락하기
                         </Btn>
@@ -254,15 +277,20 @@ export function RosterScreen({
                           size="sm"
                           v="ghost"
                           icon="x"
-                          onClick={async () => {
-                            const answer = await rejectRoleDraw(role.key);
-                            router.refresh();
-                            flash(
-                              answer === "ok"
-                                ? "다음 추첨에서 제외됩니다 — 팀원이 다시 추첨할 수 있습니다"
-                                : "이미 정리된 추첨입니다",
-                            );
-                          }}
+                          disabled={busy.answer}
+                          onClick={() =>
+                            void run(
+                              "answer",
+                              async () => {
+                                const answer = await rejectRoleDraw(role.key);
+                                router.refresh();
+                                return answer === "ok"
+                                  ? "다음 추첨에서 제외됩니다 — 팀원이 다시 추첨할 수 있습니다"
+                                  : "이미 정리된 추첨입니다";
+                              },
+                              "거절하지 못했습니다. 다시 시도해 주세요.",
+                            )
+                          }
                         >
                           거절하기
                         </Btn>

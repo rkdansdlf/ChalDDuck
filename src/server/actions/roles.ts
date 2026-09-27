@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { RANDOM_TOOLS, ROLES } from "@/data/catalog";
+import { drawPoolOf, toRoleKey, type NoDrawPool } from "@/features/roles/roster-model";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 import type { RoleKey } from "@/lib/types";
@@ -22,29 +23,32 @@ import type { RoleKey } from "@/lib/types";
 const ROLE_KEYS = new Set<string>(ROLES.map((r) => r.key));
 const TOOL_NAMES = new Set<string>(RANDOM_TOOLS.map((t) => t.name));
 
-/** 그 역할을 1순위로 고른 지금 팀원에서 이미 거절한 사람을 뺀 후보. */
+/**
+ * 그 역할을 1순위로 고른 지금 팀원에서 **Veto 한 사람과 이미 거절한 사람**을 뺀 후보.
+ * 규칙 자체는 `roster-model` 의 `drawPoolOf` 다 — 07 화면의 연출 후보와 여기서
+ * 어긋나면 룰렛이 엉뚱한 사람을 가리키므로 한 함수를 함께 쓴다.
+ */
 async function candidatesFor(teamId: string, role: RoleKey) {
   const [wanters, rejections] = await Promise.all([
     // 팀을 나간 사람은 뽑지 않는다 — 뽑혀도 수락할 사람이 없다.
     db.member.findMany({
       where: { teamId, wantRole: role, leftAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, vetoRole: true },
     }),
     db.roleRejection.findMany({ where: { teamId, role }, select: { memberId: true } }),
   ]);
 
-  const excluded = new Set(rejections.map((r) => r.memberId));
-  const remaining = wanters.filter((w) => !excluded.has(w.id));
-
-  // 전원이 거절해 후보가 비면 제외를 무시하고 전체에서 다시 뽑는다 —
-  // 아무도 못 뽑는 상태로 막히는 것보다 낫다.
-  return remaining.length > 0 ? remaining : wanters;
+  return drawPoolOf(
+    wanters.map((w) => ({ id: w.id, name: w.name, veto: toRoleKey(w.vetoRole) })),
+    role,
+    new Set(rejections.map((r) => r.memberId)),
+  );
 }
 
 export type DrawResult =
   | { status: "ok"; winner: string }
-  /** 뽑을 사람이 없다. */
-  | { status: "empty" }
+  /** 뽑을 사람이 없다. 왜 없는지는 `noPool` 이 말해 준다. */
+  | { status: "empty"; noPool: NoDrawPool }
   /** 이미 결과가 나와 있다(수락 대기 또는 확정). 거절돼야 다시 뽑을 수 있다. */
   | { status: "settled" };
 
@@ -66,8 +70,8 @@ export async function drawForRole(role: RoleKey, toolName: string): Promise<Draw
   });
   if (existing) return { status: "settled" };
 
-  const pool = await candidatesFor(me.teamId, role);
-  if (pool.length === 0) return { status: "empty" };
+  const { pool, noPool } = await candidatesFor(me.teamId, role);
+  if (pool.length === 0) return { status: "empty", noPool: noPool ?? "no-wanters" };
 
   const winner = pool[Math.floor(Math.random() * pool.length)];
 
@@ -106,20 +110,29 @@ export async function acceptRoleDraw(role: RoleKey): Promise<AnswerResult> {
   const { draw, result } = await myPendingDraw(me.teamId, role, me.id);
   if (!draw) return result;
 
-  await db.$transaction([
+  // 두 동작이 **순서를 바꿔 가며 끼어들 수 있다.** 수락과 거절 버튼은 나란히 있고 둘 다
+  // 눌린 채로 두고 갈 수 있다. 거절이 먼저 끝나면 추첨 행은 지워졌는데, 수락의 조건부
+  // 갱신은 0행을 맞으면서도 아래 제출함 주인은 그대로 자기 이름으로 덮어쓴다 — 거절한
+  // 사람에게 담당자가 넘어가는데 화면에는 "확정되었습니다" 만 떴다.
+  // 그래서 **몇 행이 실제로 바뀌었는지** 보고, 0행이면 거절한 쪽의 승리를 따른다.
+  const accepted = await db.$transaction(async (tx) => {
     // 확인한 사이에 바뀌었을 수 있어 조건에 당첨자와 대기 상태를 다시 건다.
-    db.roleDraw.updateMany({
+    const claimed = await tx.roleDraw.updateMany({
       where: { id: draw.id, winnerId: me.id, accepted: false },
       data: { accepted: true },
-    }),
+    });
+    if (claimed.count === 0) return false;
+
     // 역할이 정해지면 그 역할의 제출함 주인도 정해진다 — 드라이브가 "담당자 미정"으로
     // 남아 있으면 누가 낼 칸인지 알 수 없다.
-    db.submissionBox.updateMany({
+    await tx.submissionBox.updateMany({
       where: { teamId: me.teamId, role },
       data: { ownerId: me.id },
-    }),
-  ]);
+    });
+    return true;
+  });
 
+  if (!accepted) return "gone";
   revalidatePath("/team");
   revalidatePath("/drive", "layout");
   return "ok";
@@ -132,16 +145,25 @@ export async function rejectRoleDraw(role: RoleKey): Promise<AnswerResult> {
   const { draw, result } = await myPendingDraw(me.teamId, role, me.id);
   if (!draw) return result;
 
-  await db.$transaction([
-    db.roleRejection.upsert({
+  const rejected = await db.$transaction(async (tx) => {
+    // 이미 수락된 결과는 거절로 뒤집지 않는다 — 거절은 "다시 뽑아 달라" 는 뜻이지
+    // 확정된 것을 빼아내라는 뜻이 아니다.
+    const removed = await tx.roleDraw.deleteMany({
+      where: { id: draw.id, winnerId: me.id, accepted: false },
+    });
+    if (removed.count === 0) return false;
+
+    await tx.roleRejection.upsert({
       where: {
         teamId_role_memberId: { teamId: me.teamId, role, memberId: me.id },
       },
       update: {},
       create: { teamId: me.teamId, role, memberId: me.id },
-    }),
-    db.roleDraw.deleteMany({ where: { id: draw.id, winnerId: me.id, accepted: false } }),
-  ]);
+    });
+    return true;
+  });
+
+  if (!rejected) return "gone";
 
   revalidatePath("/team");
   return "ok";
