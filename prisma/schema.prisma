@@ -87,6 +87,8 @@ model Member {
   pokesSent       Poke[]
   notifications   Notification[]    @relation("NotifyTo")
   notificationsBy Notification[]    @relation("NotifyBy")
+  /// 이 브라우저(단말)의 푸시 구독들. 기기 하나가 여러 개일 수 있다(여러 탭·프로필).
+  pushSubscriptions PushSubscription[]
   proposalsMade   MeetingProposal[]
   meetingResponses MeetingResponse[]
   roleDraws       RoleDraw[]
@@ -209,6 +211,31 @@ model Notification {
   actor  Member? @relation("NotifyBy", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([memberId, readAt])
+}
+
+/// 이 단말의 푸시 구독.
+///
+/// 앱 안 알림함과 **같은 알림을** 밖에서도 받는 통로다. 앱을 닫아 둔 사이 오는 일은
+/// 여기로만 닿는다 — 그래서 이 앱에서 가장 조심해야 할 저장소다.
+///
+/// **`endpoint` 가 구독의 신분이다.** 브라우저가 만들어 주는 주소(푸시 서비스의 URL)라
+/// 유일하게 두고, 같은 단말이 다시 구독하면 새 행을 쌓지 않고 그 주인을 바꾼다 — 한 사람이
+/// 기기를 넘겨 쓰면 그 뒤로 알림은 새 사람에게 가야 한다.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  /// 이 구독으로 알림을 받는 사람.
+  memberId  String
+  /// 푸시 서비스가 준 단말 주소. 그대로 발신할 때 쓴다.
+  endpoint  String   @unique
+  /// 발신 암호화 키(사용자 공개키 p256dh).
+  p256dh    String
+  /// 발신 인증값(auth).
+  auth      String
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
 }
 
 /// 안 되는 시간 한 칸. 표시하지 않은 시간은 가능한 시간으로 본다.

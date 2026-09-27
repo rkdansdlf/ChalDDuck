@@ -1,11 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { AppBar, Body, Btn, Chip, Icon, Note, Panel, Rows, SecTitle } from "@/components/ui";
+import { useEffect, useState } from "react";
+import { AppBar, Body, Btn, Chip, Icon, Note, Panel, Rows, SecTitle, Toast } from "@/components/ui";
 import type { AppNotification } from "@/lib/types";
 import { markNotificationsRead, pollNotifications } from "@/server/actions/notifications";
 import { usePoll } from "@/lib/use-poll";
+import { useAction } from "@/lib/use-action";
+import { pushBlock, pushOn, type PushState } from "./push-model";
+import { readPushState, turnOffPush, turnOnPush, type PushTurnOn } from "./push-client";
 
 /**
  * 알림함.
@@ -13,7 +16,9 @@ import { usePoll } from "@/lib/use-poll";
  * 팀플에서 놓치는 일은 대부분 "나한테 온 줄 몰랐다"에서 온다. 콕 찌르기·회의 제안·정정
  * 요청은 전부 "알린다"고 적혀 있었지만, 앱을 열어 그 화면까지 가야만 보였다.
  *
- * 푸시는 아직 없다. 먼저 **앱을 열면 반드시 보이는 자리**부터 만든다.
+ * 푸시는 그 위에 얹은 길이다 — **앱을 열면 보이는 자리를 먼저 지켜야** 아래의 "닫아 둔
+ * 사이"가 통할 의미가 있다. 켤 수 없는 기기(아이폰 설치 전, 서버 키 없음)도 그 사실을
+ * 말하고 끝낸다. 조용히 아무것도 하지 않는 버튼은 쓰이지 않는다.
  */
 
 /** 알림 종류마다 다른 아이콘·색. 상태는 색만으로 구분하지 않는다는 규칙대로 글도 함께 있다. */
@@ -38,9 +43,42 @@ const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; lab
  */
 const NOTIFICATION_POLL_MS = 20_000;
 
-export function NotificationsScreen({ items }: { items: AppNotification[] }) {
+/** 켜기·끄기가 끝난 뒤 뭐라고 말할지. 성공했다고 말할 수 없는 경우도 코드 그대로 둔다. */
+const TURN_ON_TEXT: Record<PushTurnOn, string> = {
+  on: "이제 앱을 닫아도 알림이 옵니다",
+  denied: "브라우저가 알림을 막았습니다. 브라우저 설정에서 허용해 주세요.",
+  unsupported: "이 브라우저는 밖으로 알림을 보낼 수 없습니다.",
+  "not-configured": "서버에 푸시 키가 없어 켤 수 없습니다.",
+  "needs-install": "아이폰·아이패드에서는 이 앱을 홈 화면에 설치해야 알림이 옵니다.",
+  invalid: "이 브라우저가 준 구독을 읽지 못했습니다. 다시 시도해 주세요.",
+  failed: "알림을 켜지 못했습니다. 다시 시도해 주세요.",
+};
+
+export function NotificationsScreen({
+  items,
+  push,
+}: {
+  items: AppNotification[];
+  push: { configured: boolean; subscribed: boolean };
+}) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
+  const { toast, busy, run } = useAction();
+  const pushBusy = busy.push === true;
+
+  // 브라우저가 아는 값(권한·설치 여부·구독)이 서버 값에 얹힌 전체 상태.
+  // 아직 못 읽었다면 null — 읽기 전에는 "꺼짐"이라고 말하지 않는다(그건 거짓말이다).
+  const { configured, subscribed } = push;
+  const [pushState, setPushState] = useState<PushState | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void readPushState({ configured, subscribed }).then((next) => {
+      if (alive) setPushState(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [configured, subscribed]);
 
   const [polled, setPolled] = useState<AppNotification[] | null>(null);
   // 내가 읽었으면 서버가 준 값을 따른다 — 폴링이 그 위에 얹으면 방금 지운 것이 되살아난다.
@@ -66,6 +104,23 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
     else router.refresh();
   };
 
+  const block = pushState ? pushBlock(pushState) : null;
+  const on = pushState ? pushOn(pushState) : false;
+
+  // 켜기·끄기를 한 뒤의 상태를 **직접 다시 읽어** 화면에 반영한다. 성공 문구와 상태 표시가
+  // 어긋나면(알림은 안 오는데 켜짐이라고 표시) 사용자는 어느 쪽을 믿어야 할지 모른다.
+  const togglePush = () =>
+    run(
+      "push",
+      async () => {
+        const code = on ? await turnOffPush() : await turnOnPush();
+        setPushState(await readPushState({ configured, subscribed }));
+        if (code === "off") return "알림을 껐습니다. 앱을 열면 알림함에서 계속 볼 수 있습니다";
+        return TURN_ON_TEXT[code];
+      },
+      "알림 설정을 바꾸지 못했습니다. 다시 시도해 주세요.",
+    );
+
   return (
     <>
       <AppBar
@@ -75,6 +130,45 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
       />
 
       <Body dense>
+        <Panel s="card" pad={14} r={16} className="mb-3.5">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="flex-none text-txt-muted">
+              <Icon name="signal" size={17} />
+            </span>
+            <SecTitle className="m-0 flex-1" note="앱을 닫아 둔 사이에 오는 일">
+              앱 밖에서도 받기
+            </SecTitle>
+            {/* 상태는 색 점이 아니라 아이콘과 글로 함께 말한다. */}
+            {pushState ? (
+              <Chip tone={on ? "ok" : "n"} icon={on ? "circle-check" : "bell"}>
+                {on ? "켜짐" : "꺼짐"}
+              </Chip>
+            ) : null}
+          </div>
+
+          <p className="t-note keep-all mt-0 mb-2.5 text-txt-muted">
+            {on
+              ? "이 브라우저는 앱을 닫아도 알림이 옵니다. 같은 알림이 알림함에도 쌓입니다."
+              : "켜 두면 이 브라우저에서 앱을 닫아도 알림이 옵니다. 끄더라도 이 알림함은 그대로 채워집니다."}
+          </p>
+
+          {block ? (
+            <Note tone="info" icon="info" className="mb-2.5">
+              {block.text}
+            </Note>
+          ) : null}
+
+          <Btn
+            full
+            v={on ? "outline" : "primary"}
+            icon={on ? "x" : "bell"}
+            disabled={pushBusy || block !== null}
+            onClick={togglePush}
+          >
+            {on ? "알림 끄기" : "알림 받기"}
+          </Btn>
+        </Panel>
+
         {list.length > 0 ? (
           <>
             <div className="mb-3.5 flex items-center gap-2">
@@ -163,10 +257,12 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
         )}
 
         <Note tone="info" icon="bell" className="mt-3.5">
-          지금은 <b>앱 안에서만</b> 알립니다. 앱을 닫아 두면 오지 않습니다 — 휴대폰 푸시 알림은
-          아직 붙이지 않았습니다.
+          {on
+            ? "못 받아 본 것은 이 알림함에서 언제든 다시 볼 수 있습니다."
+            : "이 알림함은 앱을 열면 <b>항상</b> 보입니다. 앱을 닫아 둔 사이 놓치는 일은 위에서 푸시를 켜면 막을 수 있습니다."}
         </Note>
       </Body>
+      <Toast msg={toast} />
     </>
   );
 }

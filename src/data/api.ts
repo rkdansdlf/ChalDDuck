@@ -62,6 +62,7 @@ import { askedTodayBy } from "@/server/meetings/schedule-ask";
 import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
+import { pushConfigured } from "@/server/notify/push";
 import {
   AI_POLICY,
   AI_TOOLS,
@@ -1093,6 +1094,20 @@ export async function getUnreadNotificationCount(): Promise<number> {
   const session = await getSessionMember();
   if (!session) return 0;
   return db.notification.count({ where: { memberId: session.id, readAt: null } });
+}
+
+/**
+ * 푸시 상태 중 **서버만 알 수 있는 두 가지**.
+ *
+ * 발신 키가 있는지와 이 사람이 구독을 갖고 있는지는 서버만 안다. 브라우저가 권한을
+ * 말해 주면 나머지는 `features/home/push-client.ts` 가 채운다.
+ */
+export async function getPushState(): Promise<{ configured: boolean; subscribed: boolean }> {
+  const session = await getSessionMember();
+  const configured = pushConfigured();
+  if (!session) return { configured, subscribed: false };
+  const held = await db.pushSubscription.count({ where: { memberId: session.id } });
+  return { configured, subscribed: held > 0 };
 }
 
 /* ── 11 홈 ─────────────────────────────────────────────────── */

@@ -29,6 +29,13 @@ import {
   markText,
   meetingMark,
 } from "../src/features/schedule/meeting-cell.js";
+import {
+  pushBlock,
+  pushFailure,
+  pushOn,
+  pushPayload,
+  pushSubscriptionFrom,
+} from "../src/features/home/push-model.js";
 import type { MeetingProposal } from "../src/lib/types.js";
 
 /**
@@ -401,6 +408,134 @@ console.log("\n회의 후보에서 지난 시간");
   check("아침 9시면 아무것도 빠지지 않는다", keeps(9), SCHEDULE_HOURS.map(Number));
   // 시간표가 9~18시뿐이라 밤 11시에는 남는 후보가 없다 — 오늘 회의는 더 이상 잡을 수 없다.
   check("밤 11시면 오늘 남는 후보가 없다", keeps(23), []);
+}
+
+/* ── 푸시 알림 ──────────────────────────────────────────────── */
+
+console.log("\n푸시 알림");
+{
+  const base = {
+    supported: true,
+    permission: "default" as const,
+    standalone: false,
+    ios: false,
+    configured: true,
+    subscribed: false,
+  };
+
+  // 켤 수 없는 이유를 **말하지 않으면** 사용자는 "알림이 안 오는데 왜지?"를 알 수 없다.
+  check("조건을 다 갖췄으면 막는 말이 없다", pushBlock(base), null);
+  check(
+    "서버에 키가 없으면 켤 수 없다고 말한다",
+    pushBlock({ ...base, configured: false })?.code,
+    "not-configured",
+  );
+  check(
+    "아이폰은 설치 전에는 켤 수 없다고 말한다",
+    pushBlock({ ...base, ios: true })?.code,
+    "needs-install",
+  );
+  check(
+    "아이폰이어도 설치돼 있으면 막지 않는다",
+    pushBlock({ ...base, ios: true, standalone: true }),
+    null,
+  );
+  check(
+    "브라우저가 막아 뒀으면 그 사실을 말한다",
+    pushBlock({ ...base, permission: "denied" })?.code,
+    "denied",
+  );
+  check(
+    "푸시 API가 없으면 불가능하다고 말한다",
+    pushBlock({ ...base, supported: false })?.code,
+    "unsupported",
+  );
+
+  // "켜짐"은 다섯 가지를 다 만족할 때만이다 — 하나라도 어긋나면 껍데기가 된다.
+  check(
+    "권한만 있고 구독이 없으면 켜진 게 아니다",
+    pushOn({ ...base, permission: "granted" }),
+    false,
+  );
+  check(
+    "전부 갖췄을 때만 켜진 것으로 말한다",
+    pushOn({ ...base, permission: "granted", subscribed: true }),
+    true,
+  );
+
+  const sub = pushSubscriptionFrom({
+    endpoint: "https://push.example/abc",
+    keys: { p256dh: "k1", auth: "k2" },
+  });
+  check("브라우저가 준 구독을 읽는다", sub?.endpoint, "https://push.example/abc");
+  // 발신할 주소·키 중 하나라도 없으면 발신은 실패하는데 저장은 성공한 척이라, 아예 받지 않는다.
+  check("주소가 없으면 구독을 받지 않는다", pushSubscriptionFrom({ keys: { p256dh: "k", auth: "a" } }), null);
+  check(
+    "키가 없으면 구독을 받지 않는다",
+    pushSubscriptionFrom({ endpoint: "https://push.example/abc" }),
+    null,
+  );
+  check("엉뚱한 값이면 구독을 받지 않는다", pushSubscriptionFrom("endpoint"), null);
+
+  // `href` 는 알림을 눌렀을 때 여는 창이다 — 앱 밖으로 나가면 안 된다.
+  check("앱 안 주소는 그대로 쓴다", pushPayload({ title: "t", body: "b", href: "/home" }).href, "/home");
+  check(
+    "스킴 상대 주소는 앱 밖으로 나간다",
+    pushPayload({ title: "t", body: "b", href: "//evil.example" }).href,
+    null,
+  );
+  check(
+    "절대 주소는 앱 밖으로 나간다",
+    pushPayload({ title: "t", body: "b", href: "https://evil.example" }).href,
+    null,
+  );
+  check("주소가 없으면 주소 없이 보낸다", pushPayload({ title: "t", body: "b" }).href, null);
+
+  // 지울 것과 지우면 안 되는 것을 구분한다. 서명이 잘못되면(401) 지워 버릴수록
+  // 정상 기기들의 구독을 우리가 한 번의 설정 실수로 전부 잃는다.
+  check("404 는 죽은 주소다", pushFailure(404), "gone");
+  check("410 도 죽은 주소다", pushFailure(410), "gone");
+  check("401 은 우리 쪽 서명 문제라 지우지 않는다", pushFailure(401), "failed");
+  check("429 는 잠깐 막힌 것이라 지우지 않는다", pushFailure(429), "failed");
+  check("상태 코드가 없으면 지우지 않는다", pushFailure(undefined), "failed");
+}
+
+console.log("\n푸시 구독 (DB)");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const members = team
+    ? await db.member.findMany({ where: { teamId: team.id, leftAt: null }, take: 2 })
+    : [];
+  if (members.length < 2) {
+    console.log("  · 팀원이 둘 이상이어야 이 항목을 돌립니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const [a, b] = members;
+    const endpoint = `https://push.example/smoke-${Date.now()}`;
+
+    await db.pushSubscription.deleteMany({ where: { endpoint } });
+    const first = await db.pushSubscription.create({
+      data: { memberId: a.id, endpoint, p256dh: "k1", auth: "k2" },
+    });
+
+    // 같은 단말이 다시 구독하면 행을 쌓지 않고 **주인을 바꾼다** — 기기를 넘겨 쓰면
+    // 그 뒤로 알림은 새 사람에게 가야 한다. 쌓기만 하면 옛 사람에게 계속 간다.
+    const again = await db.pushSubscription.upsert({
+      where: { endpoint },
+      create: { memberId: b.id, endpoint, p256dh: "k1", auth: "k2" },
+      update: { memberId: b.id },
+    });
+    const rows = await db.pushSubscription.count({ where: { endpoint } });
+    check("같은 단말은 행을 쌓지 않는다", rows, 1);
+    check("기기를 넘겨 쓰면 주인이 바뀐다", again.memberId, b.id);
+    check("구독 주소는 하나뿐이다", first.endpoint, again.endpoint);
+
+    const dup = await db.pushSubscription
+      .create({ data: { memberId: a.id, endpoint, p256dh: "k1", auth: "k2" } })
+      .catch((e: { code?: string }) => e.code);
+    check("주소가 겹치면 들어가지 않는다", dup, "P2002");
+
+    await db.pushSubscription.deleteMany({ where: { endpoint } });
+  }
 }
 
 await db.$disconnect();

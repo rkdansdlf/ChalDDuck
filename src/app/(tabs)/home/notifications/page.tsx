@@ -1,4 +1,4 @@
-import { getNotifications } from "@/data/api";
+import { getNotifications, getPushState } from "@/data/api";
 import { NotificationsScreen } from "@/features/home/notifications-screen";
 
 /**
@@ -9,6 +9,6 @@ import { NotificationsScreen } from "@/features/home/notifications-screen";
 export const dynamic = "force-dynamic";
 
 export default async function NotificationsPage() {
-  const items = await getNotifications();
-  return <NotificationsScreen items={items} />;
+  const [items, push] = await Promise.all([getNotifications(), getPushState()]);
+  return <NotificationsScreen items={items} push={push} />;
 }
