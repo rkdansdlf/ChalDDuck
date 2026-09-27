@@ -9,9 +9,12 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:check": "node scripts/check-schema-in-sync.mjs",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
+    "test": "tsx --conditions=react-server scripts/smoke.mts",
     "db:storage": "node scripts/setup-storage.mjs"
   },
   "dependencies": {

@@ -81,8 +81,15 @@ Tailwind 는 `border-y-*`, `border-x-*` 를 **축 border-width** 유틸리티로
 작업을 마치기 전에:
 
 ```bash
-npm run build && npx tsc --noEmit && npm run lint
+npm test && npm run build && npx tsc --noEmit && npm run lint
 ```
+
+`npm test` 는 업무 규칙을 확인하는 불변식 모음입니다(`scripts/smoke.mts`). **타입 검사가
+잡아주지 못하는 종류의 버그**를 잡습니다 — Veto 를 후보에서 빼지 않는다, 확정된 회의를
+덮어쓴다, 승인을 새 요청이 지운다. 전부 함수 시그니처는 맞고 컴파일된다. 서버와 화면이
+**같은 계산을 함께 써야 하는 규칙**(추첨 후보·역할 값·이름 정규화·AI 입력 상한)을 직접
+부르고, 유일 인덱스 같은 DB 불변식은 실제 Postgres 에 걸어 봅니다. 로컬 DB 에서만 돕니다.
 
 레이아웃은 눈으로 확인하세요. 타입 검사가 통과해도 Tailwind 클래스 충돌은 잡히지 않습니다
 (위의 600px 테두리 버그가 그랬습니다).
+

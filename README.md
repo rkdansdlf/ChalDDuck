@@ -195,11 +195,35 @@ npm run build && npx tsc --noEmit && npm run lint
 `npm run dev` 를 띄우면 로컬에서 누른 것이 그대로 실제 팀의 데이터가 됩니다 — 위의
 "로컬 DB 로 개발하기"를 먼저 해 두세요.
 
-빌드 명령은 `vercel.json` 에 있습니다 — `prisma migrate deploy && next build`.
-**배포할 때마다 마이그레이션이 먼저 돕니다.**
+빌드 명령은 `vercel.json` 에 있습니다 —
+`prisma migrate deploy && npm run db:check && next build`.
+**배포할 때마다 마이그레이션이 먼저 돕고, 그다음 DB 가 스키마와 같은지 확인합니다.**
 
-버킷은 한 번만 만들면 됩니다(`npm run db:storage`). 이 명령은 일부러 `.env`(운영)만
-읽습니다 — 버킷은 Supabase 에만 있고 로컬 Postgres 에는 `storage` 스키마가 없습니다.
+#### `db:check` — 왜 있는가
+
+`prisma migrate deploy` 는 **"할 일이 없다"를 실패로 보지 않습니다.** 그래서
+`prisma/schema.prisma` 만 고치고 마이그레이션 파일을 빠뜨려도 배포가 **초록불**입니다.
+그렇게 올라간 Prisma 클라이언트는 첫 질의에서 죽고, 죽은 건 서버 컴포넌트라
+브라우저에는 `Minified React error #441` 로만 찍힙니다. 실제로 그렇게 배포가 성공하고
+`/chat` 이 깨진 적이 있습니다 — 서버 컴포넌트가 예외를 내면 RSC 페이로드의 에러 행으로
+바뀌고, 그 행을 클라이언트가 되살린 것이 441 입니다. **진짜 원인은 Vercel 함수
+로그에만 있습니다.**
+
+그래서 마이그레이션을 덮은 **직후에** DB 와 스키마를 직접 비교합니다
+(`prisma migrate diff`, [`scripts/check-schema-in-sync.mjs`](scripts/check-schema-in-sync.mjs)).
+차이가 있으면 **빌드가 실패합니다.** 로컬에서 미리 확인하려면 `npm run db:check`.
+
+규칙 하나만 지키면 됩니다: **`prisma/schema.prisma` 를 건드린 커밋에는 반드시
+마이그레이션을 함께 넣는다.** 그래야 `migrate deploy` 가 할 일을 찾습니다.
+
+버킷은 한 번만 만들면 됩니다(`npm run db:storage`). **버킷은 Supabase 에만 있습니다** —
+로컬 Postgres 에는 `storage` 스키마가 없어 이 명령이 목적을 이루지 못합니다. 그래서
+로컬 DB 를 가리키면 아무것도 건드리지 않고 그 사실을 알려주고 끝냅니다.
+
+예전에는 이 명령이 `.env`(운영)만 읽어, `next dev` 는 로컬 DB 를 보는데 **운영 DB 의 버킷을
+바꾸러 갔습니다.** 시드가 가진 가드를 붙여 로컬이 아닌 곳을 가리키면 명시적 허락
+(`ALLOW_REMOTE_SEED=1`) 없이는 실패하게 했습니다. 버킷을 만들 대상은 직접 지목하세요 —
+운영에 만들려면 그쪽 주소를 담은 환경에서 실행하고 `ALLOW_REMOTE_SEED=1` 을 붙입니다.
 
 ⚠️ **Vercel Hobby 는 예약 작업이 하루 한 번까지**입니다. `vercel.json` 의 schedule 을
 그보다 잦게 적으면 **배포가 실패합니다**. 지금은 하루 한 번(00:00 KST)이고, 화면이
