@@ -3,7 +3,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
-import { formatDue, formatWhen, toKstInputValue } from "@/lib/when";
+import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
 import type {
@@ -61,6 +61,7 @@ import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
 import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
+import { notificationsFor } from "@/server/notify/inbox";
 import {
   AI_POLICY,
   AI_TOOLS,
@@ -488,18 +489,6 @@ export async function getMeetingWeek(teamId: string): Promise<MeetingWeek> {
     submitted,
     total,
   };
-}
-
-/** 화면에 보일 마감 시각. 서버가 포맷해야 사람마다 다르게 보이지 않는다. */
-function formatDeadline(at: Date): string {
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Asia/Seoul",
-  }).format(at);
 }
 
 /** 지금 올라와 있는 회의 제안. 09/10 화면·홈·일정 탭 배지가 같은 값을 본다. */
@@ -1096,24 +1085,7 @@ export async function getMyPokedTaskIds(teamId: string): Promise<string[]> {
 /** 내게 온 알림. 최근 것이 위. */
 export async function getNotifications(): Promise<AppNotification[]> {
   const session = await getSessionMember();
-  if (!session) return [];
-
-  const rows = await db.notification.findMany({
-    where: { memberId: session.id },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    // 오래된 것까지 다 보여 줄 이유는 없다. 최근 것만 본다.
-    take: 50,
-  });
-
-  return rows.map((n) => ({
-    id: n.id,
-    kind: n.kind as AppNotification["kind"],
-    title: n.title,
-    body: n.body,
-    href: n.href,
-    when: formatDeadline(n.createdAt),
-    read: n.readAt !== null,
-  }));
+  return session ? notificationsFor(session.id) : [];
 }
 
 /** 안 읽은 알림 수. 홈의 종 배지에 쓴다. */

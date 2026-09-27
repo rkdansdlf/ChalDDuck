@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { ContribKindKey } from "@/lib/types";
-import { refreshContribState } from "@/server/contrib/state";
+import { humanSize } from "@/features/drive/file-rules";
+import type { ContribKindKey, TeamCheckRecord } from "@/lib/types";
+import { contribByLabel, refreshContribState } from "@/server/contrib/state";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -232,4 +233,58 @@ export async function resolveContribDispute(recordId: string, way: string): Prom
   revalidatePath("/team", "layout");
   revalidatePath("/home");
   return "ok";
+}
+
+/**
+ * 17 화면(팀원 확인)을 열지 않고도 다시 읽는다.
+ *
+ * **왜 폴링이 필요한가.** "채팅 목록과 홈이 스스로 따라온다" 는 약속이 있고 실제로 그렇게
+ * 동작한다. 17 화면만 아니었다 — 내가 "확인함"을 눌러도 목록은 그대로였고, 동료가 확인하거나
+ * 반박해 나타나도 팀원이 화면을 옮기기 전까지는 보이지 않았다. 함께 보고 있는 목록인데
+ * 옆 사람이 갱신되지 않는 것은 그 사람이 화면을 넘겨야만 알게 된다는 뜻이다.
+ *
+ * `usePoll` 이 이미 지켜 주는 것(안 보이는 탭에서는 부르지 않는다·겹치지 않는다)을 그대로
+ * 물려받는다 — 주기만 길게 둔다. 확인·반박은 사람이 하는 일이라 4초는 짧다.
+ */
+export async function pollContribCheck(): Promise<TeamCheckRecord[]> {
+  const me = await requireSessionMember();
+  const rows = await db.contribRecord.findMany({
+    where: { member: { teamId: me.teamId } },
+    include: {
+      member: { select: { id: true, name: true, leftAt: true } },
+      disputedBy: { select: { id: true, name: true, leftAt: true } },
+      confirms: { select: { memberId: true } },
+      disputes: {
+        select: { id: true, text: true, createdAt: true, by: { select: { name: true } } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  return rows.map((r) => {
+    const state = r.state as TeamCheckRecord["state"];
+    const other = r.member.id === me.id ? r.disputedBy : r.member;
+    return {
+      id: r.id,
+      who: r.member.name,
+      title: r.title,
+      state,
+      isMine: r.member.id === me.id,
+      confirms: r.confirms.length,
+      iConfirmed: r.confirms.some((c) => c.memberId === me.id),
+      by: contribByLabel({
+        state,
+        confirms: r.confirms.length,
+        disputedBy: r.disputedBy?.name ?? null,
+      }),
+      evidence: r.evidencePath && r.evidenceName
+        ? { name: r.evidenceName, size: humanSize(r.evidenceBytes ?? 0) }
+        : null,
+      dispute: r.dispute,
+      history: r.disputes.map((d) => ({ who: d.by.name, text: d.text })),
+      resolution: r.resolution,
+      dmWith: other && other.leftAt === null && other.id !== me.id ? other.id : null,
+    };
+  });
 }

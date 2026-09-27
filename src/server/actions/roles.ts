@@ -90,7 +90,7 @@ export async function drawForRole(role: RoleKey, toolName: string): Promise<Draw
 }
 
 /** 수락·거절의 결과. `not-yours` 는 당첨자가 아닌 사람이 누른 것이다. */
-export type AnswerResult = "ok" | "not-yours" | "gone";
+export type AnswerResult = "ok" | "not-yours" | "gone" | "settled";
 
 /** 지금 답을 기다리는 추첨 — 내가 당첨자일 때만 돌려준다. */
 async function myPendingDraw(teamId: string, role: RoleKey, meId: string) {
@@ -166,5 +166,56 @@ export async function rejectRoleDraw(role: RoleKey): Promise<AnswerResult> {
   if (!rejected) return "gone";
 
   revalidatePath("/team");
+  return "ok";
+}
+
+/**
+ * **혼자** 그 역할을 1순위로 고른 사람이 그 역할을 맡는다.
+ *
+ * 왜 이것이 필요한가: `RoleDraw` 는 추첨할 때만 생긴다. 그런데 1순위 희망자가 **한 명**이면
+ * 겹칠 일이 없어 추첨 자체가 일어나지 않는다 — 그래서 07 화면의 상태 칩은 "확정 예정"이라
+ * 말하면서 아무 길도 띄우지 않고, 드라이브의 제출함 주인은 영영 `null` 로 남았다. "확정 예정"
+ * 이라는 말은 결국 아무것도 확정되지 않았다는 뜻이었다.
+ *
+ * 추첨과 같은 결과를 만든다: `RoleDraw` 를 **수락된 상태로** 남기고 제출함 주인을 정한다.
+ * 그러면 이후 상태 표시가 "확정 · 김민준" 으로 한 갈래로 읽히고, 추첨이 더 이상 필요 없다는
+ * 사실(행을 못 만든다)도 같이 성립한다. 따로 만드는 상태를 만들지 않는 이유다.
+ *
+ * 누가 호출해도 되는 것은 아니다 — **지금 그 역할을 1순위로 고른 사람이 혼자일 때만** 되고,
+ * 이미 결과가 있으면 거절하듯 다시 만들 수 없다. 안전망은 유일 인덱스다.
+ */
+export async function claimSoleRole(role: RoleKey): Promise<AnswerResult> {
+  const me = await requireSessionMember();
+  if (!ROLE_KEYS.has(role)) throw new Error("알 수 없는 역할입니다.");
+
+  const [wanters, taken] = await Promise.all([
+    db.member.findMany({
+      where: { teamId: me.teamId, wantRole: role, leftAt: null },
+      select: { id: true },
+    }),
+    db.roleDraw.findUnique({ where: { teamId_role: { teamId: me.teamId, role } }, select: { id: true } }),
+  ]);
+  // 이미 결과가 있으면 예전과 같다 — 거절하듯 다시 만들 수 없다.
+  if (taken) return "settled";
+  // 겹치는 사람이 있으면 그건 추첨 몫이다 — 이 길은 "혼자 인 경우" 에만 다��인다.
+  if (wanters.length !== 1 || wanters[0].id !== me.id) return "not-yours";
+
+  try {
+    await db.$transaction([
+      db.roleDraw.create({
+        data: { teamId: me.teamId, role, tool: "담당", winnerId: me.id, accepted: true },
+      }),
+      db.submissionBox.updateMany({
+        where: { teamId: me.teamId, role },
+        data: { ownerId: me.id },
+      }),
+    ]);
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2002") return "settled";
+    throw error;
+  }
+
+  revalidatePath("/team");
+  revalidatePath("/drive", "layout");
   return "ok";
 }

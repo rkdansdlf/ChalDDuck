@@ -21,7 +21,8 @@ import {
 } from "@/components/ui";
 import type { Member, TeamCheckRecord } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
-import { confirmContribRecord, disputeContribRecord } from "@/server/actions/contrib";
+import { confirmContribRecord, disputeContribRecord, pollContribCheck } from "@/server/actions/contrib";
+import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
 import { StepRail } from "./step-rail";
 
@@ -31,6 +32,9 @@ import { StepRail } from "./step-rail";
  * 핵심: **의견이 다른 항목은 한쪽 말로 덮지 않고 둘 다 남긴다.** 기록이 한 사람의 주장으로
  * 정리돼 버리면, 정정을 요구한 사람은 기록을 신뢰할 수 없게 된다.
  */
+/** 함께 보고 있는 목록의 확인 주기. 확인·반박은 사람이 하므로 길게 둔다. */
+const CONTRIB_POLL_MS = 20_000;
+
 export function ContribTeamScreen({
   records,
   roster,
@@ -44,10 +48,60 @@ export function ContribTeamScreen({
   const { toast, busy, run } = useAction();
   const working = busy.act === true;
 
+  /**
+   * **이 화면도 저절로 따라온다.**
+   *
+   * 함께 보고 있는 목록인데 옆 사람이 확인하거나 반박해도 화면을 넘겨야만 보이면, 그 사이에
+   * 무엇이 바뀌었는지 놓친다. 이 화면은 내가 "확인함"을 눌러도 갱신되지 않았다 — 그 조작
+   * 옆에 있는 동료의 것까지 묶여 있었기 때문이다.
+   *
+   * 주기는 길게 둔다. 확인과 반박은 사람이 하는 일이라 몇 초 차이는 답답함보다 거슬림이 크다.
+   * 내가 직접 한 조작의 결과는 `router.refresh()` 가 먼저 반영하므로, 폴링이 그 위에 덮어쓰지
+   * 않는다(같은 행은 같은 내용이다).
+   */
+  /**
+   * **이 화면도 저절로 따라온다.**
+   *
+   * 함께 보고 있는 목록인데 옆 사람이 확인하거나 반박해도 화면을 넘겨야만 보이면, 그 사이에
+   * 무엇이 바뀌었는지 놓친다. 이 화면은 내가 "확인함"을 눌러도 갱신되지 않았다 — 그 조작
+   * 옆에 있는 동료의 것까지 묶여 있었기 때문이다.
+   *
+   * 주기는 길게 둔다. 확인과 반박은 사람이 하는 일이라 몇 초 차이는 답답함보다 거슬림이 크다.
+   * 내가 직접 한 조작의 결과는 `router.refresh()` 가 먼저 반영하므로, 폴링이 그 위에 덮어쓰지
+   * 않는다(같은 행은 같은 내용이다).
+   */
+  /**
+   * 이 화면도 저절로 따라온다 — 내가 "확인함"을 눌러도 목록은 그대로였고, 동료가 확인하거나
+   * 반박해 나타나도 화면을 넘기기 전까지는 보이지 않았다. 함께 보고 있는 목록인데 옆 사람이
+   * 갱신되지 않으면, 그 사이에 무엇이 바뀌었는지 놓친다.
+   *
+   * **내 조작이 우선이다.** 내가 직접 한 조작은 `router.refresh()` 로 반영되는데, 그 사이에
+   * 도착한 낡은 폴링 결과가 위에 얹히면 방금 한 조작이 뒤로 물러난 것처럼 보인다. 그래서
+   * 내가 조작하기 전까지만 폴링 결과를 쓴다 — 내가 이미 한 조작이 있으면 서버가 준 값을 따른다
+   * (그 뒤로는 폴링이 필요 없다: 내가 계속 조작하므로 그때마다 갱신된다).
+   *
+   * 주기는 길게 둔다. 확인·반박은 사람이 하는 일이라 몇 초 차이는 답답함보다 거슬림이 크다.
+   */
+  const [polled, setPolled] = useState<TeamCheckRecord[] | null>(null);
+  const [touched, setTouched] = useState(false);
+
+  usePoll(
+    async () => {
+      if (touched) return;
+      setPolled(await pollContribCheck());
+    },
+    CONTRIB_POLL_MS,
+    !touched,
+  );
+
+  const list = touched ? records : (polled ?? records);
+
   const confirm = (record: TeamCheckRecord) =>
     run(
       "act",
       async () => {
+        // 내가 건드린 뒤로는 서버가 준 값을 따른다 — 폴링은 그만 돈다.
+        setTouched(true);
         const result = await confirmContribRecord(record.id);
         router.refresh();
         return result === "ok"
@@ -66,6 +120,7 @@ export function ContribTeamScreen({
     return run(
       "act",
       async () => {
+        setTouched(true);
         const result = await disputeContribRecord(disputing.id, reason);
         setDisputing(null);
         setReason("");
@@ -80,8 +135,8 @@ export function ContribTeamScreen({
     );
   };
 
-  const confirmed = records.filter((r) => r.state === "ok").length;
-  const disputed = records.filter((r) => r.state === "disputed");
+  const confirmed = list.filter((r) => r.state === "ok").length;
+  const disputed = list.filter((r) => r.state === "disputed");
   const mbtiOf = (name: string) => roster.find((m) => m.name === name)?.mbti ?? null;
 
   return (
@@ -101,7 +156,7 @@ export function ContribTeamScreen({
               <Icon name="list-checks" size={17} />
             </span>
             <span className="keep-all min-w-0 flex-1 font-semibold text-[13.5px] leading-[1.5] text-txt">
-              {records.length}건 중 {confirmed}건 확인 완료
+              {list.length}건 중 {confirmed}건 확인 완료
             </span>
             {disputed.length > 0 ? (
               <Chip tone="err" icon="circle-alert">
@@ -113,7 +168,7 @@ export function ContribTeamScreen({
 
         <SecTitle note="확인되지 않은 항목은 리포트에서 따로 표시됩니다">팀 기록</SecTitle>
         <Rows className="mb-3.5">
-          {records.map((record) => (
+          {list.map((record) => (
             <div key={record.id} className="min-h-[56px] px-[15px] py-[13px]">
               <div className="flex items-start gap-[11px]">
                 <Avatar name={record.who} mbti={mbtiOf(record.who)} size={34} />

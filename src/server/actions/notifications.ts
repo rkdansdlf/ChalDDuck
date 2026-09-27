@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { AppNotification } from "@/lib/types";
+import { notificationsFor } from "@/server/notify/inbox";
 import { db } from "@/server/db";
 import { requireSessionMember } from "@/server/session";
 
@@ -23,4 +25,19 @@ export async function markNotificationsRead(ids?: string[]): Promise<void> {
   });
 
   revalidatePath("/home", "layout");
+}
+
+/**
+ * 알림함을 열지 않고도 다시 읽는다.
+ *
+ * 알림은 **일어나는 순간에** 보여야 하는데 이 화면은 요청마다만 그렸다. 알림이 도착해도
+ * 탭 배지만 바뀌고(30초마다 다시 세므로) 목록은 그대로였으므로, "뭔가 왔는데 목록에 없다"가
+ * 가장 흔한 상태였다. 배지가 숫자를 올려 주면서 정작 그 숫자가 가리키는 곳이 낡아 있으면
+ * 어느 쪽을 믿어야 할지 모른다.
+ *
+ * 주기는 알림함에 맞게 길게 둔다 — 확인은 사람이 하는 일이다.
+ */
+export async function pollNotifications(): Promise<AppNotification[]> {
+  const me = await requireSessionMember();
+  return notificationsFor(me.id);
 }

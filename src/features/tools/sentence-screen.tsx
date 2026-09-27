@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { AppBar, Body, CompareCard, Textarea, Undecided } from "@/components/ui";
+import { AppBar, Body, CompareCard, Note, Textarea, Undecided } from "@/components/ui";
 import { convertSentence, getSentenceSample } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
@@ -34,14 +34,29 @@ export function SentenceScreen({
 
   const [mode, setMode] = useState(initialMode);
   const [text, setText] = useState(initialInput);
+  const [sampleError, setSampleError] = useState<string | null>(null);
 
-  // 모드를 바꾸면 그 모드의 예시 문장으로 갈아 끼운다 — 두 모드는 다루는 글이 아예 다르다.
+  /**
+   * 모드를 바꾸면 그 모드의 예시 문장으로 갈아 끼운다 — 두 모드는 다루는 글이 아예 다르다.
+   *
+   * **거절되면 모드를 되돌린다.** 예전에는 `catch` 가 없어 모드는 이미 바뀌었는데 글은
+   * 옛 모드의 것이 남아 있었다. 그 상태로 AI 를 부르면 "교수님께 드릴 메일" 요청을
+   * 핵심 요약으로 돌려받는다 — 잘못된 모드의 글로 잘못된 결과가 나오는데 아무 말도 없다.
+   */
   useEffect(() => {
     if (mode === initialMode) return;
     let cancelled = false;
-    getSentenceSample(mode).then((sample) => {
-      if (!cancelled) setText(sample);
-    });
+    getSentenceSample(mode)
+      .then((sample) => {
+        if (cancelled) return;
+        setText(sample);
+        setSampleError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMode(initialMode);
+        setSampleError("다른 방식으로 바꾸지 못했습니다. 잠시 뒤 다시 눌러 주세요.");
+      });
     return () => {
       cancelled = true;
     };
@@ -115,6 +130,12 @@ export function SentenceScreen({
           resultLabel="변환 결과"
           result={working ? "바꾸는 중…" : result || "—"}
         />
+
+        {sampleError ? (
+          <Note tone="err" icon="circle-alert" className="mb-3">
+            {sampleError}
+          </Note>
+        ) : null}
 
         <Undecided>
           이 두 모드가 쿠션 번역기와 같은 화면에 있어야 하는지, 별도 도구로 남는지가 기획안에 없어 별도

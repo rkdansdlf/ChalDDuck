@@ -385,6 +385,24 @@ console.log("\n대화 순서");
   check("표시 문자열은 정렬 키가 되지 못한다", Number.isNaN(Date.parse("14:02")), true);
 }
 
+/* ── 이미 지난 시간은 후보가 아니다 ───────────────────────── */
+
+console.log("\n회의 후보에서 지난 시간");
+{
+  // 시간표의 칸 인덱스 0 = 9시. `hourNow` 와 비교하려면 반드시 `SCHEDULE_HOURS` 를 거쳐야 한다
+  // — 인덱스를 시각으로 잘못 비교하면(0 < 21) 아무것도 걸리지 않는다.
+  const SCHEDULE_HOURS = ["9", "10", "11", "12", "13", "14", "15", "16", "17", "18"];
+  const keeps = (hourNow: number) =>
+    SCHEDULE_HOURS.map(Number).filter((start) => start >= hourNow);
+
+  check("오전 10시면 9시 회의는 사라진다", keeps(10)[0], 10);
+  check("지금 시작하는 시간은 남는다", keeps(10).includes(10), true);
+  check("밤 11시면 10시 회의도 사라진다", keeps(11).includes(10), false);
+  check("아침 9시면 아무것도 빠지지 않는다", keeps(9), SCHEDULE_HOURS.map(Number));
+  // 시간표가 9~18시뿐이라 밤 11시에는 남는 후보가 없다 — 오늘 회의는 더 이상 잡을 수 없다.
+  check("밤 11시면 오늘 남는 후보가 없다", keeps(23), []);
+}
+
 await db.$disconnect();
 
 console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);

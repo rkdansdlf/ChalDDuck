@@ -1,5 +1,5 @@
 import { BUSY_KINDS, CUSTOM_BUSY_KIND, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
-import type { CandidateDate, WeekKey } from "./week";
+import { nowHourInSeoul, todayInSeoul, type CandidateDate, type WeekKey } from "./week";
 
 /**
  * 시간표에서 회의 시간 후보를 만드는 규칙.
@@ -98,18 +98,35 @@ export function slotAt(members: SlotSource[], week: WeekKey, day: number, hour: 
   return toSlot(day, hour, members.length, blockedMap(members, week).get(`${day}:${hour}`) ?? []);
 }
 
-export function computeMeetingSlots(members: SlotSource[], dates: CandidateDate[]): ComputedSlot[] {
+export function computeMeetingSlots(
+  members: SlotSource[],
+  dates: CandidateDate[],
+  now: Date = new Date(),
+): ComputedSlot[] {
   if (members.length < MIN_ATTENDEES) return [];
 
   const byWeek = new Map<WeekKey, ReturnType<typeof blockedMap>>();
   const total = members.length;
   const found: Array<ComputedSlot & { order: number }> = [];
+  const today = todayInSeoul(now);
+  const hourNow = nowHourInSeoul(now);
 
-  dates.forEach(({ week, day }, index) => {
+  dates.forEach(({ week, day, date }, index) => {
     const blockedAt = byWeek.get(week) ?? blockedMap(members, week);
     byWeek.set(week, blockedAt);
     // 기본 회의 길이가 60분이라 시간표 한 칸이 곧 후보 하나다.
     for (let hour = 0; hour < SCHEDULE_HOURS.length; hour += 1) {
+      // **이미 지나간 시간은 후보가 아니다.** 예전에는 날짜만 검사했으므로 23:50에 그날
+      // 19:00 회의가 후보로 올라가고, 팀은 그것을 제안할 수 있었고 마감 뒤 자동으로 확정되었다
+      // — 이미 지나간 회의가 확정된다.
+      //
+      // `hour` 는 **인덱스**(0 = SCHEDULE_HOURS[0] = 9시)이고 `hourNow` 는 시각이다.
+      // 둘을 그대로 비교하면 0 < 21 이 되어 아무것도 걸리지 않는다 — 반드시 시간표를 통해
+      // 실제 시각으로 바꿔 비교한다.
+      // 지금 10:00 이면 10시 회의는 **아직 시작하지 않았다** — 남긴다. 지나는 건 그보다
+      // 이른 시간이므로 `<` 이다 (`<=` 면 지금 시작하는 회의를 뺀다).
+      if (date === today && Number(SCHEDULE_HOURS[hour]) < hourNow) continue;
+
       const blocked = blockedAt.get(`${day}:${hour}`) ?? [];
       if (total - blocked.length < MIN_ATTENDEES) continue;
 

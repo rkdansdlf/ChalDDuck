@@ -35,6 +35,22 @@ export function todayInSeoul(now: Date = new Date()): WeekKey {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(now);
 }
 
+/**
+ * 지금 몇 시인가(한국 시간, 0–23).
+ *
+ * 시간표의 칸 번호(`SCHEDULE_HOURS` 의 인덱스)가 곧 0시부터의 시각이므로 비교가 된다.
+ * 기준 시간대가 다른 기기에서 쓸 수 있게 **서버에서 부른다** — 화면마다 시간이 다르면
+ * 후보 목록이 사람마다 달라진다.
+ */
+export function nowHourInSeoul(now: Date = new Date()): number {
+  const hour = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    hour12: false,
+  }).format(now);
+  return Number(hour) % 24;
+}
+
 /** 그 날짜가 속한 주의 월요일. */
 export function mondayOf(key: WeekKey): WeekKey {
   const weekday = parse(key).getUTCDay(); // 0 = 일요일

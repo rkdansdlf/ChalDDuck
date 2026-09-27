@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { AppBar, Body, Btn, Note, Panel, SecTitle, Undecided } from "@/components/ui";
+import { AppBar, Body, Btn, Note, Panel, SecTitle, Toast, Undecided } from "@/components/ui";
+import { useAction } from "@/lib/use-action";
 import type { TeamCheckRecord } from "@/lib/types";
 import { resolveContribDispute } from "@/server/actions/contrib";
 
@@ -14,19 +14,31 @@ import { resolveContribDispute } from "@/server/actions/contrib";
  */
 export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
   const router = useRouter();
-  const [answering, setAnswering] = useState(false);
+  const { toast, busy, run } = useAction();
+  const answering = busy.resolve === true;
 
-  const resolve = async (way: string) => {
-    if (answering) return;
-    setAnswering(true);
-    try {
-      await resolveContribDispute(record.id, way);
-      router.push("/team/contrib/members");
-      router.refresh();
-    } finally {
-      setAnswering(false);
-    }
-  };
+  /**
+   * 정정에 답한다.
+   *
+   * **결과를 보아야 한다.** 예전에는 `resolveContribDispute` 가 돌려주는
+   * `"ok" | "gone"` 을 버리고 곧바로 이동했다. `"gone"` 은 "남이 먼저 정리했다" 는 뜻인데,
+   * 그래도 사용자는 자기 답변이 반영됐다고 믿었다. 그리고 `catch` 가 없어 서버가
+   * 거부하면(세션 만료·이미 정리) 아무 말 없이 같은 화면에 남았다.
+   */
+  const resolve = (way: string) =>
+    run(
+      "resolve",
+      async () => {
+        const answer = await resolveContribDispute(record.id, way);
+        if (answer === "gone") {
+          // 이미 정리된 기록이다 — 앞선 답변이 남아 있으므로 그걸 보여 주는 곳으로 보낸다.
+          return "이 기록은 이미 정리됐습니다. 앞선 답변을 확인해 주세요";
+        }
+        router.push("/team/contrib/members");
+        router.refresh();
+      },
+      "답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
 
   return (
     <>
@@ -58,7 +70,7 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
             full
             icon="check"
             disabled={answering}
-            onClick={() => resolve("정정 동의 · 의견대로 수정")}
+            onClick={() => void resolve("정정 동의 · 의견대로 수정")}
           >
             정정 의견에 동의하기
           </Btn>
@@ -67,7 +79,7 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
             v="outline"
             icon="split"
             disabled={answering}
-            onClick={() => resolve("공동 작업으로 나눔")}
+            onClick={() => void resolve("공동 작업으로 나눔")}
           >
             공동 작업으로 나누기
           </Btn>
@@ -75,6 +87,8 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
 
         <Undecided>정정에도 합의가 안 되면 어떻게 되는지는 기획안에 없어 다루지 않았습니다.</Undecided>
       </Body>
+
+      <Toast msg={toast} />
     </>
   );
 }

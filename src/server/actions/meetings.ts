@@ -5,7 +5,7 @@ import { whenText } from "@/features/schedule/meeting-cell";
 import { isPastDeadline } from "@/features/schedule/meeting-model";
 import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
 import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
-import { addDays, candidateDates, isWeekKey } from "@/features/schedule/week";
+import { addDays, candidateDates, isWeekKey, nowHourInSeoul, todayInSeoul } from "@/features/schedule/week";
 import { db } from "@/server/db";
 import { BUSY_FOR_SLOTS, candidateDateOf } from "@/server/meetings/candidates";
 import { notify, teamMemberIds } from "@/server/notify/create";
@@ -51,7 +51,9 @@ export async function proposeMeeting(slotId: string): Promise<void> {
 
   // 후보 행에는 요일만 있다. 날짜는 후보 기간(오늘부터 7일)에서 요일로 되짚는다 —
   // 7일 안에 각 요일은 딱 한 번이라 "수"가 어느 수요일인지 하나로 정해진다.
-  await startProposal(me, slot, candidateDateOf(slot.day)?.date ?? null);
+  // 시각은 `time`("13:00 – 14:00")에서 앞 숫자만 읽는다 — 이미 지나간 시간이면 거절한다.
+  const startHour = Number.parseInt(slot.time, 10);
+  await startProposal(me, slot, candidateDateOf(slot.day)?.date ?? null, Number.isNaN(startHour) ? undefined : startHour);
 }
 
 /**
@@ -107,7 +109,7 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
     existing ??
     (await db.meetingSlot.create({ data: { ...computed, teamId: me.teamId, weekKey: "this" } }));
 
-  await startProposal(me, slot, date);
+  await startProposal(me, slot, date, hour);
 }
 
 /**
@@ -128,10 +130,18 @@ async function startProposal(
   me: { id: string; name: string; teamId: string },
   slot: { id: string; day: string; time: string },
   date: string | null,
+  startHour?: number,
 ): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
 
   await assertCanPropose(me.teamId);
+
+  // **이미 지나간 시간으로는 제안을 받지 않는다.** 후보에서 빼는 것만으로는 부족하다 —
+  // 화면을 오래 열어둔 사이에 그 시간이 지나면 낡은 후보가 그대로 손에 남아 있다.
+  // 두 길(`proposeMeeting`·`proposeMeetingAt`)이 여기로 모이므로 한 곳에서 막으면 된다.
+  if (date === todayInSeoul() && startHour !== undefined && startHour < nowHourInSeoul()) {
+    throw new Error("이미 지나간 시간입니다. 다른 시간을 골라 주세요.");
+  }
 
   try {
     await db.$transaction(async (tx) => {
@@ -229,7 +239,18 @@ export async function respondToMeeting(agree: boolean): Promise<"ok" | "closed">
   if (isPastDeadline(proposal.respondBy)) return "closed";
 
   if (!agree) {
-    await db.meetingProposal.delete({ where: { id: proposal.id } });
+    await db.$transaction([
+      db.meetingProposal.delete({ where: { id: proposal.id } }),
+      // **후보를 낡은 채로 두지 않는다.** 제안이 올라가 있는 동안에는 시간표가 바뀌어도
+      // 후보를 다시 만들지 않는다(고르던 후보가 발밑에서 사라지면 무엇에 동의했는지
+      // 없어진다). 그래서 제안이 철회되면, 그 사이 바뀐 시간표가 반영되지 않은 후보가
+      // 그대로 남았다 —团队이 "모두 못 오는 시간"을 다시 제안하게 된다.
+      //
+      // **즉시 다시 만들지는 않는다.** 다시 만들면 후보 행의 id 가 전부 바뀌어, 그 사이 고른
+      // 것이 "후보를 찾을 수 없습니다"가 된다. 대신 "마지막으로 만든 날"만 비워 두면 다음에
+      // 09 화면을 열 때 `refreshStaleCandidates` 가 자동으로 다시 만든다.
+      db.team.update({ where: { id: me.teamId }, data: { candidatesFrom: null } }),
+    ]);
   } else {
     await db.meetingResponse.upsert({
       where: { proposalId_memberId: { proposalId: proposal.id, memberId: me.id } },

@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Panel, Rows, SecTitle } from "@/components/ui";
 import type { AppNotification } from "@/lib/types";
-import { markNotificationsRead } from "@/server/actions/notifications";
+import { markNotificationsRead, pollNotifications } from "@/server/actions/notifications";
+import { usePoll } from "@/lib/use-poll";
 
 /**
  * 알림함.
@@ -28,14 +29,39 @@ const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; lab
   drive: { icon: "folder-open", surface: "bg-yellow-200 text-yellow-700", label: "드라이브" },
 };
 
+/**
+ * 알림함은 **도착한 순간에 보여야 한다.**
+ *
+ * 예전에는 요청마다만 그렸다. 알림이 도착해도 탭 배지만 바뀌고(30초마다 다시 세므로) 목록은
+ * 그대로였는데, 배지가 숫자를 올려 주면서 정작 그 숫자가 가리키는 곳이 낡아 있으면 어느 쪽을
+ * 믿어야 할지 모른다. "뭔가 왔는데 목록에 없다"가 이 화면의 가장 흔한 상태였다.
+ */
+const NOTIFICATION_POLL_MS = 20_000;
+
 export function NotificationsScreen({ items }: { items: AppNotification[] }) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
 
-  const unread = items.filter((n) => !n.read).length;
+  const [polled, setPolled] = useState<AppNotification[] | null>(null);
+  // 내가 읽었으면 서버가 준 값을 따른다 — 폴링이 그 위에 얹으면 방금 지운 것이 되살아난다.
+  const [touched, setTouched] = useState(false);
+  usePoll(
+    async () => {
+      if (touched) return;
+      setPolled(await pollNotifications());
+    },
+    NOTIFICATION_POLL_MS,
+    !touched,
+  );
+  const list = touched ? items : (polled ?? items);
+
+  const unread = list.filter((n) => !n.read).length;
 
   const open = async (item: AppNotification) => {
-    if (!item.read) await markNotificationsRead([item.id]);
+    if (!item.read) {
+      setTouched(true);
+      await markNotificationsRead([item.id]);
+    }
     if (item.href) router.push(item.href);
     else router.refresh();
   };
@@ -49,11 +75,11 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
       />
 
       <Body dense>
-        {items.length > 0 ? (
+        {list.length > 0 ? (
           <>
             <div className="mb-3.5 flex items-center gap-2">
               <SecTitle className="m-0 flex-1" note="누르면 그 화면으로 갑니다">
-                최근 알림 {items.length}건
+                최근 알림 {list.length}건
               </SecTitle>
               {unread > 0 ? (
                 <Btn
@@ -64,6 +90,7 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
                   onClick={async () => {
                     setWorking(true);
                     try {
+                      setTouched(true);
                       await markNotificationsRead();
                       router.refresh();
                     } finally {
@@ -77,7 +104,7 @@ export function NotificationsScreen({ items }: { items: AppNotification[] }) {
             </div>
 
             <Rows>
-              {items.map((item) => {
+              {list.map((item) => {
                 const look = LOOK[item.kind];
                 return (
                   <button

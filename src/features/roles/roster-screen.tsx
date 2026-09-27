@@ -23,7 +23,7 @@ import {
 import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
-import { acceptRoleDraw, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
+import { acceptRoleDraw, claimSoleRole, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
 import { NO_DRAW_POOL_TEXT, applyMyChoices, drawPoolOf, wantersOf } from "./roster-model";
 
 /**
@@ -234,6 +234,35 @@ export function RosterScreen({
                     </Btn>
                     <Btn size="sm" v="outline" icon="dices" onClick={() => setDrawingFor(role.key)}>
                       협의가 안 되면 추첨하기
+                    </Btn>
+                  </div>
+                ) : null}
+
+                {/* **혼자 1순위로 고른 경우의 길.** 예전에는 이 자리가 비어 있었다. 추첨은
+                    겹칠 때만 일어나므로 희망자가 한 명이면 아무 것도 일어나지 않았고, 상태 칩은
+                    "확정 예정"이라 말하면서 드라이브의 제출함 주인은 영영 "담당자 미정"이었다.
+                    아무것도 확정되지 않은 상태가 "확정 예정"이라는 말로 표시되던 셈이다. */}
+                {wanters.length === 1 && !result ? (
+                  <div className="mt-2.5">
+                    <Btn
+                      size="sm"
+                      icon="check"
+                      disabled={busy.claim}
+                      onClick={() =>
+                        void run(
+                          "claim",
+                          async () => {
+                            const answer = await claimSoleRole(role.key);
+                            router.refresh();
+                            return answer === "ok"
+                              ? `${role.name} 맡기로 정했습니다`
+                              : "이 역할은 이미 정해졌거나 다른 사람이 고른 역할입니다";
+                          },
+                          "정하지 못했습니다. 다시 눌러 주세요.",
+                        )
+                      }
+                    >
+                      {wanters[0].isMe ? "이 역할 맡기" : `${wanters[0].name}님에게 맡기기`}
                     </Btn>
                   </div>
                 ) : null}

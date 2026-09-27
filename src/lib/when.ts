@@ -49,6 +49,18 @@ export function formatWhen(at: Date, now: Date = new Date()): string {
 }
 
 /** 마감 표시 — "9/15 23:59". 상대 표현을 쓰지 않는다(마감은 날짜로 기억한다). */
+/** 화면에 보일 마감 시각. 서버가 포맷해야 사람마다 다르게 보이지 않는다. */
+export function formatDeadline(at: Date): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: ZONE,
+  }).format(at);
+}
+
 export function formatDue(at: Date): string {
   const t = kst(at);
   return `${t.m}/${t.d} ${pad(t.hh)}:${pad(t.mm)}`;
