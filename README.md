@@ -183,20 +183,17 @@ npm run verify
 
 **배포돼 있습니다 — https://chalddeok-omega.vercel.app**
 
-⚠️ **Git 연동이 없습니다.** `main` 에 푸시해도 아무 일도 일어나지 않습니다. 올리는 것은
-`npx vercel --prod` 뿐입니다. 그래서 **서빙 중인 코드는 `main` 과 다를 수 있습니다** —
-푸시했다고 배포된 줄 알면, 배포본만 고쳐 두고 마이그레이션이 없는 상태로 오래 갈 수 있습니다.
-(실제로 그렇게 됐고, `/chat` 이 새벽 내내 깨어 있었습니다.)
+저장소가 Vercel 프로젝트(`chalddeok`)에 연결돼 있어 `main` 에 푸시하면 자동으로 배포됩니다.
+**배포는 항상 푸시한 커밋에서** 일어납니다 — Vercel 이 `github.com/rkdansdlf/ChalDDuck` 를
+그 커밋으로 클론해서 빌드합니다.
 
-`npm run deploy` 로 한 번에 올립니다 — 마이그레이션 → 가드 → 빌드 순서로 묶여 있어서
-`db:check` 를 빼먹을 수 없습니다.
+`npx vercel --prod` 로 직접 올릴 수도 있지만 그러면 **푸시하지 않은 커밋까지 배포**됩니다.
+배포본이 `main` 보다 앞서고, 다음 푸시가 또 다른 배포를 만들어 배포 이력이 두 갈래로
+벌어집니다. 되도록 푸시로만 올리세요.
 
-```bash
-npm run deploy
-```
-
-Git 연동을 켜기로 했다면 Vercel 프로젝트 설정에서 저장소를 연결하세요. 그러면 푸시가
-배포가 되고 위의 경고가 사라집니다.
+`vercel.json` 의 `buildCommand` 가 빌드 순서를 정합니다 —
+`prisma migrate deploy && npm run db:check && next build`. **푸시 = 마이그레이션 적용 +
+가드 + 빌드** 이므로 `db:check` 를 빠뜨릴 길이 없습니다.
 
 새로 세팅한다면 저장소를 Vercel 프로젝트에 연결하고 **환경변수 여섯 개**를 넣으면 됩니다.
 
