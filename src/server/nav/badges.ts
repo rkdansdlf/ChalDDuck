@@ -130,7 +130,12 @@ async function countApprovalsWaiting(me: SessionMember): Promise<number> {
 
   const [claims, joins] = await Promise.all([
     db.memberClaim.count({
-      where: { status: "pending", member: { teamId: me.teamId, leftAt: null } },
+      // **나간 사람도 센다.** 재입장 경로(`rejoin.ts`)는 `leftAt` 을 다시 비워 주므로 나간
+      // 팀원이 새 기기에서 승인을 기다리는 것은 정상이다. 팀장 화면(`getRejoinRequests`)도
+      // 일부러 거르지 않는다 — 거르면 "기대하는 요청이 없습니다"만 뜨고 되돌릴 방법을 팀장에게
+      // 안 주는 셈이다. 예전에는 **여기만** `leftAt` 으로 걸러서, 화면에는 1건이 떠 있는데
+      // 배지는 0 이었다. 배지가 화면보다 적게 세면 어느 화면의 말이 맞는지 알 수 없다.
+      where: { status: "pending", member: { teamId: me.teamId } },
     }),
     db.joinRequest.count({ where: { status: "pending", teamId: me.teamId } }),
   ]);

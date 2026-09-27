@@ -1,21 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+
+import type { AiAnswerSource } from "@/lib/types";
 
 /**
- * 타이핑하는 동안 결과를 따라 만드는 도구(15 쿠션 번역기 · 27 문장 변환)의 공통 부분.
+ * AI 초안 한 장을 **누가, 언제** 만들었는지.
  *
- * 왜 필요한가: 두 화면은 원문이 바뀔 때마다 결과를 다시 받는다. 샘플을 돌려주던 때는
- * 공짜였지만 모델이 붙은 지금은 **글자 하나마다 호출 한 번**이 된다. 그래서
- *
- * - 입력이 멎고 나서 한 번만 부르고(디바운스),
- * - 서버가 이미 만들어 둔 첫 결과가 그대로면 아예 부르지 않고,
- * - 늦게 도착한 앞선 결과가 최신 입력을 덮어쓰지 않게 버린다.
+ * 화면이 "AI 초안" 배지를 어디에 붙이느냐를 정하는 근거다. 예전에는 배지가 곧 "모델이
+ * 이걸 썼다" 를 뜻했는데, 키가 없을 때 미리 넣어 둔 예시도 같은 배지 아래에 있었다 — 그래서
+ * 사람이 만든 것처럼 보였다. 출처를 따로 들면 배지가 사실에 닿는다.
  */
+export type DraftSource = AiAnswerSource | "none";
 
-/** 입력이 멎었다고 보는 시간. 한 문장을 고쳐 쓰는 사이에는 부르지 않을 만큼 넉넉하게. */
-const SETTLE_MS = 800;
-
+/**
+ * AI 초안을 **누를 때만** 만드는 도구(15 쿠션 번역기 · 27 문장 변환)의 공통 부분.
+ *
+ * ## 왜 자동으로 부르지 않나
+ *
+ * 예전에는 원문이 바뀌면 입력이 멎을 때마다(800ms) 자동으로 모델을 불렀다. 화면은 편했다.
+ * 그런데 그 **한 번 한 번이 모두 과금이었고**, 사용자가 한 문장을 고쳐 쓰는 사이에 하루 한도
+ * (기본값 60회)의 십몇 분이 갔다. 고치는 쪽이 고칠수록 나중에 안 되는 것 — 도구의 방향이
+ * 뒤집힌다. **타이핑으로는 한 번도 부르지 않는다.**
+ *
+ * ## 왜 이 문장으로 굳었나
+ *
+ * 같은 앱의 나머지 세 도구(AI 서기·발표 지원·리서처)는 원래 다 버튼을 눌러야 돌아갔다.
+ * 굳이 두 개만 자동으로 돌리던 것은 구현의 잔재였고, 그 잔재가 비용을 만들고 있었다.
+ * 이제 다섯 개가 같은 규칙을 따른다.
+ *
+ * 한 번 만들어 놓고 같은 글·같은 말투로 다시 누르면 **부르지 않는다** — 이미 있는 답이니까.
+ * 그래야 "결과가 그대로인데 한도만 줄었다" 는 일이 생기지 않는다.
+ */
 export function useAiDraft({
   text,
   variant,
@@ -24,58 +40,70 @@ export function useAiDraft({
 }: {
   /** 바꿀 원문. */
   text: string;
-  /** 원문 말고 결과를 바꾸는 값(말투·모드). 바뀌면 다시 부른다. */
+  /** 원문 말고 결과를 바꾸는 값(말투·모드). */
   variant: string;
   /** 서버가 미리 만들어 둔 첫 결과와, 그 결과가 나온 원문·변형. */
   initial: { text: string; variant: string; result: string };
-  run: (text: string, variant: string) => Promise<string>;
-}): { result: string; working: boolean; error: string | null } {
+  /**
+   * 결과와 **그 결과를 누가 만들었는지** 를 함께 돌려줘야 한다. 예전에는 `Promise<string>`
+   * 이라서 화면이 출처를 알아낼 방법이 없었고, 그 여백에서 예시가 AI 결과인 척했다.
+   */
+  run: (text: string, variant: string) => Promise<{ value: string; source: AiAnswerSource }>;
+}): {
+  result: string;
+  working: boolean;
+  error: string | null;
+  source: DraftSource;
+  /** 지금 누르면 결과가 나오는가. 비어 있으면 거절한다. */
+  canRun: boolean;
+  /** 마지막으로 만든 뒤 손댄 것이 있는가(누르면 다시 만들어야 함). */
+  stale: boolean;
+  run: () => void;
+} {
   const [result, setResult] = useState(initial.result);
+  // 화면을 열자마자 보여 주는 것은 예시다. 키가 있어도 마찬가지 — 이건 모델이 만든 게 아니다.
+  const [source, setSource] = useState<DraftSource>(initial.result ? "sample" : "none");
+  // 이 결과를 어떤 원문·말투로 만들었는지. 같은 값이면 다시 부르지 않는다.
+  const [made, setMade] = useState<{ text: string; variant: string } | null>(
+    initial.result ? { text: initial.text, variant: initial.variant } : null,
+  );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const trimmed = text.trim();
-    let cancelled = false;
+  const trimmed = text.trim();
+  const empty = trimmed.length === 0;
+  // 서버가 준 예시와 손댄 것이 같으면 이미 답이 있다 — 같은 값으로 다시 부르지 않는다.
+  const sameAsMade = made !== null && made.text === trimmed && made.variant === variant;
+  const stale = !empty && !sameAsMade;
 
-    // 서버가 준 그대로면 이미 답이 있다 — 화면을 열자마자 호출이 나가면 안 된다.
-    if (trimmed === initial.text.trim() && variant === initial.variant) {
-      return;
-    }
+  const start = useCallback(() => {
+    if (empty || working || sameAsMade) return;
+    setWorking(true);
+    setError(null);
 
-    // 원문이 비면 보여 줄 것도 없다. 아래에서 렌더 중에 비워 돌려주므로 여기서는 부르지만 않는다.
-    if (!trimmed) return;
+    run(trimmed, variant)
+      .then(({ value, source: made_by }) => {
+        setResult(value);
+        // 화면이 판단하지 않는다 — 서버가 함께 보낸 값을 그대로 쓴다.
+        setSource(made_by);
+        setMade({ text: trimmed, variant });
+      })
+      .catch((cause: unknown) => {
+        // 실패한 호출의 한도 처리는 서버가 정한다(`ai/limit.ts`). 화면은 말만 전한다.
+        setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
+      })
+      .finally(() => setWorking(false));
+  }, [empty, working, sameAsMade, run, trimmed, variant]);
 
-    const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      setWorking(true);
-      setError(null);
-
-      run(trimmed, variant)
-        .then((value) => {
-          if (!cancelled) setResult(value);
-        })
-        .catch((cause: unknown) => {
-          if (cancelled) return;
-          setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
-        })
-        .finally(() => {
-          if (!cancelled) setWorking(false);
-        });
-    }, SETTLE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [text, variant, initial.text, initial.variant, run]);
-
-  // 원문이 비었을 때의 화면은 상태가 아니라 계산이다 — 효과 안에서 비우면
-  // 렌더가 한 번 더 돌고, "비웠다가 다시 채우는" 중간 상태가 보인다.
-  const empty = text.trim().length === 0;
+  // 원문이 비었을 때의 화면은 상태가 아니라 계산이다 — 효과 안에서 비우면 렌더가 한 번 더
+  // 돌고, "비웠다가 다시 채우는" 중간 상태가 보인다.
   return {
     result: empty ? "" : result,
     working: empty ? false : working,
     error: empty ? null : error,
+    source: empty ? "none" : source,
+    canRun: !empty && !working && !sameAsMade,
+    stale: empty ? false : stale,
+    run: start,
   };
 }

@@ -28,7 +28,8 @@ export default async function AccessPage() {
   return (
     <AccessScreen
       requests={requests}
-      joins={joins}
+      joins={joins.rows}
+      joinsCapped={joins.capped}
       devices={devices}
       isLeader={me.isLeader}
       teamName={team.name}

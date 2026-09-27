@@ -25,6 +25,7 @@ export type OnboardingState = {
   /** 입장하려는 팀의 초대 코드. */
   teamCode: string | null;
   name: string;
+  email: string;
   /** 직접 고른 유형. 30초 컷 결과는 `picks` 에서 따로 환산한다. */
   mbti: MbtiType | null;
   picks: QuizPicks;
@@ -35,6 +36,7 @@ export type OnboardingState = {
 const EMPTY: OnboardingState = {
   teamCode: null,
   name: "",
+  email: "",
   mbti: null,
   picks: EMPTY_PICKS,
   want: null,
@@ -75,6 +77,7 @@ function loadStored(): OnboardingState | null {
   return {
     teamCode: typeof saved.teamCode === "string" ? saved.teamCode : null,
     name: typeof saved.name === "string" ? saved.name : "",
+    email: typeof saved.email === "string" ? saved.email : "",
     mbti: isMbtiType(saved.mbti) ? saved.mbti : null,
     picks:
       Array.isArray(saved.picks) && saved.picks.length === 4
@@ -129,6 +132,9 @@ export function setTeamCode(teamCode: string | null) {
 export function setName(name: string) {
   update({ name });
 }
+export function setEmail(email: string) {
+  update({ email });
+}
 export function setMbti(mbti: MbtiType | null) {
   update({ mbti });
 }
@@ -171,8 +177,10 @@ export function resetOnboarding() {
 
 /** 서버로 보낼 형태. */
 export function toDraft(): OnboardingDraft {
+  const emailNorm = state.email.trim().toLowerCase();
   return {
     name: normalizeName(state.name),
+    email: emailNorm || null,
     mbti: state.mbti ?? picksToMbti(state.picks),
     mbtiFromQuiz: !state.mbti && picksToMbti(state.picks) !== null,
     want: state.want,

@@ -33,7 +33,11 @@ export function Panel({ children, s = "card", pad = 16, r = 20, className, style
       <button
         type="button"
         onClick={onClick}
-        className={cn("block w-full cursor-pointer border-none text-left", SURFACE[s], className)}
+        className={cn(
+          "block w-full cursor-pointer border-none text-left select-none transition-all duration-150 ease-out hover:brightness-[0.98] active:scale-[0.985]",
+          SURFACE[s],
+          className,
+        )}
         style={{ borderRadius: r, padding: pad, ...style }}
       >
         {children}
@@ -100,10 +104,12 @@ export function SecTitle({
         <button
           type="button"
           onClick={onAction}
-          className="t-cap-strong inline-flex flex-none cursor-pointer items-center gap-0.5 border-none bg-transparent py-1.5 text-link"
+          className="t-cap-strong group inline-flex flex-none cursor-pointer items-center gap-0.5 border-none bg-transparent py-1.5 text-link transition-colors duration-150 hover:text-link-hover active:scale-95"
         >
           {action}
-          <Icon name="chevron-right" size={13} />
+          <span className="transition-transform duration-150 group-hover:translate-x-0.5">
+            <Icon name="chevron-right" size={13} />
+          </span>
         </button>
       ) : null}
     </div>

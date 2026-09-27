@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { normalizeName } from "@/features/roles/roster-model";
 import { db } from "@/server/db";
+import { clearWindow, hitWindow, readWindow } from "@/server/rate-limit/window";
 
 /**
  * 재입장 코드를 틀린 횟수.
@@ -13,6 +14,11 @@ import { db } from "@/server/db";
  *
  * 재입장 코드는 32^12 라 찍어서 맞힐 수 없지만, 제한이 없으면 그 크기를 믿는 근거는
  * 코드 길이 하나뿐이 된다. 표 하나로 근거를 하나 더 둔다.
+ *
+ * **횟수표는 `rate-limit/window.ts` 가 들고 있다.** `RejoinAttempt` 표는 재입장 전용이
+ * 아니라 범용이라 세는 로직을 저기 한 곳에 뒀다 — 서버리스에서 인스턴스마다 따로 세면
+ * 제한이 제한이 아니게 되는 것(위 문단)이 두 번 생기면 곤란하다. 여기서는 **무엇을 세는지**
+ * 만 정한다.
  *
  * ## 남는 위험 (알고 있는 채로 둔다)
  *
@@ -56,10 +62,7 @@ export function attemptKey(teamCode: string, name: string): string {
 
 /** 지금 잠겨 있는지. 창이 지난 기록은 잠긴 것으로 보지 않는다. */
 export async function isLocked(key: string): Promise<boolean> {
-  const row = await db.rejoinAttempt.findUnique({ where: { key } });
-  if (!row) return false;
-  if (row.until.getTime() <= Date.now()) return false;
-  return row.count >= MAX_ATTEMPTS;
+  return (await readWindow(key)) >= MAX_ATTEMPTS;
 }
 
 /**
@@ -69,25 +72,12 @@ export async function isLocked(key: string): Promise<boolean> {
  * 계속 눌러 보는 동안 영영 안 풀린다.
  */
 export async function countFailure(key: string): Promise<void> {
-  const now = Date.now();
-  const row = await db.rejoinAttempt.findUnique({ where: { key } });
-
-  if (!row || row.until.getTime() <= now) {
-    const until = new Date(now + LOCK_MS);
-    await db.rejoinAttempt.upsert({
-      where: { key },
-      create: { key, count: 1, until },
-      update: { count: 1, until },
-    });
-    return;
-  }
-
-  await db.rejoinAttempt.update({ where: { key }, data: { count: { increment: 1 } } });
+  await hitWindow(key, LOCK_MS);
 }
 
 /** 맞혔으면 기록을 지운다 — 다음에 한 번 틀렸다고 곧바로 잠기면 안 된다. */
 export async function clearAttempts(key: string): Promise<void> {
-  await db.rejoinAttempt.deleteMany({ where: { key } });
+  await clearWindow(key);
 }
 
 /** 창이 지난 행을 치운다. 예약 작업이 부른다 — 남겨 둬도 틀리지는 않고 쌓이기만 한다. */

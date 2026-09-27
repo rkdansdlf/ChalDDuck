@@ -8,6 +8,7 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
+import { takeJoinAttempt, takePushSlot } from "@/server/rate-limit/join-throttle";
 import {
   describeDevice,
   getSessionMember,
@@ -43,7 +44,6 @@ const MAX_NAME = 20;
 
 /** `joinTeam` 이 거절한 이유. 화면이 무엇을 고쳐야 하는지 말해 준다. */
 export type JoinBlock = "no-code" | "short-name" | "long-name" | "no-want" | "in-other-team";
-
 /**
  * 이미 다른 팀에 속해 있는지.
  *
@@ -114,6 +114,12 @@ export async function findMemberByName(
 }
 
 /** 새 팀을 만들고 초대 코드를 발급한다. */
+/** 팀 이름 길이 상한. 앱바·DM·알림 제목에 들어간다. */
+const MAX_TEAM_NAME = 60;
+
+/** 강의명 길이 상한. 팀 이름보다 짧게 — Chip 한 칸에 들어갈 만큼이면 충분하다. */
+const MAX_COURSE = 40;
+
 export async function createTeam(input: { name: string; course: string }): Promise<Team> {
   // 팀을 옮기는 기능이 없다. 조용히 옮기게 두면 예전 팀의 기록이 고아로 남는다.
   const other = await findOtherTeam();
@@ -123,12 +129,20 @@ export async function createTeam(input: { name: string; course: string }): Promi
   if (!name) throw new Error("팀 이름을 적어 주세요.");
   // 팀 이름은 앱바·DM·알림 제목에 들어간다. 화면에만 `maxLength` 가 있고 서버엔 없으면
   // 아무 한도가 없는 이름이 그대로 나간다.
-  if (name.length > 60) throw new Error("팀 이름이 너무 깁니다. 60자 안으로 적어 주세요.");
+  if (name.length > MAX_TEAM_NAME) throw new Error("팀 이름이 너무 깁니다. 60자 안으로 적어 주세요.");
+
+  // 강의명도 **같은 이유로** 자른다. 예전에는 팀 이름만 막고 강의명은 두지 않았다. 그런데
+  // 강의명은 `/join` 의 **인증 없는 공개 화면**에서 `Chip` 한 칸으로 그려지고 기여 리포트
+  // 머리말에도 들어간다 — 수천 글자가 그대로 나가면 그 칸이 화면을 밀어 버린다.
+  //
+  // 잘라서 넣는다(거절하지 않는다): 강의명은 조회 키가 아니므로(팀의 유일 키는 `code`) 자르면서
+  // 어긋날 일이 없다. 팀 이름이 거절인 것과 달리 여기서 사용자를 막을 이유가 없다.
+  const course = input.course.trim().slice(0, MAX_COURSE);
 
   const team = await db.team.create({
     data: {
       name,
-      course: input.course.trim(),
+      course,
       code: await nextInviteCode(),
       // 제출함은 팀과 함께 생긴다. 없으면 드라이브가 빈 화면이고 만들 방법도 없었다.
       // 주인은 아직 없다 — 역할 추첨을 수락하면 그 사람이 주인이 된다.
@@ -201,7 +215,23 @@ export async function joinTeam(
   | { status: "requested" }
   | { status: "name-taken" }
   /**
-   * 입력값이服务器的 규칙에 맞지 않는다.
+   * **같은 이름으로 이미 처리 중인 요청이 있고, 이 브라우저가 그 소유자가 아니다.**
+   *
+   * 알아야 하는 게 없다 — 누구의 것인지, 누가 신청했는지, 승인됐는지. 말해 버리면 그 이름의
+   * 사람이 팀에 있는지, 팀장이 누구인지, 자기 이름이 승인 대기 중인지까지 힌트가 된다. 화면은
+   * 팀장에게 확인하라고 안내한다.
+   */
+  | { status: "taken" }
+  /**
+   * abuse 제한에 걸렸다. 이 브라우저 또는 이 팀이 너무 많이 신청했다.
+   *
+   * 멈추는 것은 **신청뿐**이다. 이 요청을 이미 만든 사람이 폴링하거나 회수하는 길, 팀장이
+   * 승인·거절하는 길은 여기서 막히지 않는다 — 그렇지 않으면 공격 한 번이 정상 팀원의
+   * 가입을 끝까지 막아 버린다.
+   */
+  | { status: "limited" }
+  /**
+   * 입력값이 서버의 규칙에 맞지 않는다.
    *
    * 예외 대신 돌려준다 — 운영 빌드는 서버가 던진 오류의 문구를 지우고 `digest` 만
    * 보낸다(위 `name-taken` 주석 참고). 던지면 06 화면의 유일한 버튼이 아무 일도 하지 않는
@@ -230,6 +260,7 @@ export async function joinTeam(
   if (taken) return { status: "name-taken" };
 
   const values = {
+    email: draft.email ? draft.email.trim().toLowerCase() : null,
     mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
     mbtiFromQuiz: draft.mbtiFromQuiz,
     wantRole: isRoleKey(draft.want) ? draft.want : null,
@@ -242,76 +273,150 @@ export async function joinTeam(
   // 아무도 없을 때만 첫 사람에게 준다 — 나중에 들어온 사람이 가로채지 못한다.
   const store = await cookies();
   const createdHere = store.get(CREATOR_COOKIE)?.value === team.id;
-  const hasLeader =
-    (await db.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;
-  const isFirst = (await db.member.count({ where: { teamId: team.id, leftAt: null } })) === 0;
 
-  if (hasLeader || !(createdHere || isFirst)) {
-    // 팀장이 있으면 초대 코드만으로는 들어오지 못한다. 요청만 남기고 승인을 기다린다.
-    const existing = await db.joinRequest.findUnique({
+  // **판정과 삽입을 한 트랜잭션에서 한다, 팀 행을 잠근 안에서.**
+  //
+  // 예전에는 "팀장이 있나"와 "아무도 없나"를 읽고, 그 **뒤에** 별도 트랜잭션에서
+  // `isLeader: true` 로 만들었다. 그 사이가 구멍이었다 — 빈 팀에 두 브라우저가 동시에 붙으면
+  // 둘 다 "아무도 없다"를 보고 둘 다 팀장이 된다. 스키마에 `Member(teamId) WHERE isLeader` 의
+  // 부분 유니크 인덱스가 없어 DB 도 막지 못한다(운영 DB 에 이미 있는 데이터를 이유로
+  // 마이그레이션이 실패하지 않게 했다 — `drive.ts` 의 `withBoxLock` 주석과 같은 판단).
+  //
+  // 팀 행을 잠그면 두 번째 트랜잭션은 첫 번째가 끝난 뒤에 읽으므로 `hasLeader` 가 참이 되고
+  // 승인 요청 길로 넘어간다. 되돌릴 수 없는 "팀장이 둘" 상태를 만들지 않게 하는 최단 경로다.
+  //
+  // 승인을 기다려야 하는 쪽(요청 길)은 잠금을 잡을 필요가 없다 — 팀장을 세는 판정이 이미
+  // 끝났으니, 그대로 나간다.
+  const entry = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${team.id} FOR UPDATE`;
+
+    const hasLeader =
+      (await tx.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;
+    const isFirst = (await tx.member.count({ where: { teamId: team.id, leftAt: null } })) === 0;
+
+    if (hasLeader || !(createdHere || isFirst)) return { path: "request" as const };
+
+    // 멤버를 만드는 것과 재입장 코드를 붙이는 것을 한 트랜잭션으로 묶는다 — 둘 중 하나만
+    // 성공하면 이름은 있는데 재입장 코드가 없는 사람이 생기고, 팀장이 자신뿐이면 그
+    // 상태에서 영영 못 돌아온다(실제로 한 번 있었다).
+    const member = await tx.member.create({
+      data: { teamId: team.id, name, isLeader: true, ...values },
+    });
+    const rejoinCode = await issueRejoinCode(member.id, tx);
+    return { path: "join" as const, member, rejoinCode };
+  });
+
+  if (entry.path === "join") {
+    if (createdHere) store.delete(CREATOR_COOKIE);
+
+    await startSession(entry.member.id);
+
+    // 여기서 redirect 하지 않는다 — 화면이 재입장 코드를 한 번 보여 준 뒤에 넘어간다.
+    return { status: "joined", rejoinCode: entry.rejoinCode, isLeader: true };
+  }
+
+  // ── 여기부터는 승인 요청 길이다 ────────────────────────────────────────────
+  //
+  // 1) abuse 제한  2) 기존 요청의 소유권  3) 새 요청 생성  4) 알림.
+  // **이 순서가 규칙이다.** 2번을 1번보다 먼저 두면 정상 사용자가 자기 요청을 고칠 때마다
+  // 팀 예산을 깎아 되고(`teamGate` 는 새 요청을 만들 때만 불려야 한다 — 그게 그 함수의
+  // 전제다), 3번을 2번보다 먼저 두면 남의 이름으로 새 요청이 만들어진다.
+  {
+    // **1) abuse 제한.** 이름만 바꿔 가며 찍어도 매번 알림이 나가므로 여기가 진짜 문이다
+    // (`rate-limit/join-throttle.ts`). 행도 알림도 **만들기 전에** 막는다.
+    const gate = await takeJoinAttempt(team.id);
+    if (gate !== "open") return { status: "limited" };
+
+    // 예전에는 `upsert` 의 create/update 두 갈래에서 각각 `await describeDevice()` 를 불러
+    // 기기 설명을 두 번 읽었다. 한 번만 읽는다 — 값이 같으므로 결과도 같다.
+    const label = await describeDevice();
+
+    // **2) 기존 요청이 있으면, 이 브라우저가 그 소유자인지가 전부다.**
+    //
+    // 여기서부터가 이 액션의 보안 불변식이다:
+    //
+    // > **`JoinRequest` 의 `token` 은 만들어진 뒤로 바뀌지 않는다.**
+    //
+    // 예전에는 `upsert` 의 `update: { token }` 가 이걸 무조건 돌려서 **아직 승인도 안 된
+    // pending 요청**을 다른 브라우저가 가로챌 수 있었다:
+    //   1) B1 이 "김민준" 으로 신청 → token=T1, B1 의 쿠키=T1, pending
+    //   2) (코드, 이름) 을 아는 사람이 같은 이름으로 다시 신청 → `update` 가 token=T2,
+    //      그리고 **자기** 쿠키에 T2 를 심는다
+    //   3) B1 이 폴링 → T1 이 없어 `{status:"none"}` → `/join` 으로 튕겨난다
+    //   4) 팀장이 승인 → `Member` 와 재입장 코드가 **가로챈 사람**에게 만들어진다
+    //
+    // 위 주석이 설명하던 "승인된 요청을 넘겨붙이기" 의 같은 버그가, `approved` 뿐 아니라
+    // **`pending` 에도** 열려 있었다. 두 상태를 나누지 않는다 — 토큰은 **회수되기 전까지**
+    // 불변이다(`pending` 과 `approved-but-not-claimed` 둘 다).
+    //
+    // 그래서 소유자 판정은 **DB 에 있는 토큰과 내 쿠키가 같은지로만** 한다. 상태는 보지
+    // 않는다 — 토큰을 가진 쪽이 그 요청의 주인이고, 주인이면 `pending` 이든 `approved` 든
+    // 자기 것이다.
+    const mine = store.get(JOIN_COOKIE)?.value;
+    const found = await db.joinRequest.findUnique({
       where: { teamId_name: { teamId: team.id, name } },
       select: { id: true, token: true, status: true },
     });
 
-    // **이미 승인된 요청을 새 요청으로 덮지 않는다.** 예전에는 `upsert` 의 update 가
-    // `status: "pending"` 으로 무조건 되돌려서, 팀장이 승인한 사실과 승인자, 승인 시각이
-    // 함께 지워졌다 — 팀장이 두 번 승인해야 그 사람이 들어왔다. 여기서 다시 온다는 것은
-    // 아직 팀원이 되지 못했다는 뜻이므로, 승인받은 요청과 그 토큰을 그대로 다시 심는다.
-    if (existing?.status === "approved") {
-      // 값(MBTI·희망 역할 등)은 고친 내용을 반영하되, 승인과 토큰은 그대로 둔다.
-      await db.joinRequest.update({ where: { id: existing.id }, data: { ...values } });
-      store.set(JOIN_COOKIE, existing.token, JOIN_COOKIE_OPTIONS);
+    // 거절된 요청은 이미 끝난 것이다. **토큰이 죽었으니**(`checkJoinApproval` 이 거절을
+    // 보고 쿠키를 지운다) 행만 치우고 새 요청을 받게 한다 — 안 치우면 거절을 받은 사람이
+    // 다시 신청해도 늘 같은 벽에 부딪혀 통과할 수가 없다.
+    if (found?.status === "rejected") {
+      await db.joinRequest.delete({ where: { id: found.id } });
+    } else if (found) {
+      if (mine !== found.token) {
+        // **남의 요청은 손대지 않는다.** 토큰도, 고른 값(희망 역할·Veto)도, 상태도.
+        // 희망 역할을 덮어쓰는 건 역할 추첨의 입력을 바꾸는 일이고(위 `name-taken` 주석의
+        // 사칭과 같은 계열), 무엇을 아는지도 말하지 않는다.
+        return { status: "taken" };
+      }
+
+      // **소유자.** 승인 여부와 무관하게 자기 요청이므로 고친 값만 반영하고, 토큰은 그대로
+      // 둔다. 알림은 다시 울리지 않는다 — 같은 요청에 대한 알림이 쌓이면 그것도 폭탄이다.
+      await db.joinRequest.update({
+        where: { id: found.id },
+        data: { ...values, label },
+      });
+      store.set(JOIN_COOKIE, found.token, JOIN_COOKIE_OPTIONS);
       revalidatePath("/team", "layout");
       revalidatePath("/home");
       return { status: "requested" };
     }
 
+    // **3) 새 요청.** `upsert` 대신 `create` 다. **`token` 을 갱신하는 코드가 이 함수에
+    // 존재하지 않아야** 위 불변식이 성립한다 — 그래서 동시 요청은 DB 가 이긴다.
+    //
+    // 두 브라우저가 같은 이름을 동시에 신청하면 둘 중 하나만 `create` 에 성공하고, 진 사람은
+    // `P2002` 를 받는다. **그때 절대 덮어쓰지 않는다** — 자기가 만든 것처럼 보이는 요청을
+    // 지워야 진짜 신청자가 풀릴 수 있다. 누가 이겼는지는 중요하지 않다(테스트가 박는다).
     const token = randomUUID();
-    await db.joinRequest.upsert({
-      where: { teamId_name: { teamId: team.id, name } },
-      update: {
-        ...values,
-        token,
-        status: "pending",
-        label: await describeDevice(),
-        resolvedAt: null,
-        approvedById: null,
-      },
-      create: { teamId: team.id, name, ...values, token, label: await describeDevice() },
-    });
+    try {
+      await db.joinRequest.create({
+        data: { teamId: team.id, name, ...values, token, label },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") return { status: "taken" };
+      throw error;
+    }
 
     store.set(JOIN_COOKIE, token, JOIN_COOKIE_OPTIONS);
 
+    // **4) 알림.** 앱 안 알림은 반드시 남기고, **푸시만** 예산 안에서 보낸다. 예산이 모자라면
+    // 요청과 알림함 기록은 그대로 두고 기기 밖 울림만 멈춘다 — 방어를 위해 "누가 들어오려 했는지"
+    // 를 기록에서 지우지는 않는다.
     await notify({
       to: await leaderIds(team.id),
       kind: "join-request",
       title: `${name}님이 팀에 들어오려 합니다`,
       body: "본인이 맞는지 확인하고 승인해 주세요",
       href: "/team/access",
+      push: await takePushSlot(team.id),
     });
 
     revalidatePath("/team", "layout");
     revalidatePath("/home");
     return { status: "requested" };
   }
-
-  // 멤버를 만드는 것과 재입장 코드를 붙이는 것을 한 트랜잭션으로 묶는다 — 둘 중 하나만
-  // 성공하면 이름은 있는데 재입장 코드가 없는 사람이 생기고, 팀장이 자신뿐이면 그
-  // 상태에서 영영 못 돌아온다(실제로 한 번 있었다).
-  const { member, rejoinCode } = await db.$transaction(async (tx) => {
-    const member = await tx.member.create({
-      data: { teamId: team.id, name, isLeader: true, ...values },
-    });
-    const rejoinCode = await issueRejoinCode(member.id, tx);
-    return { member, rejoinCode };
-  });
-
-  if (createdHere) store.delete(CREATOR_COOKIE);
-
-  await startSession(member.id);
-
-  // 여기서 redirect 하지 않는다 — 화면이 재입장 코드를 한 번 보여 준 뒤에 넘어간다.
-  return { status: "joined", rejoinCode, isLeader: true };
 }
 
 /**
@@ -346,6 +451,7 @@ export async function checkJoinApproval(): Promise<
         data: {
           teamId: request.teamId,
           name: request.name,
+          email: request.email,
           mbti: request.mbti,
           mbtiFromQuiz: request.mbtiFromQuiz,
           wantRole: request.wantRole,
@@ -376,4 +482,28 @@ export async function checkJoinApproval(): Promise<
   store.delete(JOIN_COOKIE);
   await startSession(memberId, token);
   return { status: "approved", rejoinCode };
+}
+
+/**
+ * 내 MBTI 변경.
+ * 온보딩 이후에도 팀 화면이나 프로필에서 언제든 수정할 수 있다.
+ */
+export async function updateMyMbti(newMbti: string | null): Promise<"ok" | "invalid"> {
+  const session = await getSessionMember();
+  if (!session) return "invalid";
+
+  const validMbti = isMbtiType(newMbti) ? newMbti : null;
+
+  await db.member.update({
+    where: { id: session.id },
+    data: {
+      mbti: validMbti,
+      mbtiFromQuiz: false, // 직접 수정했으므로 quiz 플래그 해제
+    },
+  });
+
+  revalidatePath("/team");
+  revalidatePath("/home");
+  revalidatePath("/chat/team");
+  return "ok";
 }

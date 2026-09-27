@@ -34,11 +34,33 @@ export function RouletteScreen({
 
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [rollingLabel, setRollingLabel] = useState<string>("");
   const timer = useRef<number | null>(null);
+  const rollInterval = useRef<number | null>(null);
+
+  /**
+   * 굴리는 것을 멈추고 **다시 누를 수 있게** 돌려놓는다.
+   *
+   * 굴림 구간은 세 곳에서만 멈췄다 — 화면을 떠날 때, 다음spin 의 시작, 성공한 뒤의 예약.
+   * **서버 호출이 실패하면 그 셋 어디에도 도달하지 못했다.** `useAction.run` 이 오류를
+   * 삼키므로(`use-action.ts`) 예약된 정리로 넘어가지 않았고, 결과적으로 이름이 무한히
+   * 바뀌면서 "정하는 중…" 버튼이 계속 꺼져 있었다. 네트워크 한 번 실패하면 그 화면에서 빠져나갈
+   * 방법이 없고, 다시 시도도 눌러 볼 수 없다 — 유일한 탈출은 다른 곳으로 이동하는 것뿐이었다.
+   *
+   * 그래서 **실패해도 반드시 이 자리를 지나게** 만든다(`run` 의 반환값이 그 신호다).
+   */
+  const stopRolling = () => {
+    if (rollInterval.current) {
+      window.clearInterval(rollInterval.current);
+      rollInterval.current = null;
+    }
+    setSpinning(false);
+  };
 
   // 화면을 떠나면 예약된 setState 가 남지 않게 한다.
   useEffect(() => () => {
     if (timer.current) window.clearTimeout(timer.current);
+    stopRolling();
   }, []);
 
   const spin = () => {
@@ -47,6 +69,14 @@ export function RouletteScreen({
     setResult(null);
 
     if (timer.current) window.clearTimeout(timer.current);
+    stopRolling();
+
+    let idx = 0;
+    rollInterval.current = window.setInterval(() => {
+      idx = (idx + 1) % options.length;
+      setRollingLabel(options[idx] ?? "");
+    }, 70);
+
     // **서버가 먼저 뽑는다.** 여기는 그 결과를 천천히 보여 줄 뿐이다 — 예전에는 여기가
     // 뽑아서, 팀원이 몇 명인지에 따라 모두 다른 답이 나왔다.
     void run(
@@ -55,13 +85,16 @@ export function RouletteScreen({
         const picked = await spinMenu();
         timer.current = window.setTimeout(() => {
           setResult(picked);
-          setSpinning(false);
+          stopRolling();
         }, SPIN_MS);
         // 알림은 서버가 팀 전체에 보냈다. 여기서는 다시 말하지 않는다.
         router.refresh();
       },
       "정하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
-    );
+    ).then((ok) => {
+      // 실패하면 굴림을 멈추고 버튼을 되돌린다. 사용자가 다시 누를 수 있어야 한다.
+      if (!ok) stopRolling();
+    });
   };
 
   /** 지금 화면에 보여 줄 값. 서버가 정한 것이 우선이다. */
@@ -80,19 +113,24 @@ export function RouletteScreen({
         <div
           // 결과가 바뀌면 스크린 리더가 읽어 준다 — 애니메이션만으로는 알 수 없다.
           role="status"
-          className="mb-[18px] flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-card bg-yellow-100 px-4 text-center"
+          className="mb-[18px] flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-card bg-yellow-100 px-4 text-center transition-all duration-300"
         >
           {spinning ? (
-            <span className="animate-spin text-yellow-700">
-              <Icon name="loader-circle" size={30} />
-            </span>
-          ) : shown ? (
-            <>
-              <span className="t-cap-strong text-yellow-700" style={{ letterSpacing: ".06em" }}>
-                오늘은 이거
+            <div className="flex flex-col items-center gap-2">
+              <span className="animate-spin text-yellow-700">
+                <Icon name="loader-circle" size={26} />
               </span>
-              <span className="font-extrabold text-[24px] leading-[1.3] text-ink-900">{shown}</span>
-            </>
+              <span className="font-extrabold text-[22px] leading-[1.3] text-ink-800 animate-pulse">
+                {rollingLabel || "메뉴 고르는 중…"}
+              </span>
+            </div>
+          ) : shown ? (
+            <div className="animate-pop flex flex-col items-center gap-1">
+              <span className="t-cap-strong text-yellow-700" style={{ letterSpacing: ".06em" }}>
+                ✨ 오늘은 이거!
+              </span>
+              <span className="font-extrabold text-[26px] leading-[1.3] text-ink-900 animate-jelly">{shown}</span>
+            </div>
           ) : (
             <span className="font-semibold text-[14px] leading-[1.4] text-yellow-700">
               버튼을 눌러 정해요

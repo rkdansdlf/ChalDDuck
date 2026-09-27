@@ -1,6 +1,6 @@
 import "server-only";
 
-import { AI_POLICY, AI_TOOLS } from "@/data/catalog";
+import { AI_POLICY, AI_TOOL_NAMES } from "@/data/catalog";
 import { db } from "@/server/db";
 import type { SessionMember } from "@/server/session";
 
@@ -17,22 +17,85 @@ import type { SessionMember } from "@/server/session";
  * 한도 수치는 `AI_POLICY` 에 있고 아직 확정되지 않은 값이다.
  */
 
-/** `AI_TOOLS` 의 key 와 같은 어휘다. 화면·표·집계가 같은 이름을 쓴다. */
-export type AiToolKey = "cushion" | "clerk" | "research" | "present" | "sentence";
+/**
+ * `AI_TOOL_NAMES` 의 key 와 같은 어휘다. 화면·표·집계가 같은 이름을 쓴다.
+ *
+ * `read-cushion` 은 읽기 순화(19·31)다 — 사용자가 도구를 연 것이 아니라 **읽기 설정을
+ * 켰을 뿐**인데도 모델을 부르므로 한도에서 빠지면 안 된다. 이 이름의 행이 없으면 "AI 를
+ * 언제 왜 불렀나" 를 수습할 때 그 calls 가 통째로 사라진다.
+ */
+export type AiToolKey = "cushion" | "clerk" | "research" | "present" | "sentence" | "read-cushion";
 
 /** 하루의 기준은 한국 날짜다 — 서버가 어디서 돌든 같은 하루여야 한다. */
 function todayInSeoul(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 }
 
+/** 오늘 남은 횟수. 읽기 전용 — 이 함수는 한도를 깎지 않는다. */
+export type AiQuota = {
+  /** 내 몫의 남은 횟수. */
+  mineLeft: number;
+  /** 팀 몫의 남은 횟수. */
+  teamLeft: number;
+  /** 하루 총량. 화면이 "60회 중 N회" 라고 보여 준다. */
+  perDay: number;
+};
+
 /**
- * 한 번 쓸 수 있는지 보고, 쓸 수 있으면 썼다고 적는다.
+ * 남은 횟수만 센다. **아무것도 적지 않는다.**
  *
- * 세는 것과 쓰는 것을 한 함수에 둔 이유: 부르는 쪽이 둘 중 하나를 빠뜨리면 한도가
- * 조용히 사라진다. 모델을 부르기 **전에** 적는다 — 실패한 호출도 비용과 시간이 들었고,
- * 실패를 공짜로 두면 실패하는 요청을 무한히 보낼 수 있다.
+ * 화면이 진입할 때 부를 수 있어야 하니, 세는 것과 쓰는 것을 반드시 갈라 둔다 — 한 함수에
+ * 같이 두면 "상태를 보려고 부른 것"이 한도가 되어 이유를 알 수 없다.
+ */
+export async function aiQuotaFor(me: SessionMember): Promise<AiQuota> {
+  const day = todayInSeoul();
+  const [teamUsed, mineUsed] = await Promise.all([
+    db.aiUsage.count({ where: { teamId: me.teamId, day } }),
+    db.aiUsage.count({ where: { memberId: me.id, day } }),
+  ]);
+  return {
+    mineLeft: Math.max(0, AI_POLICY.perMemberPerDay - mineUsed),
+    teamLeft: Math.max(0, AI_POLICY.perTeamPerDay - teamUsed),
+    perDay: AI_POLICY.perMemberPerDay,
+  };
+}
+
+/**
+ * 한 번 쓸 수 있는지 보고, 쓸 수 있으면 썼다고 적는다. **한도를 깎는 유일한 자리.**
+ *
+ * ## 언제 깎나
+ *
+ * **모델을 부르는 그 순간에 깎는다.** 타이핑할 때도 깎지 않고, 화면을 열어도 깎지 않는다
+ * (조회는 `aiQuotaFor` 가 한다). 예전에는 쿠션 번역기·문장 변환이 원문이 바뀔 때마다 입력이
+ * 멎을 때(800ms) 자동으로 부르니, **고치는 행위 자체가 과금**이었다 — 고칠수록 한도가 줄었다.
+ * 이제 생성은 버튼을 눌렀을 때만 일어난다(`use-ai-draft`).
+ *
+ * ## 실패하면 돌려 주는가 — 아니다
+ *
+ * 모델을 부르기 **전에** 적는 이유다. 실패한 호출도 시간과 돈이 들었고(타임아웃은 특히 그렇다),
+ * 실패를 공짜로 두면 실패하는 요청을 무한히 보낼 수 있다 — 한도가 아니라 **지속 가능한
+ * 비용**이 된다. 이 선택을 바꾸려면 여기만 고치면 된다.
+ *
+ * ## 왜 세는 것과 쓰는 것이 한 함수에 있나
+ *
+ * 부르는 쪽이 둘 중 하나를 빠뜨리면 한도가 조용히 사라진다. 읽기(`aiQuotaFor`)와 쓰기는
+ * **반드시 다른 함수**로 갈라 둔다 — 상태를 보려고 부른 것이 한도가 되는 사고를 막기 위해서다.
  *
  * 한도를 넘으면 `message` 를 돌려준다. 화면이 그대로 보여 줄 문장이다.
+ *
+ * ## 셋과 읽기는 잠근 안에서 함께 한다
+ *
+ * 예전에는 `count` 두 번 → `create` 로 있었다. `AiUsage` 에는 이를 잡아 줄 유니크 제약이
+ * 없어서, 동시에 300개가 들어오면 300개 다 `0 회` 를 보고 300개 다 적고 **300개 다 모델을
+ * 부른다** — 돈이 드는 길이 정확히 그 병목인데, 지킨 게 아니었다. 화면에 적히는 숫자는
+ * 정확했다.
+ *
+ * 그래서 팀 행을 `FOR UPDATE` 로 잠근 안에서 센다(같은 관용구를 `server/actions/ice.ts` 와
+ * `server/actions/drive.ts` 가 이미 쓴다). 한 팀의 동시 호출은 많지 않아(하루 200회 한도)
+ * 기다림이 눈에 띄지 않는다.
+ *
+ * **모델을 부르는 동안은 잡고 있지 않는다** — 여기서 끝나면 락이 풀린다. 그 사이에 한도가
+ * 차는 것은 맞다(실제로 그만큼 부른 것이므로).
  */
 export async function consumeAiQuota(
   me: SessionMember,
@@ -40,30 +103,32 @@ export async function consumeAiQuota(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const day = todayInSeoul();
 
-  const [teamUsed, mineUsed] = await Promise.all([
-    db.aiUsage.count({ where: { teamId: me.teamId, day } }),
-    db.aiUsage.count({ where: { memberId: me.id, day } }),
-  ]);
+  return db.$transaction(async (tx): Promise<{ ok: true } | { ok: false; message: string }> => {
+    // 한 팀의 한도를 한 명씩 지킨다.
+    await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
 
-  if (teamUsed >= AI_POLICY.perTeamPerDay) {
-    return {
-      ok: false,
-      message: `오늘 팀이 쓸 수 있는 AI 횟수(${AI_POLICY.perTeamPerDay}회)를 다 썼습니다. 내일 0시(한국)에 다시 채워집니다.`,
-    };
-  }
+    const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day } });
+    if (teamUsed >= AI_POLICY.perTeamPerDay) {
+      return {
+        ok: false,
+        message: `오늘 팀이 쓸 수 있는 AI 횟수(${AI_POLICY.perTeamPerDay}회)를 다 썼습니다. 내일 0시(한국)에 다시 채워집니다.`,
+      };
+    }
 
-  if (mineUsed >= AI_POLICY.perMemberPerDay) {
-    return {
-      ok: false,
-      message: `오늘 내가 쓸 수 있는 AI 횟수(${AI_POLICY.perMemberPerDay}회)를 다 썼습니다. 팀의 남은 횟수와는 별개입니다 — 내일 0시(한국)에 다시 채워집니다.`,
-    };
-  }
+    const mineUsed = await tx.aiUsage.count({ where: { memberId: me.id, day } });
+    if (mineUsed >= AI_POLICY.perMemberPerDay) {
+      return {
+        ok: false,
+        message: `오늘 내가 쓸 수 있는 AI 횟수(${AI_POLICY.perMemberPerDay}회)를 다 썼습니다. 팀의 남은 횟수와는 별개입니다 — 내일 0시(한국)에 다시 채워집니다.`,
+      };
+    }
 
-  await db.aiUsage.create({
-    data: { teamId: me.teamId, memberId: me.id, tool, day },
+    await tx.aiUsage.create({
+      data: { teamId: me.teamId, memberId: me.id, tool, day },
+    });
+
+    return { ok: true };
   });
-
-  return { ok: true };
 }
 
 /**
@@ -99,7 +164,7 @@ export async function aiUsageCsv(teamId: string): Promise<string> {
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
-  const toolName = new Map(AI_TOOLS.map((tool) => [tool.key, tool.name]));
+  const toolName = new Map(Object.entries(AI_TOOL_NAMES));
   const clock = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Seoul",
     hour: "2-digit",

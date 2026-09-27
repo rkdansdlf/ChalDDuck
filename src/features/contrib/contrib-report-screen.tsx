@@ -50,7 +50,7 @@ export function ContribReportScreen({
             내용이 더 길면 늘어난다 — 비율을 지키려고 내용을 자르지는 않는다. */}
         <div
           data-print-doc
-          className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10"
+          className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10 animate-slide-up shadow-xs"
         >
           <div className="mb-3 border-b-[1.5px] border-ink-900 pb-3">
             <div className="keep-all font-extrabold text-[17px] leading-[1.3] tracking-[-.025em] text-ink-900">

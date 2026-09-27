@@ -66,9 +66,21 @@ export async function drawForRole(role: RoleKey, toolName: string): Promise<Draw
 
   const existing = await db.roleDraw.findUnique({
     where: { teamId_role: { teamId: me.teamId, role } },
-    select: { id: true },
+    select: { id: true, accepted: true, winner: { select: { leftAt: true } } },
   });
-  if (existing) return { status: "settled" };
+  if (existing) {
+    // **당첨자가 나간 추첨은 자리를 계속 차지한다.** 나간 사람의 세션은 지워져
+    // (`session.ts`) 수락도 거절도 못 하고, 남은 팀원은 당첨자가 본인이 아니라
+    // "not-yours" 로 거절당한다. 예전에는 여기서 "settled" 라고만 말해놓고 아무도
+    // 풀 수 없는 상태로 남겼다 — 다시 뽑으러 온 사람이 비운다.
+    //
+    // **확정된 것은 비우지 않는다.** 이미 배정이 끝났고 제출함 주인도 정해졌다. 지우면
+    // 확정된 사실과 담당자가 사라진다 — 화면(`roleViewOf`)도 같은 순서로 본다.
+    const stuck = existing.winner.leftAt !== null && !existing.accepted;
+    if (!stuck) return { status: "settled" };
+
+    await db.roleDraw.delete({ where: { id: existing.id } });
+  }
 
   const { pool, noPool } = await candidatesFor(me.teamId, role);
   if (pool.length === 0) return { status: "empty", noPool: noPool ?? "no-wanters" };

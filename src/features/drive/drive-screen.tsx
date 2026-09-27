@@ -42,6 +42,18 @@ export function DriveScreen({
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
 
   /**
+   * 제출함 하나의 올리는 중 상태를 바꾼다.
+   *
+   * **값이 같으면 같은 객체를 돌려준다.** 이 함수가 늘 새 객체를 만들면, 부르는 쪽의
+   * effect 가 무엇을 해도(그리고 언제 다시 불려도) React 는 bail-out 하지 못해
+   * setState → 렌더 → effect → setState 로 끝없이돈다. 실제로 그렇게 무한 렌더가 났다.
+   * 비교 한 줄로 그 연쇄를 끊는다 — 올리는 중인 칸 수나 시트를 막는 데에는 아무 차이가 없다.
+   */
+  const markUploading = (boxId: string, busy: boolean) => {
+    setUploading((prev) => (prev[boxId] === busy ? prev : { ...prev, [boxId]: busy }));
+  };
+
+  /**
    * 올리는 중에는 시트를 닫지 않는다.
    *
    * 대기열 목록이 시트 **안쪽**에 그려지므로 닫으면 진행도·실패 이유·"다시 시도"가 함께
@@ -173,7 +185,7 @@ export function DriveScreen({
                   boxId={box.id}
                   label="여기에 올리기"
                   onFinished={afterUpload(box.id)}
-                  onBusyChange={(b) => setUploading((prev) => ({ ...prev, [box.id]: b }))}
+                  onBusyChange={(b) => markUploading(box.id, b)}
                 />
               </div>
             ))}

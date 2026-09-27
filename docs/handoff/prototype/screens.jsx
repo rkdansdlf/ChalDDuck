@@ -65,7 +65,7 @@ function ScrName({ go, name, setName }) {
           실명이 아니어도 됩니다. 팀원이 누구인지 알아볼 수 있는 이름이면 충분합니다.
         </p>
         <Field label="이름" required error={short ? "두 글자 이상 적어 주세요." : null}>
-          <Input value={name} onChange={(v) => { setName(v); setNotMe(false); }} placeholder="예: 김민준" error={short} />
+          <Input value={name} onChange={(v) => { setName(v); setNotMe(false); }} placeholder="예: 홍길동" error={short} />
         </Field>
         <Note tone="info" icon="key-round" title="초대 코드 + 이름으로 기록을 이어갑니다">
           같은 초대 코드({D.team.code})로 같은 이름을 다시 적으면 이전 기록에 자동으로 연결됩니다. 기기를 바꿔도 됩니다 — 별도 로그인은 필요 없습니다.

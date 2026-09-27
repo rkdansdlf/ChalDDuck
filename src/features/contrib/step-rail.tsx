@@ -28,19 +28,29 @@ export function StepRail({ at }: { at: number }) {
             <span
               aria-current={current ? "step" : undefined}
               className={cn(
-                "inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-[9px] px-[9px] py-[5px] font-bold text-[13px] leading-[1.35]",
+                "inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-[9px] px-[9px] py-[5px] font-bold text-[13px] leading-[1.35] transition-all duration-200",
                 current
-                  ? "bg-ink-700 text-on-action"
+                  ? "bg-ink-700 text-on-action shadow-xs"
                   : done
                     ? "bg-yellow-200 text-[#7A5E12]"
                     : "bg-fill text-txt-faint",
               )}
             >
-              {done ? <Icon name="check" size={12} strokeWidth={3} /> : null}
+              {done ? (
+                <span className="animate-pop inline-flex">
+                  <Icon name="check" size={12} strokeWidth={3} />
+                </span>
+              ) : null}
               {step.label}
             </span>
             {i < STEPS.length - 1 ? (
-              <span aria-hidden="true" className="h-px min-w-1 flex-1 bg-line" />
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "h-0.5 min-w-1 flex-1 rounded-full transition-colors duration-300",
+                  i < at ? "bg-yellow-400" : "bg-line",
+                )}
+              />
             ) : null}
           </li>
         );

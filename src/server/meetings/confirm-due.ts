@@ -34,7 +34,11 @@ export async function confirmDueMeetings(): Promise<number> {
 
   await db.meetingProposal.updateMany({
     where: { id: { in: confirmable } },
-    data: { stage: "confirmed" },
+    // **키를 함께 비운다.** 확정된 회의는 끝난 결정이지 "진행 중인 결정"이 아니다. 키를
+    // 붙여 두면 팀이 두 번째 회의를 영영 잡지 못한다 — `assertCanPropose` 가 계속 막고,
+    // 화면도 제안을 띄울 칸을 열지 않는다. 유일 인덱스가 지킨 것은 **응답을 기다리는** 결정
+    // 하나뿐이다. 확정 행은 그대로 남는다(날짜·시간·제안자가 남는다).
+    data: { stage: "confirmed", activeKey: null },
   });
 
   revalidatePath("/schedule", "layout");

@@ -262,7 +262,7 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
   const [draws, rejections] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
-      include: { winner: { select: { name: true } } },
+      include: { winner: { select: { id: true, name: true, leftAt: true } } },
     }),
     db.roleRejection.findMany({
       where: { teamId },
@@ -276,7 +276,13 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
     result.draws[d.role as RoleKey] = {
       tool: d.tool,
       winner: d.winner.name,
+      // 이름은 고칠 수 있으므로 판은 id 로 한다 — 서버(`actions/roles`)와 같은 기준.
+      winnerId: d.winnerId,
       accepted: d.accepted,
+      // **행을 지우지 않는다.** 조회가 부수효과를 가지면 언제 지워졌는지 예측할 수
+      // 없다. 무효로 보이는 것만 알리고, 실제 정리는 `drawForRole` 이 "다시 뽑는다" 는
+      // 맥락에서 한다.
+      stale: d.winner.leftAt !== null,
     };
   }
   for (const r of rejections) {

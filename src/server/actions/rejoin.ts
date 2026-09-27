@@ -79,15 +79,42 @@ export async function requestRejoinApproval(
   const member = await findMember(teamCode, name);
   if (!member) return "unknown";
 
-  // 같은 사람이 여러 번 눌러 요청이 쌓이지 않게 정리한다.
-  await db.memberClaim.deleteMany({ where: { memberId: member.id, status: "pending" } });
+  // **이 사람의 대기 요청을 지우지 않는다.**
+  //
+  // 예전에는 여기서 `deleteMany({ memberId, status: "pending" })` 로 지우고 새로 만들었다.
+  // "같은 사람이 여러 번 눌러 요청이 쌓이지 않게" 하려는 의도였지만, 이 길은 **인증이 없다**
+  // — 재입장 코드도, 세션도 없고 (초대 코드, 이름) 만 알면 된다. 그래서 그 이름을 아는
+  // 사람은 누구든 **진짜 팀원의 요청을 지우고 자기 것을 대신 심을 수 있었다.** 지워진 요청은
+  // 팀장 목록에도 남지 않으니 아무도 알 수 없었다.
+  //
+  // 대신 **자기 브라우저가 이미 들고 있는 요청만** 고친다 — 토큰은 자기 쿠키에 있는 것으로
+  // 찾아야 한다. 남의 토큰을 알 수는 없으므로 남의 요청은 손대지 않는다. 누르면 아무 일도
+  // 일어나지 않거나 자기 요청이 쌓일 뿐, 남의 것이 사라지지 않는다.
+  const store = await cookies();
+  const label = await describeDevice();
+  const mine = store.get(CLAIM_COOKIE)?.value;
+  const own = mine
+    ? await db.memberClaim.findFirst({
+        where: { token: mine, memberId: member.id, status: "pending" },
+        select: { id: true, token: true },
+      })
+    : null;
 
-  const token = randomUUID();
-  await db.memberClaim.create({
-    data: { memberId: member.id, token, label: await describeDevice() },
-  });
+  let token: string;
+  if (own) {
+    // **토큰은 그대로 둔다.** 새로 심으면 심는 순간 자기 쿠키의 값이 잠깐 통하지 않고,
+    // 그동안의 폴링이 `{status:"none"}` 을 받아 사용자를 튕겨내게 된다.
+    token = own.token;
+    // 기기 설명만 고친다 — 같은 기기에서 다시 누른 것이라면 달라질 게 없다.
+    await db.memberClaim.update({ where: { id: own.id }, data: { label } });
+  } else {
+    token = randomUUID();
+    await db.memberClaim.create({
+      data: { memberId: member.id, token, label },
+    });
+  }
 
-  (await cookies()).set(CLAIM_COOKIE, token, {
+  store.set(CLAIM_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -95,6 +122,11 @@ export async function requestRejoinApproval(
     maxAge: CLAIM_MAX_AGE,
   });
 
+  // 팀장에게 알린다. **같은 사람이 여러 번 눌러도 알림이 쌓이지 않게** 먼저 지운다 — 이건
+  // 알림의 중복을 막는 것이지 남의 요청을 지우는 것이 아니다(요청은 위에서 지우지 않는다).
+  await db.notification.deleteMany({
+    where: { memberId: member.id, kind: "rejoin-request", readAt: null },
+  });
   await notify({
     to: await leaderIds(member.teamId),
     kind: "rejoin-request",

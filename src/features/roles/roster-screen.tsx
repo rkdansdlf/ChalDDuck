@@ -24,7 +24,32 @@ import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@
 import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { acceptRoleDraw, claimSoleRole, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
-import { NO_DRAW_POOL_TEXT, applyMyChoices, drawPoolOf, wantersOf } from "./roster-model";
+import {
+  NO_DRAW_POOL_TEXT,
+  applyMyChoices,
+  canDrawIn,
+  drawPoolOf,
+  roleViewOf,
+  voidedText,
+  wantersOf,
+  type RoleView,
+} from "./roster-model";
+
+/**
+ * 상태 칩의 말과 그림.
+ *
+ * `RoleView`(`roster-model`)와 **한 쌍**이어야 한다 — 상태가 늘어도 칩이 없으면
+ * 화면은 조용히 아무것도 그리지 않는다(예전의 "확정" 칩이 그랬다). 여기 두는 이유는
+ * 모델이 UI 어휘까지 알 필요가 없도록 하기 위해서다.
+ */
+const ROLE_VIEW_CHIP: Record<RoleView["kind"], { label: string; tone: ChipTone; icon: IconName }> = {
+  empty: { label: "미정", tone: "n", icon: "circle-dashed" },
+  auto: { label: "확정 예정", tone: "n", icon: "clock" },
+  negotiating: { label: "협의 중", tone: "warn", icon: "circle-alert" },
+  awaiting: { label: "수락 대기", tone: "warn", icon: "clock" },
+  confirmed: { label: "확정", tone: "ok", icon: "check" },
+  voided: { label: "무효", tone: "err", icon: "x" },
+};
 
 /**
  * 07 팀 역할 조율.
@@ -82,8 +107,14 @@ export function RosterScreen({
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
-  /** 서버 명단의 내 이름. 당첨자(서버가 준 이름)와 견줄 때는 로컬 선택을 얹지 않은 값을 쓴다. */
-  const myName = roster.find((m) => m.isMe)?.name ?? null;
+  /**
+   * 내가 당첨자인지 판정할 **id**.
+   *
+   * 이름으로 비교하면 같은 이름이 생겼을 때 화면은 "나" 라고 판단하고 서버는 남이라
+   * 판단한다 — 서버는 `actions/roles` 에서 이미 id 로 본다. 이름은 고칠 수 있으므로
+   * 판정은 id 로만 한다.
+   */
+  const myId = roster.find((m) => m.isMe)?.id ?? null;
 
   const inviteUrl =
     typeof window === "undefined" ? "" : `${window.location.origin}/join?code=${team.code}`;
@@ -189,22 +220,17 @@ export function RosterScreen({
           {roles.map((role) => {
             const wanters = wantersOf(members, role.key);
             const result = draws[role.key];
-            const clash = wanters.length > 1;
             const excluded = rejected[role.key] ?? [];
-
-            const status: { label: string; tone: ChipTone; icon: IconName } =
-              wanters.length === 0
-                ? { label: "미정", tone: "n", icon: "circle-dashed" }
-                : result?.accepted
-                  ? { label: "확정", tone: "ok", icon: "check" }
-                  : clash
-                    ? { label: "협의 중", tone: "warn", icon: "circle-alert" }
-                    : { label: "확정 예정", tone: "n", icon: "clock" };
+            // 상태 판정은 `roster-model` 한 곳에서. 예전에는 여기서 `clash` 로 직접
+            // 조건을 적어, 추첨이 남은 상태인데 아무것도 보이지 않는 상황이 생겼다.
+            const view = roleViewOf(wanters.length, result ?? null);
+            const status = ROLE_VIEW_CHIP[view.kind];
+            const iAmWinner = result !== undefined && myId !== null && result.winnerId === myId;
 
             return (
               <Panel
                 key={role.key}
-                s={clash && !result?.accepted ? "coral" : "card"}
+                s={view.kind === "negotiating" || view.kind === "awaiting" ? "coral" : "card"}
                 pad={14}
                 r={16}
               >
@@ -221,27 +247,31 @@ export function RosterScreen({
                     : `희망자 ${wanters.length}명 · ${wanters.map((m) => m.name).join(" · ")}`}
                 </div>
 
-                {clash && !result ? (
+                {view.kind === "voided" ? (
+                  <p className="t-note m-0 mt-2.5 text-txt-muted">{voidedText(view.winner)}</p>
+                ) : null}
+
+                {/* **무효 추첨도 자리를 차지하고 있으므로 추첨 버튼이 살아야 한다.**
+                    예전에는 "협의 중" 일 때만 떠서, 갇힌 추첨을 꺼낼 수단이 없었다. */}
+                {canDrawIn(view) ? (
                   <div className="mt-2.5 flex flex-wrap gap-[7px]">
-                    <Btn
-                      size="sm"
-                      icon="messages-square"
-                      // 이야기는 단톡방에서 한다. 앱이 대신 안내문을 올리지는 않는다 —
-                      // 예전에는 "올렸습니다" 토스트만 뜨고 실제로는 아무것도 올라가지 않았다.
-                      onClick={() => router.push("/chat/team")}
-                    >
-                      이야기해서 정하기
-                    </Btn>
+                    {view.kind === "negotiating" ? (
+                      <Btn
+                        size="sm"
+                        icon="messages-square"
+                        // 이야기는 단톡방에서 한다. 앱이 대신 안내문을 올리지는 않는다 —
+                        // 예전에는 "올렸습니다" 토스트만 뜨고 실제로는 아무것도 올라가지 않았다.
+                        onClick={() => router.push("/chat/team")}
+                      >
+                        이야기해서 정하기
+                      </Btn>
+                    ) : null}
                     <Btn size="sm" v="outline" icon="dices" onClick={() => setDrawingFor(role.key)}>
-                      협의가 안 되면 추첨하기
+                      {view.kind === "voided" ? "다시 추첨하기" : "협의가 안 되면 추첨하기"}
                     </Btn>
                   </div>
                 ) : null}
 
-                {/* **혼자 1순위로 고른 경우의 길.** 예전에는 이 자리가 비어 있었다. 추첨은
-                    겹칠 때만 일어나므로 희망자가 한 명이면 아무 것도 일어나지 않았고, 상태 칩은
-                    "확정 예정"이라 말하면서 드라이브의 제출함 주인은 영영 "담당자 미정"이었다.
-                    아무것도 확정되지 않은 상태가 "확정 예정"이라는 말로 표시되던 셈이다. */}
                 {wanters.length === 1 && !result ? (
                   <div className="mt-2.5">
                     <Btn
@@ -267,6 +297,16 @@ export function RosterScreen({
                   </div>
                 ) : null}
 
+                {view.kind === "awaiting" && result ? (
+                  <div className="mt-2.5">
+                    <div className="mb-2 flex flex-wrap gap-[5px]">
+                      <Chip tone="warn" icon="circle-dashed">
+                        {ROLE_VIEW_CHIP[view.kind].label}
+                      </Chip>
+                    </div>
+                  </div>
+                ) : null}
+
                 {clash && result && !result.accepted ? (
                   <div className="mt-2.5">
                     <div className="mb-2 flex flex-wrap gap-[5px]">
@@ -279,8 +319,9 @@ export function RosterScreen({
                         </Chip>
                       ))}
                     </div>
-                    {/* 수락·거절은 당첨자 본인만 한다 — 서버도 같은 규칙으로 막는다. */}
-                    {result.winner === myName ? (
+                    {/* 수락·거절은 당첨자 본인만 한다 — 서버도 같은 규칙으로 막는다.
+                        판정은 id 로 한다(이름은 고칠 수 있으므로). */}
+                    {iAmWinner ? (
                       <div className="flex flex-wrap gap-[7px]">
                         {/* 둘 다 `disabled` 로 잠근다 — 수락과 거절이 거의 동시에 닿으면
                             서버의 조건부 갱신 중 하나가 0 행을 맞고도 성공한 척한다. */}
@@ -332,10 +373,10 @@ export function RosterScreen({
                   </div>
                 ) : null}
 
-                {clash && result?.accepted ? (
+                {view.kind === "confirmed" ? (
                   <div className="mt-2">
                     <Chip tone="ok" icon="check">
-                      확정 · {result.winner}
+                      확정 · {view.winner}
                     </Chip>
                   </div>
                 ) : null}

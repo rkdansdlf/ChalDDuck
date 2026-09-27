@@ -1,9 +1,9 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useState } from "react";
 import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { softenProfanity } from "@/lib/profanity";
+import { displayTextOf } from "@/lib/read-cushion";
 import type { ChatMessage } from "@/lib/types";
 import { ChatAttachment, SharedDriveCard } from "./chat-attachment";
 
@@ -14,6 +14,11 @@ import { ChatAttachment, SharedDriveCard } from "./chat-attachment";
  * 같은 대화라는 감각이 깨지므로, 규격을 바꿀 일이 있으면 여기만 고친다.
  *
  * 차이는 하나뿐이다: 단톡방은 상대 이름을 말풍선 위에 붙이고, DM 은 상대가 한 명뿐이라 붙이지 않는다.
+ *
+ * **읽기 순화도 여기서 그린다.** 순화본이 있으면 순화문을, 없으면 원문을 보인다 —
+ * 어느 쪽을 그릴지 고르는 계산은 `lib/read-cushion.ts` 한 곳에 있다(서버와 같은 규칙).
+ * 그리고 **누르면 원문으로 돌아간다.** 순화는 읽기 전용이라는 약속의 반대편이 대조다 —
+ * 돌아갈 길이 없으면 그 기능은 "상대 말을 대신 쓰는 것"이 된다.
  *
  * `memo` 를 붙였다 — 메시지 하나를 보내면 배열이 새로 만들어지지만, 바뀌지 않은
  * 말풍선까지 매번 다시 그릴 이유는 없다. `onRetry` 를 메시지별 클로저 대신 `retry`
@@ -42,10 +47,16 @@ export const MessageBubble = memo(function MessageBubble({
   onSaveToDrive?: (message: ChatMessage) => void;
 }) {
   const mine = message.isMine;
-  const { text: displayText, masked } = useMemo(() => softenProfanity(message.text), [message.text]);
+
+  // 누르고 있으면 원문으로, 놓으면 순화문으로. 이 상태는 **말풍선마다** 따로다 —
+  // 한 말만 대조해 보고 싶은데 방 전체가 원문으로 바뀌면 대조가 아니라 후퇴가 된다.
+  const [showOriginal, setShowOriginal] = useState(false);
+  const { text: displayText, purified } = displayTextOf(message, showOriginal);
+  /** 화면에 그리는 글과 **보관된 원문**이 다르다 — 표시가 남아야 할 때. */
+  const changed = displayText !== message.text;
 
   return (
-    <div className={cn("flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
+    <div className={cn("animate-slide-up flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
       <Avatar name={message.author} mbti={message.mbti} size={32} />
 
       <div className={cn("flex max-w-[72%] flex-col", mine ? "items-end" : "items-start")}>
@@ -71,7 +82,7 @@ export const MessageBubble = memo(function MessageBubble({
         {displayText ? (
           <div
             className={cn(
-              "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong",
+              "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong shadow-2xs transition-all duration-150",
               mine ? "bg-yellow-300" : "border border-line bg-card",
               (message.attachment || message.driveFile) && "mt-1",
             )}
@@ -82,15 +93,24 @@ export const MessageBubble = memo(function MessageBubble({
 
         <div className="mt-1 flex items-center gap-1.5">
           {message.viaCushion ? (
-            <Chip tone="y" icon="wand-sparkles">
+            <Chip tone="y" icon="wand-sparkles" iconClassName="animate-wiggle">
               쿠션 번역기
             </Chip>
           ) : null}
 
-          {masked ? (
-            <Chip tone="n" icon="shield">
-              순화됨
-            </Chip>
+          {changed ? (
+            // **누를 수 있어야 한다.** 표시만 남기고 대조할 수 없으면 사용자는 AI 가
+            // 상대의 말을 어떻게 바꿨는지 알 방법이 없다 — 그게 이 기능의 실패다.
+            <button
+              type="button"
+              onClick={() => setShowOriginal((prev) => !prev)}
+              aria-pressed={showOriginal}
+              className="min-h-11 cursor-pointer border-none bg-transparent p-0 align-middle"
+            >
+              <Chip tone="y" icon={purified ? "wand-sparkles" : "eye"}>
+                {purified ? "순화됨 · 원문 보기" : "원문 · 순화문 보기"}
+              </Chip>
+            </button>
           ) : null}
 
           {message.status === "failed" ? (
@@ -98,7 +118,7 @@ export const MessageBubble = memo(function MessageBubble({
               <button
                 type="button"
                 onClick={() => onRetry(message)}
-                className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-bold text-[11.5px] leading-none text-err"
+                className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-bold text-[11.5px] leading-none text-err active:scale-95"
               >
                 <Icon name="circle-alert" size={12} />
                 전송 실패 · 다시 보내기
@@ -107,7 +127,7 @@ export const MessageBubble = memo(function MessageBubble({
                 <button
                   type="button"
                   onClick={() => onDiscard(message)}
-                  className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-medium text-[11.5px] leading-none text-txt-faint"
+                  className="inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 font-medium text-[11.5px] leading-none text-txt-faint active:scale-95"
                 >
                   <Icon name="x" size={12} />
                   지우기
@@ -115,7 +135,7 @@ export const MessageBubble = memo(function MessageBubble({
               ) : null}
             </span>
           ) : (
-            <span className="font-medium text-[11.5px] leading-none text-txt-faint">
+            <span className={cn("font-medium text-[11.5px] leading-none text-txt-faint", message.status === "sending" && "animate-pulse-subtle")}>
               {message.status === "sending" ? "보내는 중…" : message.time}
             </span>
           )}
@@ -126,7 +146,7 @@ export const MessageBubble = memo(function MessageBubble({
             {message.reactions.map((reaction, i) => (
               <span
                 key={i}
-                className="inline-flex items-center gap-[3px] rounded-full bg-fill px-2 py-[3px] font-semibold text-[12px] leading-none text-txt-muted"
+                className="inline-flex cursor-default select-none items-center gap-[3px] rounded-full bg-fill px-2 py-[3px] font-semibold text-[12px] leading-none text-txt-muted transition-transform duration-150 hover:scale-110 active:scale-95"
               >
                 <Icon name={reaction.icon as IconName} size={12} />
                 {reaction.count}

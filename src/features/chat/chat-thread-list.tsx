@@ -3,7 +3,6 @@
 import { useRouter, usePathname } from "next/navigation";
 import { Avatar, Icon, Rows, SecTitle } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage, DmThread, Team } from "@/lib/types";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { useThreadMessages } from "./messages-state";
@@ -63,7 +62,7 @@ export function ChatThreadList({
           ? `${lastTeamMessage.author}: ${
               // 파일만 보낸 말은 글이 비어 있다 — 무엇을 보냈는지 이름으로 적는다.
               lastTeamMessage.text
-                ? softenProfanity(lastTeamMessage.text).text
+                ? lastTeamMessage.text
                 : `파일 · ${lastTeamMessage.attachment?.name ?? ""}`
             }`
           : "아직 대화가 없습니다"
@@ -79,7 +78,7 @@ export function ChatThreadList({
       leading={<Avatar name={thread.name} mbti={thread.mbti} size={42} />}
       title={thread.name}
       time={thread.time}
-      preview={softenProfanity(thread.lastMessage).text}
+      preview={thread.lastMessage}
       unread={thread.unread}
       onClick={() => router.push(`/chat/dm/${thread.id}`)}
     />

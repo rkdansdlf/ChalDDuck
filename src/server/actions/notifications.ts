@@ -37,7 +37,10 @@ export async function markNotificationsRead(ids?: string[]): Promise<void> {
  *
  * 주기는 알림함에 맞게 길게 둔다 — 확인은 사람이 하는 일이다.
  */
-export async function pollNotifications(): Promise<AppNotification[]> {
+export async function pollNotifications(): Promise<{
+  items: AppNotification[];
+  unread: number;
+}> {
   const me = await requireSessionMember();
   return notificationsFor(me.id);
 }

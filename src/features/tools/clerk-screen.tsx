@@ -17,11 +17,12 @@ import {
 } from "@/components/ui";
 import { summarizeMeeting } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { unwrapAi } from "./ai-result";
+import { readAi } from "./ai-result";
+import { DraftSourceChip } from "./draft-source-chip";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
-import type { ClerkDraft, Member } from "@/lib/types";
+import type { AiAnswerSource, ClerkDraft, Member } from "@/lib/types";
 
 const STEP_LABELS = ["회의 내용 입력", "요약 · 할 일 후보", "업무에 반영"];
 
@@ -48,6 +49,7 @@ export function ClerkScreen({
   const [step, setStep] = useState(0);
   const [raw, setRaw] = useState(sample);
   const [draft, setDraft] = useState<ClerkDraft | null>(null);
+  const [source, setSource] = useState<AiAnswerSource | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +66,8 @@ export function ClerkScreen({
     setWorking(true);
     setError(null);
     try {
-      const result = unwrapAi(await summarizeMeeting(raw.trim()));
+      const { value: result, source: made_by } = readAi(await summarizeMeeting(raw.trim()));
+      setSource(made_by);
       setDraft(result);
       setPicked(Object.fromEntries(result.candidates.map((c) => [c.id, true])));
       setAssignees(Object.fromEntries(result.candidates.map((c) => [c.id, c.assignee])));
@@ -136,13 +139,13 @@ export function ClerkScreen({
         ) : null}
 
         {step === 1 && draft ? (
-          <>
+          <div className="animate-slide-up">
             <SecTitle note="AI가 뽑은 초안입니다 · 그대로 반영되지 않습니다">회의 요약</SecTitle>
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="t-cap-strong font-bold text-txt-muted">요약</span>
-              <Chip tone="y" icon="sparkles">
-                AI 초안
-              </Chip>
+              {/* 이 자리는 예전부터 무조건 "AI 초안" 이었다. 키가 없으면 서버가 예시를 돌려주고,
+                  그 예시가 회의 요약으로 놓였다. 서버가 보내온 출처를 그대로 쓴다. */}
+              <DraftSourceChip source={source} working={working} />
             </div>
             <Panel s="coral" pad={14} r={16} className="mb-4">
               <div className="text-pretty-keep text-[14.5px] leading-[1.6] text-[#8A3B29]">
@@ -163,7 +166,7 @@ export function ClerkScreen({
                     s={on ? "card" : "fill"}
                     pad={14}
                     r={16}
-                    className={on ? undefined : "opacity-55"}
+                    className={cn("transition-all duration-150", on ? undefined : "opacity-55")}
                   >
                     <div className="flex items-start gap-2.5">
                       <button
@@ -173,13 +176,17 @@ export function ClerkScreen({
                         aria-label={`${candidate.title} 반영하기`}
                         onClick={() => setPicked((p) => ({ ...p, [candidate.id]: !p[candidate.id] }))}
                         className={cn(
-                          "mt-px grid size-6 flex-none cursor-pointer place-items-center rounded-lg text-ink-900",
+                          "mt-px grid size-6 flex-none cursor-pointer place-items-center rounded-lg text-ink-900 select-none transition-all duration-150 active:scale-75",
                           on
-                            ? "border-[1.5px] border-transparent bg-yellow-400"
+                            ? "border-[1.5px] border-transparent bg-yellow-400 scale-105"
                             : "border-[1.5px] border-line-strong bg-card",
                         )}
                       >
-                        {on ? <Icon name="check" size={15} /> : null}
+                        {on ? (
+                          <span className="animate-pop inline-flex">
+                            <Icon name="check" size={15} />
+                          </span>
+                        ) : null}
                       </button>
 
                       <div className="min-w-0 flex-1">
@@ -237,14 +244,14 @@ export function ClerkScreen({
             >
               선택한 {acceptedCount}건 업무로 반영하기
             </Btn>
-          </>
+          </div>
         ) : null}
 
         {step === 2 ? (
-          <>
+          <div className="animate-pop">
             <Panel s="yellow" pad={20} className="mb-4 text-center">
               <div
-                className="mb-2.5 inline-flex size-[52px] items-center justify-center rounded-full text-yellow-700"
+                className="mb-2.5 inline-flex size-[52px] items-center justify-center rounded-full text-yellow-700 animate-jelly"
                 style={{ background: "rgba(255,255,255,.75)" }}
               >
                 <Icon name="check" size={24} />
@@ -268,7 +275,7 @@ export function ClerkScreen({
             <Btn full size="lg" v="outline" className="mt-2" onClick={() => router.push("/tools")}>
               AI 도구로 돌아가기
             </Btn>
-          </>
+          </div>
         ) : null}
       </Body>
     </>

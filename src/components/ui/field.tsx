@@ -44,7 +44,7 @@ export function Field({
       })}
 
       {error ? (
-        <div id={messageId} role="alert" className="mt-[7px] flex items-start gap-1.5">
+        <div id={messageId} role="alert" className="animate-slide-down mt-[7px] flex items-start gap-1.5">
           <span className="mt-px flex-none text-err">
             <Icon name="circle-alert" size={15} />
           </span>
@@ -61,8 +61,8 @@ export function Field({
 
 export type InputProps = {
   id?: string;
-  /** 기본은 글자. 마감처럼 날짜·시각을 받을 때만 `datetime-local` — 휴대폰에서 달력이 뜬다. */
-  type?: "text" | "datetime-local";
+  /** 기본은 글자. 마감처럼 날짜·시각을 받을 때만 `datetime-local` — 휴대폰에서 달력이 뜬다. 이메일은 `email`. */
+  type?: "text" | "datetime-local" | "email";
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -82,8 +82,8 @@ export function Input({ value, onChange, error, mono, className, ...rest }: Inpu
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "t-input box-border min-h-[52px] w-full rounded-control border-[1.5px] bg-card px-3.5 text-txt-strong outline-none",
-        error ? "border-err" : "border-input-border",
+        "t-input box-border min-h-[52px] w-full rounded-control border-[1.5px] bg-card px-3.5 text-txt-strong outline-none transition-all duration-150 ease-out",
+        error ? "border-err animate-shake" : "border-input-border focus:border-focus",
         mono && "font-mono",
         className,
       )}
@@ -128,7 +128,7 @@ export function Textarea({
         style={{ minHeight }}
         className={cn(
           "text-pretty-keep box-border w-full resize-y rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
-          "text-[14.5px] leading-[1.6] text-txt-strong outline-none",
+          "text-[14.5px] leading-[1.6] text-txt-strong outline-none transition-all duration-150 ease-out focus:border-focus",
           over && "border-err",
           className,
         )}

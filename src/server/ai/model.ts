@@ -22,6 +22,10 @@ import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
  * 돈이 들지 않는 대신 어떤 모델이 걸릴지 모르고, 한국어 지시를 덜 정확히 따른다 —
  * 그래서 이 파일과 `tools.ts` 는 모델 출력을 그대로 믿지 않고 한 번 더 손본다.
  * 품질이 필요해지면 `.env` 의 `OPENROUTER_MODEL` 만 바꾼다(예: anthropic/claude-sonnet-5).
+ *
+ * **읽기 순화(19·31)도 이 기본값으로 돈다.** 받기만 해도 모델을 부르는 기능이라 값이
+ * 가장 눈에 띈다 — 그래서 유료 모델로 바꾸면 순화가 눈에 띄게 달라진다. 원문 대조는
+ * 말풍선을 누르면 되지만, 그 전까지 읽는 글은 AI 가 쓴 글이다.
  */
 const MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
 

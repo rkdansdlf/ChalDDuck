@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Undecided } from "@/components/ui";
 import { findMemberByName } from "@/server/actions/onboarding";
-import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
+import { setEmail, setName, useOnboarding } from "@/features/onboarding/onboarding-state";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
 const MIN_NAME = 2;
@@ -18,7 +18,7 @@ const MIN_NAME = 2;
  */
 export default function NamePage() {
   const router = useRouter();
-  const { teamCode, name } = useOnboarding();
+  const { teamCode, name, email } = useOnboarding();
   // 초대 코드 없이 들어온 경우(새로고침·즐겨찾기·링크)에는 이름부터 되돌린다. 예전에는
   // 여기서 막지 않아 이름·MBTI·역할을 다 고른 뒤 마지막에 조용히 실패했다.
   const ready = useOnboardingGate(true);
@@ -88,16 +88,30 @@ export default function NamePage() {
               {...props}
               value={name}
               onChange={setName}
-              placeholder="예: 김민준"
+              placeholder="예: 홍길동"
               error={tooShort}
               maxLength={20}
             />
           )}
         </Field>
 
-        <Note tone="info" icon="key-round" title="처음 들어오는 이름이면 바로 통과합니다">
-          초대 코드({teamCode ?? "—"})에 없는 이름이면 아무것도 더 묻지 않습니다. 이미 있는 이름이면
-          본인 확인을 한 번 거칩니다 — 이름만으로 팀원인 척할 수 있으면 안 되기 때문입니다.
+        <Field
+          label="이메일"
+          hint="로그아웃 후 재접속할 때 메일 인증번호로 바로 로그인할 수 있어요"
+        >
+          {(props) => (
+            <Input
+              {...props}
+              type="email"
+              value={email}
+              onChange={setEmail}
+              placeholder="예: student@university.ac.kr (선택)"
+            />
+          )}
+        </Field>
+
+        <Note tone="info" icon="key-round" title="이메일을 입력하면 코드를 외울 필요가 없어요">
+          이메일을 입력해 두면 나중에 재접속할 때 12자리 재입장 코드를 찾지 않고, 메일로 온 인증번호로 바로 들어올 수 있습니다.
         </Note>
 
         {existing ? (

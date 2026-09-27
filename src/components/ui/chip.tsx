@@ -29,12 +29,14 @@ export type ChipTone = keyof typeof TONE;
 export function Chip({
   tone = "n",
   icon,
+  iconClassName,
   children,
   className,
   style,
 }: {
   tone?: ChipTone;
   icon?: IconName;
+  iconClassName?: string;
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
@@ -42,14 +44,14 @@ export function Chip({
   return (
     <span
       className={cn(
-        "t-chip keep-all inline-flex max-w-full items-center gap-1 rounded-[9px] border px-[9px] py-1",
+        "t-chip keep-all inline-flex max-w-full items-center gap-1 rounded-[9px] border px-[9px] py-1 transition-colors duration-150",
         TONE[tone],
         className,
       )}
       style={style}
     >
       {icon ? (
-        <span className="flex-none self-center">
+        <span className={cn("flex-none self-center", iconClassName)}>
           <Icon name={icon} size={13} />
         </span>
       ) : null}
@@ -85,8 +87,14 @@ export function StatusBadge({
   className?: string;
 }) {
   const s = STATUS[status];
+  const iconAnimation =
+    status === "doing"
+      ? "animate-pulse-subtle"
+      : status === "done"
+        ? "animate-pop"
+        : undefined;
   return (
-    <Chip tone={s.tone} icon={s.icon} className={className}>
+    <Chip tone={s.tone} icon={s.icon} iconClassName={iconAnimation} className={className}>
       {children ?? s.label}
     </Chip>
   );

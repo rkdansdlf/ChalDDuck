@@ -33,22 +33,40 @@ function update(threadId: string, transform: (thread: ChatMessage[]) => ChatMess
   for (const listener of listeners) listener();
 }
 
-let tempSeq = 0;
+/**
+ * 아직 서버에 도착하지 않은 말에 붙이는 임시 id.
+ *
+ * **세는 수를 순번으로 두면 안 된다.** 이 id 로 `clientId` 를 만들고(`use-chat-thread.ts`),
+ * 서버는 `@@unique([authorId, clientId])` 로 이미 저장된 말을 알아본다. 그런데 모듈 상태는
+ * **페이지를 열 때마다 0 에서 다시 시작한다** — 새로고침·새 탭·PWA 재실행 뒤 첫 말은 또
+ * `pending-1` 이 되고, 그러면 **지난 페이지 life 의 첫 말과 같은 값**이 되어 서버가 그 옛
+ * 말을 돌려준다. 새 글은 저장되지도, 화면에 남지도 않고 옛 글로 바뀐다(두 번째 말부터야
+ * 되돌아온다).
+ *
+ * 그래서 순번을 세지 말고 **겹치지 않는 값**을 만든다. 화면 안에서만 도는 임시 id 이므로
+ * 서버가 이해할 필요는 없고, 유일하면 된다. */
+function pendingId(): string {
+  return `pending-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+}
 
 /**
  * 전송을 시작하며 즉시 화면에 얹는 말풍선. 반환값은 이후 상태를 바꿀 때 쓰는 임시 id.
  *
  * `sortAt` 은 `null` 로 둔다 — 아직 서버에 도착하지 않았으므로 순서를 정할 시각이 없다.
  * 서버가 준 시각이 오면 `resolvePendingMessage` 가 채운다.
+ *
+ * `purifiedText` 는 **null 로 고정한다.** 내 말은 순화 대상이 아니다(`read-cushion.ts` 의
+ * `canPurify`) — 낙관적 말풍선에 순화본이 붙으면 내가 보낼 말을 다른 사람이 본 뜻으로
+ * 미리 고쳐 놓은 것처럼 보인다.
  */
 export function addPendingMessage(
   threadId: string,
-  message: Omit<ChatMessage, "id" | "time" | "status" | "sortAt">,
+  message: Omit<ChatMessage, "id" | "time" | "status" | "sortAt" | "purifiedText">,
 ): string {
-  const tempId = `pending-${(tempSeq += 1)}`;
+  const tempId = pendingId();
   update(threadId, (thread) => [
     ...thread,
-    { ...message, id: tempId, time: null, sortAt: null, status: "sending" },
+    { ...message, id: tempId, time: null, sortAt: null, status: "sending", purifiedText: null },
   ]);
   return tempId;
 }
@@ -97,11 +115,6 @@ export function getPendingFile(tempId: string): PendingFile | undefined {
 
 export function forgetPendingFile(tempId: string) {
   pendingFiles.delete(tempId);
-}
-
-/** 서버에도 없고 로컬에도 남은 것 — 새로고침으로 잃어버린 실패 파일처럼, 되돌릴 수 없는 것. */
-export function hasPendingFile(tempId: string): boolean {
-  return pendingFiles.has(tempId);
 }
 
 /**

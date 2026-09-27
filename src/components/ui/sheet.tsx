@@ -48,7 +48,7 @@ export function Sheet({
   return (
     <div
       onClick={onClose}
-      className="absolute inset-0 z-30 flex items-end"
+      className="animate-fade-in absolute inset-0 z-30 flex items-end"
       style={{ background: "rgba(36,28,20,.38)" }}
     >
       <div
@@ -58,7 +58,7 @@ export function Sheet({
         aria-label={title}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none"
+        className="animate-sheet-up max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none"
       >
         <div className="mx-auto mt-1.5 mb-3.5 h-1 w-[38px] rounded-sm bg-cr-300" />
         {title ? <h3 className="t-h2 keep-all m-0 mb-3 text-txt-strong">{title}</h3> : null}

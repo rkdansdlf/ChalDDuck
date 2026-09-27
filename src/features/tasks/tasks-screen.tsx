@@ -101,10 +101,10 @@ export function TasksScreen({
                 aria-selected={on}
                 onClick={() => setFilter(item.key)}
                 className={cn(
-                  "min-h-11 flex-none cursor-pointer whitespace-nowrap rounded-xl px-[13px] font-bold text-[13px] leading-none",
+                  "min-h-11 flex-none cursor-pointer whitespace-nowrap rounded-xl px-[13px] font-bold text-[13px] leading-none transition-all duration-150 select-none active:scale-95",
                   on
-                    ? "border border-transparent bg-action text-on-action"
-                    : "border border-line bg-card text-txt",
+                    ? "border border-transparent bg-action text-on-action shadow-2xs"
+                    : "border border-line bg-card text-txt hover:bg-cr-50",
                 )}
               >
                 {item.label}
@@ -134,7 +134,7 @@ export function TasksScreen({
             const kind = kindOf(task.kind);
             const done = task.status === "done";
             return (
-              <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px]">
+              <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-colors duration-150">
                 <button
                   type="button"
                   disabled={busy.cycle}
@@ -145,9 +145,14 @@ export function TasksScreen({
                     }, "상태를 바꾸지 못했습니다. 다시 눌러 주세요.")
                   }
                   aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
-                  className="mt-px flex-none cursor-pointer border-none bg-transparent p-0 text-txt-muted"
+                  className={cn(
+                    "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-75",
+                    done ? "text-ok" : "text-txt-muted hover:text-txt-strong",
+                  )}
                 >
-                  <Icon name={status.icon} size={22} />
+                  <span className={cn("inline-flex", done && "animate-pop")}>
+                    <Icon name={status.icon} size={22} />
+                  </span>
                 </button>
 
                 <div className="min-w-0 flex-1">
@@ -158,8 +163,8 @@ export function TasksScreen({
                   >
                     <div
                       className={cn(
-                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5]",
-                        done ? "text-txt-faint line-through" : "text-txt-strong",
+                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5] transition-all duration-200",
+                        done ? "text-txt-faint line-through opacity-70" : "text-txt-strong",
                       )}
                     >
                       {task.title}

@@ -1,10 +1,5 @@
 import { notFound } from "next/navigation";
-import {
-  getCurrentTeam,
-  getFileVersions,
-  getSubmissionBox,
-  getSubmittedFile,
-} from "@/data/api";
+import { getCurrentTeam, getFileVersions, getFileViewContext } from "@/data/api";
 import { FileViewScreen } from "@/features/drive/file-view-screen";
 import { getPreviewUrl } from "@/server/actions/drive";
 
@@ -20,11 +15,11 @@ export default async function FileViewPage({
 }: PageProps<"/drive/[boxId]/[fileId]/[versionId]">) {
   const { boxId, fileId, versionId } = await params;
   const team = await getCurrentTeam();
-  const [box, file] = await Promise.all([
-    getSubmissionBox(team.id, boxId),
-    getSubmittedFile(team.id, fileId),
-  ]);
-  if (!box || !file) notFound();
+  // 제출함과 파일을 **한 번에** 읽는다. 따로 읽으면 팀의 모든 제출함·파일·버전을 훑고
+  // 하나씩 골라내느라 같은 행을 여러 번 읽게 된다.
+  const context = await getFileViewContext(team.id, boxId, fileId);
+  if (!context) notFound();
+  const { box, file } = context;
 
   const [versions, previewUrl] = await Promise.all([
     getFileVersions(team.id, fileId),
@@ -36,7 +31,7 @@ export default async function FileViewPage({
 
   // 주소를 바꿔치기해 다른 파일의 버전을 열면 **아무것도 보여 주지 않는다.** 예전에는
   // A 파일의 이름·작성자·마감 배지 위에 B 파일의 그림이 그려졌는데, 그게 고쳐져도 화면은
-  // "파일을 열 수 없습니다"만 보여 주면 사용자는 자기 地址를 잘못 쳤다고도, 누가 바꿔치기
+  // "파일을 열 수 없습니다"만 보여 주면 사용자는 자기 주소를 잘못 쳤다고도, 누가 바꿔치기
   // 했다고도 알 수 없다. 어느 쪽인지 분명히 말하는 편이 낫다.
   if (!versions.some((v) => v.id === versionId)) notFound();
 

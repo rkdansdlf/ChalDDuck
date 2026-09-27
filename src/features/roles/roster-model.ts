@@ -109,6 +109,71 @@ export const NO_DRAW_POOL_TEXT: Record<NoDrawPool, string> = {
   "all-vetoed": "이 역할을 1순위로 고른 사람이 전부 Veto 했습니다 — 추첨할 수 없습니다",
 };
 
+/** 화면(`roster-screen`)이 그리는 데 필요한 추첨 정보는 `RoleDrawResult` 다 — 하나만 쓴다. */
+
+/**
+ * 역할 하나가 지금 **무슨 상태인지** 정하는 규칙.
+ *
+ * **왜 함수여야 하는가.** 예전에는 07 화면이 상태마다 조건을 직접 적었고, 조건 하나가
+ * `clash`(희망자 2명 이상)에 묶여 있었다. 그래서 두 가지가 고장 났다 —
+ *
+ * - 희망자가 1명인 역할에 남은 추첨은 **당첨자도 아무것도 볼 수 없었다.** 답을 받을
+ *   칸 자체가 조건 아래에 있어서였다. 서버는 막지 않는다 — `drawForRole` 은 희망자 수를
+ *   보지 않는다.
+ * - 당첨자가 팀을 나간 추첨은 **누구도 풀 수 없는 상태로 남았다.** 나간 사람의 세션은
+ *   지워지고(`session.ts`), 남은 팀원은 당첨자가 본인이 아니라 거절당하며, 다시 뽑는
+ *   길은 "이미 결과가 있습니다" 에 막힌다. 영원히 "수락 대기" 에 멈춘다.
+ *
+ * 상태는 `result`(추첨 결과) 로 갈라야 한다 — `clash` 로가 아니다. 추첨이 있으면 결과가
+ * 있고, 결과가 있으면 그걸 볼 사람이 반드시 있어야 한다.
+ */
+export type RoleView =
+  /** 아무도 1순위로 안 골랐다. */
+  | { kind: "empty" }
+  /** 희망자 1명, 추첨 없음 — 뽑을 것이 없으므로 곧바로 확정된다. */
+  | { kind: "auto" }
+  /** 희망자 2명 이상, 아직 추첨 전 — 이야기하거나 뽑아야 한다. */
+  | { kind: "negotiating" }
+  /** 추첨 결과가 났고 아직 수락 전. */
+  | { kind: "awaiting"; winner: string }
+  /** 확정. */
+  | { kind: "confirmed"; winner: string }
+  /** 당첨자가 팀을 나갔다 — 무효. 다시 뽑을 수 있다. */
+  | { kind: "voided"; winner: string };
+
+export function roleViewOf(wanterCount: number, draw: RoleDrawResult | null): RoleView {
+  // **추첨 결과가 있으면 희망자 수보다 먼저 본다.** 결과가 남아 있는데 화면이 "미정"
+  // 이나 "확정 예정" 으로 덮으면, 그 결과는 보이지도 풀 수도 없다 — 당첨자가 자기
+  // 1순위를 바꾼 뒤 남아 있는 추첨이 정확히 그렇다. 희망자 수는 **추적이 없을 때만**
+  // 기준이 된다.
+  if (draw) {
+    // **확정이 무효보다 먼저다.** 확정된 추첨의 당첨자가 나간 뒤에도 배정은 이미 끝난
+    // 사실이다 — 무효로 처리해 "다시 추첨하기" 를 열어 두면, 눌렀을 때 확정된 배정을
+    // 지우고 새 추첨으로 덮어쓴다. 담당자가 누구였는지도 이력에서 사라진다.
+    if (draw.accepted) return { kind: "confirmed", winner: draw.winner };
+    if (draw.stale) return { kind: "voided", winner: draw.winner };
+    return { kind: "awaiting", winner: draw.winner };
+  }
+
+  if (wanterCount === 0) return { kind: "empty" };
+  return wanterCount > 1 ? { kind: "negotiating" } : { kind: "auto" };
+}
+
+/**
+ * 이 상태에서 추첨 버튼을 띄워야 하는가.
+ *
+ * `voided` 가 여기에 핵심이다 — 무효 추첨은 **자리를 차지하고 있으므로** 다시 뽑는 길이
+ * 있어야 한다. 예전에는 `negotiating` 일 때만 보여서, 갇힌 추첨을 꺼낼 수단이 없었다.
+ */
+export function canDrawIn(view: RoleView): boolean {
+  return view.kind === "negotiating" || view.kind === "voided";
+}
+
+/** 무효가 된 이유를 화면에 말해 준다. */
+export function voidedText(winner: string): string {
+  return `${winner}님이 팀을 떠났다 — 이 추첨은 아무도 수락할 수 없어 무효입니다`;
+}
+
 /**
  * 겹쳤다고 볼지 정하는 **한 가지 규칙.**
  *

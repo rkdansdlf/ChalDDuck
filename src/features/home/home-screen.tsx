@@ -216,10 +216,10 @@ export function HomeScreen({
                 key={todo.key}
                 type="button"
                 onClick={() => router.push(todo.href)}
-                className="box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-3.5 text-left"
+                className="group box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-3.5 text-left select-none transition-colors duration-150 hover:bg-cr-50 active:scale-[0.99]"
               >
                 <span
-                  className={`grid size-[38px] flex-none place-items-center rounded-xl ${todo.surface}`}
+                  className={`grid size-[38px] flex-none place-items-center rounded-xl transition-transform duration-150 group-hover:scale-105 ${todo.surface}`}
                 >
                   <Icon name={todo.icon} size={19} />
                 </span>
@@ -229,7 +229,7 @@ export function HomeScreen({
                     {todo.note}
                   </span>
                 </span>
-                <span className="flex-none text-txt-muted">
+                <span className="flex-none text-txt-muted transition-transform duration-150 group-hover:translate-x-0.5">
                   <Icon name="chevron-right" size={17} />
                 </span>
               </button>
@@ -263,9 +263,9 @@ export function HomeScreen({
               key={item.id}
               type="button"
               onClick={() => router.push(item.href)}
-              className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-[13px] text-left"
+              className="group box-border flex min-h-[52px] w-full cursor-pointer items-center gap-3 border-none bg-transparent px-[15px] py-[13px] text-left select-none transition-colors duration-150 hover:bg-cr-50 active:scale-[0.99]"
             >
-              <span className="grid size-[34px] flex-none place-items-center rounded-[11px] bg-fill text-txt-muted">
+              <span className="grid size-[34px] flex-none place-items-center rounded-[11px] bg-fill text-txt-muted transition-transform duration-150 group-hover:scale-105">
                 <Icon name={item.icon as IconName} size={17} />
               </span>
               <span className="min-w-0 flex-1">
@@ -276,7 +276,7 @@ export function HomeScreen({
                   {item.id === TASKS_RECENT_ID ? `${remainingTasks}건 남음` : item.note}
                 </span>
               </span>
-              <span className="flex-none text-txt-muted">
+              <span className="flex-none text-txt-muted transition-transform duration-150 group-hover:translate-x-0.5">
                 <Icon name="chevron-right" size={16} />
               </span>
             </button>
@@ -300,9 +300,9 @@ export function HomeScreen({
                 key={tool.key}
                 type="button"
                 onClick={() => router.push(tool.href)}
-                className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5"
+                className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5 select-none transition-all duration-150 hover:bg-cr-25 hover:shadow-xs hover:-translate-y-0.5 active:scale-95"
               >
-                <Icon name={tool.icon as IconName} size={17} className="text-info" />
+                <Icon name={tool.icon as IconName} size={17} className="text-info transition-transform duration-150 hover:scale-110" />
                 <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
                   {tool.name}
                 </span>

@@ -30,8 +30,10 @@ import {
   disbandTeam,
   handOverAndLeave,
   leaveTeam,
+  logOut,
   transferLeadership,
 } from "@/server/actions/team";
+import { resetOnboarding } from "./onboarding-state";
 
 /**
  * 계정과 기기 — 인증에서 사람이 손댈 수 있는 것을 한 화면에 모은다.
@@ -44,6 +46,7 @@ import {
 export function AccessScreen({
   requests,
   joins,
+  joinsCapped,
   devices,
   isLeader,
   teamName,
@@ -52,6 +55,14 @@ export function AccessScreen({
   requests: RejoinRequest[];
   /** 팀에 처음 들어오려는 요청. 팀장이 아니면 빈 목록. */
   joins: JoinRequestRow[];
+  /**
+   * 새 가입 요청을 일시 제한하고 있는가.
+   *
+   * **안 뜨면 안 된다.** 제한이 걸린 채로 아무 말 없이 있으면 팀장은 자기 목록이 안 차는
+   * 이유를 모르고, 정작 그 제한을 건 팀원들은 왜 못 들어오지 않는다. 제한은 팀장만이 풀 수
+   * 있으므로(요청을 거절하면 줄이 줄어든다) 팀장에게 말할 수 있는 사람이 팀장뿐이다.
+   */
+  joinsCapped: boolean;
   devices: MyDevice[];
   isLeader: boolean;
   teamName: string;
@@ -63,8 +74,8 @@ export function AccessScreen({
   // 이 화면의 동작은 서로 배타적이다 — 하나가 끝나기 전에 다른 것을 받지 않는다.
   const { toast, busy, flash, run } = useAction();
   const working = busy.act === true;
-  /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기. */
-  const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | null>(null);
+  /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기 / 로그아웃. */
+  const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | "logout" | null>(null);
   const [confirmName, setConfirmName] = useState("");
 
   const resolve = (id: string, approve: boolean, who: string) =>
@@ -111,6 +122,19 @@ export function AccessScreen({
             <SecTitle note="초대 코드만으로는 들어올 수 없습니다 — 팀장이 마지막 문을 엽니다">
               들어오려는 사람 {joins.length}명
             </SecTitle>
+
+            {joinsCapped ? (
+              <Note
+                tone="warn"
+                icon="triangle-alert"
+                title="새 요청을 일시 제한하고 있습니다"
+                className="mb-3.5"
+              >
+                초대 코드를 아는 사람이 이름만 바꿔 가며 요청을 보내고 있습니다.{" "}
+                <b>이미 들어 있는 요청은 그대로 처리해 주세요</b> — 거절하면 자리가 나고 새
+                요청이 다시 들어옵니다.
+              </Note>
+            ) : null}
 
             {joins.length > 0 ? (
               <Rows className="mb-3.5">
@@ -246,9 +270,20 @@ export function AccessScreen({
                 </span>
               </span>
               {device.isCurrent ? (
-                <Chip tone="ok" icon="check">
-                  이 기기
-                </Chip>
+                <div className="flex items-center gap-1.5">
+                  <Chip tone="ok" icon="check">
+                    이 기기
+                  </Chip>
+                  <Btn
+                    size="sm"
+                    v="outline"
+                    icon="log-out"
+                    disabled={working}
+                    onClick={() => setSheet("logout")}
+                  >
+                    로그아웃
+                  </Btn>
+                </div>
               ) : (
                 <Btn
                   size="sm"
@@ -332,6 +367,22 @@ export function AccessScreen({
           }
         >
           재입장 코드 새로 받기
+        </Btn>
+
+        <SecTitle
+          className="mt-5"
+          note="팀원 지위와 기록은 유지되고 이 기기에서만 나갑니다"
+        >
+          로그아웃
+        </SecTitle>
+        <Btn
+          v="outline"
+          size="sm"
+          icon="log-out"
+          disabled={working}
+          onClick={() => setSheet("logout")}
+        >
+          이 기기에서 로그아웃
         </Btn>
 
         <SecTitle className="mt-5" note={isLeader ? "팀장은 그냥 나갈 수 없습니다" : undefined}>
@@ -495,6 +546,39 @@ export function AccessScreen({
             }
           >
             없애기
+          </Btn>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === "logout"} title="이 기기에서 로그아웃할까요" onClose={() => setSheet(null)}>
+        <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">
+          이 브라우저의 연결이 끊어집니다. <b>팀원 지위·기여 기록·채팅은 그대로 유지</b>됩니다.
+        </p>
+        <Note tone="info" icon="key-round" title="다시 들어올 때 필요해요" className="mb-4">
+          다시 로그인하려면 <b>초대 코드와 이름</b>을 적은 뒤, <b>재입장 코드</b>를 입력하거나{" "}
+          <b>팀장 승인</b>을 받아야 합니다.
+        </Note>
+        <div className="flex gap-2">
+          <Btn full v="outline" disabled={working} onClick={() => setSheet(null)}>
+            취소
+          </Btn>
+          <Btn
+            full
+            v="outline"
+            icon="log-out"
+            disabled={working}
+            onClick={() =>
+              void run(
+                "act",
+                async () => {
+                  resetOnboarding();
+                  await logOut();
+                },
+                "로그아웃하지 못했습니다. 다시 시도해 주세요.",
+              )
+            }
+          >
+            로그아웃
           </Btn>
         </div>
       </Sheet>

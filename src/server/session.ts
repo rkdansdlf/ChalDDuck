@@ -162,6 +162,57 @@ export async function endSession() {
   const token = store.get(COOKIE)?.value;
   if (token) await db.session.deleteMany({ where: { token } });
   store.delete(COOKIE);
+  store.delete("cd_claim");
+  store.delete("cd_join");
+}
+
+/* ── 기억 쿠키 ─────────────────────────────────────────────── */
+
+/**
+ * "이 기기 기억하기" 쿠키.
+ *
+ * 로그아웃해도 팀 코드와 이름을 남겨, 재접속할 때 초대 코드·이름 입력을 건너뛸 수 있게
+ * 한다. 세션 토큰이 아니라 **어디에 들어갔었는지만** 담으므로, 이것만으로는 아무 권한도
+ * 없고 재입장 코드나 팀장 승인을 여전히 거쳐야 한다.
+ */
+const REMEMBER_COOKIE = "cd_remember";
+const REMEMBER_MAX_AGE = 60 * 60 * 24 * 365; // 1년
+
+export type RememberedIdentity = { teamCode: string; name: string };
+
+/** 로그아웃할 때 팀 코드와 이름을 기억 쿠키에 남긴다. */
+export async function setRememberCookie(teamCode: string, name: string) {
+  (await cookies()).set(
+    REMEMBER_COOKIE,
+    JSON.stringify({ teamCode, name } satisfies RememberedIdentity),
+    {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: REMEMBER_MAX_AGE,
+    },
+  );
+}
+
+/** 기억 쿠키를 읽는다. 없거나 깨져 있으면 null. */
+export async function getRemembered(): Promise<RememberedIdentity | null> {
+  const raw = (await cookies()).get(REMEMBER_COOKIE)?.value;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<RememberedIdentity>;
+    if (typeof parsed.teamCode === "string" && typeof parsed.name === "string") {
+      return { teamCode: parsed.teamCode, name: parsed.name };
+    }
+  } catch {
+    // 깨진 값은 무시한다.
+  }
+  return null;
+}
+
+/** 기억 쿠키를 지운다. 팀이 없어졌을 때 쓴다. */
+export async function clearRemembered() {
+  (await cookies()).delete(REMEMBER_COOKIE);
 }
 
 /**

@@ -56,9 +56,18 @@ const TURN_ON_TEXT: Record<PushTurnOn, string> = {
 
 export function NotificationsScreen({
   items,
+  unread: serverUnread,
   push,
 }: {
   items: AppNotification[];
+  /**
+   * 안 읽은 알림의 **전체** 수(서버가 센다).
+   *
+   * 예전에는 목록(최근 50건)에서 직접 세었다. 그래서 63건이 쌓였는데 "50건" 이라 말하는 동안
+   * 탭 배지는 63을 보여졌다 — 화면 안의 두 숫자가 어긋나면 어느 쪽을 믿어야 할지 알 수 없다.
+   * 목록은 50건만 보여 주는 것이 조용한 정책이고, 그 수는 전체 기준이어야 한다.
+   */
+  unread: number;
   push: { configured: boolean; subscribed: boolean };
 }) {
   const router = useRouter();
@@ -80,7 +89,7 @@ export function NotificationsScreen({
     };
   }, [configured, subscribed]);
 
-  const [polled, setPolled] = useState<AppNotification[] | null>(null);
+  const [polled, setPolled] = useState<{ items: AppNotification[]; unread: number } | null>(null);
   // 내가 읽었으면 서버가 준 값을 따른다 — 폴링이 그 위에 얹으면 방금 지운 것이 되살아난다.
   const [touched, setTouched] = useState(false);
   usePoll(
@@ -91,9 +100,13 @@ export function NotificationsScreen({
     NOTIFICATION_POLL_MS,
     !touched,
   );
-  const list = touched ? items : (polled ?? items);
+  const list = touched ? items : (polled?.items ?? items);
 
-  const unread = list.filter((n) => !n.read).length;
+  // 목록을 직접 세지 않는다 — 서버가 센 **전체** 안 읽은 수를 쓴다(위 주석 참고).
+  // 내가 읽음을 눌러 서버 값이 낡아 있는 동안(`touched`)만 목록으로 내려앉힌 값을 쓴다.
+  const unread = touched ? list.filter((n) => !n.read).length : (polled?.unread ?? serverUnread);
+  // 목록 창 밖에도 안 읽은 것이 남았다면 말해 준다 — "왜 50개만 보여 주지"에 답이 되어야 한다.
+  const beyondWindow = Math.max(0, unread - list.filter((n) => !n.read).length);
 
   const open = async (item: AppNotification) => {
     if (!item.read) {
@@ -130,6 +143,14 @@ export function NotificationsScreen({
       />
 
       <Body dense>
+        {/* 목록은 최근 50건만 보여 준다. 그 밖에 안 읽은 것이 남았으면 말해 준다 — 숫자가
+            다르다는 걸 숨기면 "몇 개를 더 봐야 하지"에 답이 없다. */}
+        {beyondWindow > 0 ? (
+          <Note tone="info" icon="list" className="mb-3.5">
+            최근 50건만 보여 줍니다. 안 읽은 것이 <b>{unread}건</b>이고 여기{" "}
+            <b>{beyondWindow}건</b>이 더 있습니다 — 전부 읽음으로 표시하면 함께 정리됩니다.
+          </Note>
+        ) : null}
         <Panel s="card" pad={14} r={16} className="mb-3.5">
           <div className="mb-2 flex items-center gap-2">
             <span className="flex-none text-txt-muted">

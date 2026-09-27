@@ -40,14 +40,14 @@ export function SideNav({ pending = {} }: { pending?: TabPending }) {
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex min-h-11 items-center gap-2.5 rounded-control px-3 font-bold text-[14.5px] leading-none",
-                  active ? "bg-fill text-txt-strong" : "text-txt-muted hover:bg-cr-50",
+                  "flex min-h-11 items-center gap-2.5 rounded-control px-3 font-bold text-[14.5px] leading-none transition-all duration-150 ease-out active:scale-[0.98]",
+                  active ? "bg-fill text-txt-strong" : "text-txt-muted hover:bg-cr-50 hover:text-txt-strong",
                 )}
               >
                 <Icon name={tab.icon} size={19} strokeWidth={active ? 2.4 : 1.9} />
                 <span className="flex-1">{tab.label}</span>
                 {badge ? (
-                  <span className="box-border h-5 min-w-5 rounded-full bg-coral-400 px-[5px] text-center font-bold text-[12px] leading-5 text-ink-900">
+                  <span className="animate-pop box-border h-5 min-w-5 rounded-full bg-coral-400 px-[5px] text-center font-bold text-[12px] leading-5 text-ink-900 shadow-xs">
                     {badge}
                     <span className="sr-only">건 확인 필요</span>
                   </span>
@@ -57,6 +57,21 @@ export function SideNav({ pending = {} }: { pending?: TabPending }) {
           );
         })}
       </ul>
+
+      <div className="mt-auto border-t border-line pt-3">
+        <Link
+          href="/team/access"
+          className={cn(
+            "flex min-h-11 items-center gap-2.5 rounded-control px-3 font-bold text-[14.5px] leading-none transition-all duration-150 ease-out active:scale-[0.98]",
+            pathname === "/team/access"
+              ? "bg-fill text-txt-strong"
+              : "text-txt-muted hover:bg-cr-50 hover:text-txt-strong",
+          )}
+        >
+          <Icon name="lock" size={19} />
+          <span className="flex-1">계정과 기기</span>
+        </Link>
+      </div>
     </nav>
   );
 }

@@ -16,8 +16,8 @@ import {
 } from "@/components/ui";
 import { refineScript } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { unwrapAi } from "./ai-result";
-import type { PresentDraft } from "@/lib/types";
+import { readAi } from "./ai-result";
+import type { AiAnswerSource, PresentDraft } from "@/lib/types";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 
 /**
@@ -39,6 +39,9 @@ export function PresentScreen({
 
   const [raw, setRaw] = useState(sample);
   const [draft, setDraft] = useState(initialDraft);
+  // 예전에는 이 값이 없었고, 화면이 `aiReady` 만 보고 짐작했다. 키가 있으면 예시가 "AI 가 다듬은
+  // 대본" 으로 그대로 보였다 — 사용자의 원문과는 상관없는 글이었다.
+  const [source, setSource] = useState<AiAnswerSource>("sample");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,7 +50,9 @@ export function PresentScreen({
     setWorking(true);
     setError(null);
     try {
-      setDraft(unwrapAi(await refineScript(raw.trim())));
+      const { value, source: made_by } = readAi(await refineScript(raw.trim()));
+      setDraft(value);
+      setSource(made_by);
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
@@ -78,6 +83,7 @@ export function PresentScreen({
           }
           resultLabel="다듬은 대본"
           result={draft.refined}
+          resultSource={source}
         />
 
         <Btn

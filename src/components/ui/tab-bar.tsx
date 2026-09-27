@@ -54,24 +54,24 @@ export function TabBar({ pending = {} }: { pending?: TabPending }) {
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "relative flex min-h-[54px] flex-col items-center justify-center gap-[3px]",
-                  active ? "text-txt-strong" : "text-txt-faint",
+                  "relative flex min-h-[54px] flex-col items-center justify-center gap-[3px] select-none transition-transform duration-100 active:scale-90",
+                  active ? "text-txt-strong" : "text-txt-faint hover:text-txt-muted",
                 )}
               >
-                <span className="relative inline-flex">
+                <span className={cn("relative inline-flex transition-transform duration-200", active && "scale-105")}>
                   <Icon name={tab.icon} size={21} strokeWidth={active ? 2.4 : 1.9} />
                   {badge ? (
-                    <span className="absolute -top-1 -right-[7px] box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900">
+                    <span className="animate-pop absolute -top-1 -right-[7px] box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs">
                       {badge}
                       <span className="sr-only">건 확인 필요</span>
                     </span>
                   ) : null}
                 </span>
-                <span className={cn("whitespace-nowrap", active ? "t-tab-on" : "t-tab")}>
+                <span className={cn("whitespace-nowrap transition-colors duration-150", active ? "t-tab-on" : "t-tab")}>
                   {tab.label}
                 </span>
                 {active ? (
-                  <span className="absolute top-0 h-[3px] w-[22px] rounded-sm bg-yellow-400" />
+                  <span className="animate-pop absolute top-0 h-[3px] w-[22px] rounded-sm bg-yellow-400" />
                 ) : null}
               </Link>
             </li>

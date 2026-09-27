@@ -44,52 +44,79 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
         </p>
 
         <div className="flex flex-col gap-3.5">
-          {questions.map((q, qi) => (
-            <fieldset key={q.axis} className="m-0 border-none p-0">
-              <legend className="mb-[7px] flex items-baseline gap-[7px] p-0">
-                <span className="font-mono font-bold text-[13px] leading-none tracking-[.06em] text-yellow-700">
-                  {q.axis}
-                </span>
-                <span className="keep-all font-bold text-[15px] leading-[1.35] text-txt-strong">{q.label}</span>
-              </legend>
-              <div className="flex flex-col gap-[7px]">
-                {(["a", "b"] as const).map((key) => {
-                  const on = picks[qi] === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => setPick(qi, key)}
-                      className={cn(
-                        "flex min-h-[52px] cursor-pointer items-center gap-[11px] rounded-control px-3.5 py-[11px] text-left",
-                        on ? "bg-yellow-100 border-[1.5px] border-yellow-500" : "bg-card border border-line",
-                      )}
-                    >
-                      <span
+          {questions.map((q, qi) => {
+            const currentPick = picks[qi];
+            const axisLetters = q.axis.split(" / ");
+            return (
+              <fieldset key={q.axis} className="m-0 border-none p-0">
+                <legend className="mb-[7px] flex items-baseline justify-between p-0 w-full">
+                  <div className="flex items-baseline gap-[7px]">
+                    <span className="font-mono font-bold text-[13px] leading-none tracking-[.06em] text-yellow-700">
+                      {q.axis}
+                    </span>
+                    <span className="keep-all font-bold text-[15px] leading-[1.35] text-txt-strong">{q.label}</span>
+                  </div>
+                  {currentPick ? (
+                    <span className="font-mono font-bold text-[12px] text-yellow-800 bg-yellow-200/80 px-2 py-0.5 rounded-md animate-pop">
+                      {currentPick === "a" ? axisLetters[0] : axisLetters[1]} 선택됨
+                    </span>
+                  ) : null}
+                </legend>
+                <div className="flex flex-col gap-[7px]">
+                  {(["a", "b"] as const).map((key) => {
+                    const on = picks[qi] === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => setPick(qi, key)}
                         className={cn(
-                          "grid size-[21px] flex-none place-items-center rounded-full border-[1.5px] text-ink-900",
-                          on ? "bg-yellow-400 border-yellow-600" : "border-line-strong bg-transparent",
+                          "flex min-h-[52px] cursor-pointer items-center gap-[11px] rounded-control px-3.5 py-[11px] text-left select-none transition-all duration-150 active:scale-[0.985]",
+                          on ? "bg-yellow-100 border-[1.5px] border-yellow-500 shadow-2xs" : "bg-card border border-line hover:bg-cr-50",
                         )}
                       >
-                        {on ? <Icon name="check" size={13} strokeWidth={3} /> : null}
-                      </span>
-                      <span
-                        className={cn(
-                          "text-pretty-keep text-[14.5px] leading-[1.5] text-txt-strong",
-                          on ? "font-semibold" : "font-normal",
-                        )}
-                      >
-                        {q[key]}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ))}
+                        <span
+                          className={cn(
+                            "grid size-[21px] flex-none place-items-center rounded-full border-[1.5px] text-ink-900 transition-all duration-150",
+                            on ? "bg-yellow-400 border-yellow-600 scale-105" : "border-line-strong bg-transparent",
+                          )}
+                        >
+                          {on ? (
+                            <span className="animate-pop inline-flex">
+                              <Icon name="check" size={13} strokeWidth={3} />
+                            </span>
+                          ) : null}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-pretty-keep text-[14.5px] leading-[1.5] text-txt-strong transition-colors duration-150",
+                            on ? "font-semibold" : "font-normal",
+                          )}
+                        >
+                          {q[key]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            );
+          })}
         </div>
+
+        {done && result ? (
+          <div className="animate-pop mt-4 rounded-2xl border-[1.5px] border-yellow-400 bg-linear-to-r from-yellow-100 to-amber-50 p-4 text-center shadow-xs">
+            <span className="t-cap-strong text-yellow-800">🎉 팀플 성향 분석 완료</span>
+            <div className="font-mono font-extrabold text-[22px] text-ink-900 mt-1">
+              나의 찰떡 유형: <span className="text-yellow-700 underline decoration-yellow-400">{result}</span>
+            </div>
+            <p className="t-note m-0 mt-1 text-txt-muted">
+              아래 버튼을 눌러 내 캐릭터와 팀플 스타일을 확인하세요!
+            </p>
+          </div>
+        ) : null}
 
         <Undecided>
           이 4문항의 정확도나 검증 결과는 기획안에 없습니다. 결과 화면에서 <b>&ldquo;정확한 진단&rdquo;으로
@@ -105,7 +132,7 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
           onClick={() => router.push("/onboarding/character")}
           iconRight="arrow-right"
         >
-          {done ? `${result} 로 계속` : `${total}문항을 모두 골라 주세요`}
+          {done ? `${result} 캐릭터 발급받기` : `${total - answeredCount}문항 남았습니다`}
         </Btn>
       </Dock>
     </AppFrame>

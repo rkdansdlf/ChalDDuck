@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 /**
  * 서버가 받아 주는 길이(`actions/chat.ts` 의 `MAX_MESSAGE`)와 같은 값.
@@ -58,7 +59,7 @@ export function Composer({
           type="button"
           onClick={onAttach}
           aria-label="첨부"
-          className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-fill text-txt-muted"
+          className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-fill text-txt-muted select-none transition-all duration-150 hover:bg-cr-200 active:scale-90"
         >
           <Icon name="paperclip" size={18} />
         </button>
@@ -82,7 +83,7 @@ export function Composer({
         // 비밀번호 관리자 제안 줄을 키보드 위에 띄운다. off 로 그 휴리스틱을 끈다.
         autoComplete="off"
         data-composer-input
-        className="t-input min-h-11 min-w-0 flex-1 rounded-full border-[1.5px] border-input-border bg-card px-3.5 text-txt-strong outline-none"
+        className="t-input min-h-11 min-w-0 flex-1 rounded-full border-[1.5px] border-input-border bg-card px-3.5 text-txt-strong outline-none transition-all duration-150 focus:border-focus"
       />
 
       {onCushion ? (
@@ -90,7 +91,8 @@ export function Composer({
           type="button"
           onClick={() => onCushion(text)}
           aria-label="쿠션 번역기로 다듬기"
-          className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-yellow-200 text-yellow-700"
+          title="쿠션 번역기로 다듬기"
+          className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-yellow-200 text-yellow-700 select-none transition-all duration-150 hover:bg-yellow-300 hover:rotate-12 active:scale-90"
         >
           <Icon name="wand-sparkles" size={18} />
         </button>
@@ -99,7 +101,13 @@ export function Composer({
       <button
         type="submit"
         aria-label="보내기"
-        className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-ink-700 text-on-action"
+        disabled={!text.trim()}
+        className={cn(
+          "grid size-11 flex-none place-items-center rounded-full border-none select-none transition-all duration-150",
+          text.trim()
+            ? "cursor-pointer bg-ink-700 text-on-action shadow-xs animate-pop active:scale-90"
+            : "cursor-default bg-fill text-txt-disabled scale-95 opacity-60",
+        )}
       >
         <Icon name="send" size={17} />
       </button>

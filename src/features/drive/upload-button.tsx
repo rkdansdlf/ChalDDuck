@@ -76,9 +76,25 @@ export function UploadButton({
     },
   });
 
+  // **부르는 쪽을 ref 에 담아 두고 `busy` 만 본다.**
+  //
+  // 예전에는 의존 배열에 `onBusyChange` 도 들어갔다. 부르는 쪽이 화면 안에서 화살표로
+  // 만들어졌다면(드라이브 화면이 그랬다) 그 함수는 렌더마다 새로 생겨, effect 가 매번 다시
+  // 돌았다. 그런데 effect 가 하는 일이 `setUploading` 처럼 **항상 새 객체**를 만드는
+  // setState 면 React 는 bail-out 하지 못하고, 그 setState 가 다시 렌더를 부르고 그 렌더가
+  // 또 새 화살표를 만든다 — 무한 반복이다. 실제로 드라이브 탭의 업로드 시트를 열면
+  // `Maximum update depth exceeded` 로 화면이 죽었다.
+  //
+  // 신호의 **내용**(`busy`)이 바뀔 때만 알리는 것이 이 effect 의 일이다. 함수가 언제 새로
+  // 만들어졌는지는 신호가 아니므로 의존 배열에서 뺀다 — `use-poll.ts` 의 `latest` 와 같은
+  // 이유다. 그래야 이 컴포넌트를 부르는 쪽이 `useCallback` 을 잊어도 절대 뒤집히지 않는다.
+  const reportBusy = useRef(onBusyChange);
   useEffect(() => {
-    onBusyChange?.(busy);
-  }, [busy, onBusyChange]);
+    reportBusy.current = onBusyChange;
+  });
+  useEffect(() => {
+    reportBusy.current?.(busy);
+  }, [busy]);
 
   const pick = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -140,11 +156,11 @@ export function UploadButton({
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             className={cn(
-              "hidden flex-col items-center gap-2.5 rounded-[18px] border-2 border-dashed px-5 py-6 text-center lg:flex",
-              dragging ? "border-yellow-500 bg-yellow-50" : "border-line-strong bg-transparent",
+              "hidden flex-col items-center gap-2.5 rounded-[18px] border-2 border-dashed px-5 py-6 text-center transition-all duration-200 select-none lg:flex",
+              dragging ? "border-yellow-500 bg-yellow-100/60 scale-[1.01] shadow-xs" : "border-line-strong bg-transparent hover:border-yellow-400/70",
             )}
           >
-            <span className="text-txt-muted">
+            <span className={cn("text-txt-muted transition-transform duration-200", dragging && "scale-115 text-yellow-700")}>
               <Icon name="upload" size={22} />
             </span>
             <span className="t-note keep-all text-txt-muted">
@@ -212,7 +228,7 @@ function UploadRow({ item, onRetry, onDismiss }: { item: UploadItem; onRetry: ()
   const pct = Math.round(item.progress * 100);
 
   return (
-    <div className="px-[15px] py-3">
+    <div className="animate-slide-up px-[15px] py-3 transition-colors duration-150">
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate font-semibold text-[14px] leading-[1.4] text-txt-strong">
           {item.name}

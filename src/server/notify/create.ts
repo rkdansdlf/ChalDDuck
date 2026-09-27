@@ -35,6 +35,14 @@ export async function notify(input: {
   href?: string;
   /** 보낸 사람. 자기 자신은 받는 사람에서 빠진다. */
   actorId?: string;
+  /**
+   * 앱 밖 푸시를 보낼지. 기본은 보낸다.
+   *
+   * `false` 면 앱 안 알림함에만 남긴다. 푸시가 **비용**인 곳에서 쓴다 — 호출한 곳이 이미
+   * "이 사람은 지금까지 충분히 받았다" 를 판정했고, 그 판정을 여기로 넘긴다. 앱 안 알림은
+   * 지우지 않는다: 그게 있어야 팀장이 나중에 "누가 들어오려 했었지" 를 알 수 있다.
+   */
+  push?: boolean;
 }): Promise<void> {
   const recipients = [...new Set(input.to)].filter((id) => id !== input.actorId);
   if (recipients.length === 0) return;
@@ -59,6 +67,7 @@ export async function notify(input: {
 
   // 앱 밖으로도 같은 알림을 보낸다. 실패해도 앱 안 알림함에는 이미 쌓였고, 여기서 던져
   // 잡히지 않는다(`pushTo` 는 몇 개 나갔는지만 돌려준다).
+  if (input.push === false) return;
   await pushTo(
     active.map((m) => m.id),
     { title: input.title, body: input.body, href: input.href },

@@ -158,7 +158,10 @@ export async function addTasksFromClerk(
         title: c.title.trim().slice(0, MAX_TITLE),
         kind: "team",
         assigneeId: idOf(c.assignee),
-        due: c.due,
+        // **`dueOf` 를 쓴다.** 예전에는 `c.due` 를 그대로 넣었는데, 사람이 직접 넣는
+        // `addTask`·`updateTask` 가 같은 40자 상한을 지킨 것과 어긋났다 — 한쪽은 잘리고
+        // 다른 쪽은 그대로 들어간다.
+        due: dueOf(c.due),
         status: "todo",
         source: "clerk",
       }))

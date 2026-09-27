@@ -3,16 +3,16 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { AppFrame, Body, Btn, Dock, Note, Panel, TopInset } from "@/components/ui";
+import { AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, TopInset } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
-import { characterImage } from "@/lib/mbti";
+import { characterImage, getMbtiMeta } from "@/lib/mbti";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
 /**
  * 05 캐릭터 발급.
  *
- * MBTI 16종에 캐릭터 이미지가 1:1로 배정된다. 캐릭터 고유 이름은 기획안에 없어
- * 지어내지 않고 MBTI 유형명을 그대로 쓴다.
+ * MBTI 16종에 캐릭터와 팀플 성향이 배정된다.
+ * 캐릭터는 팀원 간 친밀한 소통과 팀플 스타일 이해를 돕기 위한 표시이다.
  */
 export default function CharacterPage() {
   const router = useRouter();
@@ -28,6 +28,8 @@ export default function CharacterPage() {
   if (!ready) return null;
   if (!effectiveMbti) return null;
 
+  const meta = getMbtiMeta(effectiveMbti);
+
   return (
     <AppFrame label="05 캐릭터 발급">
       <TopInset tone="y" />
@@ -37,47 +39,75 @@ export default function CharacterPage() {
             내 찰떡 캐릭터
           </div>
 
-          <Image
-            src={characterImage(effectiveMbti)}
-            alt={`${effectiveMbti} 캐릭터`}
-            width={168}
-            height={168}
-            priority
-            className="mx-auto block size-[168px] rounded-3xl object-contain"
-          />
+          <div className="animate-pop mx-auto my-2 size-[168px] relative">
+            <Image
+              src={characterImage(effectiveMbti)}
+              alt={`${effectiveMbti} 캐릭터`}
+              width={168}
+              height={168}
+              priority
+              className="size-full rounded-3xl object-contain animate-jelly transition-transform duration-200 hover:scale-105"
+            />
+          </div>
 
-          <h1 className="keep-all m-0 mt-2.5 font-extrabold text-[25px] leading-[1.3] tracking-[-.035em] text-ink-900">
-            내 캐릭터
+          <h1 className="keep-all m-0 mt-3 font-extrabold text-[24px] leading-[1.3] tracking-[-.035em] text-ink-900">
+            {meta?.characterName ?? "내 캐릭터"}
           </h1>
 
           <div
-            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full px-[13px] py-1.5"
-            style={{ background: "rgba(255,255,255,.7)" }}
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full px-[13px] py-1.5 shadow-2xs"
+            style={{ background: "rgba(255,255,255,.85)" }}
           >
-            <span className="font-mono font-bold text-[14px] leading-none tracking-[.04em] text-ink-800">
+            <span className="font-mono font-extrabold text-[14px] leading-none tracking-[.04em] text-yellow-800">
               {effectiveMbti}
             </span>
             {fromQuiz ? (
-              <span className="font-medium text-[13px] leading-none text-ink-600">· 30초 컷 결과</span>
+              <span className="font-medium text-[12.5px] leading-none text-coral-700">· 30초 컷 간편 결과</span>
             ) : null}
           </div>
+
+          {meta ? (
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {meta.keywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="rounded-full bg-yellow-200/90 px-2.5 py-0.5 font-bold text-[12px] text-yellow-900"
+                >
+                  #{kw}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
 
-        <Panel s="cream" pad={16} r={18} className="mt-[18px]">
-          <div className="t-note-title mb-2 text-txt-strong">16종 중 하나가 자동 배정됩니다</div>
-          <p className="t-note text-pretty-keep m-0 text-txt">
-            캐릭터는 팀원에게 나를 소개하는 표시입니다. 잘하는 일이나 맡을 역할을 뜻하지 않습니다.
+        {meta ? (
+          <Panel s="card" pad={16} r={18} className="mt-3.5 shadow-xs border border-yellow-200/70">
+            <div className="t-note-title mb-1.5 text-yellow-800 flex items-center gap-1.5">
+              <Icon name="sparkles" size={16} />
+              <span>팀플에서의 나의 강점</span>
+            </div>
+            <p className="t-body text-pretty-keep m-0 text-txt-strong leading-[1.55]">
+              {meta.teamplayStyle}
+            </p>
+
+            <div className="mt-3 pt-3 border-t border-line/60">
+              <div className="text-[12.5px] font-bold text-txt-strong mb-1">💡 팀원과의 소통 팁</div>
+              <div className="text-[13px] leading-[1.5] text-txt">
+                {meta.communicationTip.good}
+              </div>
+            </div>
+          </Panel>
+        ) : null}
+
+        <Panel s="cream" pad={14} r={16} className="mt-3">
+          <p className="t-note text-pretty-keep m-0 text-txt-muted">
+            캐릭터는 팀원에게 나를 소개하고 원활한 소통을 돕는 표시입니다. 잘하는 일이나 맡을 역할을 뜻하지 않습니다.
           </p>
         </Panel>
 
-        <Note tone="y" icon="check" className="mt-3">
-          16종 캐릭터 이미지를 반영했습니다. 캐릭터별 고유 이름은 아직 제공되지 않아, 이름 대신 MBTI 유형명을
-          그대로 씁니다.
-        </Note>
-
         {fromQuiz ? (
           <Note tone="y" icon="info" className="mt-3">
-            30초 컷은 <b>간편 선택</b>입니다. 정식 검사 결과가 아니고, 언제든 직접 고쳐서 바꿀 수 있습니다.
+            30초 컷은 <b>간편 선택</b>입니다. 정식 검사 결과가 아니며 언제든 팀 페이지나 이전 화면에서 바꿀 수 있습니다.
           </Note>
         ) : null}
       </Body>

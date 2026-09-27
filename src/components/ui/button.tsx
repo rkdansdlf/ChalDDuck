@@ -10,11 +10,11 @@ import { Icon, type IconName } from "./icon";
  * 전용 팔레트(`off`)로 — 투명도로 흐리면 대비가 예측 불가능해진다.
  */
 const VARIANT = {
-  primary: "bg-action text-on-action border border-transparent",
-  yellow: "bg-yellow-400 text-ink-900 border border-transparent",
-  outline: "bg-card text-txt-strong border border-line-strong",
-  soft: "bg-fill text-txt-strong border border-transparent",
-  ghost: "bg-transparent text-link border border-transparent",
+  primary: "bg-action text-on-action border border-transparent hover:bg-ink-800",
+  yellow: "bg-yellow-400 text-ink-900 border border-transparent hover:bg-yellow-500",
+  outline: "bg-card text-txt-strong border border-line-strong hover:bg-cr-50",
+  soft: "bg-fill text-txt-strong border border-transparent hover:bg-cr-200",
+  ghost: "bg-transparent text-link border border-transparent hover:bg-coral-100/50",
   off: "bg-fill text-txt-disabled border border-line",
 } as const;
 
@@ -57,11 +57,11 @@ export function Btn({
       disabled={disabled}
       className={cn(
         "inline-flex max-w-full items-center justify-center gap-[7px] rounded-control",
-        "keep-all",
+        "keep-all select-none transition-all duration-150 ease-out",
         size === "lg" ? "min-h-[52px]" : "min-h-11",
         size === "sm" ? "px-[13px] py-2 t-btn-sm" : "px-[17px] py-[9px] t-btn",
         full ? "w-full" : "w-auto",
-        disabled ? "cursor-default" : "cursor-pointer",
+        disabled ? "cursor-default" : "cursor-pointer active:scale-[0.97]",
         disabled ? VARIANT.off : VARIANT[v],
         className,
       )}
@@ -99,6 +99,7 @@ export function IconButton({
       title={label}
       className={cn(
         "grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted",
+        "select-none transition-all duration-150 ease-out hover:bg-cr-100 hover:text-txt-strong active:scale-90",
         className,
       )}
     >

@@ -1,12 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { humanSize } from "@/features/drive/file-rules";
 import type { ContribKindKey, TeamCheckRecord } from "@/lib/types";
-import { contribByLabel, refreshContribState } from "@/server/contrib/state";
+import {
+  canResolveContrib,
+  contribState,
+  maxConfirmsNeeded,
+  refreshContribState,
+} from "@/server/contrib/state";
+import { teamCheckRecords } from "@/server/contrib/team-check";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
-import { requireSessionMember } from "@/server/session";
+import { requireLeader, requireSessionMember } from "@/server/session";
 import { signTeamFileUrl, signTeamUpload, verifyTeamUpload } from "@/server/storage/team-upload";
 import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
@@ -214,15 +219,25 @@ export async function disputeContribRecord(
  * ⚠️ **적힌 의견(`dispute`)은 지우지 않는다.** 결론만 남기고 의견을 지우면 한쪽 말로 덮는
  * 것이 되어, 정정을 요구한 사람이 기록을 믿을 수 없게 된다. 어떻게 정리했는지를
  * `resolution` 에 따로 적고 둘 다 남긴다.
+ *
+ * **답할 수 있는 사람은 기록 주인과 지금 의견을 적은 사람뿐이다**(`canResolveContrib`).
+ * 예전에는 "기획에 없어" 팀원 누구나로 열어 뒀는데, 제3자가 결론을 적으면 두 사람이
+ * 정리한 것이 아니라 제3자가 정한 것이 되어 버린다. 화면이 버튼을 감추지만 주소로 바로
+ * 들어올 수 있으므로 여기서 다시 확인한다.
  */
-export async function resolveContribDispute(recordId: string, way: string): Promise<"ok" | "gone"> {
+export async function resolveContribDispute(
+  recordId: string,
+  way: string,
+): Promise<"ok" | "gone" | "notYours"> {
   const me = await requireSessionMember();
 
   // 우리 팀 기록인지 서버에서 확인한다.
-  // 누가 응답할 수 있는지(기록 당사자만인지)는 기획안에 없어 팀원 누구나로 열어 뒀다.
   const record = await teamRecord(recordId, me.teamId);
   if (!record) throw new Error("기록을 찾을 수 없습니다.");
   if (record.state !== "disputed") return "gone";
+  if (!canResolveContrib({ memberId: record.memberId, disputedById: record.disputedById, meId: me.id })) {
+    return "notYours";
+  }
 
   await db.contribRecord.update({
     where: { id: record.id },
@@ -248,43 +263,65 @@ export async function resolveContribDispute(recordId: string, way: string): Prom
  */
 export async function pollContribCheck(): Promise<TeamCheckRecord[]> {
   const me = await requireSessionMember();
-  const rows = await db.contribRecord.findMany({
-    where: { member: { teamId: me.teamId } },
-    include: {
-      member: { select: { id: true, name: true, leftAt: true } },
-      disputedBy: { select: { id: true, name: true, leftAt: true } },
-      confirms: { select: { memberId: true } },
-      disputes: {
-        select: { id: true, text: true, createdAt: true, by: { select: { name: true } } },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      },
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  return teamCheckRecords(me.teamId, me.id);
+}
 
-  return rows.map((r) => {
-    const state = r.state as TeamCheckRecord["state"];
-    const other = r.member.id === me.id ? r.disputedBy : r.member;
-    return {
-      id: r.id,
-      who: r.member.name,
-      title: r.title,
-      state,
-      isMine: r.member.id === me.id,
-      confirms: r.confirms.length,
-      iConfirmed: r.confirms.some((c) => c.memberId === me.id),
-      by: contribByLabel({
-        state,
-        confirms: r.confirms.length,
-        disputedBy: r.disputedBy?.name ?? null,
-      }),
-      evidence: r.evidencePath && r.evidenceName
-        ? { name: r.evidenceName, size: humanSize(r.evidenceBytes ?? 0) }
-        : null,
-      dispute: r.dispute,
-      history: r.disputes.map((d) => ({ who: d.by.name, text: d.text })),
-      resolution: r.resolution,
-      dmWith: other && other.leftAt === null && other.id !== me.id ? other.id : null,
-    };
+/**
+ * 기록이 확정되려면 몇 명이 확인해야 하는지 — **팀장이 정한다.**
+ *
+ * 예전에는 `CONFIRMS_NEEDED = 1` 이 코드 상수였다. 기준을 정하려면 코드를 고쳐 배포해야 했고,
+ * 기준이 정해지지 않았다는 사실이 17 화면의 검토 안내에만 적혀 있었다.
+ *
+ * **바꾸면 팀의 기록을 전부 다시 계산한다.** 1명 확인이었던 기록이 2명 기준 아래에서
+ * "확정"이라면 그 말 자체가 거짓이다 — 기준을 올린 이상 다시 기다려야 한다. 그래서
+ * 저장은 그 전에 **몇 건이 달라지는지 말하고 한 번 더 받는다**(`ok: false` + `affected`).
+ *
+ * 팀장만 바꾼다(`requireLeader`) — 재입장 승인과 같은 기준이다.
+ */
+export type ConfirmsNeededResult =
+  | { ok: false; /** 이렇게 바꾸면 상태가 달라지는 기록 수. */ affected: number; needed: number }
+  | { ok: true; needed: number; affected: number };
+
+export async function setConfirmsNeeded(needed: number, confirm: boolean): Promise<ConfirmsNeededResult> {
+  const leader = await requireLeader();
+  const teamId = leader.teamId;
+
+  const members = await db.member.count({ where: { teamId, leftAt: null } });
+  const max = maxConfirmsNeeded(members);
+
+  if (!Number.isInteger(needed) || needed < 1) throw new Error("확인 인원은 1명 이상이어야 합니다.");
+  if (needed > max) {
+    throw new Error(
+      `확인 인원은 ${max}명까지입니다. 팀이 ${members}명이면 자기 기록의 주인을 빼고 ${max}명만 확인할 수 있습니다.`,
+    );
+  }
+
+  // 바꿀 게 없으면 화면에 "바뀌는 기록 N건"을 띄우지 않는다 — 0건인 대화를 벌이는 일이다.
+  const before = await db.contribRecord.findMany({
+    where: { member: { teamId } },
+    select: { id: true, state: true, dispute: true, resolution: true, _count: { select: { confirms: true } } },
   });
+  const team = await db.team.findUniqueOrThrow({ where: { id: teamId }, select: { confirmsNeeded: true } });
+
+  const changed = before.filter((r) => {
+    const after = contribState({
+      confirms: r._count.confirms,
+      dispute: r.dispute,
+      resolution: r.resolution,
+      needed,
+    });
+    return after !== r.state;
+  }).length;
+
+  if (team.confirmsNeeded === needed) return { ok: true, needed, affected: 0 };
+  if (!confirm) return { ok: false, affected: changed, needed };
+
+  await db.team.update({ where: { id: teamId }, data: { confirmsNeeded: needed } });
+  // 표에 저장된 `state` 를 기준에 맞춰 다시 계산한다 — 기준만 바꾸고 상태를 남기면
+  // 목록의 "확인됨"이 기준과 어긋난 채 굳는다.
+  for (const r of before) await refreshContribState(r.id);
+
+  revalidatePath("/team", "layout");
+  revalidatePath("/home");
+  return { ok: true, needed, affected: changed };
 }

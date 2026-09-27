@@ -42,6 +42,40 @@ async function withBoxLock<T>(boxId: string, work: (tx: Tx) => Promise<T>): Prom
 }
 
 /**
+ * **팀**을 잠그고 그 안에서 일한다 — 용량 한도를 지키기 위한 잠금.
+ *
+ * `withBoxLock` 은 제출함 하나만 지킨다. 그래도 충분하지 않았다: 팀 저장 용량(2GB)은
+ * **팀 전체**의 합인데 판정은 제출함 밖에서 갔고, 그 잠금조차 상자별이라 서로 다른 상자로
+ * 들어온 동시 업로드는 아예 만나지 않았다. 한 팀이 세 제출함에 50MB씩 동시에 올리면 셋 다
+ * "0 바이트"를 보고 셋 다 통과해 2GB를 넘는다(파일을 다시 waves로 올리면 무한히).
+ *
+ * 그래서 잠금의 **범위를 팀으로** 올린다. `Team` 행은 언제나 존재하고 한 팀只有一个 이므로
+ * 안정적인 잠금 대상이고, 한 팀의 동시 업로드는 많지 않아 기다림이 눈에 띄지 않는다.
+ * (`server/ai/limit.ts` 가 AI 한도를 지키며 같은 방식으로 팀 행을 잡는다.)
+ *
+ * 제출함 이름까지 같이 필요하면 `withTeamBoxLock` 을 쓴다 — **Team 을 먼저, 그다음
+ * SubmissionBox** 순서를 어기지 않는다(어긋나면 두 요청이 서로를 기다리는 교착이 생긴다).
+ */
+async function withTeamLock<T>(teamId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${teamId} FOR UPDATE`;
+    return work(tx);
+  });
+}
+
+/** 팀을 잠근 다음 제출함을 잠근다. 순서는 항상 이렇다. */
+async function withTeamBoxLock<T>(
+  teamId: string,
+  boxId: string,
+  work: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return withTeamLock(teamId, async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "SubmissionBox" WHERE "id" = ${boxId} FOR UPDATE`;
+    return work(tx);
+  });
+}
+
+/**
  * 22 파일 복원 서버 액션.
  *
  * 핵심 규칙: **복원은 덮어쓰기가 아니라 새 버전 추가다.** 옛 버전으로 되돌려도 그 사이의
@@ -211,26 +245,29 @@ export async function finishUpload(
 
   const bytes = info.size ?? 0;
   const type = resolveFileType(name, info.contentType ?? "");
-  // 용량은 1단계에서도 봤지만 그사이 다른 팀원이 올렸을 수 있어 실제 크기로 다시 본다.
-  const overQuota = (await teamUsedBytes(me.teamId)) + bytes > TEAM_CAP_BYTES;
-  const rejection: UploadRejection | null =
-    bytes <= 0
-      ? "empty"
-      : bytes > MAX_BYTES
-        ? "too-big"
-        : !type
-          ? "bad-type"
-          : overQuota
-            ? "over-quota"
-            : null;
 
-  if (rejection || !type) {
+  // **확실히 틀린 것만 잠금 밖에서 먼저 본다** — 저장소를 만질 필요가 없다. 용량은
+  // 여기서 보지 않는다: 팀 전체의 합이고, 아래 잠금 안에서 다시 세야 한다.
+  const obvious: UploadRejection | null =
+    bytes <= 0 ? "empty" : bytes > MAX_BYTES ? "too-big" : !type ? "bad-type" : null;
+  if (obvious || !type) {
     await storage().remove([upload.path]);
-    return { status: rejection ?? "bad-type" };
+    return { status: obvious ?? "bad-type" };
   }
 
-  // 같은 이름 찾기 → 새 파일 만들기 → 다음 버전 이름 고르기 → 기록은 한 사람씩.
-  const result = await withBoxLock(box.id, async (tx): Promise<FinishUploadResult> => {
+  // **팀을 잠근다** — 용량(2GB)이 팀 전체의 합이기 때문이다. 예전에는 이 판정이 잠금 밖에서
+  // 갔고 그 잠금조차 제출함별이라, 서로 다른 제출함으로 동시에 올리는 사람들은 서로를 보지
+  // 못하고 **모두 "여유 있다"를 보고** 2GB를 넘겼다. 지금 크기로 다시 보는 것도 그대로지만,
+  // 그것만으로는 부족했다 — 보는 것과 막는 것이 한 자리에 있어야 한다.
+  //
+  // 잠금 안에서는 두 가지를 함께 한다: 용량 판정과 버전 이름 고르기. 후자는 원래
+  // 제출함 잠그기로 지켰던 그것이다(같은 이름의 새 버전이 둘 생기지 않게).
+  const result = await withTeamBoxLock(me.teamId, box.id, async (tx): Promise<FinishUploadResult> => {
+    // 아직 안 쓰인 객체다(`already` 검사 아래) — 여기서 세는 값이 곧 늘어난다.
+    if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) {
+      return { status: "over-quota" };
+    }
+
     // 응답이 늦어 화면이 한 번 더 보냈을 때 같은 버전이 둘 생기지 않게. 잠금 안에서 봐야
     // 두 요청이 동시에 "아직 없다"고 보지 않는다.
     const already = await tx.fileVersion.findFirst({
@@ -414,10 +451,15 @@ export async function saveChatAttachmentToDrive(
   const bytes = message.attachBytes ?? 0;
   if (bytes <= 0) return { status: "empty" };
   if (bytes > MAX_BYTES) return { status: "too-big" };
-  // 팀원이 그동안 올렸을 수 있어 지금 기준으로 다시 본다.
-  if ((await teamUsedBytes(me.teamId)) + bytes > TEAM_CAP_BYTES) return { status: "over-quota" };
 
-  const result = await withBoxLock(box.id, async (tx): Promise<SaveAttachmentResult> => {
+  const result = await withTeamBoxLock(me.teamId, box.id, async (tx): Promise<SaveAttachmentResult> => {
+    // **용량 판정은 잠금 안에서 한다.** 팀 전체의 합이므로 팀을 잡고 세어야 한다 — 올리기
+    //(`finishUpload`)와 같은 이유, 같은 잠금. 예전에는 잠금 밖에서 세었고 그 잠금조차
+    // 상자별이라, 단톡방 파일을 드라이브로 옮기는 동시 요청이 2GB를 넘겨도 서로를 보지
+    // 못했다. 여기서 막혔다고 **저장소 객체를 지우지 않는다** — 그건 이미 단톡방에 붙어 있는
+    // 파일이므로, 거절은 "드라이브에 못 넣는다"까지만이다.
+    if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) return { status: "over-quota" };
+
     // 잠금 안에서 다시 본다 — 두 번 눌렀을 때 두 버전이 생기면 용량에 두 번 세어진다.
     const fresh = await tx.message.findUnique({ where: { id: message.id }, select: { savedVersionId: true } });
     if (fresh?.savedVersionId) return { status: "already-saved" };

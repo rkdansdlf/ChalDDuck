@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { usePoll } from "@/lib/use-poll";
 import {
   AppBar,
   AppFrame,
@@ -43,9 +44,35 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   const [issued, setIssued] = useState<{ rejoinCode: string; isLeader: boolean } | null>(null);
   /** 팀장 승인을 기다리는 중. */
   const [waiting, setWaiting] = useState(false);
+  /**
+   * 여기서 더 나아갈 수 없는 상태. 승인을 기다리는 것과 **다른** 끝이다 — 폴링하면 되는
+   * 문제가 아니라, 팀장에게 확인받거나 시간이 지나야 하는 문제다. 기다리는 화면으로 보내면
+   * `{status:"none"}` 을 받아 `/join` 으로 튕겨나가므로, 그 대신 여기서 멈춰 세운다.
+   */
+  const [stopped, setStopped] = useState<"taken" | "limited" | null>(null);
 
   const picked = mode === "want" ? want : veto;
-  const set = mode === "want" ? setWant : setVeto;
+
+  // 자동으로 Veto 탭으로 넘어간 적 있는지. **한 번만** 넘어간다.
+  const autoMoved = useRef(false);
+
+  /** 역할을 고를 때 쓰는 setter. 희망을 막 골랐으면 자동으로 Veto 탭으로 넘긴다. */
+  const set = (key: RoleKey | null) => {
+    if (mode === "want") {
+      setWant(key);
+      // **처음 한 번만** 자동으로 넘어간다. 예전에는 `!veto` 만 보고 넘어가서, Veto 가 비어
+      // 있는 동안 **희망을 고칠 때마다** 다시 뒤집혔다 — "아 그 선택을 잘못했나" 하고
+      // 희망 탭으로 돌아와 Role 를 바꿨는데 확인도 보기 전에 Veto 탭으로 튕겨 나가,
+      // 왜 넘어갔는지 알 수 없었다. Veto 는 선택 사항(`submit` 은 `want` 만 요구)인데
+      // 화면은 강제처럼 여기서 멈추게 했다.
+      if (key && !veto && !autoMoved.current) {
+        autoMoved.current = true;
+        setMode("veto");
+      }
+    } else {
+      setVeto(key);
+    }
+  };
 
   const submit = async () => {
     if (!want || busy.submit) return;
@@ -71,6 +98,18 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
           setWaiting(true);
           return;
         }
+        // 같은 이름으로 이미 처리 중인 요청이 있는데 이 브라우저가 그 소유자가 아니다.
+        // **누구의 것인지 말하지 않는다** — 알면 팀에 그 이름이 있는지와 승인 대기 여부가
+        // 드러난다. 팀장에게 확인하라고 안내하는 것이 전부다.
+        if (result.status === "taken") {
+          setStopped("taken");
+          return;
+        }
+        // abuse 제한. 막힌 것은 **신청**뿐이므로 시간이 지나면 같은 화면에서 다시 누를 수 있다.
+        if (result.status === "limited") {
+          setStopped("limited");
+          return;
+        }
         // 이제 서버에 이름이 있다. 로컬 초안을 비운다 — 비우지 않으면 팀을 옮겼을 때
         // 옛 이름과 MBTI 가 새 팀 명단 위에 남아 그려진다(07 화면의 수락 버튼이
         // 엉뚱한 이름을 비교해 아예 안 뜨는 일까지 있었다).
@@ -83,6 +122,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
 
   if (!ready) return null;
   if (issued) return <RejoinCodePanel {...issued} onDone={() => router.push("/team")} />;
+  if (stopped) return <JoinStoppedPanel reason={stopped} onRetry={() => setStopped(null)} />;
   if (waiting) return <WaitingPanel name={toDraft().name} onIssued={setIssued} />;
 
   return (
@@ -311,27 +351,40 @@ function WaitingPanel({
 }) {
   const router = useRouter();
   const [rejected, setRejected] = useState(false);
+  /** 승인을 확인하는 호출이 한 번 실패했다. 조용히 멈춘 게 아니라 말해 준다. */
+  const [stalled, setStalled] = useState(false);
 
-  useEffect(() => {
-    let stopped = false;
-    const tick = async () => {
-      const result = await checkJoinApproval();
-      if (stopped) return;
-
-      if (result.status === "approved") {
-        // 팀원이 되었으니 로컬 초안을 버린다. `name` 은 prop 으로 이미 받아 두었다.
-        resetOnboarding();
-        onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
-      } else if (result.status === "rejected") setRejected(true);
-      else if (result.status === "none") router.push("/join");
-    };
-
-    const timer = window.setInterval(tick, POLL_MS);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [onIssued, router]);
+  // 승인을 기다리는 동안 주기적으로 확인한다. 팀장이 승인해도 **이 브라우저가** 세션을
+  // 만들어야 하므로(쿠키를 심을 수 있는 건 여기뿐) 기다리는 쪽이 물어본다.
+  //
+  // `usePoll` 을 쓴다 — 예전에는 `setInterval` 을 직접 걸어서 그저 세 가지를 잃었다:
+  // 실패 처리(한 번 실패하면 "확인하는 중…" 이 영영 끝나지 않음), 안 보이는 탭에서도 계속
+  // 부름(5초마다 서버를 때림), 응답이 5초를 넘으면 겹쳐 쌓임. 셋 다 `use-poll.ts` 가 이미
+  // 지키고 있다(`rejoin-screen` · `icebreak-screen` · `thread-list-poll` 도 그쪽을 쓴다).
+  usePoll(
+    async () => {
+      try {
+        const result = await checkJoinApproval();
+        if (result.status === "approved") {
+          // 팀원이 되었으니 로컬 초안을 버린다. `name` 은 prop 으로 이미 받아 두었다.
+          resetOnboarding();
+          onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
+        } else if (result.status === "rejected") {
+          setRejected(true);
+        } else if (result.status === "none") {
+          router.push("/join");
+        }
+        setStalled(false);
+      } catch {
+        // 실패는 **조용히 넘기지 않는다.** 예전엔 여기가 `try/catch` 없이 그대로 두여,
+        // 한 번 실패하면 "확인하는 중…" 이 영영 끝나지 않았고 무엇이 잘못됐는지 알 길이
+        // 없었다. 한 번 실패한 뒤 계속 물어보되, 그 사실을 말해 둔다.
+        setStalled(true);
+      }
+    },
+    POLL_MS,
+    !rejected,
+  );
 
   return (
     <AppFrame label="팀장 승인 대기">
@@ -358,7 +411,9 @@ function WaitingPanel({
 
             <Panel s="fill" pad={16} r={16} className="mb-4">
               <p className="t-note keep-all m-0 text-center text-txt-muted">
-                확인하는 중… 이 화면을 열어 두셔도 되고, 나중에 같은 기기로 다시 들어오셔도 됩니다.
+                {stalled
+                  ? "확인에 실패했습니다. 다시 확인하고 있습니다… 연결이 끊겼다면 붙여 주세요."
+                  : "확인하는 중… 이 화면을 열어 두셔도 되고, 나중에 같은 기기로 다시 들어오셔도 됩니다."}
               </p>
             </Panel>
 
@@ -379,6 +434,57 @@ function WaitingPanel({
  * 예전에는 서버가 던진 오류 문구에 기대고 있었다. 운영 빌드는 그 문구를 지우므로
  * 사용자에게는 "알리는 중…"이 끝난 뒤 아무 일도 일어나지 않는 화면으로 보였다.
  */
+/**
+ * 여기서 더 나아갈 수 없을 때.
+ *
+ * `WaitingPanel` 의 "거절" 화면과 모양을 같게 둔 이유가 있다 — 둘 다 **기다림이 끝났는데 팀원이
+ * 되지 못한** 상태고, 사용자에게는 같은 종류의 이야기다. 폴링 화면을 재사용하지 않는 건
+ * `checkJoinApproval()` 이 이 요청을 모른다는 사실 때문이라, `usePoll` 이 곧바로 `/join` 으로
+ * 튕겨내 버린다.
+ */
+function JoinStoppedPanel({
+  reason,
+  onRetry,
+}: {
+  reason: "taken" | "limited";
+  onRetry: () => void;
+}) {
+  const router = useRouter();
+
+  return (
+    <AppFrame label="팀에 알리기">
+      <AppBar title="지금은 들어갈 수 없습니다" />
+      <Body>
+        <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">{STOPPED_TITLE[reason]}</h1>
+        <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
+          {STOPPED_TEXT[reason]}
+        </p>
+
+        {reason === "limited" ? (
+          <Btn full size="lg" v="outline" onClick={onRetry}>
+            다시 시도하기
+          </Btn>
+        ) : (
+          <Btn full size="lg" v="outline" onClick={() => router.push("/join")}>
+            처음으로
+          </Btn>
+        )}
+      </Body>
+    </AppFrame>
+  );
+}
+
+const STOPPED_TITLE: Record<"taken" | "limited", string> = {
+  taken: "같은 이름의 요청이 이미 처리 중입니다",
+  limited: "요청이 너무 많습니다",
+};
+
+const STOPPED_TEXT: Record<"taken" | "limited", string> = {
+  // 누구의 요청인지 말하지 않는다. 알면 팀에 그 이름이 있는지와 승인 대기 여부가 드러난다.
+  taken: "이름을 바꿔 다시 신청하면 **같은 사람이 두 번** 신청한 것으로 헷갈립니다. 팀장에게 직접 확인해 주세요.",
+  limited: "잠시 뒤에 다시 눌러 주세요. **이미 신청한 분은 그대로 기다리고 계십니다** — 막히는 것은 새 신청뿐입니다.",
+};
+
 function JoinBlockedNote({
   reason,
   onGoToTeam,

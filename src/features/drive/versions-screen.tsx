@@ -63,10 +63,10 @@ export function VersionsScreen({
 
       <Body dense>
         {latest ? (
-          <Panel s="yellow" pad={14} r={16} className="mb-4">
+          <Panel s="yellow" pad={14} r={16} className="mb-4 animate-slide-up">
             <div className="flex items-center gap-[11px]">
               <span
-                className="grid size-[38px] flex-none place-items-center rounded-xl text-yellow-700"
+                className="grid size-[38px] flex-none place-items-center rounded-xl text-yellow-700 animate-pop"
                 style={{ background: "rgba(255,255,255,.75)" }}
               >
                 <Icon name="file-check-2" size={19} />
@@ -90,7 +90,10 @@ export function VersionsScreen({
             {versions.map((version, index) => {
               const isLatest = index === 0;
               return (
-                <div key={version.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px]">
+                <div
+                  key={version.id}
+                  className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-colors hover:bg-fill/40"
+                >
                   <span
                     className={`mt-0.5 grid h-[26px] min-w-[38px] flex-none place-items-center rounded-lg px-1.5 font-mono font-bold text-[13px] leading-none ${
                       isLatest ? "bg-ink-700 text-on-action" : "bg-fill text-txt-muted"

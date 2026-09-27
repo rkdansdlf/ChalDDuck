@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { AppBar, Body, CompareCard, Note, Textarea, Undecided } from "@/components/ui";
+import { AppBar, Body, Btn, CompareCard, Note, Textarea, Undecided } from "@/components/ui";
 import { convertSentence, getSentenceSample } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { unwrapAi } from "./ai-result";
+import { readAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
+import { useAiQuota } from "./use-ai-quota";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 import type { SentenceMode } from "@/lib/types";
@@ -35,6 +36,7 @@ export function SentenceScreen({
   const [mode, setMode] = useState(initialMode);
   const [text, setText] = useState(initialInput);
   const [sampleError, setSampleError] = useState<string | null>(null);
+  const { left, perDay } = useAiQuota(aiReady);
 
   /**
    * 모드를 바꾸면 그 모드의 예시 문장으로 갈아 끼운다 — 두 모드는 다루는 글이 아예 다르다.
@@ -64,10 +66,10 @@ export function SentenceScreen({
 
   // 입력이 멎은 뒤 한 번만 부른다 — 글자마다 부르면 모델 호출이 그만큼 나간다.
   const run = useCallback(
-    (value: string, key: string) => convertSentence(value, key).then(unwrapAi),
+    (value: string, key: string) => convertSentence(value, key).then(readAi),
     [],
   );
-  const { result, working, error } = useAiDraft({
+  const { result, working, error, source, canRun, stale, run: generate } = useAiDraft({
     text,
     variant: mode,
     initial: { text: initialInput, variant: initialMode, result: initialOutput },
@@ -85,6 +87,21 @@ export function SentenceScreen({
       <Body dense>
         {aiReady ? null : <SampleNote className="mb-3.5" />}
         {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
+        {aiReady ? (
+          <div className="mt-3 mb-3 flex flex-wrap items-center gap-2">
+            <Btn full size="lg" icon="wand-sparkles" disabled={!canRun} onClick={generate}>
+              {working ? "바꾸는 중…" : stale ? "고친 글 다시 바꾸기" : "이 상황으로 바꾸기"}
+            </Btn>
+            {/* 한도를 미리 보여 준다 — 막혀서야 알게 하지 않는다. */}
+            {perDay > 0 ? (
+              <span className="t-cap w-full text-txt-muted">
+                오늘 내 몫 {left}회 남음
+                {left === 0 ? " — 다 썼습니다" : ""}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <div role="radiogroup" aria-label="변환 모드" className="mb-4 flex gap-1.5">
           {modes.map((item) => {
@@ -129,6 +146,7 @@ export function SentenceScreen({
           }
           resultLabel="변환 결과"
           result={working ? "바꾸는 중…" : result || "—"}
+          resultSource={source === "none" ? null : source}
         />
 
         {sampleError ? (

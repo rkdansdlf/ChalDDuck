@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePoll } from "@/lib/use-poll";
 import {
   AppBar,
   AppFrame,
@@ -46,31 +47,33 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
 
   // 승인을 기다리는 동안 주기적으로 확인한다. 팀장이 승인해도 **이 브라우저가**
   // 세션을 만들어야 하므로(쿠키를 심을 수 있는 건 여기뿐) 기다리는 쪽이 물어본다.
-  useEffect(() => {
-    if (phase !== "waiting") return;
-
-    let stopped = false;
-    const tick = async () => {
-      const result = await checkRejoinApproval();
-      if (stopped) return;
-
-      if (result === "approved") {
-        router.push("/home");
-        router.refresh();
-      } else if (result === "rejected") {
-        setPhase("code");
-        setError("팀장이 요청을 거절했습니다. 본인이 맞다면 팀장에게 직접 확인해 주세요.");
-      } else if (result === "none") {
-        setPhase("code");
+  //
+  // `usePoll` 을 쓴다 — 예전에는 `setInterval` 을 직접 걸어서 그저 세 가지를 잃었다:
+  // 실패 처리(한 번 실패하면 "확인하는 중…" 이 영영 끝나지 않음), 안 보이는 탭에서도 계속
+  // 부름(5초마다 서버를 때림), 응답이 5초를 넘으면 겹쳐 쌓임. 셋 다 `use-poll.ts` 가 이미
+  // 지키고 있다(`icebreak-screen` 과 `thread-list-poll` 도 그쪽을 쓴다).
+  usePoll(
+    async () => {
+      try {
+        const result = await checkRejoinApproval();
+        if (result === "approved") {
+          router.push("/home");
+          router.refresh();
+        } else if (result === "rejected") {
+          setPhase("code");
+          setError("팀장이 요청을 거절했습니다. 본인이 맞다면 팀장에게 직접 확인해 주세요.");
+        } else if (result === "none") {
+          setPhase("code");
+        }
+      } catch {
+        // 확인이 실패해도 **대기는 유지한다** — 그 사이에 승인되었을 수 있으므로. 조용히
+        // 넘기면 사용자는 "아직인가"만 되풀이한다. 무엇이 잘못됐는지 말해 준다.
+        setError("승인 여부를 확인하지 못했습니다. 잠시 뒤 다시 확인합니다.");
       }
-    };
-
-    const timer = window.setInterval(tick, POLL_MS);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [phase, router]);
+    },
+    POLL_MS,
+    phase === "waiting",
+  );
 
   const submitCode = async () => {
     if (!code.trim() || working) return;

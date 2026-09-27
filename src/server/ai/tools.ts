@@ -8,6 +8,7 @@ import {
   SENTENCE_SAMPLE_OUTPUT,
 } from "@/data/catalog";
 import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
+import { parseSoftened } from "@/lib/read-cushion";
 import { askShape, askText, askWithSearch, isAiConfigured } from "./model";
 
 /**
@@ -79,6 +80,47 @@ export async function rewriteWithCushion(text: string, tone: string): Promise<st
     user: text,
     maxTokens: 512,
   });
+}
+
+/* ── 19 / 31 읽기 순화 ─────────────────────────────────────── */
+
+/**
+ * **다른 사람이 보낸 말**을 순화한다. 보내는 쪽의 쿠션 번역기와는 다른 일이다.
+ *
+ * 차이는 세 가지다.
+ * 1. 원문은 **고치지 않는다.** 여기서 나온 문장은 그 말을 읽는 사람에게만 보인다.
+ * 2. **묶어서** 부른다. 말 하나마다 한 번씩 부르면 대화방을 한 번 열 때 AI 를 40회
+ *    부르는 셈이라 한도(하루 60회)가 첫 화면에 다 Gone 된다.
+ * 3. 순화해도 **사실과 부탁은 그대로다.** 순화는 말투의 일을 한다 — 일이 굴러가지
+ *    않게 하는 것은 순화의 책임이 아니다.
+ */
+export async function softenIncoming(lines: string[], tone: string): Promise<string[]> {
+  // 키가 없으면 **샘플로 대신하지 않는다.** 보낸 사람은 그 글이 그대로 전달되었는데
+  // 읽는 사람에게만 가짜 문장이 붙어 있으면 대화가 거짓말을 하게 된다. 원문 그대로
+  // 두고 "AI 가 없다"고 알리는 쪽이 정직하다(액션이 그 문구를 돌려준다).
+  if (!isAiConfigured()) throw new Error("AI 가 연결되어 있지 않습니다.");
+
+  const text = await askText({
+    system: `${BASE}
+
+너는 "읽기 순화"다. 팀원에게 **도착한 말**을 읽는 사람이 덜 상처받도록 표현만 다듬는다.
+
+지켜야 할 것:
+- ${TONE_GUIDE[tone] ?? TONE_GUIDE.soft}
+- 사실·요청·마감·이름·수치는 **한 글자도 바꾸지 않는다.** 없는 말을 더하지도 않는다.
+- 탓하는 표현·빈정대는 말투·과장·욕만 걷어낸다. **의미를 뒤집지 않는다.**
+- **${lines.length}개 입력에 ${lines.length}개의 순화문**을 만든다. 두 줄을 합치거나
+  하나를 빼먹지 않는다.
+- 한 순화문은 한 문장 안에서 끝내고 줄바꿈을 넣지 않는다.
+- 이미 순화된 말은 그대로 통과시켜도 좋다.
+
+출력은 **JSON 문자열 배열 하나뿐**이다. 설명·머리말·코드펜스·번호를 붙이지 않는다.
+예: ["다듬은 첫 번째 말", "다듬은 두 번째 말"]`,
+    user: lines.join("\n"),
+    maxTokens: 2048,
+  });
+
+  return parseSoftened(text, lines.length);
 }
 
 /* ── 20 AI 서기 ─────────────────────────────────────────────── */

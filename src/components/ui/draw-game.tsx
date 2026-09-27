@@ -85,12 +85,14 @@ function WinnerCard({ candidate }: { candidate: DrawCandidate }) {
     <div
       className={cn(
         "flex flex-col items-center gap-2 transition-all duration-300 ease-out",
-        shown ? "scale-100 opacity-100" : "scale-75 opacity-0",
+        shown ? "scale-100 opacity-100 animate-pop" : "scale-75 opacity-0",
       )}
     >
-      <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
+      <div className="animate-jelly">
+        <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
+      </div>
       <span className="t-h2 keep-all text-txt-strong">{candidate.name}</span>
-      <Chip tone="ok" icon="check">
+      <Chip tone="ok" icon="check" iconClassName="animate-pop">
         당첨
       </Chip>
     </div>
@@ -206,8 +208,8 @@ function DiceStage({ onLanded }: { onLanded: () => void }) {
   return (
     <div
       className={cn(
-        "grid size-20 place-items-center rounded-2xl border border-line bg-card text-yellow-700 shadow-md",
-        rolling && "animate-bounce",
+        "grid size-20 place-items-center rounded-2xl border border-line bg-card text-yellow-700 shadow-md transition-all",
+        rolling && "animate-bounce animate-wiggle",
       )}
     >
       <Icon name="dices" size={36} />
@@ -272,9 +274,9 @@ function TicketStage({
               shuffling && "animate-pulse",
               isFlipped
                 ? isWinner
-                  ? "scale-105 border-ok bg-ok-bg"
-                  : "border-line bg-fill"
-                : "border-line bg-yellow-200",
+                  ? "scale-105 border-ok bg-ok-bg animate-pop shadow-sm"
+                  : "border-line bg-fill animate-fade-in"
+                : "border-line bg-yellow-200 hover:scale-105",
             )}
           >
             {isFlipped ? (

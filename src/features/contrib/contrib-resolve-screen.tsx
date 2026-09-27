@@ -11,6 +11,10 @@ import { resolveContribDispute } from "@/server/actions/contrib";
  *
  * 고를 수 있는 길이 두 개뿐인 것이 의도다: **상대 의견을 받아들이거나, 공동 작업으로 나누거나.**
  * "내 말이 맞다"로 덮는 선택지는 두지 않는다 — 그러면 정정이 무의미해진다.
+ *
+ * **여는 사람은 기록 주인과 지금 의견을 적은 사람뿐이다**(17 화면이 감추고 서버가 다시
+ * 본다). 주소를 알면 들어올 수 있으므로 이 화면도 같은 조건을 지킨다 — 선택지를 두고
+ * 눌렀다 "안 됩니다" 를 듣는 것보다, 왜 내가 답할 자리가 아닌지 바로 말하는 편이 낫다.
  */
 export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
   const router = useRouter();
@@ -33,6 +37,10 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
         if (answer === "gone") {
           // 이미 정리된 기록이다 — 앞선 답변이 남아 있으므로 그걸 보여 주는 곳으로 보낸다.
           return "이 기록은 이미 정리됐습니다. 앞선 답변을 확인해 주세요";
+        }
+        if (answer === "notYours") {
+          // 17 화면이 감춘 버튼을 주소로 직접 들어온 경우다. 조용히 실패시키지 않고 이유를 말한다.
+          return "이 기록은 기록을 적은 사람과 의견을 적은 사람만 답할 수 있습니다";
         }
         router.push("/team/contrib/members");
         router.refresh();
@@ -65,25 +73,32 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
           수 있습니다.
         </Note>
 
-        <div className="flex flex-col gap-2">
-          <Btn
-            full
-            icon="check"
-            disabled={answering}
-            onClick={() => void resolve("정정 동의 · 의견대로 수정")}
-          >
-            정정 의견에 동의하기
-          </Btn>
-          <Btn
-            full
-            v="outline"
-            icon="split"
-            disabled={answering}
-            onClick={() => void resolve("공동 작업으로 나눔")}
-          >
-            공동 작업으로 나누기
-          </Btn>
-        </div>
+        {record.iCanResolve ? (
+          <div className="flex flex-col gap-2">
+            <Btn
+              full
+              icon="check"
+              disabled={answering}
+              onClick={() => void resolve("정정 동의 · 의견대로 수정")}
+            >
+              정정 의견에 동의하기
+            </Btn>
+            <Btn
+              full
+              v="outline"
+              icon="split"
+              disabled={answering}
+              onClick={() => void resolve("공동 작업으로 나눔")}
+            >
+              공동 작업으로 나누기
+            </Btn>
+          </div>
+        ) : (
+          <Note tone="warn" icon="info" className="mb-4">
+            이 기록을 정리할 수 있는 사람은 <b>기록을 적은 사람</b>과 <b>의견을 적은 사람</b>뿐입니다.
+            남은 팀원은 17 화면에서 1:1로 이야기해 주세요 — 결론을 적는 자리는 두 사람의 몫입니다.
+          </Note>
+        )}
 
         <Undecided>정정에도 합의가 안 되면 어떻게 되는지는 기획안에 없어 다루지 않았습니다.</Undecided>
       </Body>

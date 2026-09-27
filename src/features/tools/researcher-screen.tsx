@@ -6,7 +6,6 @@ import {
   AppBar,
   Body,
   Btn,
-  Chip,
   Icon,
   Note,
   Panel,
@@ -15,8 +14,9 @@ import {
 } from "@/components/ui";
 import { searchResearch } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { unwrapAi } from "./ai-result";
-import type { ResearchResult } from "@/lib/types";
+import { readAi } from "./ai-result";
+import { DraftSourceChip } from "./draft-source-chip";
+import type { AiAnswerSource, ResearchResult } from "@/lib/types";
 
 /**
  * 25 AI 리서처.
@@ -37,21 +37,19 @@ export function ResearcherScreen({
 
   const [query, setQuery] = useState(sampleQuery);
   const [results, setResults] = useState(initialResults);
-  /** 아직 한 번도 찾지 않았으면 화면의 결과는 예시다. */
-  const [searched, setSearched] = useState(false);
+  /** 화면에 지금 떠 있는 결과가 예시인지 AI 검색인지. 서버가 같이 보내 준 값이다. */
+  const [source, setSource] = useState<AiAnswerSource>("sample");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  /** 예시 결과를 보고 있는 중인지. 아니라고 말할 수 있을 때만 "샘플" 표시를 뗀다. */
-  const showingSample = !aiReady || !searched;
 
   const search = async () => {
     if (!query.trim() || working) return;
     setWorking(true);
     setError(null);
     try {
-      setResults(unwrapAi(await searchResearch(query.trim())));
-      setSearched(true);
+      const { value, source: made_by } = readAi(await searchResearch(query.trim()));
+      setResults(value);
+      setSource(made_by);
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
@@ -101,15 +99,11 @@ export function ResearcherScreen({
           <SecTitle note="출처가 없는 결과는 보여주지 않습니다" className="m-0 flex-1">
             결과 {results.length}건
           </SecTitle>
-          {showingSample ? (
-            <Chip tone="warn" icon="flask-conical">
-              샘플 결과
-            </Chip>
-          ) : (
-            <Chip tone="y" icon="sparkles">
-              AI 검색 결과
-            </Chip>
-          )}
+          <DraftSourceChip
+            source={source}
+            working={working}
+            aiLabel="AI 검색 결과"
+          />
         </div>
 
         {results.length === 0 ? (

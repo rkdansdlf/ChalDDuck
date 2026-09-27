@@ -9,6 +9,6 @@ import { NotificationsScreen } from "@/features/home/notifications-screen";
 export const dynamic = "force-dynamic";
 
 export default async function NotificationsPage() {
-  const [items, push] = await Promise.all([getNotifications(), getPushState()]);
-  return <NotificationsScreen items={items} push={push} />;
+  const [inbox, push] = await Promise.all([getNotifications(), getPushState()]);
+  return <NotificationsScreen items={inbox.items} unread={inbox.unread} push={push} />;
 }

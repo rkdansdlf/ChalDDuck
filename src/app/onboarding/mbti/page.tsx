@@ -1,10 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Dock, Icon, Note, Progress } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, Progress } from "@/components/ui";
 import { setMbti, startQuiz, useOnboarding } from "@/features/onboarding/onboarding-state";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
-import { MBTI_TYPES } from "@/lib/mbti";
+import { MBTI_TYPES, characterImage, getMbtiMeta } from "@/lib/mbti";
 import { cn } from "@/lib/cn";
 
 /**
@@ -18,6 +19,8 @@ export default function MbtiPage() {
   const { mbti } = useOnboarding();
   const ready = useOnboardingGate(true);
   if (!ready) return null;
+
+  const currentMeta = getMbtiMeta(mbti);
 
   return (
     <AppFrame label="03 MBTI 선택">
@@ -41,10 +44,10 @@ export default function MbtiPage() {
                 aria-checked={on}
                 onClick={() => setMbti(type)}
                 className={cn(
-                  "min-h-[52px] cursor-pointer rounded-[13px] font-mono text-[14px] leading-none tracking-[.02em]",
+                  "min-h-[52px] cursor-pointer rounded-[13px] font-mono text-[14px] leading-none tracking-[.02em] transition-all duration-150 active:scale-95",
                   on
-                    ? "bg-yellow-400 border-[1.5px] border-yellow-600 font-extrabold text-ink-900"
-                    : "bg-card border border-line font-semibold text-txt",
+                    ? "bg-yellow-400 border-[1.5px] border-yellow-600 font-extrabold text-ink-900 shadow-xs"
+                    : "bg-card border border-line font-semibold text-txt hover:border-yellow-300",
                 )}
               >
                 {type}
@@ -52,6 +55,55 @@ export default function MbtiPage() {
             );
           })}
         </div>
+
+        {/* 선택한 유형의 캐릭터 및 팀플 스타일 미리보기 카드 */}
+        {currentMeta && mbti ? (
+          <div className="animate-pop mb-4 overflow-hidden rounded-2xl border-[1.5px] border-yellow-300 bg-linear-to-b from-yellow-50 to-card p-3.5 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="relative size-[58px] flex-none overflow-hidden rounded-xl border border-yellow-200 bg-yellow-100">
+                <Image
+                  src={characterImage(mbti)}
+                  alt={`${mbti} 캐릭터`}
+                  width={58}
+                  height={58}
+                  className="size-full object-cover animate-jelly"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-extrabold text-[15px] text-yellow-800">{currentMeta.type}</span>
+                  <span className="t-sec keep-all text-txt-strong">{currentMeta.characterName}</span>
+                </div>
+                <p className="keep-all mt-0.5 line-clamp-1 text-[13px] text-txt-muted">{currentMeta.shortDesc}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {currentMeta.keywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="rounded-full bg-yellow-200/80 px-2 py-0.5 font-medium text-[11.5px] text-yellow-900"
+                    >
+                      #{kw}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-2.5 rounded-xl bg-card/80 p-2.5 border border-line/60">
+              <div className="flex items-start gap-1.5 text-[12.5px] leading-[1.5] text-txt">
+                <span className="flex-none font-bold text-yellow-700">팀플 성향</span>
+                <span className="text-pretty-keep">{currentMeta.teamplayStyle}</span>
+              </div>
+              <div className="mt-1 flex items-start gap-1.5 text-[12px] leading-[1.45] text-txt-muted">
+                <span className="flex-none font-bold text-coral-600">소통 팁</span>
+                <span className="text-pretty-keep">{currentMeta.communicationTip.good}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-4 rounded-xl border border-dashed border-line-strong bg-fill/50 px-3.5 py-3 text-center text-[13px] text-txt-muted">
+            위 버튼에서 MBTI를 누르면 팀플 성향과 찰떡 캐릭터를 미리 볼 수 있어요.
+          </div>
+        )}
 
         <button
           type="button"

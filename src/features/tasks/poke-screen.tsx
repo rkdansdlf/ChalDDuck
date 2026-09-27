@@ -102,9 +102,9 @@ export function PokeScreen({
                   disabled={already}
                   onClick={() => setSelected(task.id)}
                   className={cn(
-                    "box-border flex w-full items-center gap-[11px] rounded-2xl px-[15px] py-[13px] text-left",
-                    on ? "border-[1.5px] border-yellow-500 bg-yellow-100" : "border-[1.5px] border-line bg-card",
-                    already ? "cursor-default opacity-55" : "cursor-pointer",
+                    "box-border flex w-full items-center gap-[11px] rounded-2xl px-[15px] py-[13px] text-left select-none transition-all duration-150",
+                    on ? "border-[1.5px] border-yellow-500 bg-yellow-100 shadow-xs scale-[1.01]" : "border-[1.5px] border-line bg-card hover:bg-cr-50",
+                    already ? "cursor-default opacity-55" : "cursor-pointer active:scale-[0.98]",
                   )}
                 >
                   <Avatar name={task.assignee ?? ""} mbti={task.mbti} size={32} />
@@ -140,8 +140,8 @@ export function PokeScreen({
       </Body>
 
       <Dock>
-        <Btn full size="lg" icon="bell" disabled={!selectedTask || sending} onClick={send}>
-          {sending ? "보내는 중" : "진행상황 물어보기"}
+        <Btn full size="lg" icon={sending ? "loader-circle" : "bell"} disabled={!selectedTask || sending} onClick={send}>
+          {sending ? "보내는 중…" : "진행상황 물어보기 (콕 찌르기)"}
         </Btn>
       </Dock>
 

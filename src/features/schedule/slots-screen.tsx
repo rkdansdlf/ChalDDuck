@@ -366,8 +366,11 @@ export function SlotsScreen({
         )}
       </Body>
 
-      {/* 이월은 보류일 뿐 결정이 아니므로, 후보를 고르고 다시 제안할 수 있다. */}
-      {stage === "idle" || stage === "carried" ? (
+      {/* 이월은 보류일 뿐 결정이 아니므로, 후보를 고르고 다시 제안할 수 있다.
+          **확정된 회의도 그렇다** — 그건 이미 정해진 사실이지 진행 중인 결정이 아니므로, 다음
+          회의를 그 뒤에 별개로 잡을 수 있다. 예전에는 `idle`·`carried` 만 열려 있었고,
+          확정 카드가 뜨는 순간 Dock 이 사라져 팀이 두 번째 회의를 잡을 곳이 아예 없어졌다. */}
+      {stage !== "proposed" ? (
         <Dock>
           {/* 후보가 없을 때 "시간을 골라 주세요"를 비활성으로 띄우면 고를 것이 없는데
               고르라고 하는 셈이다. 그 상태에서 할 수 있는 일은 시간표를 내는 것뿐이다. */}
@@ -436,13 +439,13 @@ function SlotOption({
       aria-checked={selected}
       onClick={onSelect}
       className={cn(
-        "box-border flex w-full cursor-pointer items-center gap-[13px] rounded-[18px] px-4 py-3.5 text-left",
-        selected ? "bg-yellow-100 border-[1.5px] border-yellow-500" : "bg-card border border-line",
+        "box-border flex w-full cursor-pointer items-center gap-[13px] rounded-[18px] px-4 py-3.5 text-left transition-all duration-150 active:scale-[0.985]",
+        selected ? "bg-yellow-100 border-[1.5px] border-yellow-500 shadow-sm" : "bg-card border border-line hover:border-yellow-300",
       )}
     >
       <span
         className={cn(
-          "grid size-11 flex-none place-items-center rounded-[13px]",
+          "grid size-11 flex-none place-items-center rounded-[13px] transition-colors",
           selected ? "bg-yellow-400" : "bg-fill",
         )}
       >
@@ -462,7 +465,7 @@ function SlotOption({
       </span>
 
       {selected ? (
-        <span className="flex-none text-yellow-700">
+        <span className="flex-none text-yellow-700 animate-pop">
           <Icon name="circle-check" size={21} />
         </span>
       ) : null}
@@ -483,9 +486,9 @@ function ResultPanel({
   className?: string;
 }) {
   return (
-    <Panel s="yellow" pad={18} r={18} className={`text-center ${className}`}>
+    <Panel s="yellow" pad={18} r={18} className={cn("text-center animate-slide-up", className)}>
       <div
-        className="mb-2 inline-flex size-11 items-center justify-center rounded-full text-yellow-700"
+        className="mb-2 inline-flex size-11 items-center justify-center rounded-full text-yellow-700 animate-pop"
         style={{ background: "rgba(255,255,255,.75)" }}
       >
         <Icon name={icon} size={20} />

@@ -32,7 +32,7 @@ import {
 import { MIN_ATTENDEES } from "./meeting-slots";
 import { ScheduleTabs } from "./schedule-tabs";
 import { dateOfDay, shortDate, type CandidateDate } from "./week";
-import { GRID_COLUMNS, dayTone, MeetingMarkCell } from "./week-grid";
+import { CountGrid } from "./week-grid";
 import { WeekPicker } from "./week-picker";
 
 /** 칸의 진하기. 숫자와 함께 보여 준다 — 색만으로 몇 명인지 읽게 하지 않는다. */
@@ -172,6 +172,23 @@ export function TeamTimeScreen({
     return `${from}시~${from + 1}시`;
   };
 
+  /**
+   * 칸 하나가 격자에 말할 것 — 그 시간에 되는 사람 수, 그 진하기, 읽어 주는 설명.
+   *
+   * 격자는 같은 틀(`CountGrid`)을 쓰되 칸에 무엇을 적을지는 이 화면이 정한다. 세는
+   * 방법과 진하기 기준이 팀 화면에만 있으므로.
+   */
+  const countAt = (dayIndex: number, hourIndex: number) => {
+    const n = availableAt(dayIndex, hourIndex);
+    // 회의 표식이 있는 칸은 그렇다는 사실까지 읽어 준다 — 표식은 08 와 같은 그림이므로.
+    const marked = markAt?.day === dayIndex && markAt.hour === hourIndex;
+    return {
+      count: n,
+      level: LEVEL[levelOf(n, shown.length)],
+      label: `${days[dayIndex]} ${hourText(hourIndex)} — ${shown.length}명 중 ${n}명 가능${marked ? `, ${mark?.stage === "confirmed" ? "확정된 회의" : "제안된 회의"}` : ""}`,
+    };
+  };
+
   // 시트에 보일 칸의 명단
   const sheet = cell
     ? (() => {
@@ -245,58 +262,14 @@ export function TeamTimeScreen({
               겹쳐 볼 팀원을 한 명 이상 골라 주세요.
             </p>
           ) : (
-            <div
-              className="grid gap-[2px]"
-              style={{
-                gridTemplateColumns: GRID_COLUMNS(days.length),
-                gridTemplateRows: `auto repeat(${hours.length},44px)`,
-              }}
-            >
-              <span />
-              {days.map((day, i) => (
-                <span
-                  key={day}
-                  className={cn(
-                    "pb-1.5 text-center font-bold text-[13px] leading-none",
-                    dayTone(i),
-                  )}
-                >
-                  {day}
-                  <span className="mt-1 block font-mono font-medium text-[10.5px] text-txt-faint">
-                    {dateOfDay(week, i)}
-                  </span>
-                </span>
-              ))}
-              {hours.map((hour, hourIndex) => (
-                <div key={hour} className="contents">
-                  <span className="pt-1 pr-1 text-right font-mono font-medium text-[11.5px] leading-none text-txt-faint">
-                    {hour}
-                  </span>
-                  {days.map((day, dayIndex) => {
-                    const n = availableAt(dayIndex, hourIndex);
-                    const level = LEVEL[levelOf(n, shown.length)];
-                    const isMark = markAt?.day === dayIndex && markAt.hour === hourIndex;
-                    return (
-                      <button
-                        key={`${day}-${hour}`}
-                        type="button"
-                        onClick={() => setCell({ day: dayIndex, hour: hourIndex })}
-                        aria-label={`${day} ${hourText(hourIndex)} — ${shown.length}명 중 ${n}명 가능${isMark ? `, ${mark?.stage === "confirmed" ? "확정된 회의" : "제안된 회의"}` : ""}`}
-                        className={cn(
-                          "relative grid cursor-pointer place-items-center rounded-md border-none p-0 font-mono font-bold text-[13px] leading-none",
-                          level.text,
-                        )}
-                        style={{ background: level.bg }}
-                      >
-                        {n}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-              {/* 회의 표식. 08 과 같은 요소라 두 격자의 표시가 달라지지 않는다. */}
-              <MeetingMarkCell cell={markAt} />
-            </div>
+            <CountGrid
+              days={days}
+              dayNotes={days.map((_, i) => dateOfDay(week, i))}
+              hours={hours}
+              mark={markAt}
+              cell={countAt}
+              onOpen={(day, hour) => setCell({ day, hour })}
+            />
           )}
         </Panel>
 

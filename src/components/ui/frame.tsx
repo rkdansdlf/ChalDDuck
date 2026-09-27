@@ -125,7 +125,7 @@ export function AppBar({
           onClick={onBack}
           aria-label="뒤로"
           className={cn(
-            "grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt",
+            "grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt select-none transition-all duration-150 hover:bg-cr-100 active:scale-90",
             hideBackOnWide && "lg:hidden",
           )}
         >
@@ -141,14 +141,16 @@ export function AppBar({
           type="button"
           onClick={onAction}
           aria-label={actionLabel ?? action}
-          className="relative grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt"
+          className="relative grid size-11 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt select-none transition-all duration-150 hover:bg-cr-100 active:scale-90"
         >
-          <Icon name={action} size={20} />
+          <span className={cn("inline-flex", Boolean(actionBadge) && action === "bell" && "animate-wiggle")}>
+            <Icon name={action} size={20} />
+          </span>
           {actionBadge ? (
             // 탭바 배지와 같은 규격을 쓴다 — 같은 뜻의 표시가 화면마다 달라 보이면 안 된다.
             <span
               aria-hidden
-              className="absolute top-1.5 right-1.5 box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900"
+              className="animate-pop absolute top-1.5 right-1.5 box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs"
             >
               {actionBadge > 9 ? "9+" : actionBadge}
             </span>

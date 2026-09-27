@@ -33,6 +33,16 @@ model Team {
   menuPick String?
   menuDrawnBy String?
   menuPickedAt DateTime?
+  /// 기록이 `ok` 되려면 몇 명이 확인해야 하는가 — **팀이 정하는 값**이다.
+  ///
+  /// 예전에는 코드 상수(`CONFIRMS_NEEDED = 1`)였다. 상수로 두면 기준을 정하는 사람이
+  /// 코드를 고쳐 배포해야 했고, "몇 명이 확인해야 확정인지"가 미정인 상태가 화면 문구로만
+  /// 남았다. 팀장이 이 화면에서 고른다.
+  ///
+  /// 1을 기본으로 두는 이유: 전원으로 두면 한 사람이 답하지 않을 때 영영 확정되지 않는다.
+  /// 올릴 수 있는 최댓값은 팀원 수에서 자기 기록의 주인을 뺀 만큼이다(자기 기록은
+  /// 확인하지 못한다) — 팀장이 화면 밖의 값을 넣지 못하게 서버가 막는다.
+  confirmsNeeded Int      @default(1)
   createdAt DateTime @default(now())
 
   members        Member[]
@@ -59,6 +69,9 @@ model Member {
   isLeader     Boolean  @default(false)
   /// 재입장 코드의 해시. 첫 입장 때 한 번만 보여 주고 여기에는 해시만 남는다.
   rejoinCodeHash String?
+  /// 로그인 및 재접속용 이메일
+  email        String?
+  emailVerifiedAt DateTime?
   /// 1순위 희망 역할 / 이번엔 피하고 싶은 역할.
   wantRole     String?
   vetoRole     String?
@@ -78,6 +91,9 @@ model Member {
   messages        Message[]
   reactions       MessageReaction[]
   readMarks       ReadMark[]
+  /// 이 사람의 순화 읽기 설정과, 이 사람에게 보여 줄 순화문.
+  readCushions    ReadCushion[]
+  messageCushions MessageCushion[]
   contribRecords  ContribRecord[]   @relation("ContribOwner")
   contribDisputes ContribRecord[]   @relation("ContribDisputer")
   contribConfirms ContribConfirm[]
@@ -98,6 +114,7 @@ model Member {
   iceSeats        IceSeat[]         @relation("IceSeatOf")
 
   @@unique([teamId, name])
+  @@index([email])
 }
 
 /// 브라우저 하나 = 기기 하나. 쿠키에는 `token` 만 담고 회원 식별자는 담지 않는다.
@@ -165,6 +182,7 @@ model JoinRequest {
   id           String    @id @default(cuid())
   teamId       String
   name         String
+  email        String?
   mbti         String?
   mbtiFromQuiz Boolean   @default(false)
   wantRole     String?
@@ -184,6 +202,22 @@ model JoinRequest {
   /// 같은 이름으로 요청이 쌓이지 않게 한다.
   @@unique([teamId, name])
   @@index([teamId])
+}
+
+/// 이메일 OTP 및 매직 링크 인증 토큰.
+///
+/// 6자리 번호는 해시로 저장하며, 유효 시간은 10분입니다.
+/// 시도 횟수(attempts)가 5회 초과 시 무효 처리됩니다.
+model EmailAuthToken {
+  id        String   @id @default(cuid())
+  email     String
+  codeHash  String
+  token     String   @unique
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
 }
 
 /// 앱 안 알림.
@@ -483,9 +517,15 @@ model Message {
   driveVersion FileVersion?     @relation("MessageSharesVersion", fields: [driveVersionId], references: [id], onDelete: SetNull)
   savedVersion  FileVersion?     @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
   reactions MessageReaction[]
+  /// 이 말을 **읽는 사람별로** 순화해 둔 문장(19 화면의 읽기 순화).
+  cushions MessageCushion[]
 
   @@unique([authorId, clientId])
   @@index([teamId, threadKey])
+  /// DM 목록은 "이 대화의 마지막 말 한 개" 를 4초마다 다시 읽는다. 그 정렬이
+  /// `(teamId, threadKey, createdAt DESC)` 이지 않으면 Postgres 가 **해당 대화의 전체
+  /// 메시지**를 읽고 자른다 — DM 이 쌓일수록 폴링 한 번의 비용이 그대로 오른다.
+  @@index([teamId, threadKey, createdAt])
 }
 
 model MessageReaction {
@@ -510,6 +550,49 @@ model ReadMark {
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([memberId, threadKey])
+}
+
+/// 한 사람이 이 방의 말을 **어떤 말투로 읽는지**. 읽기 전용이라 저장된 원문은 그대로다.
+///
+/// **끄는 칸이 없다** — 순화는 이 앱의 약속이고(받는 사람은 순화된 표현을 받는다),
+/// 꺼진 화면을 보면 그 말이 순화본인지 원문인지 알 수 없다. 원문을 보고 싶을 때는
+/// 말풍선을 누른다.
+///
+/// 대화방마다 한 줄이다 — "단톡방은 부드럽게, DM 은 담담하게"가 가능해야 하므로
+/// 사람당 하나의 값만 두면 안 된다.
+model ReadCushion {
+  id        String   @id @default(cuid())
+  memberId  String
+  threadKey String
+  /// 말투("soft" | "plain" | "firm"). 처음엔 15 쿠션 번역기와 같은 첫 값으로 읽는다.
+  tone      String   @default("soft")
+  updatedAt DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, threadKey])
+}
+
+/// 이 말을 읽는 사람 한 명에게 보여 줄 **순화문**.
+///
+/// 원문(`Message.text`)은 고치지 않는다. 순화는 **보기에만** 걸린다는 약속이라
+/// 읽는 쪽이 원문 대조를 언제든 할 수 있어야 한다.
+///
+/// 한 말은 한 사람에게 한 번만 순화된다 — 같은 말을 여러 번 부르면 AI 비용만 늘어난다.
+model MessageCushion {
+  id        String   @id @default(cuid())
+  messageId String
+  memberId  String
+  /// 순화한 문장. 원문과 같은 길이 안에서 끝낸다.
+  text      String
+  /// 이 순화본을 만든 말투 — 다시 만들지 않고 같은 말투로 보여 준다는 사실로 남는다.
+  tone      String   @default("soft")
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, memberId])
 }
 
 /// 기여 기록.

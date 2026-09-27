@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppBar, Body, Btn, Icon, Note, Sheet, Toast, Undecided } from "@/components/ui";
-import type { ChatMessage, Member, SubmissionBox, Team } from "@/lib/types";
+import type { ChatMessage, CushionTone, Member, SubmissionBox, Team } from "@/lib/types";
+import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { ACCEPT } from "@/features/drive/file-rules";
@@ -11,9 +12,11 @@ import { useMe } from "@/features/onboarding/use-me";
 import { handOffToCushion } from "@/features/tools/cushion-handoff";
 import { setNavBadges } from "@/components/nav-badges-store";
 import { saveChatAttachmentToDrive } from "@/server/actions/drive";
+import { setReadCushionTone } from "@/server/actions/chat";
 import { pollNavBadges } from "@/server/actions/nav";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
+import { ReadCushionBar } from "./read-cushion-bar";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
 /** 첨부를 드라이브에 올릴 때 실패한 이유를 사람 말로. */
@@ -39,6 +42,8 @@ export function TeamChatScreen({
   initialCursor,
   me: fromRoster,
   boxes,
+  tones,
+  cushion: cushionFromServer,
 }: {
   team: Team;
   messages: ChatMessage[];
@@ -46,6 +51,15 @@ export function TeamChatScreen({
   me: Member | undefined;
   /** 드라이브 제출함 목록 — 첨부를 올릴 곳을 고르는 데 쓴다(14). */
   boxes: SubmissionBox[];
+  /**
+   * 말투 3종(15 쿠션 번역기와 같은 어휘).
+   *
+   * **서버에서 받는다** — 카탈로그를 화면이 직접 import 하면 카탈로그 전체(퀴즈·컨텐츠)가
+   * 채팅 화면 번들에 따라 들어온다. 15 화면이 이렇게 받고 있으니 같은 규칙을 따른다.
+   */
+  tones: CushionTone[];
+  /** 이 브라우저가 이 방의 말을 읽는 말투. 고른 것이 없으면 첫 말투로 읽는다. */
+  cushion: ReadCushionSetting;
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
@@ -57,17 +71,35 @@ export function TeamChatScreen({
    * 도 아직 만들어지지 않은 시점의 값이 된다.
    */
   const lostFileRef = useRef<(message: ChatMessage) => void>(() => {});
-  const { messages, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder } =
+  const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
+  const { messages, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
     useChatThread(
     TEAM_THREAD_ID,
     fromServer,
     initialCursor,
       me,
+      cushion,
       lostFileRef,
     );
   const { toast, flash, run } = useAction();
 
   const [picking, setPicking] = useState<ChatMessage | null>(null);
+
+  /**
+   * "다시 보내기" — **거절 사유를 알림으로 남긴다.**
+   *
+   * 첨부는 용량 초과·형식·파일 없음으로 거절될 수 있다. 그 문장을 버리면 아무 반응도 없는
+   * 버튼을 몇 번이나 눌러야 한다. 처음 보낼 때(`sendFile`)는 사유를 띄우는데 재시도만
+   * 조용했으므로, "처음엔 됐는데 다시 보내기가 안 된다"로 보인다.
+   * `MessageBubble` 의 memo 가 이 함수 한 개만 보기 때문에 `useCallback` 으로 고정한다.
+   */
+  const onRetry = useCallback(
+    async (message: ChatMessage) => {
+      const refused = await retry(message);
+      if (refused) flash(refused);
+    },
+    [retry, flash],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -89,6 +121,31 @@ export function TeamChatScreen({
       picker.current?.click();
     };
   }, [discard, flash, fileLostText]);
+
+  /**
+   * 읽는 말투를 바꾼다.
+   *
+   * **기다리지 않는다.** 순화본은 화면에 이미 있으므로 먼저 칩을 바꾸고 저장은 나중에
+   * 한다. 저장이 실패하면 서버가 준 문구를 그대로 토스트로 말한다(화면이 지어내지 않는다).
+   */
+  const changeCushionTone = async (key: string) => {
+    setCushion({ tone: key });
+    await run(
+      `cushion-tone-${key}`,
+      async () => {
+        const result = await setReadCushionTone(TEAM_THREAD_ID, key);
+        if (!result.ok) {
+          setCushion(cushionFromServer);
+          return flash(result.message);
+        }
+        setCushion(result.setting);
+        // 저장된 순화본은 예전 말투로 된 것이다 — **다시 다듬어 읽어야** 칩이 약속한
+        // 말투가 된다. 지우지 않고 한 번 더 시킨다(같은 말의 순화본은 늘 하나).
+        retryPurify();
+      },
+      "말투를 바꾸지 못했습니다. 잠시 후 다시 눌러 주세요",
+    );
+  };
 
   /** 고른 제출함에 이 첨부를 올린다. 같은 첨부는 두 번 올리지 않는다(서버가 막는다). */
   const saveTo = async (box: SubmissionBox) => {
@@ -130,7 +187,16 @@ export function TeamChatScreen({
         onAction={() => router.push("/team")}
       />
 
-      <Note tone="info" icon="wand-sparkles" className="mx-4 mt-3">
+      <ReadCushionBar
+        setting={cushion}
+        tones={tones}
+        working={purifyWorking}
+        notice={purifyNotice}
+        onTone={(key) => void changeCushionTone(key)}
+        onRetry={retryPurify}
+      />
+
+      <Note tone="info" icon="wand-sparkles" className="mx-4 mt-2.5">
         쿠션 번역기로 다듬은 말은 <b>표시가 남습니다</b>. 원문을 숨기지 않습니다.
       </Note>
 
@@ -147,13 +213,16 @@ export function TeamChatScreen({
             key={message.id}
             message={message}
             showAuthor
-            onRetry={retry}
+            onRetry={onRetry}
             onDiscard={discard}
             onSaveToDrive={setPicking}
           />
         ))}
 
         <Undecided>
+          읽기 순화(받는 사람이 순화된 표현으로 읽는 기능)를 어디까지 둘지는 기획안에 없습니다.
+          지금은 <b>원문이 그대로 저장되고, 읽는 사람에게만 순화문이 보여 주며, 원문으로
+          언제든 돌아갈 수 있게</b> 두었습니다. 순화가 꺼져 있거나 실패하면 원문이 보인다.
           채널을 여러 개 두는지, 메시지 삭제가 되는지는 기획안에 없어 팀 전체가 보는 단일 채팅방으로만
           구성했습니다. 첨부는 드라이브와 같은 규칙(문서·이미지·PPT·PDF, 50MB)이고 1:1 대화에는 두지
           않았습니다. 드라이브 파일을 여기 공유하고(14) 첨부를 다시 드라이브로 올리는 것은 되지만,

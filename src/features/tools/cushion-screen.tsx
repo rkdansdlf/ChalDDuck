@@ -1,12 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   AppBar,
   Body,
   Btn,
-  Chip,
   Note,
   Panel,
   Textarea,
@@ -17,10 +16,18 @@ import { rewriteWithCushion } from "@/server/actions/ai";
 import { sendChatMessage } from "@/server/actions/chat";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
-import { clearCushionDraft, peekCushionDraft } from "./cushion-handoff";
+import {
+  clearCushionDraft,
+  noCushionDraft,
+  peekCushionDraft,
+  subscribeCushionDraft,
+} from "./cushion-handoff";
+import { TonePicker } from "./tone-picker";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { unwrapAi } from "./ai-result";
+import { readAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
+import { DraftSourceChip } from "./draft-source-chip";
+import { useAiQuota } from "./use-ai-quota";
 import { cn } from "@/lib/cn";
 import type { CushionTone } from "@/lib/types";
 
@@ -45,28 +52,39 @@ export function CushionScreen({
   const router = useRouter();
 
   const initialTone = tones[0]?.key ?? "soft";
-  // 단톡방에서 쓰던 글을 들고 왔으면 그 글로 시작한다. 서버 렌더에는 늘 없으므로
-  // (모듈 변수는 브라우저에만 있다) 첫 화면이 서로 어긋나지 않는다.
-  const [text, setText] = useState(() => peekCushionDraft() ?? sample);
+  // 단톡방에서 넘겨받은 글은 **스토어로 읽는다.** 서버 스냅샷이 `null` 이라 hydrate 때는
+  // 서버가 그린 `sample` 으로 시작하고, hydrate 가 끝난 뒤 클라이언트 값(내 글)으로 다시
+  // 그려진다 — 그래서 첫 화면이 어긋나지 않는다.
+  //
+  // 예전 주석은 "서버 렌더에는 늘 없으므로 첫 화면이 서로 어긋나지 않는다"였는데, 정반대다.
+  // **서버가 모르는 값을 첫 렌더에 쓰는 것이 어긋남의 원인**이고, 그래서 `useState` 의
+  // 초기값으로 읽지 않는다.
+  const handedOff = useSyncExternalStore(subscribeCushionDraft, peekCushionDraft, noCushionDraft);
+  // 사람이 직접 고친 값이 있으면 그게 우선이다 — 넘겨받은 글은 시작값일 뿐이다.
+  const [typed, setTyped] = useState<string | null>(null);
+  const text = typed ?? handedOff ?? sample;
+  const setText = setTyped;
   const [tone, setTone] = useState(initialTone);
   const [toast, setToast] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    clearCushionDraft();
-  }, []);
+  // 넘겨받은 글은 **화면을 떠날 때** 치운다. 읽는 중에 지우면 원문이 예시 문장으로
+  // 되돌아가 사용자가 적은 글을 잃어버린다. 모델은 자동으로 부르지 않는다
+  // (`use-ai-draft` 의 규칙) — 결과는 `stale` 로 표시되고 누를 때만 새로 만든다.
+  useEffect(() => clearCushionDraft, []);
 
   // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다 — 입력이 멎은 뒤 한 번만.
   const run = useCallback(
-    (value: string, key: string) => rewriteWithCushion(value, key).then(unwrapAi),
+    (value: string, key: string) => rewriteWithCushion(value, key).then(readAi),
     [],
   );
-  const { result, working, error } = useAiDraft({
+  const { result, working, error, source, canRun, stale, run: generate } = useAiDraft({
     text,
     variant: tone,
     initial: { text: sample, variant: initialTone, result: initialResult },
     run,
   });
+  const { left, perDay } = useAiQuota(aiReady);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -112,38 +130,50 @@ export function CushionScreen({
         />
 
         <div className="t-cap-strong mt-3.5 mb-[7px] font-bold text-txt-muted">말투 고르기</div>
-        <div role="radiogroup" aria-label="말투" className="mb-3.5 flex gap-1.5 overflow-x-auto">
-          {tones.map((item) => {
-            const on = tone === item.key;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                onClick={() => setTone(item.key)}
-                className={cn(
-                  "min-h-11 flex-none cursor-pointer whitespace-nowrap rounded-xl px-3.5 font-bold text-[13.5px] leading-none",
-                  on
-                    ? "border border-transparent bg-action text-on-action"
-                    : "border border-line bg-card text-txt",
-                )}
-              >
-                {item.name}
-              </button>
-            );
-          })}
-        </div>
+        <TonePicker tones={tones} value={tone} onChange={setTone} label="말투" className="mb-3.5" />
+
+        {aiReady ? (
+          <div className="mt-3.5 mb-3 flex flex-wrap items-center gap-2">
+            <Btn
+              full
+              size="lg"
+              icon="wand-sparkles"
+              disabled={!canRun}
+              onClick={generate}
+            >
+              {working ? "다듬는 중…" : stale ? "고친 말 다시 다듬기" : "쿠션어로 다듬기"}
+            </Btn>
+            {/* 한도를 미리 보여 준다 — 막혀서야 알게 하지 않는다. */}
+            {perDay > 0 ? (
+              <span className="t-cap w-full text-txt-muted">
+                오늘 내 몫 {left}회 남음
+                {left === 0 ? " — 다 썼습니다" : ""}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mb-1.5 flex items-center gap-1.5">
           <span className="t-cap-strong font-bold text-txt-muted">바꾼 말</span>
-          <Chip tone="y" icon="sparkles">
-            AI 초안
-          </Chip>
+          {/* 배지 글자를 여기서 정하지 않는다 — 서버가 값과 함께 보낸 출처를 그대로 그린다. */}
+          <DraftSourceChip source={source === "none" ? null : source} working={working} />
         </div>
-        <Panel s="coral" pad={14} r={16} className="mb-3">
-          <div className="text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29]">
-            {working ? "다듬는 중…" : result || "원문을 적으면 다듬은 말이 여기에 나옵니다."}
+        <Panel s="coral" pad={14} r={16} className="mb-3 transition-all duration-300">
+          <div
+            className={cn(
+              "text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29] transition-all duration-200",
+              working && "animate-pulse-subtle opacity-70",
+              !working && result && "animate-slide-up",
+            )}
+          >
+            {working ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="animate-spin text-coral-600">🪄</span>
+                쿠션어로 다듬는 중…
+              </span>
+            ) : (
+              result || "원문을 적으면 다듬은 말이 여기에 나옵니다."
+            )}
           </div>
         </Panel>
 

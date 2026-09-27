@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { whenText } from "@/features/schedule/meeting-cell";
-import { isPastDeadline } from "@/features/schedule/meeting-model";
+import { effectiveStage, isPastDeadline } from "@/features/schedule/meeting-model";
 import { MIN_ATTENDEES, membersBlockedAt, slotAt } from "@/features/schedule/meeting-slots";
 import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { addDays, candidateDates, isWeekKey, nowHourInSeoul, todayInSeoul } from "@/features/schedule/week";
@@ -27,10 +27,60 @@ async function currentProposal(teamId: string) {
 }
 
 /**
- * 지금 제안할 수 있는지 확인한다. 진행 중인 결정이 있으면 어떤 말로 막아야 하는지
- * 알려 준다 — 확정된 회의와 대기 중인 제안은 팀원이 다르게 받아들인다.
+ * 끝난 결정의 `activeKey` 를 비운다.
+ *
+ * `activeKey` 는 **아직 응답을 기다리는 결정** 하나를 지키는-lock 이다. 확정된 회의는 이미
+ * 끝난 사실이지 진행 중인 결정이 아니다. 그런데 예전에는 확정을 해도 키를 그대로 두었고,
+ * 비우는 곳이 어디에도 없었다(`IceRound.activeKey` 와 달리). 그 결과 한 번 회의가 확정되면
+ * 팀은 **영영 두 번째 회의를 잡을 수 없었다** — `assertCanPropose` 가 계속 "이미 확정된 회의가
+ * 있습니다"를 던지고, 화면(`slots-screen`)도 제안을 띄울 칸을 열지 않았다. 후보는 매일 다시
+ * 계산되는데 아무도 고를 수 없는 상태였다.
+ *
+ * 그래도 여기서 직접 비우지 않고 **계산된 상태**(`effectiveStage`)로 판단한다 — 마감은 아무도
+ * 앱을 열지 않아도 지나가므로, 예약 작업이 표를 고치기 전에도 이 자리가 스스로 정결된다.
+ * `meeting-model.ts` 를 한 곳에 둔 이유가 바로 이것이고, 이제 그 판단이 세 곳이 아니라
+ * 여섯 곳이 함께 한다. 반대가 붙은 제안은 끝난 것이 아니므로 키를 붙든 채 둔다.
+ */
+async function releaseSettledDecision(teamId: string): Promise<void> {
+  const held = await db.meetingProposal.findFirst({
+    where: { teamId, activeKey: teamId },
+    select: { id: true, stage: true, respondBy: true, responses: { select: { agree: true } } },
+  });
+  if (!held) return;
+
+  // 이미 끝난 상태인데 키가 붙어 있는 행 — 지금 고치기 **전에** 확정돼 있던 회의가 그렇다.
+  // 이쪽도 비운다. 안 그러면 그 팀은 이 수정 없이도, 평생 막힌 채 남는다.
+  if (held.stage !== "proposed") {
+    await db.meetingProposal.update({ where: { id: held.id }, data: { activeKey: null } });
+    return;
+  }
+
+  const settled = effectiveStage({
+    stage: "proposed",
+    respondBy: held.respondBy,
+    against: held.responses.filter((r) => !r.agree).length,
+  });
+  // "proposed" 면 아직 결정이 끝나지 않았다 — 키를 붙든 채 둔다. 반대가 붙은 제안도 같다.
+  if (settled === "proposed") return;
+
+  await db.meetingProposal.update({
+    where: { id: held.id },
+    data: { stage: settled, activeKey: null },
+  });
+}
+
+/**
+ * 지금 제안할 수 있는지 확인한다. **응답을 기다리는 결정**이 있으면 막는다.
+ *
+ * 끝난 결정(확정·이월)은 막지 않는다 — 그건 이미 정해진 사실이고, 다음 회의는 그 뒤에 별개로
+ * 잡는 일이다. 예전에는 확정된 회의까지 "진행 중"으로 취급해 팀이 두 번째 회의를 잡지 못했다.
  */
 async function assertCanPropose(teamId: string): Promise<void> {
+  // 예약 작업이 아직 표를 고치지 않았어도 스스로 정결되게 한다 — 화면은 이미
+  // `effectiveStage` 로 "확정"으로 보고 있는데 서버만 "대기 중"이라 하면, 사용자가 볼 말과
+  // 눌렀을 때의 말이 어긋난다("확정이라는데 왜 막히지").
+  await releaseSettledDecision(teamId);
+
   const decided = await db.meetingProposal.findFirst({
     where: { teamId, activeKey: teamId },
     select: { stage: true },
@@ -109,7 +159,15 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
     existing ??
     (await db.meetingSlot.create({ data: { ...computed, teamId: me.teamId, weekKey: "this" } }));
 
-  await startProposal(me, slot, date, hour);
+  // **인덱스를 시각으로 바꾸어 넘긴다.** `hour` 는 시간표의 칸 번호(0 = 9시)이고
+  // `startProposal` 이 비교하는 것은 **시각**이다. 예전에는 `hour` 를 그대로 넘겼고, 그래서
+  // 오늘 10시가 되면 18시 칸이 `9 < 10` 이 되어 "이미 지나간 시간"으로 거절됐다(오전 9시에
+  // 9시 칸도 마찬가지로 거절). `computeMeetingSlots` 가 하는 것과 같은 변환이다.
+  //
+  // 여기서는 `SCHEDULE_HOURS[hour]` 대신 **그 칸의 후보 행에 적힌 시각**(`"13:00 – 14:00"`)을
+  // 읽는다 — `proposeMeeting` 과 같은 길이고, 칸 번호와 시각의 대응을 여기서 다시 알 필요가 없다.
+  const startHour = Number.parseInt(computed.time, 10);
+  await startProposal(me, slot, date, Number.isNaN(startHour) ? undefined : startHour);
 }
 
 /**
@@ -130,6 +188,15 @@ async function startProposal(
   me: { id: string; name: string; teamId: string },
   slot: { id: string; day: string; time: string },
   date: string | null,
+  /**
+   * 제안 시간의 **실제 시각** (0–23). 칸 번호가 아니다.
+   *
+   * 두 caller 가 각각 자기 길의 값을 가져온다: `proposeMeeting` 은 후보 행의 `time`
+   * (`"13:00 – 14:00"`)에서 앞 숫자를, `proposeMeetingAt` 은 시간표 칸을 후보로 만든 뒤
+   * 같은 문자열에서 앞 숫자를 읽는다. **인덱스(0 = 9시)를 그대로 넘기면 아래 비교가 조용히
+   * 틀어진다** — 실제로 오늘 10시 이후의 시간이 전부 "지난 시간"으로 거절됐다.
+   * 알 수 없는 값은 `undefined` 로 보내고, 그때는 이 검사를 건너뛴다(아래 주석 참고).
+   */
   startHour?: number,
 ): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
@@ -139,6 +206,8 @@ async function startProposal(
   // **이미 지나간 시간으로는 제안을 받지 않는다.** 후보에서 빼는 것만으로는 부족하다 —
   // 화면을 오래 열어둔 사이에 그 시간이 지나면 낡은 후보가 그대로 손에 남아 있다.
   // 두 길(`proposeMeeting`·`proposeMeetingAt`)이 여기로 모이므로 한 곳에서 막으면 된다.
+  // 지금 10:00 이면 10시 회의는 아직 시작하지 않았으므로 남긴다 — 지나는 건 그보다 이른
+  // 시간이므로 `<` 이다.
   if (date === todayInSeoul() && startHour !== undefined && startHour < nowHourInSeoul()) {
     throw new Error("이미 지나간 시간입니다. 다른 시간을 골라 주세요.");
   }

@@ -11,7 +11,7 @@ export function Toast({ msg }: { msg?: string | null }) {
   return (
     <div
       role="status"
-      className="keep-all absolute inset-x-4 z-40 rounded-control bg-ink-800 px-4 py-3 font-semibold text-[14px] leading-[1.45] text-on-action shadow-lg"
+      className="animate-slide-up keep-all absolute inset-x-4 z-40 rounded-control bg-ink-800 px-4 py-3 font-semibold text-[14px] leading-[1.45] text-on-action shadow-lg"
       style={{ bottom: "calc(var(--cd-tabbar) + 10px)" }}
     >
       {msg}

@@ -19,9 +19,15 @@ import {
   Toast,
   Undecided,
 } from "@/components/ui";
-import type { Member, TeamCheckRecord } from "@/lib/types";
+import { cn } from "@/lib/cn";
+import type { ConfirmsPolicy, Member, TeamCheckRecord } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
-import { confirmContribRecord, disputeContribRecord, pollContribCheck } from "@/server/actions/contrib";
+import {
+  confirmContribRecord,
+  disputeContribRecord,
+  pollContribCheck,
+  setConfirmsNeeded,
+} from "@/server/actions/contrib";
 import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
 import { StepRail } from "./step-rail";
@@ -38,13 +44,18 @@ const CONTRIB_POLL_MS = 20_000;
 export function ContribTeamScreen({
   records,
   roster,
+  policy,
 }: {
   records: TeamCheckRecord[];
   roster: Member[];
+  /** 몇 명이 확인해야 확정인지. 팀장만 바꿀 수 있다. */
+  policy: ConfirmsPolicy;
 }) {
   const router = useRouter();
   const [disputing, setDisputing] = useState<TeamCheckRecord | null>(null);
   const [reason, setReason] = useState("");
+  /** 기준을 바꾸기 전에 "이렇게 바뀌는데 괜찮나"를 한 번 더 묻는다. */
+  const [changing, setChanging] = useState<{ needed: number; affected: number } | null>(null);
   const { toast, busy, run } = useAction();
   const working = busy.act === true;
 
@@ -135,6 +146,45 @@ export function ContribTeamScreen({
     );
   };
 
+  /**
+   * 기준을 고른다 — **서버가 몇 건이 달라지는지 먼저 말하고**, 그대로 할지 다시 받는다.
+   *
+   * 1명 기준 아래에서 "확정"이던 기록을 2명으로 바꾸면 그 기록은 다시 기다려야 한다. 모른 채
+   * 확정 숫자가 줄면 팀이 무엇이 사라졌는지 알 수 없다.
+   */
+  const askChange = async (needed: number) => {
+    if (needed === policy.needed) return;
+    await run(
+      "policy",
+      async () => {
+        const preview = await setConfirmsNeeded(needed, false);
+        if (preview.ok) {
+          router.refresh();
+          return `확정 기준을 ${needed}명으로 바꿨습니다`;
+        }
+        setChanging({ needed, affected: preview.affected });
+        return null;
+      },
+      "기준을 바꾸지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
+  };
+
+  const applyChange = async () => {
+    if (!changing) return;
+    await run(
+      "policy",
+      async () => {
+        const result = await setConfirmsNeeded(changing.needed, true);
+        setChanging(null);
+        router.refresh();
+        return result.affected > 0
+          ? `확정 기준을 ${result.needed}명으로 바꿨습니다 · 기록 ${result.affected}건이 다시 계산됐습니다`
+          : `확정 기준을 ${result.needed}명으로 바꿨습니다`;
+      },
+      "기준을 바꾸지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
+  };
+
   const confirmed = list.filter((r) => r.state === "ok").length;
   const disputed = list.filter((r) => r.state === "disputed");
   const mbtiOf = (name: string) => roster.find((m) => m.name === name)?.mbti ?? null;
@@ -164,6 +214,48 @@ export function ContribTeamScreen({
               </Chip>
             ) : null}
           </div>
+        </Panel>
+
+        {/* 확정 기준. 예전에는 코드의 상수였고, "몇 명인지"가 검토 안내에만 적혀 있었다. */}
+        <Panel s="fill" pad={14} r={16} className="mb-3.5">
+          <div className="flex items-start gap-2.5">
+            <span className="flex-none text-txt-muted">
+              <Icon name="users-round" size={17} />
+            </span>
+            <span className="keep-all min-w-0 flex-1 font-semibold text-[13.5px] leading-[1.5] text-txt">
+              기록은 <b>{policy.needed}명</b>이 확인하면 확정돼요
+              {policy.needed > 1 ? (
+                <span className="text-txt-muted">
+                  {" "}
+                  · 지금까지 모인 확인은 그대로 두고, 모인 인원이 기준에 도달하면 확정돼요
+                </span>
+              ) : null}
+            </span>
+          </div>
+          {policy.canChange ? (
+            <div
+              role="radiogroup"
+              aria-label="확정에 필요한 확인 인원"
+              className="mt-2.5 flex gap-[5px]"
+            >
+              {Array.from({ length: policy.max }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  role="radio"
+                  aria-checked={policy.needed === n}
+                  disabled={working}
+                  onClick={() => askChange(n)}
+                  className={cn(
+                    "min-h-11 flex-1 cursor-pointer rounded-[10px] border-none font-bold text-[13px] leading-none",
+                    policy.needed === n ? "bg-yellow-400 text-ink-900" : "bg-fill text-txt",
+                  )}
+                >
+                  {n}명
+                </button>
+              ))}
+            </div>
+          ) : null}
         </Panel>
 
         <SecTitle note="확인되지 않은 항목은 리포트에서 따로 표시됩니다">팀 기록</SecTitle>
@@ -279,7 +371,7 @@ export function ContribTeamScreen({
                           </span>
                         </div>
                       ) : (
-                        <div className="mt-[9px] flex flex-wrap gap-1.5">
+                        <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
                           {/* 목록이 아니라 이 기록을 두고 이야기할 사람과의 대화방으로 간다. */}
                           {record.dmWith ? (
                             <Btn
@@ -291,14 +383,24 @@ export function ContribTeamScreen({
                               1:1 DM
                             </Btn>
                           ) : null}
-                          <Btn
-                            size="sm"
-                            v="ghost"
-                            icon="split"
-                            onClick={() => router.push(`/team/contrib/resolve/${record.id}`)}
-                          >
-                            정정에 응답하기
-                          </Btn>
+                          {/* 응답은 다툼의 당사자(기록 주인·의견을 적은 사람)만 한다.
+                              남는 팀원에게는 버튼을 감추되 **왜 없는지도 같이 말한다** —
+                              이유를 말하지 않으면 화면이 고장난 것으로 읽힌다. */}
+                          {record.iCanResolve ? (
+                            <Btn
+                              size="sm"
+                              v="ghost"
+                              icon="split"
+                              onClick={() => router.push(`/team/contrib/resolve/${record.id}`)}
+                            >
+                              정정에 응답하기
+                            </Btn>
+                          ) : (
+                            <span className="t-cap keep-all inline-flex items-center gap-1 text-txt-faint">
+                              <Icon name="info" size={12} />
+                              기록을 적은 사람만 답할 수 있습니다
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -316,8 +418,8 @@ export function ContribTeamScreen({
 
         <Undecided>
           의견 차이가 끝까지 안 좁혀졌을 때 최종 기재 방식이 기획안에 없습니다. 지금은 양쪽 의견을 함께
-          남기는 안입니다. <b>몇 명이 확인해야 확정인지</b>도 정해지지 않아 한 명으로 두었습니다 —
-          전원으로 두면 한 사람이 답하지 않을 때 영영 확정되지 않습니다.
+          남기는 안입니다. <b>누가 정정에 답할 수 있는지</b>도
+          정했습니다: 기록 주인과 그 의견을 적은 사람뿐입니다(화면·서버가 같은 조건을 봅니다).
         </Undecided>
       </Body>
 
@@ -331,6 +433,39 @@ export function ContribTeamScreen({
           리포트 미리 보기
         </Btn>
       </Dock>
+
+      <Sheet
+        open={changing !== null}
+        title={changing ? `확정 기준을 ${changing.needed}명으로` : undefined}
+        onClose={() => setChanging(null)}
+      >
+        {changing ? (
+          <>
+            <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
+              {changing.affected > 0 ? (
+                <>
+                  지금까지 모인 확인 인원이 기준에 못 미쳐 <b>기록 {changing.affected}건</b>이 상태가
+                  다시 바뀝니다. 모인 확인은 지워지지 않고, 기준에 도달하면 다시 확정돼요.
+                </>
+              ) : (
+                <>지금 상태가 달라지는 기록은 없습니다. 기준만 바뀌어요.</>
+              )}
+            </p>
+            <Note tone="info" icon="info" className="mb-3">
+              기준을 올리면 확인이 모인 기록이 다시 기다립니다. 내리면 모이지 않은 기록이 곧바로
+              확정돼요.
+            </Note>
+            <div className="flex flex-col gap-2">
+              <Btn full disabled={working} onClick={applyChange}>
+                {working ? "바꾸는 중…" : `${changing.needed}명으로 정하기`}
+              </Btn>
+              <Btn full v="outline" icon="x" onClick={() => setChanging(null)}>
+                그대로 두기
+              </Btn>
+            </div>
+          </>
+        ) : null}
+      </Sheet>
 
       <Sheet
         open={disputing !== null}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { usePoll } from "@/lib/use-poll";
 import {
   AppBar,
   Body,
@@ -60,26 +61,28 @@ export function IceBreakScreen({ games, initial }: { games: IceGame[]; initial: 
     window.setTimeout(() => setToast(null), 3000);
   };
 
-  useEffect(() => {
-    let inFlight = false;
-    const tick = async () => {
-      if (inFlight || document.visibilityState !== "visible") return;
-      inFlight = true;
-      try {
-        setView(await pollIce());
-      } catch {
-        // 다음 차례에 다시 묻는다 — 화면은 마지막으로 받은 모습을 그대로 둔다.
-      } finally {
-        inFlight = false;
-      }
-    };
-    const timer = window.setInterval(tick, POLL_MS);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, []);
+  /**
+   * 내가 직접 뭔가를 한 횟수.
+   *
+   * 폴링의 `inFlight` 는 **요청이 겹치는 것**만 막는다. 내가 투표하는 순간 진행 중이던
+   * 폴링은 투표 **전** 시점의 화면을 들고 돌아오므로, 그 결과가 나중에 풀려 나면 방금
+   * 고른 것까지 되돌린다 — "내 선택" 칩이 잠깐 떴다가 사라지고, 다음 3초 뒤에야 다시 뜬다.
+   * 읽는 사람에게는 "내 표가 안 먹혔다"로 보인다.
+   *
+   * 그래서 폴링을 시작할 때 이 값을 기억해 두고, **그 사이에 내가 아무것도 하지 않았다면
+   * 만** 결과를 반영한다. 액션이 갱신할 때마다 하나씩 올리면 된다.
+   */
+  const acted = useRef(0);
+
+  usePoll(
+    async () => {
+      const stamp = acted.current;
+      const next = await pollIce();
+      // 그 사이에 내가 뭔가를 했다면 이 결과는 이미 과거다 — 덮어쓰지 않는다.
+      if (stamp === acted.current) setView(next);
+    },
+    POLL_MS,
+  );
 
   /** 액션은 바뀐 뒤의 내 화면을 돌려준다 — 다음 폴링을 기다리지 않는다. */
   const run = async (action: () => Promise<IceResult>) => {
@@ -87,6 +90,8 @@ export function IceBreakScreen({ games, initial }: { games: IceGame[]; initial: 
     setBusy(true);
     try {
       const result = await action();
+      // 진행 중이던 폴링 결과는 이제 전부 과거다 — 다음 폴링이 새 값을 물어온다.
+      acted.current += 1;
       setView(result.view);
       if (result.message) flash(result.message);
     } catch {
@@ -265,9 +270,9 @@ function RoundView({
                     disabled={disabled}
                     onClick={() => run(() => castIceVote(p.id))}
                     className={cn(
-                      "box-border flex min-h-[52px] w-full items-center gap-3 border-none px-[15px] py-3 text-left",
-                      chosen ? "bg-yellow-100" : "bg-transparent",
-                      disabled ? "cursor-default" : "cursor-pointer",
+                      "box-border flex min-h-[52px] w-full items-center gap-3 border-none px-[15px] py-3 text-left select-none transition-all duration-150",
+                      chosen ? "bg-yellow-100 shadow-2xs" : "bg-transparent hover:bg-cr-50",
+                      disabled ? "cursor-default" : "cursor-pointer active:scale-[0.985]",
                     )}
                   >
                     <span className={cn("t-label flex-1", p.alive ? "text-txt-strong" : "text-txt-faint line-through")}>
@@ -275,7 +280,7 @@ function RoundView({
                       {isMe ? <span className="t-cap ml-1.5 text-txt-muted">나</span> : null}
                     </span>
                     {chosen ? (
-                      <Chip tone="y" icon="check">
+                      <Chip tone="y" icon="check" iconClassName="animate-pop">
                         내 선택
                       </Chip>
                     ) : !p.alive ? (
@@ -363,13 +368,13 @@ function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGam
   const [shown, setShown] = useState(false);
 
   return (
-    <Panel s={shown ? "yellow" : "fill"} pad={18} r={18} className="mb-4 text-center">
+    <Panel s={shown ? "yellow" : "fill"} pad={18} r={18} className="mb-4 text-center transition-all duration-300">
       <div className="t-cap-strong mb-2 text-txt-muted">내 카드</div>
       {shown ? (
-        <>
-          <div className="t-h1-sm text-ink-900">{ROLE_LABEL[me.role]}</div>
+        <div className="animate-pop">
+          <div className="t-h1-sm text-ink-900 font-extrabold animate-jelly">{ROLE_LABEL[me.role]}</div>
           {game === "liar" ? (
-            <p className="t-body m-0 mt-2 text-txt">
+            <p className="t-body m-0 mt-2 text-txt animate-slide-up">
               주제 <b>{me.topic}</b>
               {me.word ? (
                 <>
@@ -381,7 +386,7 @@ function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGam
               )}
             </p>
           ) : me.allies.length > 0 ? (
-            <p className="t-body m-0 mt-2 text-txt">
+            <p className="t-body m-0 mt-2 text-txt animate-slide-up">
               같은 편 마피아: <b>{me.allies.join(", ")}</b>
             </p>
           ) : null}
@@ -390,12 +395,12 @@ function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGam
               <Chip icon="user-minus">탈락했습니다 — 말하지 않고 지켜봐 주세요</Chip>
             </div>
           ) : null}
-        </>
+        </div>
       ) : (
         <p className="t-note m-0 text-txt-muted">옆 사람이 보지 않을 때 여세요.</p>
       )}
-      <Btn size="sm" v="outline" icon={shown ? "eye-off" : "eye"} className="mt-3" onClick={() => setShown(!shown)}>
-        {shown ? "카드 가리기" : "내 카드 보기"}
+      <Btn size="sm" v={shown ? "ghost" : "outline"} icon={shown ? "eye-off" : "eye"} className="mt-3" onClick={() => setShown(!shown)}>
+        {shown ? "카드 가리기" : "내 카드 슬쩍 보기"}
       </Btn>
     </Panel>
   );
@@ -404,7 +409,7 @@ function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGam
 function ResultPanel({ view }: { view: IceView }) {
   const result = view.result!;
   return (
-    <>
+    <div className="animate-slide-up">
       <Panel s="yellow" pad={18} r={18} className="mb-3">
         <div className="t-cap-strong mb-1.5 text-yellow-700">결과</div>
         <p className="t-body-strong m-0 text-ink-900">{result.outcome}</p>
@@ -435,6 +440,6 @@ function ResultPanel({ view }: { view: IceView }) {
           </p>
         </>
       ) : null}
-    </>
+    </div>
   );
 }
