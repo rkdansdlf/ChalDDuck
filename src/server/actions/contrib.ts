@@ -86,7 +86,11 @@ export async function addContribRecord(input: {
       kind: input.kind,
       title,
       detail: evidence ? "직접 추가한 기록 · 근거 첨부" : "직접 추가한 기록",
-      whenLabel: "방금",
+      // 시각을 문자열로 저장하지 않는다. 예전에는 "방금" 을 저장해서, 석 달 전에 추가한
+      // 기록도 오늘 추가한 것처럼 계속 "방금" 이었다(`lib/when.ts` 가 같은 이유로 파일 쪽은
+      // 지킨다). 이 칸은 **사람이 적은 설명**(예: "9/8 – 9/12")을 위한 것이고, 언제 추가했는지는
+      // `createdAt` 이 말한다.
+      whenLabel: null,
       source: "self",
       state: "pending",
       ...evidence,
@@ -170,15 +174,23 @@ export async function disputeContribRecord(
   const record = await teamRecord(recordId, me.teamId);
   if (!record) throw new Error("기록을 찾을 수 없습니다.");
   if (record.memberId === me.id) return "mine";
-  // 앞선 의견을 덮으면 그 사람의 말이 사라진다.
+  // 아직 정리되지 않은 의견이 있으면 기다린다 — 동시로 두 개의 "다르다"가 붙으면
+  // 무엇에 대한 판단인지 흐려진다.
   if (record.dispute && !record.resolution) return "taken";
 
-  await db.contribRecord.update({
-    where: { id: record.id },
-    // 본문에 이름을 섞지 않는다 — 나중에 이름을 떼어내려면 본문을 파싱해야 하고, 그러면
-    // 콜론이 든 의견에서 엉뚱한 곳이 잘린다.
-    data: { dispute: text, disputedById: me.id, resolution: null },
-  });
+  // **덮어쓰지 않는다.** 예전에는 이 `update` 하나가 앞선 의견과 이미 합의된 정정 내용까지
+  // 함께 지웠다 — 기록의 주인이 그 사이 적어 둔 말이 화면에서 사라졌다. 17 화면이
+  // "한쪽 말로 덮지 않고 둘 다 남깁니다"라고 말하고, 스키마 주석도 "`dispute` 는 여기 값이
+  // 생겨도 지우지 않는다"고 적어 놓았다. 둘 다 코드와 어긋나 있었다.
+  await db.$transaction([
+    db.contribDispute.create({ data: { recordId: record.id, byId: me.id, text } }),
+    db.contribRecord.update({
+      where: { id: record.id },
+      // 본문에 이름을 섞지 않는다 — 나중에 이름을 떼어내려면 본문을 파싱해야 하고, 그러면
+      // 콜론이 든 의견에서 엉뚱한 곳이 잘린다.
+      data: { dispute: text, disputedById: me.id, resolution: null },
+    }),
+  ]);
   await refreshContribState(record.id);
 
   await notify({

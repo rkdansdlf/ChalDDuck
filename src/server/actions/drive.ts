@@ -349,6 +349,127 @@ export async function markDriveSeen(): Promise<NavBadges> {
 }
 
 /**
+ * 채팅에 붙인 파일을 제출함에 올린다(14). 단톡방 첨부 → 드라이브.
+ *
+ * **바이트를 복사하지 않는다.** 채팅에 이미 올라간 저장소 객체를 그대로 가리키는 버전을
+ * 하나 세운다. 용량에 두 번 세어지지 않으려고 하지 않는다 — 올린 뒤엔 그것이 드라이브
+ * 파일이므로 팀 용량에 **한 번** 세는 것이 맞다. (채팅 첨부 자체를 용량에 넣을지는 2번
+ * 항목이라 아직 하지 않는다.)
+ *
+ * 기록의 주인은 **파일을 만든 사람**이다. 단톡방에 내가 올린 파일일 수도 있고 팀원이 올린
+ * 파일일 수도 있는데, `authorId` 를 눌러 누가 드라이브에 올렸는지로 잡으면 기여 기록에
+ * 엉뚱한 사람이 남는다 — 드라이브는 "누가 무엇을 만들었는가"를 사실로 남기는 곳이다.
+ * 내가 대신 올렸다는 사실은 버전 메모와 알림에 남긴다.
+ *
+ * 마감은 평소 올리기와 똑같이 본다. 제출함이 마감한 뒤에야 드라이브에 들어온 것이니
+ * "마감 후 제출" 라벨이 붙는 것이 맞다. 메모에 단톡방에서 왔다는 말이 함께 남는다.
+ *
+ * 중복은 만들지 않는다 — 같은 첨부를 두 번 올리면 용량과 버전 이름이 두 번 나간다.
+ * 잠금 안에서 다시 확인한다.
+ */
+export type SaveAttachmentResult =
+  | { status: "ok"; label: string; fileName: string; boxName: string }
+  | { status: UploadRejection | "missing" | "already-saved" };
+
+export async function saveChatAttachmentToDrive(
+  messageId: string,
+  boxId: string,
+): Promise<SaveAttachmentResult> {
+  const me = await requireSessionMember();
+
+  const box = await db.submissionBox.findFirst({
+    where: { id: boxId, teamId: me.teamId },
+    // 마감을 여기서 보지 않는다 — "마감 후 제출" 은 저장하지 않고 제출함 마감과 버전의
+    // `createdAt` 으로 그때그때 계산한다(`isLateVersion`).
+    select: { id: true, name: true },
+  });
+  if (!box) return { status: "missing" };
+
+  // 우리 팀 **단톡방**의 말인지, 첨부가 있는지 — DM 첨부는 기획에 없어 애초에 생기지 않는다.
+  const message = await db.message.findFirst({
+    where: { id: messageId, teamId: me.teamId, threadKey: "team" },
+    select: {
+      id: true,
+      attachPath: true,
+      attachName: true,
+      attachBytes: true,
+      attachMime: true,
+      authorId: true,
+      savedVersionId: true,
+    },
+  });
+  if (!message?.attachPath || !message.attachName) return { status: "missing" };
+  if (message.savedVersionId) return { status: "already-saved" };
+
+  // 이름·경로를 지역 상수로 둔다. 아래 잠금 콜백 안에서는 TypeScript 가 이 속성의 좁힘을
+  // 지운다(`message.attachName` 이 `string | null` 이 되돌아온다).
+  const attachName = message.attachName;
+  const attachPath = message.attachPath;
+
+  // 올릴 때와 같은 규칙을 다시 본다. 첨부 시점에 통과했지만 형식 판정은 이름과 MIME 로 하므로
+  // 여기서도 같은 값을 얻는다 — 한 군데서 한 번만 검사하게 두면 나중에 한쪽만 고치게 된다.
+  const type = resolveFileType(attachName, message.attachMime ?? "");
+  if (!type) return { status: "bad-type" };
+
+  const bytes = message.attachBytes ?? 0;
+  if (bytes <= 0) return { status: "empty" };
+  if (bytes > MAX_BYTES) return { status: "too-big" };
+  // 팀원이 그동안 올렸을 수 있어 지금 기준으로 다시 본다.
+  if ((await teamUsedBytes(me.teamId)) + bytes > TEAM_CAP_BYTES) return { status: "over-quota" };
+
+  const result = await withBoxLock(box.id, async (tx): Promise<SaveAttachmentResult> => {
+    // 잠금 안에서 다시 본다 — 두 번 눌렀을 때 두 버전이 생기면 용량에 두 번 세어진다.
+    const fresh = await tx.message.findUnique({ where: { id: message.id }, select: { savedVersionId: true } });
+    if (fresh?.savedVersionId) return { status: "already-saved" };
+
+    const target = await tx.submittedFile.findFirst({ where: { boxId: box.id, name: attachName } });
+    if (target && target.kind !== type.kind) return { status: "kind-mismatch" };
+
+    const file =
+      target ?? (await tx.submittedFile.create({ data: { boxId: box.id, name: attachName, kind: type.kind } }));
+    const versions = await tx.fileVersion.findMany({ where: { fileId: file.id }, select: { label: true } });
+    const label = nextVersionLabel(versions);
+
+    const version = await tx.fileVersion.create({
+      data: {
+        fileId: file.id,
+        label,
+        // 파일을 만든 사람. 내가 단톡방에서 받아 올렸어도 이건 그 사람의 파일이다.
+        authorId: message.authorId,
+        note: `${attachName} 단톡방에서 올림`,
+        size: humanSize(bytes),
+        kind: type.kind,
+        // 같은 저장소 객체를 가리킨다 — 복사하지 않는다. 그래서 이 버전을 내려받으면
+        // 단톡방에 올렸던 그 파일이 나온다.
+        storagePath: attachPath,
+        bytes,
+        mimeType: type.contentType,
+      },
+    });
+
+    await tx.message.update({ where: { id: message.id }, data: { savedVersionId: version.id } });
+    return { status: "ok", label, fileName: file.name, boxName: box.name };
+  });
+
+  if (result.status !== "ok") return result;
+
+  // 드라이브에 파일이 들어갔으니 팀에 알린다 — 13 과 같은 알림이다.
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    actorId: me.id,
+    kind: "drive",
+    title: `${me.name}님이 ${result.fileName}을 드라이브에 올렸습니다`,
+    body: `${result.boxName} · 단톡방 파일 · ${result.label}`,
+    href: `/drive/${box.id}`,
+  });
+
+  revalidatePath("/drive", "layout");
+  revalidatePath("/chat", "layout");
+  revalidatePath("/home");
+  return result;
+}
+
+/**
  * 제출함 마감을 정하거나 바꾼다. `null` 이면 마감을 없앤다.
  *
  * 마감을 옮기면 "마감 후 제출" 라벨도 따라 바뀐다 — 라벨을 저장하지 않고 이 값으로

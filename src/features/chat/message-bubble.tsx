@@ -5,7 +5,7 @@ import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { softenProfanity } from "@/lib/profanity";
 import type { ChatMessage } from "@/lib/types";
-import { ChatAttachment } from "./chat-attachment";
+import { ChatAttachment, SharedDriveCard } from "./chat-attachment";
 
 /**
  * 말풍선 하나.
@@ -23,11 +23,14 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   showAuthor,
   onRetry,
+  onSaveToDrive,
 }: {
   message: ChatMessage;
   /** 여러 사람이 있는 방에서만 상대 이름을 보여 준다. */
   showAuthor: boolean;
   onRetry: (message: ChatMessage) => void;
+  /** 이 첨부를 드라이브에 올린다. 단톡방에서만 넘긴다 — DM 은 첨부를 두지 않는다. */
+  onSaveToDrive?: (message: ChatMessage) => void;
 }) {
   const mine = message.isMine;
   const { text: displayText, masked } = useMemo(() => softenProfanity(message.text), [message.text]);
@@ -43,12 +46,15 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         ) : null}
 
+        {message.driveFile ? <SharedDriveCard file={message.driveFile} /> : null}
+
         {message.attachment ? (
           <ChatAttachment
             messageId={message.id}
             attachment={message.attachment}
             sent={message.status === "sent"}
             mine={mine}
+            onSaveToDrive={onSaveToDrive ? () => onSaveToDrive(message) : undefined}
           />
         ) : null}
 
@@ -58,7 +64,7 @@ export const MessageBubble = memo(function MessageBubble({
             className={cn(
               "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong",
               mine ? "bg-yellow-300" : "border border-line bg-card",
-              message.attachment && "mt-1",
+              (message.attachment || message.driveFile) && "mt-1",
             )}
           >
             {displayText}

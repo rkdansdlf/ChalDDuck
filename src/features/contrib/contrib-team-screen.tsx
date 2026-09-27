@@ -182,9 +182,38 @@ export function ContribTeamScreen({
                   {record.dispute ? (
                     <div className="mt-[9px] rounded-xl bg-err-bg px-3 py-2.5">
                       <div className="t-cap-strong mb-[3px] font-bold text-[#8A3B31]">적힌 의견</div>
-                      <div className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
-                        {record.dispute}
-                      </div>
+                      {/* **전부** 보여 준다. 예전에는 지금 떠 있는 의견 하나만 나왔고,
+                          새로 의견이 달리면 앞선 말이 화면에서 사라졌다. 시간순으로
+                          쌓이고 정리된 뒤에도 남아 있는 것이 이 기록의 이력이다. */}
+                      {record.history.length > 1 ? (
+                        <ol className="mb-[6px] list-none p-0">
+                          {record.history.map((opinion, i) => {
+                            const settled =
+                              record.resolution !== null && i < record.history.length - 1;
+                            return (
+                              <li key={`${opinion.who}-${i}`} className="mb-1.5 last:mb-0">
+                                <span className="t-cap-strong font-bold text-[#8A3B31]">
+                                  {opinion.who}
+                                </span>
+                                <span className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
+                                  {opinion.text}
+                                </span>
+                                {settled ? (
+                                  <span className="t-cap ml-1 text-[#8A3B31] opacity-70">
+                                    (이후 정리됨)
+                                  </span>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      ) : null}
+                      {/* 의견이 하나뿐이면 위 목록 대신 이것만 보여 준다(이름 없이). */}
+                      {record.history.length > 1 ? null : (
+                        <div className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
+                          {record.dispute}
+                        </div>
+                      )}
                       {/* 정리된 뒤에도 적힌 의견은 그대로 두고 결론을 아래에 덧붙인다 —
                           의견을 지우고 결론만 남기면 한쪽 말로 덮는 것이 된다. */}
                       {record.resolution ? (

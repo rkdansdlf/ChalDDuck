@@ -127,6 +127,52 @@ export async function getChatAttachmentUrl(messageId: string): Promise<string | 
   return signTeamFileUrl(message.attachPath, message.attachName ?? "첨부", message.attachMime);
 }
 
+/**
+ * 드라이브의 파일을 단톡방에 공유한다(14).
+ *
+ * **바이트를 복사하지 않는다.** 새 버전을 만들지도, 저장소에 다시 올리지도 않고 그 버전만
+ * 가리키는 말을 남긴다. 그래서
+ * - 팀 용량에 두 번 세지지 않는다,
+ * - 드라이브의 버전 이름과 기여 기록이 "누가 무엇을 올렸는가"로 흐려지지 않는다,
+ * - 드라이브에서 그 버전을 복원해도 공유한 카드는 원래 이름을 그대로 보여 준다.
+ *
+ * 올린 사람과 공유한 사람이 다를 수 있다 — 그래서 **공유에도 알림을 따로 보내지 않는다.**
+ * 알림은 드라이브에 파일이 새로 생겼을 때의 것이고(13), 공유는 그 말을 단톡방에 쓰는 것이
+ * 이미 알림 그 자체다. 여기서 다시 울리면 같은 파일에 종이 두 번 울린다.
+ *
+ * @param text 곁붙일 말. 비우면 파일만 보낸 말이다(첨부와 같은 규칙).
+ */
+export async function shareVersionToChat(
+  versionId: string,
+  text = "",
+): Promise<{ ok: true; label: string; fileName: string } | { ok: false }> {
+  const me = await requireSessionMember();
+
+  // 화면이 보낸 버전이 정말 우리 팀 것인지 서버에서 확인한다.
+  const version = await db.fileVersion.findFirst({
+    where: { id: versionId, file: { box: { teamId: me.teamId } } },
+    select: { id: true, label: true, file: { select: { id: true, name: true } } },
+  });
+  if (!version) return { ok: false };
+
+  const body = text.trim().slice(0, MAX_MESSAGE);
+
+  await db.message.create({
+    data: {
+      teamId: me.teamId,
+      threadKey: "team",
+      authorId: me.id,
+      text: body,
+      whenLabel: nowLabel(),
+      driveVersionId: version.id,
+    },
+  });
+
+  // 목록의 마지막 한 줄이 달라지므로 사이드바까지. DM 목록은 손대지 않는다.
+  revalidatePath("/chat", "layout");
+  return { ok: true, label: version.label, fileName: version.file.name };
+}
+
 /** 위로 스크롤해 더 불러오기. `threadId` 가 실제로 내 방인지는 `resolveThread` 가 확인한다. */
 export async function loadOlderMessages(threadId: string, cursor: string): Promise<MessagePage> {
   const me = await requireSessionMember();

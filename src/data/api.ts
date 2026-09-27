@@ -697,12 +697,32 @@ type MessageRow = {
   attachMime: string | null;
   author: { id: string; name: string; mbti: string | null };
   reactions: { icon: string }[];
+  /** 드라이브에서 공유한 버전. 없으면 null — 대다수 말은 이 관계가 없다. */
+  driveVersion: {
+    id: string;
+    label: string;
+    size: string;
+    kind: string;
+    file: { id: string; name: string; boxId: string };
+  } | null;
+  /** 이 첨부를 드라이브에 올려 만든 버전. */
+  savedVersion: { id: string; file: { id: string; boxId: string } } | null;
 };
 
 const MESSAGE_INCLUDE = {
   author: { select: { id: true, name: true, mbti: true } },
   reactions: { select: { icon: true } },
+  // 드라이브 연결은 **말풍선을 그릴 때 필요한 만큼만** 가져온다 — 주소는 화면이 만든다.
+  // 여기에 서명 주소를 넣지 않는다: 비공개 버킷이라 주소를 저장하면 만료 뒤에도 남아 있고,
+  // 미리보기로 그리는 일은 드라이브 화면이 이미 한다.
+  driveVersion: { select: { id: true, label: true, size: true, kind: true, file: { select: { id: true, name: true, boxId: true } } } },
+  savedVersion: { select: { id: true, file: { select: { id: true, boxId: true } } } },
 } as const;
+
+/** 드라이브의 그 파일·버전으로 가는 길. 여기에서 두 번 쓰므로 한 곳에 둔다(화면은 값을 받아 쓴다). */
+function driveHref(boxId: string, fileId: string, versionId: string): string {
+  return `/drive/${boxId}/${fileId}/${versionId}`;
+}
 
 function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
   const counts = new Map<string, number>();
@@ -720,8 +740,26 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
     attachment:
       m.attachPath && m.attachName
-        ? { name: m.attachName, size: humanSize(m.attachBytes ?? 0), image: m.attachMime?.startsWith("image/") ?? false }
+        ? {
+            name: m.attachName,
+            size: humanSize(m.attachBytes ?? 0),
+            image: m.attachMime?.startsWith("image/") ?? false,
+            savedHref: m.savedVersion
+              ? driveHref(m.savedVersion.file.boxId, m.savedVersion.file.id, m.savedVersion.id)
+              : null,
+          }
         : undefined,
+    // 드라이브에서 공유한 말은 **버전 이름 그대로** 보여 준다. 공유한 뒤 그 파일이 새 버전으로
+    // 갱신되어도 여기서는 공유할 때의 이름이 남는다 — 무엇을 보냈는지가 바뀌면 안 된다.
+    driveFile: m.driveVersion
+      ? {
+          name: m.driveVersion.file.name,
+          label: m.driveVersion.label,
+          size: m.driveVersion.size,
+          kind: m.driveVersion.kind as FileKind,
+          href: driveHref(m.driveVersion.file.boxId, m.driveVersion.file.id, m.driveVersion.id),
+        }
+      : undefined,
   };
 }
 
@@ -911,9 +949,13 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
     kind: r.kind as ContribRecord["kind"],
     title: r.title,
     detail: r.detail,
-    when: r.whenLabel,
+    // 사람이 적을 설명이 있으면 그것을, 없으면 실제로 추가한 시각을 보여 준다.
+    when: r.whenLabel ?? formatWhen(r.createdAt),
     source: r.source as ContribRecord["source"],
-    state: r.state === "ok" ? "ok" : "pending",
+    // **`disputed` 를 `pending` 으로 접지 않는다.** 접으면 팀원이 내 기록에 반박했는데
+    // 내 화면에는 "팀원 확인을 거칩니다" 라고만 떠, 반대된 사실이 감춰진다. 본인은
+    // 알림 말고 여기서 알아야 한다.
+    state: r.state as ContribRecord["state"],
     evidence: toEvidence(r),
   }));
 }
@@ -935,6 +977,12 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
       member: { select: { id: true, name: true, leftAt: true } },
       disputedBy: { select: { id: true, name: true, leftAt: true } },
       confirms: { select: { memberId: true } },
+      // 의견의 **전체 이력.** 지금 떠 있는 의견 하나만 보여 주면 앞선 말이 사라진 것처럼
+      // 보인다 — 실제로opinions가 덮여 있었다. 시간순으로 모두 준다.
+      disputes: {
+        select: { id: true, text: true, createdAt: true, by: { select: { name: true } } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
@@ -959,6 +1007,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
       }),
       evidence: toEvidence(r),
       dispute: r.dispute,
+      history: r.disputes.map((d) => ({ who: d.by.name, text: d.text })),
       resolution: r.resolution,
       dmWith: other && other.leftAt === null && other.id !== session?.id ? other.id : null,
     };

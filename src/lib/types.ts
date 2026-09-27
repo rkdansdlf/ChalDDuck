@@ -415,6 +415,8 @@ export type ChatMessage = {
   reactions?: MessageReaction[];
   /** 첨부 파일(단톡방만). 여는 주소는 볼 때마다 서버가 새로 만든다(`getChatAttachmentUrl`). */
   attachment?: ChatAttachment;
+  /** 드라이브에서 공유한 파일(단톡방만). **바이트를 복사하지 않고 그 버전만 가리킨다.** */
+  driveFile?: SharedDriveFile;
 };
 
 export type ChatAttachment = {
@@ -422,6 +424,33 @@ export type ChatAttachment = {
   size: string;
   /** 이미지면 말풍선 안에 바로 그린다. 그 밖의 형식은 파일 줄로 보이고 누르면 연다. */
   image: boolean;
+  /**
+   * 이 첨부를 드라이브에 올려 만든 버전으로 가는 길.
+   *
+   * 있으면 첨부 아래에 "드라이브에 있음" 이라고 **버튼 대신 길**을 보여 준다 — 같은 바이트를
+   * 두 번 올리면 팀 용량에 두 번 세어지므로 다시 만들지 않는다.
+   */
+  savedHref: string | null;
+};
+
+/**
+ * 드라이브에서 단톡방에 공유한 파일 한 장.
+ *
+ * 첨부와 다른 점: 이건 **저장소 객체를 가리키기만 한다.** 그래서
+ * - 드라이브 용량에 두 번 세지지 않는다,
+ * - 드라이브에 새 버전이 생기지 않는다(버전 이름·기여 기록이 공유로 어그러지지 않는다),
+ * - 드라이브에서 그 버전을 복원해도 공유 카드는 그 옛 버전의 이름을 그대로 보여 준다
+ *   (공유한 시점의 것이었다는 사실이 남는다).
+ */
+export type SharedDriveFile = {
+  name: string;
+  /** 공유한 시점의 버전 이름("v4"). */
+  label: string;
+  size: string;
+  /** `FileKind` — 어떤 형식인지. */
+  kind: FileKind;
+  /** 드라이브의 그 버전으로 가는 길. */
+  href: string;
 };
 
 /** 1:1 대화 목록의 한 줄. 팀원 한 명당 하나씩 열린다. */
@@ -467,12 +496,16 @@ export type ContribRecord = {
   detail: string;
   when: string;
   source: "auto" | "self";
-  state: "ok" | "pending";
+  /** `disputed` = 팀원이 사실과 다르다고 적은 것. 본인이 알아야 한다 — 접으면 숨겨진다. */
+  state: "ok" | "pending" | "disputed";
   evidence: ContribEvidence | null;
 };
 
 /** 기록에 붙은 근거 파일. 여는 주소는 볼 때마다 서버가 새로 만든다(`getEvidenceUrl`). */
 export type ContribEvidence = { name: string; size: string };
+
+/** 누가 무엇을 적었는지로 된 의견 하나. */
+export type ContribOpinion = { who: string; text: string };
 
 /**
  * 팀원이 확인해야 하는 기록.
@@ -497,6 +530,15 @@ export type TeamCheckRecord = {
   evidence: ContribEvidence | null;
   /** 의견 차이가 적힌 경우 그 내용. 정리된 뒤에도 지우지 않는다. */
   dispute: string | null;
+  /**
+   * 이 기록에 달린 **전체 의견**, 시간순.
+   *
+   * `dispute` 는 지금 떠 있는 의견 하나만 가리킨다. 새로 의견이 달리면 앞선 의견이
+   * 덮였고, 기록의 주인이 적어 둔 말이 화면에서 사라졌다. 이력으로 남겨 두었으므로
+   * 화면은 이 배열을 전부 보여 준다 — 오래된 의견에도 "그 뒤 정리됐습니다" 처럼
+   * 현재 상태가 붙는다.
+   */
+  history: ContribOpinion[];
   /**
    * 정정에 어떻게 답했는지. 이 값이 있으면 의견 차이는 정리된 것이다.
    *

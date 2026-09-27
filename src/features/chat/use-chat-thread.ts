@@ -152,7 +152,8 @@ export function useChatThread(
         mbti: me.mbti,
         isMine: true,
         text: "",
-        attachment: { name: file.name, size: humanSize(file.size), image: file.type.startsWith("image/") },
+        // 낙관적 말풍선 — 아직 서버에 없으므로 드라이브에 올렸는지는 알 수 없다(null).
+        attachment: { name: file.name, size: humanSize(file.size), image: file.type.startsWith("image/"), savedHref: null },
       });
       pendingFiles.current.set(tempId, { file, path: null });
       try {

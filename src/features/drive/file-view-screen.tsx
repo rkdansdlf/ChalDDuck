@@ -17,6 +17,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
+import { shareVersionToChat } from "@/server/actions/chat";
 import { restoreFileVersion } from "@/server/actions/drive";
 import { DOWNLOAD_FAILED_TEXT, downloadVersion } from "./file-display";
 import { canOpenInApp } from "./file-rules";
@@ -56,6 +57,7 @@ export function FileViewScreen({
   const [confirming, setConfirming] = useState(false);
   const [restoredAs, setRestoredAs] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const current = versions.find((v) => v.id === versionId) ?? versions[0] ?? null;
@@ -100,6 +102,25 @@ export function FileViewScreen({
   const download = async () => {
     const outcome = await downloadVersion(current.id);
     if (outcome !== "started") flash(DOWNLOAD_FAILED_TEXT[outcome]);
+  };
+
+  /**
+   * 단톡방에 공유한다.
+   *
+   * **파일을 다시 올리지 않는다** — 그 버전만 가리키는 말을 남긴다. 그래서 용량이 늘지 않고
+   * 드라이브에 새 버전도 생기지 않는다. 팀에 따로 알림을 보내지 않는다 — 그 말 자체가 알림이다.
+   */
+  const share = async () => {
+    setSharing(true);
+    try {
+      const result = await shareVersionToChat(current.id);
+      if (result.ok) flash(`${result.fileName} ${result.label}을(를) 단톡방에 보냈습니다`);
+      else flash("공유하지 못했습니다. 잠시 후 다시 시도해 주세요");
+    } catch {
+      flash("공유하지 못했습니다. 잠시 후 다시 시도해 주세요");
+    } finally {
+      setSharing(false);
+    }
   };
 
   const openInNewTab = () => {
@@ -227,6 +248,11 @@ export function FileViewScreen({
                 </Btn>
               ) : null}
             </div>
+
+            {/* 공유는 내려받기와 다른 일이다 — 팀에게 **알리는** 동작이라 혼자 두지 않는다. */}
+            <Btn full className="mt-2" v="outline" icon="share-2" disabled={sharing} onClick={share}>
+              {sharing ? "보내는 중" : "단톡방에 보내기"}
+            </Btn>
 
             <Undecided>
               복원 권한이 올린 사람에게만 있는지가 기획안에 없어 누구나 할 수 있게 열어뒀습니다.

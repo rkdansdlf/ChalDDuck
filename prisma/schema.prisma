@@ -81,6 +81,8 @@ model Member {
   contribRecords  ContribRecord[]   @relation("ContribOwner")
   contribDisputes ContribRecord[]   @relation("ContribDisputer")
   contribConfirms ContribConfirm[]
+  /// 이 사람이 남긴 의견들(`ContribDispute`).
+  disputesWritten ContribDispute[]   @relation("ContribDisputesBy")
   assignedTasks   Task[]
   pokesSent       Poke[]
   notifications   Notification[]    @relation("NotifyTo")
@@ -405,6 +407,12 @@ model FileVersion {
   file   SubmittedFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
   author Member        @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
+  /// 드라이브에서 단톡방에 공유된 말들이 가리킨다. 공유는 **바이트를 복사하지 않는다** —
+  /// 이 버전을 가리킬 뿐이라 용량에도 두 번 세지 않는다.
+  sharedInMessages Message[] @relation("MessageSharesVersion")
+  /// 채팅 첨부를 드라이브에 올려 생긴 버전. 한 첨부에 하나만 둔다.
+  savedFromMessages Message[] @relation("MessageSavedAsVersion")
+
   @@index([fileId])
 }
 
@@ -424,12 +432,22 @@ model Message {
   attachName  String?
   attachBytes Int?
   attachMime  String?
+  /// 드라이브 파일을 단톡방에 공유한 말. **저장소 객체를 복사하지 않고 그 버전만 가리킨다.**
+  /// 공유는 단톡방에서만( DM 은 첨부와 마찬가지다).
+  driveVersionId String?
+  /// 이 첨부를 드라이브에 올려서 생긴 버전. 한 첨부에 하나만 — 두 번 올리면 같은 바이트가
+  /// 용량에 두 번 세어진다. 이미 있으면 화면은 "드라이브에 있음"을 보여 주고 다시 만들지 않는다.
+  savedVersionId  String?
   createdAt  DateTime @default(now())
   /// 화면에 보이는 시각 문자열("14:02").
   whenLabel  String
 
   team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
   author    Member            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  /// 드라이브 파일·버전이 지워지면 공유/저장 자리만 비운다 — **말 자체는 남는다.**
+  /// 드라이브 기록은 팀의 공식 기록이라 임의로 지우지 않지만, 말은 남기는 편이 낫다.
+  driveVersion FileVersion?     @relation("MessageSharesVersion", fields: [driveVersionId], references: [id], onDelete: SetNull)
+  savedVersion  FileVersion?     @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
   reactions MessageReaction[]
 
   @@index([teamId, threadKey])
@@ -470,13 +488,20 @@ model ContribRecord {
   kind      String
   title     String
   detail    String
-  /// "9/8 – 9/12" 같은 표시 문자열.
-  whenLabel String
+  /// 사람이 적은 설명("9/8 – 9/12"). 없는 기록이 많다 — 언제 추가했는지는 `createdAt` 이
+  /// 말하고 화면이 그때 그때 만든다("방금", "3주 전"). 시각을 여기 저장하면 저장한
+  /// 순간의 말로 굳어 버린다(`lib/when.ts` 가 같은 이유로 파일 쪽은 `createdAt` 을 쓴다).
+  whenLabel String?
   /// auto = 앱이 모음 / self = 본인이 직접 추가
   source    String
   /// ok | pending | disputed — 확인 수와 의견에서 다시 계산한다(`server/contrib/state.ts`).
   state     String   @default("pending")
   /// 사실과 다르다고 적힌 의견. **한쪽 말로 덮지 않고 남긴다.**
+  ///
+  /// 여기 값이 있어도 지우지 않는다. 새로 의견이 달리면 아래 `ContribDispute` 에
+  /// **추가**하고 이 칸은 "지금 떡고 있는 의견"으로 옮긴다. 예전에는 `update` 가 이 칸을
+  /// 그냥 덮어써서, 정리된 뒤 새로 달린 의견이 앞선 의견과 합의 내용까지 함께 지웠다 —
+  /// 17 화면이 약속한 "한쪽 말로 덮지 않고 둘 다 남깁니다" 와 정면으로 어긋났다.
   dispute   String?
   /// 그 의견을 적은 사람. 다툼이 생기면 누가 적었는지가 중요하다.
   disputedById String?
@@ -494,8 +519,28 @@ model ContribRecord {
   member     Member          @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
   disputedBy Member?         @relation("ContribDisputer", fields: [disputedById], references: [id], onDelete: SetNull)
   confirms   ContribConfirm[]
+  /// 의견의 이력. **덮어쓰지 않는다.**
+  disputes   ContribDispute[]
 
   @@index([memberId])
+}
+
+/// 한 사람이 한 기록에 남긴 의견 하나.
+///
+/// 정리는 되돌릴 수 없으니 의견 자체는 남겨 둔다. `ContribRecord.dispute` 는 지금
+/// 떠 있는 의견 하나만 가리키지만 이 표가 전부다 — 정리된 뒤 다시 의견이 달리면 앞선
+/// 의견은 여기에 그대로 있고, 화면은 시간순으로 모두 보여 준다.
+model ContribDispute {
+  id        String   @id @default(cuid())
+  recordId  String
+  byId      String
+  text      String
+  createdAt DateTime @default(now())
+
+  record ContribRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  by     Member        @relation("ContribDisputesBy", fields: [byId], references: [id], onDelete: Cascade)
+
+  @@index([recordId, createdAt])
 }
 
 /// 기여 기록 하나에 대한 팀원의 확인.
