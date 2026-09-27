@@ -1,36 +1,71 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
-import { AppBar, Body, Btn, Chip, Icon, Undecided } from "@/components/ui";
+import { useEffect, useRef, useState } from "react";
+import { AppBar, Body, Btn, Chip, Icon, Note, Toast } from "@/components/ui";
+import { useAction } from "@/lib/use-action";
+import { spinMenu } from "@/server/actions/social";
 
-/** 돌아가는 느낌을 주는 시간. 결과는 누른 순간 이미 정해져 있다. */
+/** 돌아가는 느낌을 주는 시간. 결과는 누른 순간 이미 서버에 정해져 있다. */
 const SPIN_MS = 700;
 
 /**
  * 29 친목 · 메뉴 룰렛.
  *
- * 07(역할 조율)의 추첨 도구를 밥 메뉴 정하기에 그대로 쓴다.
+ * **결정은 팀에 하나다.** 예전에는 폰마다 `Math.random()` 으로 따로 돌렸고 서버를 부르지도
+ * 않았다 — 팀원 네 명이 각자 다른 메뉴를 보고 무엇을 먹을지 합의가 되지 않았고, 새로고침하면
+ * 또 다른 값이 나왔다. 이제 서버가 한 번 뽑아 저장하고 모두가 그 값을 본다.
+ *
+ * 보여 주는 순서가 이 화면의 전부다: **이미 정해진 밥이 있으면 그게 먼저 보인다.** 다시
+ * 돌리려면 그 위에 다시 만들라는 말을 남긴다.
+ *
  * 결과에 따라 순위를 매기지 않는다 — 친목 기능이 점수가 되면 친목이 아니게 된다.
  */
-export function RouletteScreen({ options }: { options: string[] }) {
+export function RouletteScreen({
+  options,
+  pick,
+}: {
+  options: string[];
+  /** 팀이 이미 정한 밥. 없으면 아직 아무도 돌리지 않았다. */
+  pick: string | null;
+}) {
   const router = useRouter();
+  const { toast, busy, run } = useAction();
 
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
+  // 화면을 떠나면 예약된 setState 가 남지 않게 한다.
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+
   const spin = () => {
-    if (spinning || options.length === 0) return;
+    if (busy.spin || options.length === 0) return;
     setSpinning(true);
     setResult(null);
 
     if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      setResult(options[Math.floor(Math.random() * options.length)]);
-      setSpinning(false);
-    }, SPIN_MS);
+    // **서버가 먼저 뽑는다.** 여기는 그 결과를 천천히 보여 줄 뿐이다 — 예전에는 여기가
+    // 뽑아서, 팀원이 몇 명인지에 따라 모두 다른 답이 나왔다.
+    void run(
+      "spin",
+      async () => {
+        const picked = await spinMenu();
+        timer.current = window.setTimeout(() => {
+          setResult(picked);
+          setSpinning(false);
+        }, SPIN_MS);
+        // 알림은 서버가 팀 전체에 보냈다. 여기서는 다시 말하지 않는다.
+        router.refresh();
+      },
+      "정하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+    );
   };
+
+  /** 지금 화면에 보여 줄 값. 서버가 정한 것이 우선이다. */
+  const shown = result ?? pick;
 
   return (
     <>
@@ -38,21 +73,26 @@ export function RouletteScreen({ options }: { options: string[] }) {
 
       <Body dense className="flex flex-col">
         <p className="text-pretty-keep mt-1 mb-[18px] text-[14.5px] leading-[1.62] text-txt">
-          역할 조율에 쓰는 추첨 도구를 밥 메뉴 정하기에도 그대로 씁니다. 결과에 따라 순위를 매기지
-          않습니다.
+          여기서 정한 밥은 <b>팀에 하나</b>입니다. 정하기 전에는 누구도 볼 수 없고, 정한 뒤에는
+          모두 같은 값을 봅니다. 순위는 매기지 않습니다.
         </p>
 
         <div
           // 결과가 바뀌면 스크린 리더가 읽어 준다 — 애니메이션만으로는 알 수 없다.
           role="status"
-          className="mb-[18px] flex min-h-[140px] items-center justify-center rounded-card bg-yellow-100"
+          className="mb-[18px] flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-card bg-yellow-100 px-4 text-center"
         >
           {spinning ? (
             <span className="animate-spin text-yellow-700">
               <Icon name="loader-circle" size={30} />
             </span>
-          ) : result ? (
-            <span className="font-extrabold text-[24px] leading-[1.3] text-ink-900">{result}</span>
+          ) : shown ? (
+            <>
+              <span className="t-cap-strong text-yellow-700" style={{ letterSpacing: ".06em" }}>
+                오늘은 이거
+              </span>
+              <span className="font-extrabold text-[24px] leading-[1.3] text-ink-900">{shown}</span>
+            </>
           ) : (
             <span className="font-semibold text-[14px] leading-[1.4] text-yellow-700">
               버튼을 눌러 정해요
@@ -60,21 +100,27 @@ export function RouletteScreen({ options }: { options: string[] }) {
           )}
         </div>
 
+        {shown && !spinning ? (
+          <Note tone="info" icon="users-round" className="mb-[18px]">
+            지금 정해진 밥은 <b>{shown}</b> 입니다. 다음에 밥을 정할 때 다시 돌리면 전체가 함께
+            바뀝니다 — 지금 정한 밥으로 갈 수도 있습니다.
+          </Note>
+        ) : null}
+
         <div className="mb-[18px] flex flex-wrap gap-1.5">
           {options.map((option) => (
-            <Chip key={option}>{option}</Chip>
+            <Chip key={option} tone={option === shown ? "y" : undefined}>
+              {option}
+            </Chip>
           ))}
         </div>
 
-        <Btn full size="lg" icon="dices" onClick={spin} disabled={spinning}>
-          {result ? "다시 돌리기" : "돌리기"}
+        <Btn full size="lg" icon="dices" onClick={spin} disabled={busy.spin}>
+          {spinning ? "정하는 중…" : shown ? "다른 거로 정하기" : "정하기"}
         </Btn>
-
-        <Undecided>
-          원안의 장소 태그·밥약 사진 인증·찰떡 지수·치장 아이템 중 메뉴 룰렛만 먼저 연결했습니다. 나머지
-          우선순위는 기획안에 없습니다.
-        </Undecided>
       </Body>
+
+      <Toast msg={toast} />
     </>
   );
 }

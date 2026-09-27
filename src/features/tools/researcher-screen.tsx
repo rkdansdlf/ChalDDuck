@@ -112,9 +112,20 @@ export function ResearcherScreen({
           )}
         </div>
 
+        {results.length === 0 ? (
+          <Note tone="warn" icon="search-x" className="mb-4">
+            찾은 자료가 없습니다. 말하려던 것을 조금 다르게 적어 다시 찾아 보세요.
+          </Note>
+        ) : null}
+
         <div className="mt-2 mb-4 flex flex-col gap-[9px]">
           {results.map((result) => (
-            <Panel key={result.id} s="card" pad={14} r={16}>
+            <Panel
+              key={result.id}
+              s={result.url ? "card" : "fill"}
+              pad={14}
+              r={16}
+            >
               <div className="keep-all font-bold text-[14.5px] leading-[1.4] text-txt-strong">
                 {result.title}
               </div>

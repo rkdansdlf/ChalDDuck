@@ -18,6 +18,7 @@ import { refineScript } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
 import type { PresentDraft } from "@/lib/types";
+import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 
 /**
  * 26 발표 지원.
@@ -67,6 +68,7 @@ export function PresentScreen({
           editableInput
           input={
             <Textarea
+              limit={AI_INPUT_LIMIT}
               value={raw}
               onChange={setRaw}
               minHeight={120}

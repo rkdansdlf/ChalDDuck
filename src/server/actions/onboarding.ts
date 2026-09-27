@@ -3,6 +3,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { isRoleKey, normalizeName } from "@/features/roles/roster-model";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
@@ -16,9 +17,16 @@ import type { OnboardingDraft, Team } from "@/lib/types";
  *
  * 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수 있다. 그래서 **입력을 여기서 다시
  * 검사한다** — 화면에서 막았다는 사실은 보호가 되지 못한다.
+ *
+ * **검사에 실패하면 던지지 않고 돌려준다.** 운영 빌드의 Next 는 서버가 던진 오류의
+ * 문구를 지우고 `digest` 만 보낸다. 던지면 호출한 화면에 아무 말이 남지 않아 "눌렀는데
+ * 아무 일도 안 일어나는" 화면이 된다 — 실제로 그랬다.
  */
 
 const MIN_NAME = 2;
+
+/** `joinTeam` 이 거절한 이유. 화면이 무엇을 고쳐야 하는지 말해 준다. */
+export type JoinBlock = "no-code" | "short-name" | "no-want";
 
 /**
  * 팀을 만든 브라우저를 기억하는 쿠키.
@@ -44,19 +52,28 @@ const SUBMISSION_BOXES = [
 /** 승인을 기다리는 가입 요청을 들고 있는 쿠키. 세션 쿠키와 다르다 — 아직 아무 권한도 없다. */
 const JOIN_COOKIE = "cd_join";
 
+/** 가입 요청 쿠키의 조건. 요청을 새로 만들 때와, 이미 승인된 요청을 다시 심을 때 같다. */
+const JOIN_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  maxAge: 60 * 60 * 24,
+} as const;
+
 /** 같은 팀에 같은 이름의 기록이 이미 있는지. 02 화면이 "본인 확인" 시트를 띄울지 판단한다. */
 export async function findMemberByName(
   teamCode: string,
   name: string,
 ): Promise<{ name: string } | null> {
-  const trimmed = name.trim();
-  if (trimmed.length < MIN_NAME) return null;
+  const wanted = normalizeName(name);
+  if (wanted.length < MIN_NAME) return null;
 
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return null;
 
   const member = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: trimmed } },
+    where: { teamId_name: { teamId: team.id, name: wanted } },
     select: { name: true },
   });
   return member;
@@ -142,13 +159,21 @@ export async function joinTeam(
   | { status: "joined"; rejoinCode: string; isLeader: boolean }
   | { status: "requested" }
   | { status: "name-taken" }
+  /**
+   * 입력값이服务器的 규칙에 맞지 않는다.
+   *
+   * 예외 대신 돌려준다 — 운영 빌드는 서버가 던진 오류의 문구를 지우고 `digest` 만
+   * 보낸다(위 `name-taken` 주석 참고). 던지면 06 화면의 유일한 버튼이 아무 일도 하지 않는
+   * 화면이 된다. 무엇을 고쳐야 하는지 알 수 있어야 화면이 말할 수 있다.
+   */
+  | { status: "invalid"; reason: JoinBlock }
 > {
-  const name = draft.name.trim();
-  if (name.length < MIN_NAME) throw new Error("이름을 두 글자 이상 적어 주세요.");
-  if (!draft.want) throw new Error("1순위 희망 역할을 골라 주세요.");
+  const name = normalizeName(draft.name);
+  if (name.length < MIN_NAME) return { status: "invalid", reason: "short-name" };
+  if (!isRoleKey(draft.want)) return { status: "invalid", reason: "no-want" };
 
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
-  if (!team) throw new Error("초대 코드를 찾을 수 없습니다.");
+  if (!team) return { status: "invalid", reason: "no-code" };
 
   const taken = await db.member.findUnique({
     where: { teamId_name: { teamId: team.id, name } },
@@ -162,8 +187,10 @@ export async function joinTeam(
   const values = {
     mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
     mbtiFromQuiz: draft.mbtiFromQuiz,
-    wantRole: draft.want,
-    vetoRole: draft.veto,
+    wantRole: isRoleKey(draft.want) ? draft.want : null,
+    // 같은 역할을 희망하면서 동시에 피할 수는 없다 — 화면에서 잠근다. 그래도 서버도
+    // 본다: 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수 있다.
+    vetoRole: isRoleKey(draft.veto) && draft.veto !== draft.want ? draft.veto : null,
   };
 
   // 팀을 만든 브라우저가 첫 팀장이다. 쿠키가 없어졌으면(다른 기기로 들어옴) 팀에
@@ -176,6 +203,24 @@ export async function joinTeam(
 
   if (hasLeader || !(createdHere || isFirst)) {
     // 팀장이 있으면 초대 코드만으로는 들어오지 못한다. 요청만 남기고 승인을 기다린다.
+    const existing = await db.joinRequest.findUnique({
+      where: { teamId_name: { teamId: team.id, name } },
+      select: { id: true, token: true, status: true },
+    });
+
+    // **이미 승인된 요청을 새 요청으로 덮지 않는다.** 예전에는 `upsert` 의 update 가
+    // `status: "pending"` 으로 무조건 되돌려서, 팀장이 승인한 사실과 승인자, 승인 시각이
+    // 함께 지워졌다 — 팀장이 두 번 승인해야 그 사람이 들어왔다. 여기서 다시 온다는 것은
+    // 아직 팀원이 되지 못했다는 뜻이므로, 승인받은 요청과 그 토큰을 그대로 다시 심는다.
+    if (existing?.status === "approved") {
+      // 값(MBTI·희망 역할 등)은 고친 내용을 반영하되, 승인과 토큰은 그대로 둔다.
+      await db.joinRequest.update({ where: { id: existing.id }, data: { ...values } });
+      store.set(JOIN_COOKIE, existing.token, JOIN_COOKIE_OPTIONS);
+      revalidatePath("/team", "layout");
+      revalidatePath("/home");
+      return { status: "requested" };
+    }
+
     const token = randomUUID();
     await db.joinRequest.upsert({
       where: { teamId_name: { teamId: team.id, name } },
@@ -185,17 +230,12 @@ export async function joinTeam(
         status: "pending",
         label: await describeDevice(),
         resolvedAt: null,
+        approvedById: null,
       },
       create: { teamId: team.id, name, ...values, token, label: await describeDevice() },
     });
 
-    store.set(JOIN_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-    });
+    store.set(JOIN_COOKIE, token, JOIN_COOKIE_OPTIONS);
 
     await notify({
       to: await leaderIds(team.id),
@@ -246,31 +286,49 @@ export async function checkJoinApproval(): Promise<
   if (!request) return { status: "none" };
   if (request.status === "pending") return { status: "pending" };
 
-  store.delete(JOIN_COOKIE);
-  if (request.status !== "approved") return { status: "rejected" };
+  if (request.status !== "approved") {
+    store.delete(JOIN_COOKIE);
+    return { status: "rejected" };
+  }
 
   // 멤버를 만드는 것과 재입장 코드를 붙이는 것을 한 트랜잭션으로 묶는다 — joinTeam 과
   // 같은 이유다.
-  const { member, rejoinCode } = await db.$transaction(async (tx) => {
-    const member = await tx.member.create({
-      data: {
-        teamId: request.teamId,
-        name: request.name,
-        mbti: request.mbti,
-        mbtiFromQuiz: request.mbtiFromQuiz,
-        wantRole: request.wantRole,
-        vetoRole: request.vetoRole,
-      },
-    });
-    const rejoinCode = await issueRejoinCode(member.id, tx);
-    return { member, rejoinCode };
-  });
+  let memberId: string;
+  let rejoinCode: string;
+  try {
+    ({ member: { id: memberId }, rejoinCode } = await db.$transaction(async (tx) => {
+      const member = await tx.member.create({
+        data: {
+          teamId: request.teamId,
+          name: request.name,
+          mbti: request.mbti,
+          mbtiFromQuiz: request.mbtiFromQuiz,
+          wantRole: request.wantRole,
+          vetoRole: request.vetoRole,
+        },
+      });
+      const code = await issueRejoinCode(member.id, tx);
+      return { member, rejoinCode: code };
+    }));
+  } catch (error) {
+    // 폴링이 겹쳐 두 번 불리면 이름이 겹쳐 실패한다. 이미 팀원이 된 것이니 요청만 정리한다.
+    if ((error as { code?: string }).code === "P2002") {
+      await db.joinRequest.delete({ where: { token } });
+      store.delete(JOIN_COOKIE);
+      return { status: "none" };
+    }
+    throw error;
+  }
 
   // 인원이 늘면 "몇 명 가능"이 달라진다.
   await rebuildMeetingCandidates(request.teamId);
 
   await db.joinRequest.delete({ where: { token } });
 
-  await startSession(member.id, token);
+  // **쿠키는 멤버가 만들어진 다음에 지운다.** 예전에는 지터를 먼저 해서, 세션 시작이
+  // 꼬이면 토큰을 잃어버렸다. 그러면 요청은 `approved` 인데 아무도 다시 꺼낼 수 없고
+  // ("승인 대기" 목록에도 없으니) 팀장이 두 번 승인해도 돌아올 수 없는 사람이 된다.
+  store.delete(JOIN_COOKIE);
+  await startSession(memberId, token);
   return { status: "approved", rejoinCode };
 }

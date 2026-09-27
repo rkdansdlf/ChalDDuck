@@ -2,11 +2,26 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, Progress, Rows, TopInset } from "@/components/ui";
-import { checkJoinApproval, joinTeam } from "@/server/actions/onboarding";
+import {
+  AppBar,
+  AppFrame,
+  Body,
+  Btn,
+  Chip,
+  Dock,
+  Icon,
+  Note,
+  Panel,
+  Progress,
+  Rows,
+  Toast,
+  } from "@/components/ui";
+import { checkJoinApproval, joinTeam, type JoinBlock } from "@/server/actions/onboarding";
+import { useAction } from "@/lib/use-action";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
-import { setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
+import { resetOnboarding, setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
+import { useOnboardingGate } from "./use-onboarding-gate";
 
 type Mode = "want" | "veto";
 
@@ -21,7 +36,9 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   const { teamCode, want, veto } = useOnboarding();
 
   const [mode, setMode] = useState<Mode>("want");
-  const [submitting, setSubmitting] = useState(false);
+  const [blocked, setBlocked] = useState<JoinBlock | null>(null);
+  const { toast, busy, run } = useAction();
+  const ready = useOnboardingGate(true);
   /** 들어간 뒤 한 번만 보여 주는 재입장 코드. 서버에는 해시만 남아 다시 볼 수 없다. */
   const [issued, setIssued] = useState<{ rejoinCode: string; isLeader: boolean } | null>(null);
   /** 팀장 승인을 기다리는 중. */
@@ -31,31 +48,45 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   const set = mode === "want" ? setWant : setVeto;
 
   const submit = async () => {
-    if (!want || submitting) return;
-    setSubmitting(true);
-    try {
-      // 팀장이 있으면 바로 들어가지 못하고 승인을 기다린다.
-      const result = await joinTeam(teamCode ?? "", toDraft());
-      if (result.status === "name-taken") {
-        // 이름 단계에서 걸러지지만, 그 사이에 같은 이름이 들어왔을 수 있다.
-        const query = new URLSearchParams({ code: teamCode ?? "", name: toDraft().name });
-        router.push(`/join/rejoin?${query}`);
-        return;
-      }
-      if (result.status === "requested") setWaiting(true);
-      else setIssued({ rejoinCode: result.rejoinCode, isLeader: result.isLeader });
-    } catch (error) {
-      setSubmitting(false);
-      throw error;
-    }
+    if (!want || busy.submit) return;
+    await run(
+      "submit",
+      async () => {
+        setBlocked(null);
+        // 팀장이 있으면 바로 들어가지 못하고 승인을 기다린다.
+        const result = await joinTeam(teamCode ?? "", toDraft());
+        if (result.status === "name-taken") {
+          // 이름 단계에서 걸러지지만, 그 사이에 같은 이름이 들어왔을 수 있다.
+          const query = new URLSearchParams({ code: teamCode ?? "", name: toDraft().name });
+          router.push(`/join/rejoin?${query}`);
+          return;
+        }
+        if (result.status === "invalid") {
+          // 서버가 거절한 이유를 그대로 옮긴다. 예전에는 여기가 `throw` 였고, 운영 빌드는
+          // 그 문구를 지워서 **유일한 버튼이 아무 일도 하지 않는 화면**이 되었다.
+          setBlocked(result.reason);
+          return;
+        }
+        if (result.status === "requested") {
+          setWaiting(true);
+          return;
+        }
+        // 이제 서버에 이름이 있다. 로컬 초안을 비운다 — 비우지 않으면 팀을 옮겼을 때
+        // 옛 이름과 MBTI 가 새 팀 명단 위에 남아 그려진다(07 화면의 수락 버튼이
+        // 엉뚱한 이름을 비교해 아예 안 뜨는 일까지 있었다).
+        resetOnboarding();
+        setIssued({ rejoinCode: result.rejoinCode, isLeader: result.isLeader });
+      },
+      "알리지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+    );
   };
 
+  if (!ready) return null;
   if (issued) return <RejoinCodePanel {...issued} onDone={() => router.push("/team")} />;
   if (waiting) return <WaitingPanel name={toDraft().name} onIssued={setIssued} />;
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
-      <TopInset />
       <AppBar title="맡고 싶은 일" sub="4 / 4단계" onBack={() => router.back()} />
       <Body dense>
         <Progress step={4} total={4} className="mt-1 mb-4" />
@@ -157,11 +188,21 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
         <Note tone="info" icon="lock" className="mt-3">
           역할은 <b>희망·Veto·경험·가능한 시간</b>으로만 조율합니다. MBTI 유형은 배정 계산에 들어가지 않습니다.
         </Note>
+
+        {blocked ? <JoinBlockedNote reason={blocked} /> : null}
       </Body>
 
+      <Toast msg={toast} />
+
       <Dock>
-        <Btn full size="lg" disabled={!want || submitting} onClick={submit} iconRight="arrow-right">
-          {want ? (submitting ? "알리는 중…" : "팀에 알리기") : "1순위 희망을 골라 주세요"}
+        <Btn
+          full
+          size="lg"
+          disabled={!want || busy.submit}
+          onClick={submit}
+          iconRight="arrow-right"
+        >
+          {want ? (busy.submit ? "알리는 중…" : "팀에 알리기") : "1순위 희망을 골라 주세요"}
         </Btn>
       </Dock>
     </AppFrame>
@@ -185,10 +226,20 @@ function RejoinCodePanel({
   onDone: () => void;
 }) {
   const [saved, setSaved] = useState(false);
+  const { toast, flash } = useAction();
+
+  /** 코드를 눌러 클립보드에 옮긴다 — 화면에 있는 코드를 손으로 옮겨 적게 두지 않는다. */
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(rejoinCode);
+      flash("코드를 복사했습니다. 메모장에 붙여 두세요");
+    } catch {
+      flash("복사하지 못했습니다. 코드를 직접 옮겨 적어 주세요.");
+    }
+  };
 
   return (
     <AppFrame label="재입장 코드">
-      <TopInset />
       <AppBar title="들어왔습니다" sub={isLeader ? "팀장" : undefined} />
       <Body>
         <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">재입장 코드를 저장해 주세요</h1>
@@ -197,11 +248,15 @@ function RejoinCodePanel({
           <b>이 화면을 지나면 다시 볼 수 없습니다.</b>
         </p>
 
-        <Panel s="yellow" pad={18} r={18} className="mb-4 text-center">
+        <Panel s="yellow" pad={18} r={18} className="mb-2 text-center">
           <div className="font-mono font-extrabold text-[22px] leading-[1.4] tracking-[.08em] text-ink-900">
             {rejoinCode}
           </div>
         </Panel>
+
+        <Btn v="outline" full icon="copy" onClick={copy} className="mb-3">
+          코드 복사하기
+        </Btn>
 
         {isLeader ? (
           <Note tone="info" icon="user-round" title="팀을 만드셨으니 팀장입니다" className="mb-3">
@@ -232,6 +287,8 @@ function RejoinCodePanel({
           팀으로 가기
         </Btn>
       </Dock>
+
+      <Toast msg={toast} />
     </AppFrame>
   );
 }
@@ -261,8 +318,11 @@ function WaitingPanel({
       const result = await checkJoinApproval();
       if (stopped) return;
 
-      if (result.status === "approved") onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
-      else if (result.status === "rejected") setRejected(true);
+      if (result.status === "approved") {
+        // 팀원이 되었으니 로컬 초안을 버린다. `name` 은 prop 으로 이미 받아 두었다.
+        resetOnboarding();
+        onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
+      } else if (result.status === "rejected") setRejected(true);
       else if (result.status === "none") router.push("/join");
     };
 
@@ -275,7 +335,6 @@ function WaitingPanel({
 
   return (
     <AppFrame label="팀장 승인 대기">
-      <TopInset />
       <AppBar title="승인을 기다립니다" sub={name} />
       <Body>
         {rejected ? (
@@ -313,3 +372,23 @@ function WaitingPanel({
     </AppFrame>
   );
 }
+
+/**
+ * `joinTeam` 이 거절한 이유를 그대로 보여 준다.
+ *
+ * 예전에는 서버가 던진 오류 문구에 기대고 있었다. 운영 빌드는 그 문구를 지우므로
+ * 사용자에게는 "알리는 중…"이 끝난 뒤 아무 일도 일어나지 않는 화면으로 보였다.
+ */
+function JoinBlockedNote({ reason }: { reason: JoinBlock }) {
+  return (
+    <Note tone="err" icon="circle-alert" title="아직 팀에 들어갈 수 없습니다" className="mt-3">
+      {JOIN_BLOCK_TEXT[reason]}
+    </Note>
+  );
+}
+
+const JOIN_BLOCK_TEXT: Record<JoinBlock, string> = {
+  "no-code": "초대 코드를 찾을 수 없습니다. 코드에 오타가 있는지 확인하거나, 다시 초대 코드를 받아 주세요.",
+  "short-name": "이름을 두 글자 이상 적어 주세요.",
+  "no-want": "1순위 희망 역할을 골라 주세요.",
+};

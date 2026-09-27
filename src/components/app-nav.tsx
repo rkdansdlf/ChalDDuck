@@ -1,6 +1,7 @@
 "use client";
 
 import { SideNav, TabBar } from "@/components/ui";
+import { useEffect } from "react";
 import { usePoll } from "@/lib/use-poll";
 import { pollNavBadges } from "@/server/actions/nav";
 import type { NavBadges } from "@/server/nav/badges";
@@ -41,6 +42,17 @@ export function AppNav({
     BADGE_POLL_MS,
     as === "tabs",
   );
+
+  // **서버가 다시 그려 준 숫자는 곧바로 반영한다.** 알림을 읽거나 DM 을 열면 화면은
+  // `router.refresh()` 로 바로 맞는데, store 는 모듈 상태라 새로 그려 준 값을 받지 못하고
+  // 다음 폴링(30초)까지 옛 숫자를 보여 준다 — "안 읽은 알림 2건" 이 남은 채 알림함은
+  // 비어 있는 상태다. `drive-seen.tsx` 가 이미 `setNavBadges` 를 직접 부르는 것으로 이
+  // 표시가 갱신된다는 것을 보여 준다.
+  // 탭바 인스턴스만 한다 — 둘이 같은 값을 두 번 쓰면 폴링 결과와 깜빡인다.
+  useEffect(() => {
+    if (as !== "tabs") return;
+    setNavBadges(initial);
+  }, [as, initial]);
 
   const badges = useNavBadges() ?? initial;
 

@@ -25,6 +25,21 @@ async function currentProposal(teamId: string) {
   return db.meetingProposal.findFirst({ where: { teamId }, orderBy: { createdAt: "desc" } });
 }
 
+/**
+ * 지금 제안할 수 있는지 확인한다. 진행 중인 결정이 있으면 어떤 말로 막아야 하는지
+ * 알려 준다 — 확정된 회의와 대기 중인 제안은 팀원이 다르게 받아들인다.
+ */
+async function assertCanPropose(teamId: string): Promise<void> {
+  const decided = await db.meetingProposal.findFirst({
+    where: { teamId, activeKey: teamId },
+    select: { stage: true },
+  });
+  if (!decided) return;
+  throw new Error(
+    decided.stage === "confirmed" ? "이미 확정된 회의가 있습니다." : "이미 올라온 회의 제안이 있습니다.",
+  );
+}
+
 /** 후보 하나를 팀에 제안한다. 제안자는 그 자리에서 동의한 것으로 본다. */
 export async function proposeMeeting(slotId: string): Promise<void> {
   const me = await requireSessionMember();
@@ -68,7 +83,8 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
     throw new Error("오늘부터 7일 안의 시간만 제안할 수 있습니다.");
   }
 
-  if (await currentProposal(me.teamId)) throw new Error("이미 올라온 회의 제안이 있습니다.");
+  // 후보 행을 만들기 **전에** 막는다 — 막히고 남은 후보 행은 어느 화면에서도 안 쓰인다.
+  await assertCanPropose(me.teamId);
 
   const members = await db.member.findMany({
     where: { teamId: me.teamId, leftAt: null },
@@ -91,23 +107,50 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
   await startProposal(me, slot);
 }
 
+/**
+ * 후보를 팀에 제안한다.
+ *
+ * **진행 중인 결정이 있으면 받지 않는다.** 올라온 제안(마감까지 반대를 기다리는)이거나
+ * 이미 확정된 회의면 그 위에서 다시 제안할 수 없다 — 뒤엎으면 "확정"이라는 말이
+ * 아무 뜻이 없어진다. 이월(`carried`)은 결정을 미룬 것이라 대신할 수 있다.
+ *
+ * 방어선은 DB 다. `MeetingProposal.activeKey` 유일 인덱스가 진행 중인 결정 하나를 지킨다
+ * (`IceRound.activeKey` 와 같은 방식). 여기서 먼저 확인하는 건 화면에 즉시 이해되는
+ * 말을 주기 위해서이고, 실제로는 인덱스가 두 사람이 동시에 눌렀을 때를 막는다.
+ */
 async function startProposal(
   me: { id: string; name: string; teamId: string },
   slot: { id: string; day: string; time: string },
 ): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
 
-  await db.$transaction(async (tx) => {
-    // 앞선 제안은 정리하고 새로 시작한다 — 동시에 두 개가 올라와 있으면 무엇을 따를지 알 수 없다.
-    await tx.meetingProposal.deleteMany({ where: { teamId: me.teamId } });
+  await assertCanPropose(me.teamId);
 
-    const proposal = await tx.meetingProposal.create({
-      data: { teamId: me.teamId, slotId: slot.id, proposedById: me.id, respondBy },
+  try {
+    await db.$transaction(async (tx) => {
+      // 지난번에 이월해 둔 보류 행은 치운다 — 결정을 미루고 미루는 것만 쌓이면 된다.
+      await tx.meetingProposal.deleteMany({ where: { teamId: me.teamId, stage: "carried" } });
+
+      const proposal = await tx.meetingProposal.create({
+        data: {
+          teamId: me.teamId,
+          slotId: slot.id,
+          proposedById: me.id,
+          respondBy,
+          activeKey: me.teamId,
+        },
+      });
+      await tx.meetingResponse.create({
+        data: { proposalId: proposal.id, memberId: me.id, agree: true },
+      });
     });
-    await tx.meetingResponse.create({
-      data: { proposalId: proposal.id, memberId: me.id, agree: true },
-    });
-  });
+  } catch (error) {
+    // 확인한 뒤 누군가 먼저 올린 경우 — 먼저 들어간 결정을 따른다.
+    if ((error as { code?: string }).code === "P2002") {
+      throw new Error("누군가 먼저 회의 시간을 제안했습니다.");
+    }
+    throw error;
+  }
 
   await notify({
     to: await teamMemberIds(me.teamId),
@@ -222,8 +265,13 @@ export async function fastForwardMeetingDeadline(): Promise<"moved" | "gone"> {
 export async function carryOverMeeting(): Promise<void> {
   const me = await requireSessionMember();
 
+  // 화면에는 진행 중인 결정이 없을 때 이 버튼만 보이지만, 서버 액션은 POST 로 바로
+  // 불릴 수 있다. 올라온 제안이나 확정된 회의를 이월로 지우면 팀원이 동의한 것이 사라진다.
+  await assertCanPropose(me.teamId);
+
   await db.$transaction(async (tx) => {
-    await tx.meetingProposal.deleteMany({ where: { teamId: me.teamId } });
+    // 이월은 보류다. 예전 이월만 치운다 — 진행 중인 결정은 위에서 이미 막았다.
+    await tx.meetingProposal.deleteMany({ where: { teamId: me.teamId, stage: "carried" } });
     await tx.meetingProposal.create({
       data: {
         teamId: me.teamId,
@@ -232,6 +280,16 @@ export async function carryOverMeeting(): Promise<void> {
         respondBy: new Date(),
       },
     });
+  });
+
+  // 이월은 팀 전체가 알아야 하는 결정이다 — 조용히 바뀌면 아무도 모른다.
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    kind: "meeting",
+    title: `${me.name}님이 이번 주 회의를 다음 주로 넘겼습니다`,
+    body: "이번 주는 열리지 않습니다. 다음 주 시간은 다시 골라 주세요",
+    href: "/schedule/slots",
+    actorId: me.id,
   });
 
   revalidatePath("/schedule", "layout");

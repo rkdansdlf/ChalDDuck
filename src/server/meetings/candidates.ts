@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Prisma } from "@/generated/prisma";
 import { SCHEDULE_DAYS } from "@/data/catalog";
 import { computeMeetingSlots } from "@/features/schedule/meeting-slots";
 import {
@@ -39,17 +40,34 @@ export function candidateDateOf(dayLetter: string): CandidateDate | null {
  * 계산 결과**이므로, 시간표나 명단이 바뀔 때마다 여기서 다시 만든다.
  *
  * 그래도 표에 남기는 이유는 회의 제안이 후보 행을 가리키기 때문이다(`MeetingProposal.slotId`).
- * 그래서 **제안이 올라와 있는 동안에는 다시 만들지 않는다** — 제안된 후보가 발밑에서
- * 사라지면 팀원이 무엇에 동의하는지가 없어진다.
+ * 그래서 **제안이 올라와 있는 동안에는 아예 다시 만들지 않는다** — 제안된 후보가 발밑에서
+ * 사라지면 고르던 사람이 "후보를 찾을 수 없습니다"를 보고, 무엇에 동의했는지가 없어진다.
+ *
+ * **확정된** 회의의 후보 행은 지우지 않는다. 예전에는 `proposed` 만 지켰는데,
+ * `slotId` 는 `onDelete: SetNull` 이라 확정한 행을 지운 순간 그 회의의 날짜·시간이 조용히
+ * 사라졌다. 그러면 09 화면은 "확정"을 보여 주지 못하고 후보 목록만 띄우는데, 제안도 다시
+ * 올릴 수 없어 거기에 갇힌다. 남겨 둔 칸과 같은 시간이 다시 계산되면 중복이 되므로
+ * 새 후보에서는 그 시간을 뺀다.
  *
  * 계산 자체는 `features/schedule/meeting-slots.ts` 에 있다. 시드도 같은 함수를 쓴다.
  */
 export async function rebuildMeetingCandidates(teamId: string): Promise<void> {
-  const live = await db.meetingProposal.findFirst({
-    where: { teamId, stage: "proposed" },
-    select: { id: true },
+  const proposals = await db.meetingProposal.findMany({
+    where: { teamId },
+    select: { slotId: true, stage: true },
   });
-  if (live) return;
+
+  if (proposals.some((p) => p.stage === "proposed")) return;
+
+  // 팀장이 확정한 회의를 가리키는 후보 행. 지우지 않고, 같은 시간은 새로 만들지 않는다.
+  const keepIds = proposals.flatMap((p) => (p.slotId ? [p.slotId] : []));
+  const kept = keepIds.length
+    ? await db.meetingSlot.findMany({
+        where: { id: { in: keepIds } },
+        select: { day: true, time: true },
+      })
+    : [];
+  const keptWhen = new Set(kept.map((s) => `${s.day} ${s.time}`));
 
   const members = await db.member.findMany({
     where: { teamId, leftAt: null },
@@ -57,10 +75,16 @@ export async function rebuildMeetingCandidates(teamId: string): Promise<void> {
   });
 
   const from = todayInSeoul();
-  const slots = computeMeetingSlots(members, candidateDates());
+  const slots = computeMeetingSlots(members, candidateDates()).filter(
+    (s) => !keptWhen.has(`${s.day} ${s.time}`),
+  );
+
+  // 남겨 둘 칸이 있으면 그 id 를 빼고 지운다. `notIn: []` 에 기대지 않고 갈라 쓴다.
+  const staleSlots: Prisma.MeetingSlotWhereInput =
+    keepIds.length > 0 ? { teamId, id: { notIn: keepIds } } : { teamId };
 
   await db.$transaction([
-    db.meetingSlot.deleteMany({ where: { teamId } }),
+    db.meetingSlot.deleteMany({ where: staleSlots }),
     db.meetingSlot.createMany({
       data: slots.map((s) => ({ ...s, teamId, weekKey: "this" })),
     }),

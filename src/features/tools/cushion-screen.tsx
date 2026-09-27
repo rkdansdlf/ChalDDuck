@@ -16,6 +16,7 @@ import {
 import { rewriteWithCushion } from "@/server/actions/ai";
 import { sendChatMessage } from "@/server/actions/chat";
 import { TEAM_THREAD_ID } from "@/lib/types";
+import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 import { clearCushionDraft, peekCushionDraft } from "./cushion-handoff";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
@@ -102,6 +103,7 @@ export function CushionScreen({
 
         <div className="t-cap-strong mb-1.5 font-bold text-txt-muted">하고 싶은 말</div>
         <Textarea
+          limit={AI_INPUT_LIMIT}
           value={text}
           onChange={setText}
           minHeight={92}

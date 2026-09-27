@@ -59,6 +59,7 @@ import { db } from "@/server/db";
 import { contribByLabel } from "@/server/contrib/state";
 import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
+import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import {
   AI_POLICY,
@@ -178,7 +179,7 @@ export async function findExistingMember(teamCode: string, name: string): Promis
   if (!team) return null;
 
   const member = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: name.trim() } },
+    where: { teamId_name: { teamId: team.id, name: normalizeName(name) } },
   });
   if (!member) return null;
 
@@ -219,6 +220,17 @@ export async function getIceView(): Promise<IceView | null> {
 }
 export async function getMenuOptions(_teamId: string): Promise<string[]> {
   return MENU_OPTIONS;
+}
+
+/**
+ * 팀이 정한 밥. 없으면 아직 아무도 돌리지 않았다.
+ *
+ * 이 값을 화면에 내려야 하는 이유: **각자 돌리면 각자 다른 값이 나온다.** 예전에는
+ * 서버를 부르지 않고 폰에서만 `Math.random()` 을 돌렸고, 새로고침하면 값이 바뀌었다.
+ */
+export async function getMenuPick(teamId: string): Promise<string | null> {
+  const team = await db.team.findUnique({ where: { id: teamId }, select: { menuPick: true } });
+  return team?.menuPick ?? null;
 }
 export async function getScheduleOptions(): Promise<{
   kinds: BusyKind[];
@@ -281,6 +293,8 @@ export type RejoinRequest = {
   who: string;
   device: string;
   when: string;
+  /** 팀을 나갔다 온 사람인지. 돌아오길 바라는 상황이라 승인해야 명단에 돌아온다. */
+  leftBefore: boolean;
 };
 
 /**
@@ -293,8 +307,13 @@ export async function getRejoinRequests(teamId: string): Promise<RejoinRequest[]
   if (!session || !session.isLeader) return [];
 
   const claims = await db.memberClaim.findMany({
-    where: { status: "pending", member: { teamId, ...ACTIVE } },
-    include: { member: { select: { name: true } } },
+    // **나간 사람도 포함한다.** 재입장 경로 자체가 `leftAt` 을 다시 비워 주므로(팀을
+    // 나갔다 온 사람을 되돌리는 길) 그런 사람의 요청이 정상적으로 생긴다. 여기서
+    // 걸러 내면 팀장 화면엔 "기대하는 요청이 없습니다"만 뜬다 — 그래놓고 요청자는
+    // 24시간 동안 "확인하는 중…"에서 영영 못 빠져나온다. 되돌릴 방법을 팀장에게
+    // 안 주는 셈이라 더 나쁘다.
+    where: { status: "pending", member: { teamId } },
+    include: { member: { select: { name: true, leftAt: true } } },
     orderBy: { createdAt: "desc" },
   });
 
@@ -303,6 +322,7 @@ export async function getRejoinRequests(teamId: string): Promise<RejoinRequest[]
     who: c.member.name,
     device: c.label ?? "알 수 없는 기기",
     when: formatDeadline(c.createdAt),
+    leftBefore: c.member.leftAt !== null,
   }));
 }
 
@@ -945,8 +965,12 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
 export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
+  // **나간 사람도 남긴다.** 예전에는 여기만 `ACTIVE` 로 걸러서, 나간 팀원은 17 화면
+  // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
+  // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
+  // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
   const members = await db.member.findMany({
-    where: { teamId, ...ACTIVE },
+    where: { teamId },
     include: { contribRecords: { select: { state: true } } },
     orderBy: { joinedAt: "asc" },
   });
@@ -954,6 +978,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   return members.map((m) => ({
     memberId: m.id,
     who: m.name,
+    left: m.leftAt !== null,
     role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
     confirmed: m.contribRecords.filter((r) => r.state === "ok").length,
     pending: m.contribRecords.filter((r) => r.state === "pending").length,
@@ -964,9 +989,12 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
 /* ── 21 할 일 ──────────────────────────────────────────────── */
 
 export async function getTasks(teamId: string): Promise<Task[]> {
+  // 담당자가 나인지 알아야 한다 — 내 업무를 나에게 찌를 수는 없고(서버가 막는다),
+  // 화면에 그 버튼이 떠 있으면 실패만 눌러 보게 된다.
+  const session = await getSessionMember();
   const rows = await db.task.findMany({
     where: { teamId },
-    include: { assignee: { select: { name: true, mbti: true } } },
+    include: { assignee: { select: { id: true, name: true, mbti: true, leftAt: true } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
@@ -976,6 +1004,9 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     kind: t.kind as Task["kind"],
     assignee: t.assignee?.name ?? null,
     mbti: toMbti(t.assignee?.mbti),
+    // 팀을 나간 담당자도 이름은 남는다 — 기록은 남겨야 하되, 알림은 갈 수 없다.
+    assigneeLeft: t.assignee?.leftAt != null,
+    isMine: t.assigneeId != null && t.assigneeId === session?.id,
     due: t.due,
     status: t.status as Task["status"],
     source: t.source as Task["source"],

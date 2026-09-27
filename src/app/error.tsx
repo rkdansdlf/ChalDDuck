@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Failure, TopInset } from "@/components/ui";
+import { AppBar, AppFrame, Body, Failure } from "@/components/ui";
 
 /**
  * 탭 밖(온보딩·입장)에서 렌더가 실패했을 때. 탭 셸 자체가 실패한 경우도 여기로 온다 —
@@ -25,12 +25,12 @@ export default function AppError({
 
   useEffect(() => {
     // 운영에서는 문구가 지워진 채 오므로 `digest` 가 서버 로그와 잇는 유일한 끈이다.
-    console.error(error);
+    // `error` 만 찍으면 `Minified React error #441` 만 남아 어디서 난 건지 알 수 없다.
+    console.error(`[화면 오류] digest=${error.digest ?? "없음"}`, error);
   }, [error]);
 
   return (
     <AppFrame label="오류">
-      <TopInset />
       <AppBar title="찰떡" />
       <Body>
         <Failure
@@ -39,8 +39,8 @@ export default function AppError({
           onHome={() => router.push("/")}
           digest={error.digest}
         >
-          잠시 연결이 끊겼을 수 있습니다. 다시 시도해 보고, 계속 같으면 조금 뒤에 다시 열어 주세요.
-          오래 앱을 열지 않았다면 다시 입장해야 할 수도 있습니다.
+          서버가 이 화면을 그리지 못했습니다. 다시 시도해 보세요. 계속 같으면 아래 오류
+          번호를 알려 주세요. 오래 앱을 열지 않았다면 다시 입장해야 할 수도 있습니다.
         </Failure>
       </Body>
     </AppFrame>

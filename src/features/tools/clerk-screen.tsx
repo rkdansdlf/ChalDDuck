@@ -20,6 +20,7 @@ import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
+import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
 import type { ClerkDraft, Member } from "@/lib/types";
 
 const STEP_LABELS = ["회의 내용 입력", "요약 · 할 일 후보", "업무에 반영"];
@@ -104,11 +105,23 @@ export function ClerkScreen({
             <Textarea
               value={raw}
               onChange={setRaw}
+              limit={AI_INPUT_LIMIT}
               placeholder="회의 중 적은 메모나 채팅 로그를 그대로 붙여넣으면 됩니다."
               aria-label="회의 내용"
             />
             <div className="t-cap text-pretty-keep mt-1.5 mb-3.5 text-txt-muted">
               회의 중 적은 메모나 채팅 로그를 그대로 붙여넣으면 됩니다.
+              {/* 잘린다는 사실을 숨기지 않는다 — 예전에는 서버만 8000자에서 잘랐고 화면에는
+                  아무 표시가 없어, 회의 절반이 빠진 요약이 "전부"인 것처럼 보였다. */}
+              {aiInputOverrun(raw) > 0 ? (
+                <>
+                  {" "}
+                  <b className="text-err">
+                    {aiInputOverrun(raw).toLocaleString("ko-KR")}자가 잘립니다 — AI 는 앞부분만
+                    봅니다.
+                  </b>
+                </>
+              ) : null}
             </div>
 
             <Note tone="info" icon="shield" className="mb-3.5">

@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { EMPTY_PICKS, isMbtiType, picksToMbti, type MbtiType, type QuizPicks } from "@/lib/mbti";
+import { normalizeName } from "@/features/roles/roster-model";
 import type { OnboardingDraft, RoleKey } from "@/lib/types";
 
 /**
@@ -119,11 +120,26 @@ export function setPick(index: number, pick: "a" | "b") {
   update({ picks });
 }
 
-/** 30초 컷으로 들어갈 때 직접 고른 값을 비운다(프로토타입의 `go("quiz")` 동작). */
+/**
+ * 30초 컷으로 들어갈 때 직접 고른 값을 비운다(프로토타입의 `go("quiz")` 동작).
+ *
+ * **답도 함께 비운다.** 예전에는 `mbti` 만 지워서, 전에 답해 둔 4문항이 남아 있었다.
+ * 다시 03 화면에서 "30초 컷"을 눌러도 4/4 가 체크된 채 "INFP 로 계속" 이 떠 있었고,
+ * 거기서 "MBTI 없이 계속하기" 를 눌러도 그 답이 그대로 저장됐다 — 사용자가 하지 않기로
+ * 고른 MBTI 를 고른 쪽에서 사다.
+ */
 export function startQuiz() {
-  update({ mbti: null });
+  update({ mbti: null, picks: EMPTY_PICKS });
 }
 
+/**
+ * 온보딩 초안을 비운다. **서버에 등록된 직후에 부른다.**
+ *
+ * 예전에는 이 함수를 아무 곳에서도 부르지 않았다(`submitOnboarding` 이라는 함수도 없다).
+ * 그래서 팀을 옮겨도 남은 이름·MBTI·희망 역할이 새 팀 명단 위에 덮여 그려졌고,
+ * 07 화면은 서버가 준 당첨자 이름을 로컬 이름과 비교해 수락·거절 버튼을 아예 띄우지
+ * 않았다. 공용 PC 에 이름이 남을 이유도 없으므로 끝나면 반드시 비운다.
+ */
 export function resetOnboarding() {
   update(EMPTY);
 }
@@ -131,7 +147,7 @@ export function resetOnboarding() {
 /** 서버로 보낼 형태. */
 export function toDraft(): OnboardingDraft {
   return {
-    name: state.name.trim(),
+    name: normalizeName(state.name),
     mbti: state.mbti ?? picksToMbti(state.picks),
     mbtiFromQuiz: !state.mbti && picksToMbti(state.picks) !== null,
     want: state.want,

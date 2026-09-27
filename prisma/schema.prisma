@@ -28,6 +28,11 @@ model Team {
   /// 회의 후보(`MeetingSlot`)를 어느 날부터 7일로 만들었는지(한국 날짜). 날이 바뀌면 다시
   /// 만든다 — 지난 날이 후보에 남거나, 지난주에만 있던 시간이 후보를 막지 않게.
   candidatesFrom String?
+  /// 29 메뉴 룰렛으로 정한 밥. **팀에 하나** — 각자 돌리면 네 사람이 네 값을 보고
+  /// 무엇을 먹을지 합의가 되지 않는다(예전에는 폰마다 따로 돌았다).
+  menuPick String?
+  menuDrawnBy String?
+  menuPickedAt DateTime?
   createdAt DateTime @default(now())
 
   members        Member[]
@@ -258,6 +263,10 @@ model MeetingProposal {
   proposedById String
   /// proposed | confirmed | carried — idle 은 행이 없는 상태다.
   stage        String   @default("proposed")
+  /// 팀마다 **진행 중인 결정은 하나**다. `proposed`·`confirmed` 동안 `teamId` 를 담고,
+  /// 이월(`carried`)처럼 보류인 동안은 비어 있다. 유일 인덱스가 "확정된 회의를 조용히
+  /// 덮어쓰는 제안"을 DB 에서 막는다 — 두 사람이 우연히 동시에 눌러도 하나만 선다.
+  activeKey    String?  @unique
   /// 응답 마감 시각. 이때까지 반대가 없으면 확정.
   respondBy    DateTime
   createdAt    DateTime @default(now())

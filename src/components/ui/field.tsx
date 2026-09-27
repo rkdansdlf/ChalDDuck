@@ -102,25 +102,48 @@ export type TextareaProps = {
   "aria-invalid"?: boolean;
 };
 
-/** 여러 줄 입력 — 회의 메모·대본처럼 문단을 받는 자리에 쓴다. */
+/**
+ * 여러 줄 입력 — 회의 메모·대본처럼 문단을 받는 자리에 쓴다.
+ *
+ * `limit` 을 주면 오른쪽 아래에 `n / 8000` 을 보여 주고 상한을 넘으면 **빨갛게** 알린다.
+ * 넘었다고 입력 자체를 막지는 않는다 — 자르지 않고 거절하는 쪽이 화면마다 다르게
+ * 행동할 테니, 잘린다는 사실만 분명히 보여 주는 편이 낫다.
+ */
 export function Textarea({
   value,
   onChange,
   minHeight = 160,
+  limit,
   className,
   ...rest
-}: TextareaProps & { className?: string }) {
+}: TextareaProps & { className?: string; limit?: number }) {
+  const over = limit !== undefined && value.length > limit;
   return (
-    <textarea
-      {...rest}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{ minHeight }}
-      className={cn(
-        "text-pretty-keep box-border w-full resize-y rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
-        "text-[14.5px] leading-[1.6] text-txt-strong outline-none",
-        className,
-      )}
-    />
+    <div className="relative">
+      <textarea
+        {...rest}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-describedby={over && limit ? "textarea-count" : rest["aria-describedby"]}
+        style={{ minHeight }}
+        className={cn(
+          "text-pretty-keep box-border w-full resize-y rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
+          "text-[14.5px] leading-[1.6] text-txt-strong outline-none",
+          over && "border-err",
+          className,
+        )}
+      />
+      {limit ? (
+        <span
+          id="textarea-count"
+          className={cn(
+            "t-cap pointer-events-none absolute right-2.5 bottom-1.5 tabular-nums",
+            over ? "font-bold text-err" : "text-txt-faint",
+          )}
+        >
+          {value.length.toLocaleString("ko-KR")} / {limit.toLocaleString("ko-KR")}
+        </span>
+      ) : null}
+    </div>
   );
 }

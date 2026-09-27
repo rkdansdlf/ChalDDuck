@@ -62,6 +62,17 @@ class UploadFailure extends Error {
 }
 
 /**
+ * 저장소에 직접 올릴 때 기다려 줄 최대 시간.
+ *
+ * 연결이 성립한 뒤 멈추는 경우(모바일 네트워크, 회사 프록시, 반쪽 열린 TCP)가 실제로
+ * 벌어진다. 예전에는 `onload` 와 `onerror` 밖에 없어 그런 요청이 영영 끝나지 않아
+ * 진행률이 멈춘 채 버튼이 그대로 잠겼다 — 50MB 짜리 PPT 를 올리려던 사람이 바로 그
+ * 상황을 만난다. AI 쪽은 같은 이유로 이미 `AbortSignal.timeout()` 을 함께 건다
+ * (`server/ai/model.ts`).
+ */
+const PUT_TIMEOUT_MS = 120_000;
+
+/**
  * 서명된 주소로 저장소에 직접 올린다.
  *
  * `fetch` 는 올리는 쪽 진행률을 알려 주지 않아 `XMLHttpRequest` 를 쓴다. 본문은 파일 그대로
@@ -74,6 +85,7 @@ export function putToStorage(url: string, file: File, contentType: string, onPro
     xhr.open("PUT", url);
     xhr.setRequestHeader("content-type", contentType);
     xhr.setRequestHeader("x-upsert", "false");
+    xhr.timeout = PUT_TIMEOUT_MS;
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
     };
@@ -87,6 +99,8 @@ export function putToStorage(url: string, file: File, contentType: string, onPro
       );
     };
     xhr.onerror = () => reject(new UploadFailure("연결이 끊겨 올리지 못했습니다.", true));
+    xhr.ontimeout = () =>
+      reject(new UploadFailure("시간이 너무 오래 걸려 올리기를 멈췄습니다. 다시 시도해 주세요.", true));
     xhr.send(file);
   });
 }

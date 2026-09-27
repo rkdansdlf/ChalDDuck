@@ -1,6 +1,7 @@
 import "server-only";
 
 import OpenAI from "openai";
+import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 
 /**
  * 모델 호출 한 겹.
@@ -58,11 +59,14 @@ function client(): OpenAI {
   return cached;
 }
 
-/** 사용자가 넣는 글의 길이 상한. 팀플 회의 메모 기준이고, 넘으면 앞부분만 보낸다. */
-const MAX_INPUT = 8000;
-
+/**
+ * 넘으면 앞부분만 보낸다.
+ *
+ * 상한과 자른 사실을 화면에 알려 주는 일은 `lib/ai-limit` 가 함께 한다 — 같은 값을 두
+ * 곳에 적으면 어느 한쪽이 조용히 어긋난다(예전에는 서버만 자르고 화면은 몰랐다).
+ */
 export function clampInput(text: string): string {
-  return text.slice(0, MAX_INPUT);
+  return text.slice(0, AI_INPUT_LIMIT);
 }
 
 /** 요청마다 거는 하드 타임아웃. SDK 설정만으로는 끊기지 않는 경우가 있다. */

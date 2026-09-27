@@ -12,7 +12,6 @@ import {
   Input,
   Note,
   Panel,
-  TopInset,
   Undecided,
 } from "@/components/ui";
 import {
@@ -111,7 +110,6 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
 
   return (
     <AppFrame label="재입장">
-      <TopInset />
       <AppBar
         title="다시 들어오기"
         sub={name}

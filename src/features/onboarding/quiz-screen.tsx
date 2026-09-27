@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, TopInset, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, Undecided } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { picksToMbti } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/types";
 import { setPick, useOnboarding } from "./onboarding-state";
+import { useOnboardingGate } from "./use-onboarding-gate";
 
 /**
  * 04 30초 MBTI 판별.
@@ -16,6 +17,8 @@ import { setPick, useOnboarding } from "./onboarding-state";
 export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
   const router = useRouter();
   const { picks, answeredCount } = useOnboarding();
+  const ready = useOnboardingGate(true);
+  if (!ready) return null;
 
   const total = questions.length;
   const result = picksToMbti(picks);
@@ -23,7 +26,6 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
 
   return (
     <AppFrame label="04 30초 MBTI 판별">
-      <TopInset />
       <AppBar
         title="30초 컷"
         sub={`${answeredCount} / ${total}문항`}

@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { AppBar, Body, Note, Toast, Undecided } from "@/components/ui";
 import type { ChatMessage, Member, Team } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { ACCEPT } from "@/features/drive/file-rules";
 import { useMe } from "@/features/onboarding/use-me";
@@ -37,7 +38,7 @@ export function TeamChatScreen({
     initialCursor,
     me,
   );
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, flash } = useAction();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -49,11 +50,6 @@ export function TeamChatScreen({
   // 새 말이 오면 맨 아래로 — 과거 메시지를 앞에 붙였을 때나 위로 올려 읽는 중일
   // 때는 움직이지 않는다.
   const { stick } = useStickToBottom(scrollRef, bottomRef, messages.at(-1)?.id);
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2400);
-  };
 
   return (
     <>

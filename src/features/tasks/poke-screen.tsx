@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Task } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import { pokeTask } from "@/server/actions/tasks";
 
 /**
@@ -36,33 +37,39 @@ export function PokeScreen({
   const router = useRouter();
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, busy, run } = useAction();
+  const sending = busy.send === true;
 
-  /** 끝난 일과 담당자 없는 일은 찌를 대상이 아니다. */
-  const targets = tasks.filter((t) => t.status !== "done" && t.assignee);
+  /**
+   * 찌를 대상이 아닌 것을 화면에서 먼저 뺀다.
+   *
+   * - 끝난 일: 다시 재촉할 일이 아니다.
+   * - 담당자 없는 일: 보낼 사람이 없다.
+   * - **내가 맡은 일**: 서버가 막는다(`notify` 가 본인을recipient 에서 빼므로 알림은
+   *   안 가는데, 예전에는 "알렸습니다"만 떴다).
+   * - **팀을 나간 담당자**: 알림이 닿지 않는다 — 같은 이유로 거짓말이 된다.
+   *
+   * 서버도 같은 조건을 다시 확인한다. 여기서 걸러야 실패할 수 없는 버튼만 남는다.
+   */
+  const targets = tasks.filter(
+    (t) => t.status !== "done" && t.assignee && !t.isMine && !t.assigneeLeft,
+  );
   const selectedTask = targets.find((t) => t.id === selected) ?? null;
 
   const send = async () => {
-    if (!selectedTask || sending || poked.includes(selectedTask.id)) return;
-    setSending(true);
-    try {
-      const result = await pokeTask(selectedTask.id);
-      setSelected(null);
-      router.refresh();
-      flash(
-        result === "sent"
+    if (!selectedTask || poked.includes(selectedTask.id)) return;
+    await run(
+      "send",
+      async () => {
+        const result = await pokeTask(selectedTask.id);
+        setSelected(null);
+        router.refresh();
+        return result === "sent"
           ? `${selectedTask.assignee}님에게 알렸습니다`
-          : "이 업무에는 오늘 이미 보냈습니다",
-      );
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
+          : "이 업무에는 오늘 이미 보냈습니다";
+      },
+      "알리지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+    );
   };
 
   return (

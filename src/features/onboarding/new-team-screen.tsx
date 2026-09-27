@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, TopInset, Toast, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, Toast, Undecided } from "@/components/ui";
 import { createTeam } from "@/server/actions/onboarding";
 import type { Team } from "@/lib/types";
 import { setTeamCode } from "./onboarding-state";
@@ -72,7 +72,6 @@ export function NewTeamScreen() {
 
   return (
     <AppFrame label="00 팀 만들기">
-      <TopInset />
       <AppBar title="새 팀 만들기" onBack={() => router.push("/join")} />
       <Body>
         {!created ? (

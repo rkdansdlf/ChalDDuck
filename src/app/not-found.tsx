@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Failure, TopInset } from "@/components/ui";
+import { AppBar, AppFrame, Body, Failure } from "@/components/ui";
 
 /**
  * 없는 주소.
@@ -14,7 +14,6 @@ export default function NotFound() {
 
   return (
     <AppFrame label="없는 주소">
-      <TopInset />
       <AppBar title="찰떡" />
       <Body>
         <Failure title="없는 주소입니다" onHome={() => router.push("/")}>

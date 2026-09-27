@@ -162,6 +162,11 @@ export async function summarizeMeeting(raw: string): Promise<ClerkDraft> {
  * 제목과 학회지 이름을 지어내므로, 이 도구만은 웹 검색을 붙인다. 그리고 모델이
  * 정리한 목록 중 **실제로 인용된 주소를 가진 것만** 남긴다 — 규칙을 프롬프트가 아니라
  * 코드가 지킨다. 적합도 점수는 만들지 않는다.
+ *
+ * **못 찾았다는 말은 그대로 전달한다.** 예전에는 출처가 0건이면 `[]` 만 돌려주며 모델이
+ * 적어 둔 "찾지 못했다" 를 버렸다. 화면에는 "AI 검색 결과" 배지와 "결과 0건" 만 남고
+ * 왜 비었는지가 아무 데도 없었다 — 아무것도 못 찾은 것과 화면이 고장난 것이 구분되지 않는
+ * 상태였다. 이제 그 말을 첫 번째 결과로 돌려준다.
  */
 export async function searchResearch(query: string): Promise<ResearchResult[]> {
   if (!isAiConfigured()) return RESEARCH_SAMPLE_RESULTS;
@@ -179,8 +184,12 @@ export async function searchResearch(query: string): Promise<ResearchResult[]> {
     user: query,
   });
 
-  // 출처가 하나도 없으면 보여 줄 것이 없다. 이것이 리서처의 약속이다.
-  if (answer.citations.length === 0) return [];
+  // 출처가 하나도 없으면 보여 줄 것이 없다. 이것이 리서처의 약속이다. 다만 모델이
+  // 스스로 적은 "찾지 못했다" 는 약속을 깬 것이 아니라 정직한 답이므로 지우지 않는다.
+  if (answer.citations.length === 0) {
+    const said = answer.text.trim();
+    return said ? [{ id: "nothing-found", title: said, source: "출처 없음", snippet: "", url: "" }] : [];
+  }
 
   const allowed = new Map(answer.citations.map((c) => [c.url, c]));
 

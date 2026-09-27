@@ -410,14 +410,22 @@ export async function getDownloadUrl(versionId: string): Promise<string | null> 
  * 내려받기 주소보다 오래 살린다. 브라우저 PDF 뷰어는 큰 파일을 한 번에 받지 않고
  * 넘길 때마다 필요한 부분을 다시 요청해서, 60초짜리 주소로는 읽던 중에 끊긴다.
  * 이 주소로는 "새 탭에서 열기"도 한다.
+ *
+ * **`fileId` 로도 묶는다.** 예전에는 팀 안의 어떤 버전인지만 확인했다. 그래서 주소를
+ * `/drive/<boxA>/<fileA>/<fileB의버전>` 으로 바꿔치기하면 **A 파일의 이름·작성자·크기·마감
+ * 배지 위에 B 파일의 그림**이 그려졌다. 팀 안에서만 빠지는 건이라 보안은 아니지만,
+ * 아무도 엉뚱한 줄을 고칠 이유가 없다.
  */
 const PREVIEW_URL_SECONDS = 10 * 60;
 
-export async function getPreviewUrl(versionId: string): Promise<string | null> {
+export async function getPreviewUrl(versionId: string, fileId?: string): Promise<string | null> {
   const me = await requireSessionMember();
 
   const version = await db.fileVersion.findFirst({
-    where: { id: versionId, file: { box: { teamId: me.teamId } } },
+    where: {
+      id: versionId,
+      file: { box: { teamId: me.teamId }, ...(fileId ? { id: fileId } : {}) },
+    },
     select: { storagePath: true, kind: true, previewUrl: true },
   });
   if (!version) return null;
@@ -425,6 +433,13 @@ export async function getPreviewUrl(versionId: string): Promise<string | null> {
   if (version.previewUrl) return version.previewUrl;
   if (!canOpenInApp(version.kind as FileKind) || !version.storagePath || !isStorageConfigured()) return null;
 
-  const { data } = await storage().createSignedUrl(version.storagePath, PREVIEW_URL_SECONDS);
+  // 서명 주소를 못 만들면 **왜인지 서버에 남긴다.** 조용히 `null` 을 돌려주면 화면은
+  // "이 버전에는 저장된 파일이 없어 미리 볼 수 없습니다"라고 말해 — 멀쩡한 파일을
+  // 없는 파일이라고 Saying 때문이다.
+  const { data, error } = await storage().createSignedUrl(version.storagePath, PREVIEW_URL_SECONDS);
+  if (error) {
+    console.error("[storage] 미리보기 주소 실패:", version.storagePath, error);
+    return null;
+  }
   return data?.signedUrl ?? null;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Btn, Field, Icon, Input, ProgressBar, Rows, Sheet, StatusBadge, Toast, type StatusKey } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { ACCEPT, humanSize } from "./file-rules";
@@ -26,6 +26,7 @@ export function UploadButton({
   dropzone,
   askNote,
   onFinished,
+  onBusyChange,
   className,
 }: {
   boxId: string;
@@ -43,6 +44,14 @@ export function UploadButton({
    * 안 주면 이 버튼이 직접 알림을 띄운다.
    */
   onFinished?: (done: UploadDone[], failedCount: number) => void;
+  /**
+   * 올리는 중인지 위로 알린다.
+   *
+   * 대기열 목록이 **이 버튼 안에** 그려진다. 그래서 이 버튼을 감싼 시트를 닫으면 목록도
+   * 사라지고 파일을 잃어버린다 — 업로드 자체는 XHR 이 살아서 끝나지만, 올리는 사람은
+   * 아무것도 보지 못한 채 팀 알림만 받게 된다. 시트는 이 신호를 보고 닫기를 막는다.
+   */
+  onBusyChange?: (busy: boolean) => void;
   className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -67,10 +76,22 @@ export function UploadButton({
     },
   });
 
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
   const pick = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    // 버전 기록 화면에서 여러 개를 놓으면 모두 같은 파일의 버전이 돼 버린다 — 첫 것만 받는다.
-    const picked = fileId ? [list[0]] : Array.from(list);
+    if (fileId && list.length > 1) {
+      // 버전 기록 화면에서 여러 개를 놓으면 모두 같은 파일의 버전이 돼 버리므로 첫 것만
+      // 받는다. **버린 것을 말해 준다** — 조용히 버리면 세 개를 올린 것으로 보여
+      // 나머지 둘이 없어져 있다.
+      flash(`${list.length}개 중 첫 번째 파일만 받았습니다. 한 번에 하나씩 올려 주세요.`);
+      setPending(null);
+      setNote("");
+      return add([list[0]]);
+    }
+    const picked = Array.from(list);
     if (!askNote) return add(picked);
     setNote("");
     setPending(picked);

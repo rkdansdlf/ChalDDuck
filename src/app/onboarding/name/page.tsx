@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, TopInset, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Undecided } from "@/components/ui";
 import { findMemberByName } from "@/server/actions/onboarding";
 import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
+import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
 const MIN_NAME = 2;
 
@@ -18,6 +19,9 @@ const MIN_NAME = 2;
 export default function NamePage() {
   const router = useRouter();
   const { teamCode, name } = useOnboarding();
+  // 초대 코드 없이 들어온 경우(새로고침·즐겨찾기·링크)에는 이름부터 되돌린다. 예전에는
+  // 여기서 막지 않아 이름·MBTI·역할을 다 고른 뒤 마지막에 조용히 실패했다.
+  const ready = useOnboardingGate(true);
 
   const [existing, setExisting] = useState<{ name: string } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -65,9 +69,10 @@ export default function NamePage() {
     router.push(`/join/rejoin?${query}`);
   };
 
+  if (!ready) return null;
+
   return (
     <AppFrame label="02 이름 입력">
-      <TopInset />
       <AppBar title="팀에 들어가기" sub="1 / 4단계" onBack={() => router.push("/join")} />
       <Body>
         <Progress step={1} total={4} className="mb-[18px]" />

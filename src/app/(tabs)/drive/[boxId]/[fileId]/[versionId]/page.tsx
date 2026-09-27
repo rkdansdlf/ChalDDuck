@@ -28,9 +28,17 @@ export default async function FileViewPage({
 
   const [versions, previewUrl] = await Promise.all([
     getFileVersions(team.id, fileId),
-    // 비공개 버킷이라 서명된 주소를 요청 시점에 만든다.
-    getPreviewUrl(versionId),
+    // 비공개 버킷이라 서명된 주소를 요청 시점에 만든다. **주소의 `fileId` 와 `versionId` 가
+    // 같은 파일인지 서버가 확인한다** — 예전에는 팀 안의 버전이면 그랬고, 그래서
+    // A 파일의 정보 위에 B 파일의 내용이 그려졌다.
+    getPreviewUrl(versionId, fileId),
   ]);
+
+  // 주소를 바꿔치기해 다른 파일의 버전을 열면 **아무것도 보여 주지 않는다.** 예전에는
+  // A 파일의 이름·작성자·마감 배지 위에 B 파일의 그림이 그려졌는데, 그게 고쳐져도 화면은
+  // "파일을 열 수 없습니다"만 보여 주면 사용자는 자기 地址를 잘못 쳤다고도, 누가 바꿔치기
+  // 했다고도 알 수 없다. 어느 쪽인지 분명히 말하는 편이 낫다.
+  if (!versions.some((v) => v.id === versionId)) notFound();
 
   return (
     <FileViewScreen

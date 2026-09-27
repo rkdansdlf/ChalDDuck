@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import { normalizeName } from "@/features/roles/roster-model";
 import { db } from "@/server/db";
 
 /**
@@ -31,7 +32,7 @@ const LOCK_MS = 10 * 60 * 1000;
  * 이 표만 새어도 어느 팀에 누가 있는지 훑을 수 없다.
  */
 export function attemptKey(teamCode: string, name: string): string {
-  const normalized = `${teamCode.trim().toUpperCase()}:${name.trim()}`;
+  const normalized = `${teamCode.trim().toUpperCase()}:${normalizeName(name)}`;
   return createHash("sha256").update(normalized).digest("hex");
 }
 

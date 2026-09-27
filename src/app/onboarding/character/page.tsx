@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { AppFrame, Body, Btn, Dock, Note, Panel, TopInset } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { characterImage } from "@/lib/mbti";
+import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
 /**
  * 05 캐릭터 발급.
@@ -16,12 +17,15 @@ import { characterImage } from "@/lib/mbti";
 export default function CharacterPage() {
   const router = useRouter();
   const { effectiveMbti, fromQuiz } = useOnboarding();
+  // 초대 코드 없이 직접 들어온 경우를 여기서 되돌린다.
+  const ready = useOnboardingGate(Boolean(effectiveMbti));
 
   // 유형 없이 이 화면에 직접 들어온 경우(새로고침·링크 공유) 선택 화면으로 되돌린다.
   useEffect(() => {
-    if (!effectiveMbti) router.replace("/onboarding/mbti");
-  }, [effectiveMbti, router]);
+    if (ready && !effectiveMbti) router.replace("/onboarding/mbti");
+  }, [ready, effectiveMbti, router]);
 
+  if (!ready) return null;
   if (!effectiveMbti) return null;
 
   return (

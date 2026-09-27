@@ -8,18 +8,22 @@ import {
   Body,
   Btn,
   Chip,
+  Field,
   Icon,
+  Input,
   Note,
   Rows,
   Sheet,
   STATUS,
   StatusBadge,
+  Toast,
   Undecided,
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { Task, TaskKind, TaskKindKey } from "@/lib/types";
-import { addTask, cycleTaskStatus } from "@/server/actions/tasks";
+import type { Member, Task, TaskKind, TaskKindKey } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
+import { addTask, cycleTaskStatus, updateTask } from "@/server/actions/tasks";
 
 /**
  * 21 할 일 · 체크리스트.
@@ -32,14 +36,38 @@ import { addTask, cycleTaskStatus } from "@/server/actions/tasks";
 export function TasksScreen({
   tasks,
   kinds,
+  roster,
 }: {
   tasks: Task[];
   kinds: TaskKind[];
+  /** 담당자를 고르는 명단. 지금 팀에 있는 사람만 담긴다. */
+  roster: Member[];
 }) {
   const router = useRouter();
 
   const [filter, setFilter] = useState<TaskKindKey | "all">("all");
   const [adding, setAdding] = useState(false);
+  /** 편집 중인 할 일. 눌린 행 하나. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const { toast, busy, run } = useAction();
+
+  // 명단에는 나간 사람이 이미 없다(`getRoster` 가 걸러 준다). 서버도 같은 조건으로 막는다.
+  const assignable = roster;
+
+  const [draft, setDraft] = useState<TaskDraft>(EMPTY_DRAFT);
+  const [editingDraft, setEditingDraft] = useState<TaskDraft>(EMPTY_DRAFT);
+  const editing = tasks.find((t) => t.id === editingId) ?? null;
+
+  // 열 때만 폼을 채운다 — 매 렌저 다시 쓰면 typing 하는 동안 글자가 흔들린다.
+  const openEditor = (task: Task) => {
+    setEditingId(task.id);
+    setEditingDraft({
+      title: task.title,
+      kind: task.kind,
+      assignee: task.assignee ?? "",
+      due: task.due === "미정" ? "" : task.due,
+    });
+  };
 
   const remaining = tasks.filter((t) => t.status !== "done").length;
   const shown = filter === "all" ? tasks : tasks.filter((t) => t.kind === filter);
@@ -104,10 +132,13 @@ export function TasksScreen({
               <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px]">
                 <button
                   type="button"
-                  onClick={async () => {
-                    await cycleTaskStatus(task.id);
-                    router.refresh();
-                  }}
+                  disabled={busy.cycle}
+                  onClick={() =>
+                    void run("cycle", async () => {
+                      await cycleTaskStatus(task.id);
+                      router.refresh();
+                    }, "상태를 바꾸지 못했습니다. 다시 눌러 주세요.")
+                  }
                   aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
                   className="mt-px flex-none cursor-pointer border-none bg-transparent p-0 text-txt-muted"
                 >
@@ -115,19 +146,28 @@ export function TasksScreen({
                 </button>
 
                 <div className="min-w-0 flex-1">
-                  <div
-                    className={cn(
-                      "text-pretty-keep font-semibold text-[14.5px] leading-[1.5]",
-                      done ? "text-txt-faint line-through" : "text-txt-strong",
-                    )}
+                  <button
+                    type="button"
+                    onClick={() => openEditor(task)}
+                    className="block w-full cursor-pointer border-none bg-transparent p-0 text-left"
                   >
-                    {task.title}
-                  </div>
+                    <div
+                      className={cn(
+                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5]",
+                        done ? "text-txt-faint line-through" : "text-txt-strong",
+                      )}
+                    >
+                      {task.title}
+                    </div>
+                  </button>
 
                   <div className="mt-[7px] flex flex-wrap gap-[5px]">
                     <Chip icon={kind.icon as IconName}>{kind.name}</Chip>
                     {task.assignee ? (
-                      <Chip icon="user-round">{task.assignee}</Chip>
+                      <Chip icon={task.isMine ? "user-check" : "user-round"}>
+                        {task.isMine ? `${task.assignee}(나)` : task.assignee}
+                        {task.assigneeLeft ? " · 팀 퇴장" : ""}
+                      </Chip>
                     ) : (
                       <Chip tone="warn" icon="circle-dashed">
                         담당자 미정
@@ -160,32 +200,202 @@ export function TasksScreen({
         </Undecided>
       </Body>
 
-      <Sheet open={adding} title="업무 종류 고르기" onClose={() => setAdding(false)}>
-        <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
-          어떤 종류의 할 일인지 먼저 고르면 목록에 추가됩니다. 제목·담당자·기한은 목록에서 이어서
-          채웁니다.
-        </p>
-        <div className="flex flex-col gap-2">
+      <Sheet
+        open={adding}
+        title="할 일 고쳐 적기"
+        onClose={() => setAdding(false)}
+        footer={
+          <Btn
+            full
+            size="lg"
+            disabled={busy.add || !draft.title.trim()}
+            onClick={() =>
+              void run(
+                "add",
+                async () => {
+                  await addTask(draft.kind, draft.title, {
+                    assignee: draft.assignee || null,
+                    due: draft.due,
+                  });
+                  setAdding(false);
+                  setFilter("all");
+                  setDraft(EMPTY_DRAFT);
+                  router.refresh();
+                  return "추가했습니다";
+                },
+                "추가하지 못했습니다. 다시 시도해 주세요.",
+              )
+            }
+          >
+            목록에 넣기
+          </Btn>
+        }
+      >
+        <TaskFields
+          draft={draft}
+          onChange={setDraft}
+          kinds={kinds}
+          assignable={assignable}
+        />
+      </Sheet>
+
+      <Sheet
+        open={editing !== null}
+        title="할 일 고쳐 적기"
+        onClose={() => setEditingId(null)}
+        footer={
+          <Btn
+            full
+            size="lg"
+            disabled={busy.edit || !editingDraft.title.trim()}
+            onClick={() =>
+              void run(
+                "edit",
+                async () => {
+                  if (!editing) return;
+                  await updateTask(editing.id, {
+                    title: editingDraft.title,
+                    assignee: editingDraft.assignee || null,
+                    due: editingDraft.due,
+                  });
+                  setEditingId(null);
+                  router.refresh();
+                  return "고쳐 적었습니다";
+                },
+                "고치지 못했습니다. 다시 시도해 주세요.",
+              )
+            }
+          >
+            저장하기
+          </Btn>
+        }
+      >
+        <TaskFields
+          draft={editingDraft}
+          onChange={setEditingDraft}
+          kinds={kinds}
+          assignable={assignable}
+        />
+      </Sheet>
+
+      <Toast msg={toast} />
+    </>
+  );
+}
+
+/**
+ * 할 일 한 개의 제목·종류·담당자·기한.
+ *
+ * 추가와 편집이 **같은 폼**을 쓴다 — 예전에는 추가만 있었고 "목록에서 이어서 채웁니다"
+ * 라는 문장만 있고 그 길이 없었다. 사람이 넣은 할 일은 제목이 `새 팀 업무` 로, 담당자가
+ * 미정으로 남았는데, 담당자가 없으면 콕 찌르기 대상이 되지 못해 사실상 쓸 수 없었다.
+ */
+type TaskDraft = {
+  title: string;
+  kind: TaskKindKey;
+  /** 이름. 비면 미정. */
+  assignee: string;
+  /** 비어 있으면 미정으로 저장된다. */
+  due: string;
+};
+
+const EMPTY_DRAFT: TaskDraft = { title: "", kind: "team", assignee: "", due: "" };
+
+function TaskFields({
+  draft,
+  onChange,
+  kinds,
+  assignable,
+}: {
+  draft: TaskDraft;
+  onChange: (next: TaskDraft) => void;
+  kinds: TaskKind[];
+  assignable: Member[];
+}) {
+  return (
+    <>
+      {/* `Field` 는 한 입력에 대한 `<label for>` 이라 render-prop 이다. 종류·담당자는
+          여러 개를 고르는 그룹이라 `role="group"` 으로 묶고 라벨을 따로 준다. */}
+      <Field label="무엇을 해야 하나요" required>
+        {(p) => (
+          <Input
+            {...p}
+            value={draft.title}
+            onChange={(value) => onChange({ ...draft, title: value })}
+            placeholder="예: 실험 결과 정리해서 공유"
+            maxLength={120}
+          />
+        )}
+      </Field>
+
+      <div className="mb-3.5">
+        <div className="t-label mb-1.5 block text-txt-strong">종류</div>
+        <div role="group" aria-label="할 일 종류" className="flex flex-wrap gap-[7px]">
           {kinds.map((kind) => (
             <button
               key={kind.key}
               type="button"
-              onClick={async () => {
-                setAdding(false);
-                setFilter("all");
-                await addTask(kind.key, `새 ${kind.name}`);
-                router.refresh();
-              }}
-              className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 py-3 text-left"
+              aria-pressed={draft.kind === kind.key}
+              onClick={() => onChange({ ...draft, kind: kind.key })}
+              className={chipClass(draft.kind === kind.key)}
             >
-              <Icon name={kind.icon as IconName} size={18} />
-              <span className="font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
-                {kind.name}
-              </span>
+              <Icon name={kind.icon as IconName} size={15} />
+              {kind.name}
             </button>
           ))}
         </div>
-      </Sheet>
+      </div>
+
+      <div className="mb-3.5">
+        <div className="t-label mb-1.5 block text-txt-strong">담당자</div>
+        <div role="group" aria-label="담당자" className="flex flex-wrap gap-[7px]">
+          <button
+            type="button"
+            aria-pressed={draft.assignee === ""}
+            onClick={() => onChange({ ...draft, assignee: "" })}
+            className={chipClass(draft.assignee === "")}
+          >
+            미정
+          </button>
+          {assignable.map((m) => {
+            const on = draft.assignee === m.name;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => onChange({ ...draft, assignee: m.name })}
+                className={chipClass(on)}
+              >
+                {m.name}
+                {m.isMe ? "(나)" : ""}
+              </button>
+            );
+          })}
+        </div>
+        <div className="t-cap text-pretty-keep mt-1.5 text-txt-muted">
+          비워 두면 미정으로 남습니다. 담당자가 정해져야 콕 찌르기가 됩니다.
+        </div>
+      </div>
+
+      <Field label="기한">
+        {(p) => (
+          <Input
+            {...p}
+            value={draft.due}
+            onChange={(value) => onChange({ ...draft, due: value })}
+            placeholder="예: 다음 발표까지"
+            maxLength={40}
+          />
+        )}
+      </Field>
     </>
+  );
+}
+
+function chipClass(on: boolean) {
+  return cn(
+    "inline-flex min-h-11 cursor-pointer items-center rounded-chip px-3 text-[13px] font-bold leading-none",
+    on ? "border border-transparent bg-action text-on-action" : "border border-line bg-card text-txt",
   );
 }

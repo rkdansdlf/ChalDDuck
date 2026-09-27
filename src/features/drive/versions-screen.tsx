@@ -15,7 +15,7 @@ import {
   Toast,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
-import { downloadVersion } from "./file-display";
+import { DOWNLOAD_FAILED_TEXT, downloadVersion } from "./file-display";
 import { UploadButton } from "./upload-button";
 
 /**
@@ -46,7 +46,8 @@ export function VersionsScreen({
   };
 
   const download = async (version: FileVersion) => {
-    if (!(await downloadVersion(version.id))) flash("이 버전에는 내려받을 파일이 없습니다");
+    const outcome = await downloadVersion(version.id);
+    if (outcome !== "started") flash(DOWNLOAD_FAILED_TEXT[outcome]);
   };
 
   return (

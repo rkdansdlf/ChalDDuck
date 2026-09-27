@@ -8,6 +8,7 @@ import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { unwrapAi } from "./ai-result";
 import { useAiDraft } from "./use-ai-draft";
 import { cn } from "@/lib/cn";
+import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 import type { SentenceMode } from "@/lib/types";
 
 /**
@@ -105,6 +106,7 @@ export function SentenceScreen({
             <Textarea
               value={text}
               onChange={setText}
+              limit={AI_INPUT_LIMIT}
               minHeight={100}
               placeholder="바꾸고 싶은 글을 적어 주세요"
               aria-label="바꿀 글"

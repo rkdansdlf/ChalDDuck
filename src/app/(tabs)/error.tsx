@@ -21,7 +21,10 @@ export default function TabsError({
   const router = useRouter();
 
   useEffect(() => {
-    console.error(error);
+    // 운영에서 브라우저에 보이는 것은 `Minified React error #441` 뿐이다 — 서버가
+    // RSC 페이로드로 넘긴 에러를 클라이언트가 되살린 것이고, 메시지와 스택이 지워져
+    // 있다. 서버 로그와 이어지는 끈은 `digest` 하나뿐이므로 반드시 함께 찍는다.
+    console.error(`[화면 오류] digest=${error.digest ?? "없음"}`, error);
   }, [error]);
 
   return (
@@ -34,7 +37,8 @@ export default function TabsError({
           onHome={() => router.push("/home")}
           digest={error.digest}
         >
-          잠시 연결이 끊겼을 수 있습니다. 다시 시도해 보세요. 다른 탭은 그대로 쓸 수 있습니다.
+          서버가 이 화면을 그리지 못했습니다. 다시 시도해 보세요. 계속 같으면 아래 오류
+          번호를 알려 주세요. 다른 탭은 그대로 쓸 수 있습니다.
         </Failure>
       </Body>
     </>

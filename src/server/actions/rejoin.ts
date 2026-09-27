@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { normalizeName } from "@/features/roles/roster-model";
 import { attemptKey, clearAttempts, countFailure, isLocked } from "@/server/auth/attempts";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
@@ -32,7 +33,7 @@ async function findMember(teamCode: string, name: string) {
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return null;
   return db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: name.trim() } },
+    where: { teamId_name: { teamId: team.id, name: normalizeName(name) } },
   });
 }
 

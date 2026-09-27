@@ -19,6 +19,7 @@ import {
 } from "@/components/ui";
 import type { JoinRequestRow, MyDevice, RejoinRequest } from "@/data/api";
 import type { Member } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import {
   regenerateRejoinCode,
   resolveJoinRequest,
@@ -58,53 +59,47 @@ export function AccessScreen({
   others: Member[];
 }) {
   const router = useRouter();
-  const [working, setWorking] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  // 이 화면의 동작은 서로 배타적이다 — 하나가 끝나기 전에 다른 것을 받지 않는다.
+  const { toast, busy, flash, run } = useAction();
+  const working = busy.act === true;
   /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기. */
   const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | null>(null);
   const [confirmName, setConfirmName] = useState("");
 
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
-  };
-
-  const resolve = async (id: string, approve: boolean, who: string) => {
-    if (working) return;
-    setWorking(true);
-    try {
-      const result = await resolveRejoinClaim(id, approve);
-      router.refresh();
-      flash(
-        result === "gone"
+  const resolve = (id: string, approve: boolean, who: string) =>
+    run(
+      "act",
+      async () => {
+        const result = await resolveRejoinClaim(id, approve);
+        router.refresh();
+        return result === "gone"
           ? "이미 정리된 요청입니다"
           : approve
             ? `${who}님의 재입장을 승인했습니다`
-            : `${who}님의 요청을 거절했습니다`,
-      );
-    } finally {
-      setWorking(false);
-    }
-  };
+            : `${who}님의 요청을 거절했습니다`;
+      },
+      "처리하지 못했습니다. 다른 기기에서 이미 처리되었을 수 있어요.",
+    );
 
-  const resolveJoin = async (id: string, approve: boolean, who: string) => {
-    if (working) return;
-    setWorking(true);
-    try {
-      const result = await resolveJoinRequest(id, approve);
-      router.refresh();
-      flash(
-        result === "gone"
+  const resolveJoin = (id: string, approve: boolean, who: string) =>
+    run(
+      "act",
+      async () => {
+        const result = await resolveJoinRequest(id, approve);
+        router.refresh();
+        // **"들어왔습니다"라고 말하면 안 된다.** 팀원이 되는 것은 요청한 그 브라우저에서
+        // 일어난다 — 세션 쿠키를 심을 수 있는 곳이 거기뿐이라서다(`actions/onboarding.ts`).
+        // 여기서 만들면 팀장 기기에 그 사람의 계정이 생겨 버린다. 그러니 승인을 알리는
+        // 것과 실제로 들어온 것을 구분해 말해야 한다.
+        return result === "gone"
           ? "이미 정리된 요청입니다"
           : approve
-            ? `${who}님이 팀에 들어왔습니다`
-            : `${who}님의 요청을 거절했습니다`,
-      );
-    } finally {
-      setWorking(false);
-    }
-  };
+            ? `${who}님을 승인했습니다 — 상대가 승인 화면을 열어야 팀에 들어옵니다`
+            : `${who}님의 요청을 거절했습니다`;
+      },
+      "처리하지 못했습니다. 다른 기기에서 이미 처리되었을 수 있어요.",
+    );
 
   return (
     <>
@@ -185,6 +180,13 @@ export function AccessScreen({
                         <div className="mt-1 flex flex-wrap gap-[5px]">
                           <Chip icon="info">{request.device}</Chip>
                           <Chip icon="calendar-clock">{request.when}</Chip>
+                          {/* 나갔다 온 사람이다. 팀장에게 그 사실이 없으면 "이 사람이 누구지"
+                              가 되어 승인을 미루게 되고, 그동안 요청자는 기다리기만 한다. */}
+                          {request.leftBefore ? (
+                            <Chip tone="warn" icon="undo-2">
+                              팀을 나갔다 온 사람
+                            </Chip>
+                          ) : null}
                         </div>
                         <div className="mt-[9px] flex flex-wrap gap-1.5">
                           <Btn
@@ -253,16 +255,17 @@ export function AccessScreen({
                   v="outline"
                   icon="x"
                   disabled={working}
-                  onClick={async () => {
-                    setWorking(true);
-                    try {
-                      await revokeDevice(device.id);
-                      router.refresh();
-                      flash("그 기기에서 내보냈습니다");
-                    } finally {
-                      setWorking(false);
-                    }
-                  }}
+                  onClick={() =>
+                    void run(
+                      "act",
+                      async () => {
+                        await revokeDevice(device.id);
+                        router.refresh();
+                        return "그 기기에서 내보냈습니다";
+                      },
+                      "내보내지 못했습니다. 다시 시도해 주세요.",
+                    )
+                  }
                 >
                   내보내기
                 </Btn>
@@ -273,14 +276,36 @@ export function AccessScreen({
 
         <SecTitle note="잃어버렸다면 새로 받으세요">재입장 코드</SecTitle>
         {fresh ? (
-          <Panel s="yellow" pad={18} r={18} className="mb-3 text-center">
-            <div className="font-mono font-extrabold text-[20px] leading-[1.4] tracking-[.08em] text-ink-900">
-              {fresh}
-            </div>
-            <div className="keep-all mt-2 font-medium text-[13px] leading-[1.5] text-yellow-700">
-              이 화면을 지나면 다시 볼 수 없습니다. 이전 코드는 이제 쓸 수 없습니다.
-            </div>
-          </Panel>
+          <>
+            <Panel s="yellow" pad={18} r={18} className="mb-2 text-center">
+              <div className="font-mono font-extrabold text-[20px] leading-[1.4] tracking-[.08em] text-ink-900">
+                {fresh}
+              </div>
+              <div className="keep-all mt-2 font-medium text-[13px] leading-[1.5] text-yellow-700">
+                이 화면을 지나면 다시 볼 수 없습니다. 이전 코드는 이제 쓸 수 없습니다.
+              </div>
+            </Panel>
+
+            {/* 최초 발급 화면과 같은 복사 수단을 둔다. 예전에는 여기서 복사도 확인도 없이
+                한 번 눌러 끝났는데, 그럼 새 코드를 받아 놓고 지나쳐 두면 기존 코드도 새
+                코드도 둘 다 없는 사람이 된다. */}
+            <Btn
+              v="outline"
+              full
+              icon="copy"
+              className="mb-3"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(fresh);
+                  flash("코드를 복사했습니다");
+                } catch {
+                  flash("복사하지 못했습니다. 코드를 직접 옮겨 적어 주세요.");
+                }
+              }}
+            >
+              코드 복사하기
+            </Btn>
+          </>
         ) : (
           <Panel s="fill" pad={16} className="mb-3">
             <p className="t-note keep-all m-0 text-center text-txt-muted">
@@ -295,14 +320,16 @@ export function AccessScreen({
           size="sm"
           icon="key-round"
           disabled={working}
-          onClick={async () => {
-            setWorking(true);
-            try {
-              setFresh(await regenerateRejoinCode());
-            } finally {
-              setWorking(false);
-            }
-          }}
+          onClick={() =>
+            void run(
+              "act",
+              async () => {
+                setFresh(await regenerateRejoinCode());
+                return "새 코드를 받았습니다 — 이전 코드는 이제 쓸 수 없습니다";
+              },
+              "새 코드를 받지 못했습니다. 다시 시도해 주세요.",
+            )
+          }
         >
           재입장 코드 새로 받기
         </Btn>
@@ -386,20 +413,22 @@ export function AccessScreen({
               key={member.id}
               type="button"
               disabled={working}
-              onClick={async () => {
-                setWorking(true);
-                try {
-                  if (sheet === "handLeave") await handOverAndLeave(member.id);
-                  else {
+              onClick={() =>
+                void run(
+                  "act",
+                  async () => {
+                    if (sheet === "handLeave") {
+                      await handOverAndLeave(member.id);
+                      return;
+                    }
                     await transferLeadership(member.id);
                     setSheet(null);
                     router.refresh();
-                    flash(`${member.name}님이 팀장이 되었습니다`);
-                  }
-                } finally {
-                  setWorking(false);
-                }
-              }}
+                    return `${member.name}님이 팀장이 되었습니다`;
+                  },
+                  "팀장을 넘기지 못했습니다. 다시 시도해 주세요.",
+                )
+              }
               className="box-border flex min-h-[52px] w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 py-3 text-left"
             >
               <Avatar name={member.name} mbti={member.mbti} size={30} />
@@ -423,14 +452,11 @@ export function AccessScreen({
           <Btn
             full
             disabled={working}
-            onClick={async () => {
-              setWorking(true);
-              try {
+            onClick={() =>
+              void run("act", async () => {
                 await leaveTeam();
-              } finally {
-                setWorking(false);
-              }
-            }}
+              }, "나가지 못했습니다. 다시 시도해 주세요.")
+            }
           >
             나가기
           </Btn>
@@ -458,14 +484,15 @@ export function AccessScreen({
           <Btn
             full
             disabled={working || confirmName.trim() !== teamName}
-            onClick={async () => {
-              setWorking(true);
-              try {
-                await disbandTeam(confirmName);
-              } finally {
-                setWorking(false);
-              }
-            }}
+            onClick={() =>
+              void run(
+                "act",
+                async () => {
+                  await disbandTeam(confirmName);
+                },
+                "없애지 못했습니다. 다시 시도해 주세요.",
+              )
+            }
           >
             없애기
           </Btn>

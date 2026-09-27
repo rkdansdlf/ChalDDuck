@@ -65,6 +65,11 @@ export function ContribReportScreen({
             <div key={row.memberId} className="mb-[11px] border-b border-line pb-[11px]">
               <div className="flex items-baseline gap-[7px]">
                 <span className="font-bold text-[14px] leading-[1.4] text-ink-900">{row.who}</span>
+                {row.left ? (
+                  <span className="font-medium text-[12px] leading-[1.4] text-txt-faint">
+                    팀 퇴장
+                  </span>
+                ) : null}
                 <span className="font-medium text-[13px] leading-[1.4] text-txt-muted">
                   합의한 역할 · {row.role}
                 </span>

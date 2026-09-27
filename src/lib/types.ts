@@ -515,6 +515,8 @@ export type TeamCheckRecord = {
 export type ContribReportRow = {
   memberId: string;
   who: string;
+  /** 팀을 나갔다 온 사람인지. 기록은 남으므로 줄도 남고, 구분만 해 준다. */
+  left: boolean;
   /** 합의한 역할 이름. */
   role: string;
   confirmed: number;
@@ -542,6 +544,10 @@ export type Task = {
   /** 담당자. 아직 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다. */
   assignee: string | null;
   mbti: MbtiType | null;
+  /** 그 담당자가 이미 팀을 나갔는지. 알림은 닿지 않는다 — 화면이 확인해야 한다. */
+  assigneeLeft: boolean;
+  /** 이 업무의 담당자가 나인지. */
+  isMine: boolean;
   due: string;
   status: "todo" | "doing" | "done";
   /** AI 서기가 만든 항목인지 사람이 직접 넣은 것인지. 화면에 배지로 남는다. */

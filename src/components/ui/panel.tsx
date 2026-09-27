@@ -18,13 +18,31 @@ export type PanelProps = {
   onClick?: () => void;
 };
 
+/**
+ * 눌릴 수 있는 판.
+ *
+ * `onClick` 이 있으면 **진짜 `<button>`** 으로 그린다. `<div onClick>` 은 포인터로는
+ * 동작하지만 Tab 키로 도달할 수 없고 Enter·Space 도 먹지 않는다 — 키보드만 쓰는 사람은
+ * 그 카드가 있는 줄을 건너뛰게 된다. 홈 화면의 "가까운 일정" 카드가 거기 들어가 있다.
+ *
+ * 스타일은 `SURFACE` 를 그대로 쓴다. 눌림 표시가 필요하면 `className` 으로 준다.
+ */
 export function Panel({ children, s = "card", pad = 16, r = 20, className, style, onClick }: PanelProps) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn("block w-full cursor-pointer border-none text-left", SURFACE[s], className)}
+        style={{ borderRadius: r, padding: pad, ...style }}
+      >
+        {children}
+      </button>
+    );
+  }
+
   return (
-    <div
-      onClick={onClick}
-      className={cn(SURFACE[s], onClick && "cursor-pointer", className)}
-      style={{ borderRadius: r, padding: pad, ...style }}
-    >
+    <div className={cn(SURFACE[s], className)} style={{ borderRadius: r, padding: pad, ...style }}>
       {children}
     </div>
   );

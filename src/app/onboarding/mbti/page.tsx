@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Dock, Icon, Note, Progress, TopInset } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Icon, Note, Progress } from "@/components/ui";
 import { setMbti, startQuiz, useOnboarding } from "@/features/onboarding/onboarding-state";
+import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 import { MBTI_TYPES } from "@/lib/mbti";
 import { cn } from "@/lib/cn";
 
@@ -15,10 +16,11 @@ import { cn } from "@/lib/cn";
 export default function MbtiPage() {
   const router = useRouter();
   const { mbti } = useOnboarding();
+  const ready = useOnboardingGate(true);
+  if (!ready) return null;
 
   return (
     <AppFrame label="03 MBTI 선택">
-      <TopInset />
       <AppBar title="내 MBTI" sub="2 / 4단계" onBack={() => router.push("/onboarding/name")} />
       <Body dense>
         <Progress step={2} total={4} className="mt-1 mb-[18px]" />

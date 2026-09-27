@@ -38,6 +38,24 @@ export function DriveScreen({
   const router = useRouter();
   const [picking, setPicking] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  /** 제출함별로 올리는 중인가. 시트를 닫지 않기 위한 감시다. */
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+
+  /**
+   * 올리는 중에는 시트를 닫지 않는다.
+   *
+   * 대기열 목록이 시트 **안쪽**에 그려지므로 닫으면 진행도·실패 이유·"다시 시도"가 함께
+   * 사라진다. 업로드 자체는 살아서 끝나므로 파일은 올라가는데, 올리는 사람은 아무것도
+   * 보지 못하고 팀 알림만 받게 된다 — 본인이 올린 걸 모르는 채로.
+   */
+  const closePicking = () => {
+    if (Object.values(uploading).some(Boolean)) {
+      setToast("올리는 중입니다. 끝나면 닫을 수 있어요");
+      window.setTimeout(() => setToast(null), 2600);
+      return;
+    }
+    setPicking(false);
+  };
 
   /**
    * 시트에서 올리기가 끝났을 때.
@@ -136,7 +154,7 @@ export function DriveScreen({
         </Note>
       </Body>
 
-      <Sheet open={picking} title="어느 제출함에 올릴까요" onClose={() => setPicking(false)}>
+      <Sheet open={picking} title="어느 제출함에 올릴까요" onClose={closePicking}>
         {boxes.length === 0 ? (
           <Note tone="warn" icon="folder" title="아직 제출함이 없습니다">
             역할이 정해지면 역할별 제출함이 생깁니다.
@@ -151,7 +169,12 @@ export function DriveScreen({
                     {box.owner ?? "담당자 미정"} · {box.due} 마감
                   </span>
                 </span>
-                <UploadButton boxId={box.id} label="여기에 올리기" onFinished={afterUpload(box.id)} />
+                <UploadButton
+                  boxId={box.id}
+                  label="여기에 올리기"
+                  onFinished={afterUpload(box.id)}
+                  onBusyChange={(b) => setUploading((prev) => ({ ...prev, [box.id]: b }))}
+                />
               </div>
             ))}
           </Rows>

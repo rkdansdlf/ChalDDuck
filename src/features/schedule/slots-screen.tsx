@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
@@ -52,8 +53,8 @@ export function SlotsScreen({
 
   const { stage, slot: proposed } = proposal;
   const [pickedId, setPickedId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [requesting, setRequesting] = useState(false);
+  const { toast, busy, flash, run } = useAction();
+  const requesting = busy.request === true;
 
   const picked = week.slots.find((s) => s.id === pickedId) ?? null;
   /**
@@ -70,16 +71,24 @@ export function SlotsScreen({
   const noFullWeek = !noSlots && !week.hasFullAvailability;
   const bestAvailable = noSlots ? 0 : Math.max(...week.slots.map((s) => s.available));
 
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
-  };
-
+  /**
+   * 후보를 팀에 제안한다.
+   *
+   * 화면을 오래 열어둔 사이 팀원이 시간표를 바꿔 두면 그 사이 후보가 다시 만들어져
+   * 고른 칸이 사라진다. 그때 서버가 "후보를 찾을 수 없습니다"로 거절하는데, 예전에는
+   * 예외를 그대로 두었으므로 아무 말 없이 아무 일도 일어나지 않았다.
+   */
   const propose = async () => {
     if (!picked) return;
-    await proposeMeeting(picked.id);
-    router.refresh();
-    flash(`팀원 ${week.total - 1}명에게 확인 요청을 보냈습니다`);
+    await run(
+      "propose",
+      async () => {
+        await proposeMeeting(picked.id);
+        router.refresh();
+        return `팀원 ${week.total - 1}명에게 확인 요청을 보냈습니다`;
+      },
+      "제안하지 못했습니다. 후보가 바뀌었을 수 있으니 시간을 다시 골라 주세요.",
+    );
   };
 
   return (
@@ -88,8 +97,6 @@ export function SlotsScreen({
         title="회의 시간"
         sub={team.name}
         onBack={() => router.push("/schedule")}
-        action="settings-2"
-        actionLabel="회의 설정"
       />
 
       <Body dense>
@@ -110,13 +117,17 @@ export function SlotsScreen({
           </div>
         </Panel>
 
+        {/* 이월은 결정을 미룬 것이다. 그래도 시간 고르기는 열려 있어야 한다 — 예전에는
+            이 카드 하나만 떠서 후보도 Dock 도 없이 갇혔다(되돌아갈 길이 없었다). */}
         {stage === "carried" ? (
           <ResultPanel
             icon="calendar-arrow-up"
             title="다음 주로 이월했습니다"
-            note="이번 주 회의는 열리지 않습니다"
+            note="이번 주 회의는 열리지 않습니다. 아래에서 다른 시간을 다시 고를 수 있어요"
           />
-        ) : stage === "confirmed" && proposed ? (
+        ) : null}
+
+        {stage === "confirmed" && proposed ? (
           <ResultPanel
             icon="calendar-check"
             title={`${proposed.day} ${proposed.time} · ${DEFAULT_MINUTES}분으로 확정`}
@@ -271,21 +282,18 @@ export function SlotsScreen({
                     size="sm"
                     icon="user-round"
                     disabled={!picked || requesting}
-                    onClick={async () => {
+                    onClick={() => {
                       if (!picked) return;
-                      setRequesting(true);
-                      try {
-                        const sent = await requestRemoteInput(picked.id);
-                        flash(
-                          sent > 0
+                      void run(
+                        "request",
+                        async () => {
+                          const sent = await requestRemoteInput(picked.id);
+                          return sent > 0
                             ? `이 시간에 못 오는 ${sent}명에게 의견 요청을 보냈습니다`
-                            : "이 시간에 빠지는 다른 팀원이 없습니다",
-                        );
-                      } catch {
-                        flash("요청을 보내지 못했습니다. 잠시 뒤 다시 눌러 주세요.");
-                      } finally {
-                        setRequesting(false);
-                      }
+                            : "이 시간에 빠지는 다른 팀원이 없습니다";
+                        },
+                        "요청을 보내지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+                      );
                     }}
                   >
                     {picked ? "빠진 팀원에게 의견 요청하기" : "시간을 고른 뒤 요청할 수 있습니다"}
@@ -294,10 +302,18 @@ export function SlotsScreen({
                     v="ghost"
                     size="sm"
                     icon="arrow-right"
-                    onClick={async () => {
-                      await carryOverMeeting();
-                      router.refresh();
-                    }}
+                    disabled={busy.carry}
+                    onClick={() =>
+                      void run(
+                        "carry",
+                        async () => {
+                          await carryOverMeeting();
+                          router.refresh();
+                          return "이번 주 회의를 다음 주로 넘겼습니다";
+                        },
+                        "이월하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+                      )
+                    }
                   >
                     다음 주로 이월 확정하기
                   </Btn>
@@ -309,7 +325,8 @@ export function SlotsScreen({
         )}
       </Body>
 
-      {stage === "idle" ? (
+      {/* 이월은 보류일 뿐 결정이 아니므로, 후보를 고르고 다시 제안할 수 있다. */}
+      {stage === "idle" || stage === "carried" ? (
         <Dock>
           {/* 후보가 없을 때 "시간을 골라 주세요"를 비활성으로 띄우면 고를 것이 없는데
               고르라고 하는 셈이다. 그 상태에서 할 수 있는 일은 시간표를 내는 것뿐이다. */}
@@ -393,13 +410,15 @@ function ResultPanel({
   icon,
   title,
   note,
+  className = "mb-3",
 }: {
   icon: "calendar-check" | "calendar-arrow-up";
   title: string;
   note: string;
+  className?: string;
 }) {
   return (
-    <Panel s="yellow" pad={18} r={18} className="text-center">
+    <Panel s="yellow" pad={18} r={18} className={`text-center ${className}`}>
       <div
         className="mb-2 inline-flex size-11 items-center justify-center rounded-full text-yellow-700"
         style={{ background: "rgba(255,255,255,.75)" }}

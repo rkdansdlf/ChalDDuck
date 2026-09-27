@@ -20,6 +20,7 @@ import {
   Undecided,
 } from "@/components/ui";
 import type { Member, TeamCheckRecord } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import { confirmContribRecord, disputeContribRecord } from "@/server/actions/contrib";
 import { EvidenceLink } from "./evidence-link";
 import { StepRail } from "./step-rail";
@@ -38,54 +39,45 @@ export function ContribTeamScreen({
   roster: Member[];
 }) {
   const router = useRouter();
-  const [working, setWorking] = useState(false);
   const [disputing, setDisputing] = useState<TeamCheckRecord | null>(null);
   const [reason, setReason] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, busy, run } = useAction();
+  const working = busy.act === true;
 
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
-  };
-
-  const confirm = async (record: TeamCheckRecord) => {
-    if (working) return;
-    setWorking(true);
-    try {
-      const result = await confirmContribRecord(record.id);
-      router.refresh();
-      flash(
-        result === "ok"
+  const confirm = (record: TeamCheckRecord) =>
+    run(
+      "act",
+      async () => {
+        const result = await confirmContribRecord(record.id);
+        router.refresh();
+        return result === "ok"
           ? `${record.who}님의 기록을 확인했습니다`
           : result === "already"
             ? "이미 확인한 기록입니다"
             : result === "mine"
               ? "자기 기록은 확인할 수 없습니다"
-              : "의견 차이가 정리된 뒤에 확인할 수 있습니다",
-      );
-    } finally {
-      setWorking(false);
-    }
-  };
+              : "의견 차이가 정리된 뒤에 확인할 수 있습니다";
+      },
+      "확인하지 못했습니다. 다시 시도해 주세요.",
+    );
 
-  const submitDispute = async () => {
-    if (!disputing || !reason.trim() || working) return;
-    setWorking(true);
-    try {
-      const result = await disputeContribRecord(disputing.id, reason);
-      setDisputing(null);
-      setReason("");
-      router.refresh();
-      flash(
-        result === "ok"
+  const submitDispute = () => {
+    if (!disputing || !reason.trim()) return Promise.resolve(false);
+    return run(
+      "act",
+      async () => {
+        const result = await disputeContribRecord(disputing.id, reason);
+        setDisputing(null);
+        setReason("");
+        router.refresh();
+        return result === "ok"
           ? "적은 의견이 기록에 남았습니다"
           : result === "taken"
             ? "이미 다른 의견이 걸려 있습니다"
-            : "자기 기록에는 적을 수 없습니다",
-      );
-    } finally {
-      setWorking(false);
-    }
+            : "자기 기록에는 적을 수 없습니다";
+      },
+      "의견을 남기지 못했습니다. 다시 시도해 주세요.",
+    );
   };
 
   const confirmed = records.filter((r) => r.state === "ok").length;

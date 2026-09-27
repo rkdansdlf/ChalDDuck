@@ -19,6 +19,7 @@ import {
 import { saveMyBusyBlocks } from "@/server/actions/schedule";
 import { cn } from "@/lib/cn";
 import type { BusyBlock, BusyKind, ScheduleWeek } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import {
   blocksInWeek,
   blocksShape,
@@ -89,8 +90,7 @@ export function MyTimeScreen({
   // 방금 만들고 아직 칠하지 않은 사유 이름. 블록에 쓰이기 전에도 칩으로 남아 있어야 한다.
   const [newLabels, setNewLabels] = useState<string[]>([]);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { toast, busy, flash, run } = useAction();
 
   /** 칩 줄에 보일 내 사유 이름들 — 블록에 쓰인 것 + 방금 만든 것. */
   const labels = useMemo(
@@ -122,11 +122,6 @@ export function MyTimeScreen({
     return `${day} ${from}시~${from + b.hours}시`;
   };
   const repeatText = (b: Draft) => (b.weekOf ? `${weekNameOf(b.weekOf)}만` : "매주");
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2000);
-  };
 
   const paint = (day: number, startHour: number, length: number) => {
     setBlocks((prev) =>
@@ -190,15 +185,22 @@ export function MyTimeScreen({
     [blocks, initialBlocks],
   );
 
+  /**
+   * 저장하고 다음 화면으로 간다. **저장이 실패하면 넘어가지 않는다.**
+   *
+   * 예전에는 `finally` 만 있어서 저장이 거절돼도 사용자에게는 아무 말이 없고,
+   * 탭 이동을 막아 둔 채(`e.preventDefault()`) 화면만 그대로였다. 서버가 말해 주는
+   * 사유를 그대로 보여 주고 여기서 멈춘다 — 적어 둔 안 되는 시간은 화면에 남아 있다.
+   */
   const saveAndGo = async (href: string) => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await saveMyBusyBlocks(blocks);
-      router.push(href);
-    } finally {
-      setSaving(false);
-    }
+    await run(
+      "save",
+      async () => {
+        await saveMyBusyBlocks(blocks);
+        router.push(href);
+      },
+      "저장하지 못했습니다. 적은 시간은 화면에 남아 있으니 다시 시도해 주세요.",
+    );
   };
 
   const save = () => saveAndGo("/schedule/slots");
@@ -354,8 +356,14 @@ export function MyTimeScreen({
       </Body>
 
       <Dock>
-        <Btn full size="lg" onClick={save} iconRight="arrow-right" disabled={saving}>
-          {saving ? "저장 중…" : `${filled}칸 저장하고 회의 시간 보기`}
+        <Btn
+          full
+          size="lg"
+          onClick={save}
+          iconRight="arrow-right"
+          disabled={busy.save}
+        >
+          {busy.save ? "저장 중…" : `${filled}칸 저장하고 회의 시간 보기`}
         </Btn>
       </Dock>
 

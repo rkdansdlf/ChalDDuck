@@ -6,7 +6,7 @@ import { AppBar, Body, Chip, Icon, IconButton, Note, Panel, Rows, SecTitle, Stat
 import { cn } from "@/lib/cn";
 import type { SubmissionBox, SubmittedFile } from "@/lib/types";
 import { DeadlineRow } from "./deadline-row";
-import { KIND_ICON, downloadVersion } from "./file-display";
+import { DOWNLOAD_FAILED_TEXT, KIND_ICON, downloadVersion } from "./file-display";
 import { UploadButton, uploadSummary } from "./upload-button";
 
 /**
@@ -44,7 +44,8 @@ export function FilesScreen({
   };
 
   const download = async (versionId: string) => {
-    if (!(await downloadVersion(versionId))) flash("이 버전에는 내려받을 파일이 없습니다");
+    const outcome = await downloadVersion(versionId);
+    if (outcome !== "started") flash(DOWNLOAD_FAILED_TEXT[outcome]);
   };
 
   return (

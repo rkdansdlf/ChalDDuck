@@ -14,11 +14,17 @@ export function Sheet({
   open,
   title,
   onClose,
+  footer,
   children,
 }: {
   open: boolean;
   title?: string;
   onClose: () => void;
+  /**
+   * 시트 맨 아래에 붙는 동작 막대. 입력 항목이 있는 시트에는 보통 하나가 있어야 한다 —
+   * 입력과 확인이 화면上下로 흩어지면 무엇을 확정하는지 애매해진다.
+   */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -53,11 +59,22 @@ export function Sheet({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none"
-        style={{ paddingBottom: "calc(26px + env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto mt-1.5 mb-3.5 h-1 w-[38px] rounded-sm bg-cr-300" />
         {title ? <h3 className="t-h2 keep-all m-0 mb-3 text-txt-strong">{title}</h3> : null}
         {children}
+        {/* 동작 막대는 시트를 아래로 스크롤해도 따라온다 — 확인 버튼이 안 보이면
+            입력한 것이 그대로 버려진다. */}
+        {footer ? (
+          <div
+            className="sticky bottom-0 -mx-5 mt-4 bg-card px-5 pt-2"
+            style={{ paddingBottom: "calc(18px + env(safe-area-inset-bottom))" }}
+          >
+            {footer}
+          </div>
+        ) : (
+          <div style={{ height: "calc(26px + env(safe-area-inset-bottom))" }} />
+        )}
       </div>
     </div>
   );

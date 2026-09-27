@@ -40,6 +40,11 @@ export function AppFrame({ children, label }: { children: ReactNode; label?: str
  * 노치·다이나믹 아일랜드에 내용이 가리지 않도록 그만큼 자리를 비운다.
  * 그 영역에도 화면 색이 이어져야 해서 `tone` 을 받는다.
  *
+ * **`AppBar` 가 있는 화면에서는 쓰지 않는다.** `AppBar` 가 자기 톤으로 이 영역까지 칠하며
+ * 비운다(그쪽 주석 참고). 예전에는 각 화면이 직접 놓았는데, 탭 화면 25개는 놓지 않아
+ * 앱바 전체가 노치 아래로 깔렸고, 반대로 이중으로 놓인 화면은 두 배로 자리를 비웠다.
+ * 앱바 없이 위에서 바로 본문을 그리는 화면(00 초대 코드, 05 캐릭터)에서만 쓴다.
+ *
  * 디자인 원본에는 9:41 목업 상태바가 있었지만 옮기지 않았다 — 실기기에서는 OS 가 그리는
  * 영역이고, 가짜 시계를 그리면 44px 을 버리면서 틀린 시각을 보여 주게 된다.
  */
@@ -91,15 +96,29 @@ export function AppBar({
   hideBackOnWide,
 }: AppBarProps) {
   return (
-    <div
-      className={cn(
-        "flex min-h-[52px] flex-none items-center gap-1 pr-1.5 backdrop-blur-md",
-        onBack ? "pl-0.5" : "pl-[18px]",
-        onBack && hideBackOnWide && "lg:pl-[18px]",
-        tone === "y" ? "bg-yellow-100 border-b border-transparent" : "border-b border-line",
-      )}
-      style={tone === "y" ? undefined : { background: "rgba(255,253,249,.94)" }}
-    >
+    <div className="flex-none">
+      {/*
+        노치·다이나믹 아일랜드만큼을 앱바 **안쪽**에서 비운다. 예전에는 `TopInset` 을
+        각 화면이 직접 놓았는데, 탭 화면 25개는 `AppShell` 만 쓰고 `TopInset` 을 놓지
+        않았다 — 앱바 전체가 노치 아래로 깔려 제목이 안 보였다. 화면마다 놓는 방식은
+        "기억해서" 동작하는 방식이라 어디는 빠진다.
+        앱바 안에 두는 이유도 있다: 그 영역을 **앱바 자신의 색**으로 칠해야 노치 위
+        배경을 화면마다 따로 맞출 필요가 없다.
+      */}
+      <div
+        aria-hidden="true"
+        className="h-[env(safe-area-inset-top)]"
+        style={tone === "y" ? undefined : { background: "rgba(255,253,249,.94)" }}
+      />
+      <div
+        className={cn(
+          "flex min-h-[52px] items-center gap-1 pr-1.5 backdrop-blur-md",
+          onBack ? "pl-0.5" : "pl-[18px]",
+          onBack && hideBackOnWide && "lg:pl-[18px]",
+          tone === "y" ? "bg-yellow-100 border-b border-transparent" : "border-b border-line",
+        )}
+        style={tone === "y" ? undefined : { background: "rgba(255,253,249,.94)" }}
+      >
       {onBack ? (
         <button
           type="button"
@@ -136,6 +155,7 @@ export function AppBar({
           ) : null}
         </button>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -193,7 +213,9 @@ export function Dock({ children, above }: { children: ReactNode; above?: number 
       )}
       style={{
         bottom: above,
-        paddingBottom: floating ? 12 : "calc(22px + env(safe-area-inset-bottom))",
+        // 안전 영역 여백은 **탭바가 이미 챙긴다.** 예전에는 Dock 도 또 더해서, iOS 독립
+        // 실행 모드에서 CTA 와 탭바 사이에 34px 짜리 빈 공간이 생겼다.
+        paddingBottom: floating ? 12 : 22,
         background: "rgba(255,253,249,.96)",
       }}
     >

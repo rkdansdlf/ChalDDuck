@@ -18,7 +18,7 @@ import {
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
 import { restoreFileVersion } from "@/server/actions/drive";
-import { downloadVersion } from "./file-display";
+import { DOWNLOAD_FAILED_TEXT, downloadVersion } from "./file-display";
 import { canOpenInApp } from "./file-rules";
 import { nextVersionLabel } from "./version-label";
 
@@ -98,7 +98,8 @@ export function FileViewScreen({
   };
 
   const download = async () => {
-    if (!(await downloadVersion(current.id))) flash("이 버전에는 내려받을 파일이 없습니다");
+    const outcome = await downloadVersion(current.id);
+    if (outcome !== "started") flash(DOWNLOAD_FAILED_TEXT[outcome]);
   };
 
   const openInNewTab = () => {
