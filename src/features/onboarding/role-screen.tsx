@@ -189,7 +189,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
           역할은 <b>희망·Veto·경험·가능한 시간</b>으로만 조율합니다. MBTI 유형은 배정 계산에 들어가지 않습니다.
         </Note>
 
-        {blocked ? <JoinBlockedNote reason={blocked} /> : null}
+        {blocked ? <JoinBlockedNote reason={blocked} onGoToTeam={() => router.push("/team")} /> : null}
       </Body>
 
       <Toast msg={toast} />
@@ -379,10 +379,29 @@ function WaitingPanel({
  * 예전에는 서버가 던진 오류 문구에 기대고 있었다. 운영 빌드는 그 문구를 지우므로
  * 사용자에게는 "알리는 중…"이 끝난 뒤 아무 일도 일어나지 않는 화면으로 보였다.
  */
-function JoinBlockedNote({ reason }: { reason: JoinBlock }) {
+function JoinBlockedNote({
+  reason,
+  onGoToTeam,
+}: {
+  reason: JoinBlock;
+  onGoToTeam: () => void;
+}) {
   return (
     <Note tone="err" icon="circle-alert" title="아직 팀에 들어갈 수 없습니다" className="mt-3">
       {JOIN_BLOCK_TEXT[reason]}
+      {/* 막기만 하면 사용자는 어디로 가야 하는지 모른다. "나가기"는 팀 화면에 있으니
+          그 길을 직접 둔다 — 팀을 옮기는 기능이 없는 것을 감추지 않는다. */}
+      {reason === "in-other-team" ? (
+        <Btn
+          v="outline"
+          size="sm"
+          className="mt-2.5"
+          icon="log-out"
+          onClick={onGoToTeam}
+        >
+          지금 있는 팀 화면으로 가기
+        </Btn>
+      ) : null}
     </Note>
   );
 }
@@ -392,4 +411,6 @@ const JOIN_BLOCK_TEXT: Record<JoinBlock, string> = {
   "short-name": "이름을 두 글자 이상 적어 주세요.",
   "long-name": "이름이 너무 깁니다. 20자 안으로 적어 주세요.",
   "no-want": "1순위 희망 역할을 골라 주세요.",
+  "in-other-team":
+    "이미 다른 팀에 속해 있습니다. 새 팀에 들어가려면 먼저 그 팀에서 나가 주세요.",
 };

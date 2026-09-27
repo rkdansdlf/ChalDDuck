@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppFrame, Body, Btn, Chip, Dock, Input, Note, Panel, TopInset } from "@/components/ui";
 import type { Team } from "@/lib/types";
-import { setTeamCode } from "./onboarding-state";
+import { setTeamCode, useOnboarding } from "./onboarding-state";
 
 /**
  * 01 초대 링크 입장 — 로그인 없이, 이름만 적고 들어간다.
@@ -21,6 +21,18 @@ export function JoinScreen({ team, requestedCode }: { team: Team | null; request
   useEffect(() => {
     if (team) setTeamCode(team.code);
   }, [team]);
+
+  // **아직 기억하는 팀이 있는데 주소가 비어 있으면 그 팀으로 되돌린다.**
+  //
+  // 이 화면이 이 구역에서 가장 자주 오는 길이다 — 02 이름 화면의 뒤로가기, 재입장 화면,
+  // 온보딩을 되돌아온 주소가 모두 여기로 모인다. 예전에는 여기서 항상 빈 입력창만 띄워
+  // 방금 쓰던 코드를 다시 타이밍하게 했다. 서버는 저장소를 모으니 서버 렌더는 그대로
+  // 비어 있고, 클라이언트가 주소를 바꿔 팀 정보를 받아 온다(첫 화면이 깜빡이지 않는다).
+  const { teamCode: remembered } = useOnboarding();
+  useEffect(() => {
+    if (team || requestedCode || !remembered) return;
+    router.replace(`/join?code=${encodeURIComponent(remembered)}`);
+  }, [team, requestedCode, remembered, router]);
 
   return (
     <AppFrame label="01 초대 링크 입장">

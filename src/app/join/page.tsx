@@ -9,6 +9,8 @@ import { JoinScreen } from "@/features/onboarding/join-screen";
  */
 export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   const { code } = await searchParams;
+  // **서버는 저장소를 모른다** — `sessionStorage` 는 브라우저에만 있다. 그래서 기억한 팀은
+  // 클라이언트 주소로 되돌린다(`JoinScreen` 의 effect).
   const requested = typeof code === "string" ? code.trim() : "";
   const team = requested ? await getTeamByCode(requested) : null;
 

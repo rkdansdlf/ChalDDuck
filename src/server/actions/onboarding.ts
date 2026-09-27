@@ -8,7 +8,12 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
-import { describeDevice, startSession } from "@/server/session";
+import {
+  describeDevice,
+  getSessionMember,
+  startSession,
+  type SessionMember,
+} from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
 import type { OnboardingDraft, Team } from "@/lib/types";
 
@@ -37,7 +42,23 @@ const MIN_NAME = 2;
 const MAX_NAME = 20;
 
 /** `joinTeam` 이 거절한 이유. 화면이 무엇을 고쳐야 하는지 말해 준다. */
-export type JoinBlock = "no-code" | "short-name" | "long-name" | "no-want";
+export type JoinBlock = "no-code" | "short-name" | "long-name" | "no-want" | "in-other-team";
+
+/**
+ * 이미 다른 팀에 속해 있는지.
+ *
+ * 예전에는 이 확인이 없었다. 팀 A의 팀원이 팀 B를 만들면 `startSession` 이 새 세션 쿠키만
+ * 심고 **A 의 `Member` 행은 그대로 남는다** — `leftAt` 이 null 이라 A 의 명단·회의 후보·
+ * 기여 리포트에 계속 세어지고, A 의 다른 기기 세션은 여전히 통한다. 되돌릴 길은 없다
+ * (팀 전환 기능이 없고 팀 나가기는 팀 화면에서만 한다).
+ *
+ * 팀 전환을 **기능으로 넣을지는 기획에 없다.** 그래서 여기서는 조용히 팀을 바꾸지 못하게
+ * 막는 데까지만 한다 — 새 팀을 만들거나 다른 팀에 들어가려면 먼저 팀에서 나가야 하고,
+ * 그건 팀 화면에서 한 번이면 된다.
+ */
+async function findOtherTeam(): Promise<SessionMember | null> {
+  return getSessionMember();
+}
 
 /**
  * 팀을 만든 브라우저를 기억하는 쿠키.
@@ -94,6 +115,10 @@ export async function findMemberByName(
 
 /** 새 팀을 만들고 초대 코드를 발급한다. */
 export async function createTeam(input: { name: string; course: string }): Promise<Team> {
+  // 팀을 옮기는 기능이 없다. 조용히 옮기게 두면 예전 팀의 기록이 고아로 남는다.
+  const other = await findOtherTeam();
+  if (other) throw new Error("이미 팀에 속해 있습니다. 새 팀을 만들려면 먼저 팀에서 나가 주세요.");
+
   const name = input.name.trim();
   if (!name) throw new Error("팀 이름을 적어 주세요.");
   // 팀 이름은 앱바·DM·알림 제목에 들어간다. 화면에만 `maxLength` 가 있고 서버엔 없으면
@@ -184,6 +209,9 @@ export async function joinTeam(
    */
   | { status: "invalid"; reason: JoinBlock }
 > {
+  // 팀을 옮기는 기능이 없다 — 예전 팀의 기록을 고아로 남기지 않는다.
+  if (await findOtherTeam()) return { status: "invalid", reason: "in-other-team" };
+
   const name = normalizeName(draft.name);
   if (name.length < MIN_NAME) return { status: "invalid", reason: "short-name" };
   if (name.length > MAX_NAME) return { status: "invalid", reason: "long-name" };

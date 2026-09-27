@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, Toast, Undecided } from "@/components/ui";
 import { createTeam } from "@/server/actions/onboarding";
 import type { Team } from "@/lib/types";
+import { useAction } from "@/lib/use-action";
 import { setTeamCode } from "./onboarding-state";
 
 /** 00 팀 만들기 — 팀 이름·과목만 적으면 초대 코드가 발급된다. */
@@ -14,31 +15,34 @@ export function NewTeamScreen() {
   const [teamName, setTeamName] = useState("");
   const [course, setCourse] = useState("");
   const [created, setCreated] = useState<Team | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, busy, flash, run } = useAction();
+  const submitting = busy.create === true;
 
   const canSubmit = teamName.trim().length > 0 && !submitting;
 
+  /**
+   * 팀을 만든다.
+   *
+   * `catch` 가 없으면 실패가 조용하다. 운영 빌드는 서버가 던진 오류의 문구를 지우므로,
+   * 특히 **"이미 팀에 속해 있습니다"** 가 화면에 남지 않으면 사용자는 버튼이 고장 난 것으로
+   * 알고 몇 번을 더 누른다. `useAction` 이 실패 문구를 대신 띄워 준다.
+   */
   const handleCreate = async () => {
     if (!canSubmit) return;
-    setSubmitting(true);
-    try {
-      const team = await createTeam({ name: teamName, course });
-      setCreated(team);
-      setTeamCode(team.code);
-    } finally {
-      setSubmitting(false);
-    }
+    await run(
+      "create",
+      async () => {
+        const team = await createTeam({ name: teamName, course });
+        setCreated(team);
+        setTeamCode(team.code);
+      },
+      "팀을 만들지 못했습니다. 이미 팀에 속해 있다면 팀에서 먼저 나가 주세요.",
+    );
   };
 
   const inviteUrl = created
     ? `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${created.code}`
     : "";
-
-  const flash = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2200);
-  };
 
   const copyCode = async () => {
     if (!created) return;
