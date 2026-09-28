@@ -16,6 +16,7 @@
     "db:reset": "prisma migrate reset",
     "test": "tsx --conditions=react-server scripts/smoke.mts",
     "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
+    "decisions": "node scripts/list-open-decisions.mjs",
     "db:storage": "node scripts/setup-storage.mjs",
     "verify": "npm run db:check && npm test && npm run build && npx tsc --noEmit && npm run lint"
   },
@@ -25,6 +26,7 @@
     "@supabase/supabase-js": "^2.116.0",
     "lucide-react": "^1.47.0",
     "next": "16.3.5",
+    "nodemailer": "^10.0.12",
     "openai": "^7.19.0",
     "pg": "^8.23.0",
     "react": "19.2.8",
@@ -36,6 +38,7 @@
     "@prisma/config": "^7.10.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
