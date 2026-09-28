@@ -49,8 +49,11 @@ next-env.d.ts
 #
 # Throwaway scripts for manual investigation. These get written often during debugging and
 # easily get forgotten, and a leftover `scripts/tmp-*.mts` has real costs beyond just being
-# ugly — `tsconfig.json` includes `**/*.mts`, so a scratch file half-finished gets pulled
-# into `tsc --noEmit` and type errors, and worse, it lands in the commit history.
+# ugly — worse, it lands in the commit history.
+#
+# Ignoring it is **not enough on its own.** `tsconfig.json` includes `**/*.mts`, so a scratch
+# file half-written keeps breaking `tsc --noEmit` and `next build` even while untracked. That
+# is why `scripts/tmp-*` is in `tsconfig.json`'s `exclude` as well — keep the two in step.
 #
 # Real check scripts are named after what they check (e.g. `check-schema-in-sync.mjs`,
 # `smoke.mts`) and are not matched here.

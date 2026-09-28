@@ -1454,7 +1454,14 @@ console.log("\nDM 목록 조회 비용");
     // 오늘 바로 그랬다. 실제로 해 봤다 — Prisma 어댑터는 배열 파라미터에 이미 `::text[]` 를
     // 붙이는데 여기에 또 붙여서 `::text[]::text[]` 인 **다른 질문을** EXPLAIN 하고 있었다.
     // 앱이 보내는 SQL 을 그대로 받는다(위에서 잡아 둔 `capturedSql`·`capturedParams`).
-    const askSql = async (extra: number) => {
+    // **실행마다 다른 표식.** 이 검사는 로컬 DB 를 쓴다. 다른 사람이 같은 저장소에서
+  // `npm test` 를 동시에 돌리면 둘이 같은 방에 같은 접두사로 줄을 세우고, 그럼 "치운 뒤에도
+  // 남았나" 를 재는 쪽이 **상대의 줄을 뒤집어쓴다.** 실제로 났다.
+  const runTag = `${process.pid}-${Date.now().toString(36)}`;
+  const mine = `규모 확인 ${runTag} `;
+  const mineWhere = { threadKey: key, text: { startsWith: mine } };
+
+  const askSql = async (extra: number) => {
       const base = new Date("2026-01-01T00:00:00Z");
       for (let i = 0; i < extra; i += 500) {
         await db.message.createMany({
@@ -1462,7 +1469,7 @@ console.log("\nDM 목록 조회 비용");
             teamId: team.id,
             threadKey: key,
             authorId: member.id,
-            text: `규모 확인 ${i + k}`,
+            text: `${mine}${i + k}`,
             whenLabel: "00:00",
             // `createMany` 한 번으로 전부 넣으면 `createdAt` 이 한 문장 안의 `now()` 로
             // 같아진다. 실제 대화에서는 그렇지 않고, 같으면 인덱스가 첫 행에서 멈출 수 없다.
@@ -1497,15 +1504,11 @@ console.log("\nDM 목록 조회 비용");
     // 두 번째 실패를 만든다.** 그래서 `finally` 다.
     // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 measurement 행을 먼저 치운다. 이 검사가
     // 스스로를 고치지 못하면 **비교 기준이 조용히 오염되고**, 어느 쪽이 옳은지 알 수 없게 된다.
-    await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
-    // 앞선 실행이 남긴 것이 있으면 **비교 기준이 조용히 오염된다**(작을 때의 수치가
-    // 5,000개 방에서 5,166행처럼 보인다). 눈에 보이게 한다. 남은 건 이 검사가 만든 것뿐이어야
-    // 하고, 남의 메시지는 이 방에 얼마든지 있어도 상관없다.
-    check(
-      "측정을 시작할 때 이 검사가 만든 잔재가 없다",
-      await db.message.count({ where: { threadKey: key, text: { startsWith: "규모 확인" } } }),
-      0,
-    );
+    // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 **내 표식의** 행을 먼저 치운다. 안 그러면
+    // 비교 기준이 조용히 오염된다 — 작은 방에서 10행을 읽는 쿼리가, 5,000개 방에서 5,166행을
+    // 읽는 것처럼 보인다. **남의 실행이 만든 행은 만지지 않는다.**
+    await db.message.deleteMany({ where: mineWhere });
+    check("측정을 시작할 때 이 실행이 만든 잔재가 없다", await db.message.count({ where: mineWhere }), 0);
     let small = 0;
     let big = 0;
     try {
@@ -1518,13 +1521,9 @@ console.log("\nDM 목록 조회 비용");
       check("5,000개 방에서도 읽는 행이 100행 미만이다 (방 크기와 무관)", big < 100, true);
       console.log(`      (작을 때 ${small}행 → 5,000개 방에서 ${big}행 · 방이 800배 커졌는데 ${(big / Math.max(small, 1)).toFixed(1)}배)`);
     } finally {
-      await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
+      await db.message.deleteMany({ where: mineWhere });
     }
-    check(
-      "측정용 메시지는 남지 않는다",
-      await db.message.count({ where: { threadKey: key, text: { startsWith: "규모 확인" } } }),
-      0,
-    );
+    check("이 실행이 만든 측정용 메시지는 남지 않는다", await db.message.count({ where: mineWhere }), 0);
   }
 }
 
