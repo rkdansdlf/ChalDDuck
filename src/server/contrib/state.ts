@@ -48,7 +48,7 @@ export type ContribState = "ok" | "pending" | "disputed";
  * 답할 수 없다.
  *
  * 화면(17)의 "정정에 응답하기" 버튼과 서버 액션이 **같은 함수**를 쓴다 — 화면이 숨긴
- * 것을 서버가 따로 판단하면, 어떤 경로로 호출하�� 들어갈 수 있다.
+ * 것을 서버가 따로 판단하면, 어떤 경로로 호출하든 들어갈 수 있다.
  */
 export function canResolveContrib(input: {
   /** 기록 주인. */

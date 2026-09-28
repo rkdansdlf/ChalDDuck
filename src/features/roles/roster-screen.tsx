@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   AppBar,
-  Avatar,
   Body,
   Btn,
   Chip,
@@ -17,7 +16,6 @@ import {
   SecTitle,
   Sheet,
   Toast,
-  type ChipTone,
   type DrawCandidate,
   type IconName,
 } from "@/components/ui";
@@ -31,29 +29,10 @@ import { acceptRoleDraw, claimSoleRole, drawForRole, rejectRoleDraw } from "@/se
 import {
   NO_DRAW_POOL_TEXT,
   applyMyChoices,
-  canDrawIn,
   drawPoolOf,
   roleViewOf,
-  voidedText,
   wantersOf,
-  type RoleView,
 } from "./roster-model";
-
-/**
- * 상태 칩의 말과 그림.
- *
- * `RoleView`(`roster-model`)와 **한 쌍**이어야 한다 — 상태가 늘어도 칩이 없으면
- * 화면은 조용히 아무것도 그리지 않는다(예전의 "확정" 칩이 그랬다). 여기 두는 이유는
- * 모델이 UI 어휘까지 알 필요가 없도록 하기 위해서다.
- */
-const ROLE_VIEW_CHIP: Record<RoleView["kind"], { label: string; tone: ChipTone; icon: IconName }> = {
-  empty: { label: "미정", tone: "n", icon: "circle-dashed" },
-  auto: { label: "확정 예정", tone: "n", icon: "clock" },
-  negotiating: { label: "협의 중", tone: "warn", icon: "circle-alert" },
-  awaiting: { label: "수락 대기", tone: "warn", icon: "clock" },
-  confirmed: { label: "확정", tone: "ok", icon: "check" },
-  voided: { label: "무효", tone: "err", icon: "x" },
-};
 
 /**
  * 07 팀 역할 조율.
@@ -110,8 +89,6 @@ export function RosterScreen({
     pool: DrawCandidate[];
     winner: string;
   } | null>(null);
-
-  const roleName = (key: RoleKey | null) => roles.find((r) => r.key === key)?.name ?? "미정";
 
   const members = useMemo(
     () =>
@@ -221,6 +198,20 @@ export function RosterScreen({
     if (finished) flash(`${finished.tool.name} 결과를 ${finished.winner}님에게 보냈습니다 — 수락 대기`);
   };
 
+  const confirmedCount = roles.filter(
+    (role) => roleViewOf(wantersOf(members, role.key).length, draws[role.key] ?? null).kind === "confirmed",
+  ).length;
+
+  // 내게 걸려 있는 겹침 역할 또는 팀의 협의 대상 역할 찾기
+  const myOverlappingRole = roles.find((r) => {
+    const w = wantersOf(members, r.key);
+    return w.length > 1 && w.some((m) => m.isMe);
+  });
+  const anyOverlappingRole = roles.find((r) => wantersOf(members, r.key).length > 1);
+  const heroRole = myOverlappingRole ?? anyOverlappingRole ?? roles[0];
+  const heroWanters = heroRole ? wantersOf(members, heroRole.key) : [];
+  const otherHeroMember = heroWanters.find((m) => !m.isMe);
+
   return (
     <>
       <AppBar
@@ -231,111 +222,222 @@ export function RosterScreen({
         onAction={() => setInviteOpen(true)}
       />
       <Body dense>
-        <SecTitle note="희망자 수와 조율 상태입니다">역할별 현황</SecTitle>
+        {/* 상단 진행도 및 마감 디데이 헤더 */}
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between text-[13.5px]">
+            <span className="font-bold text-txt-strong">
+              역할 {roles.length}개 중 {confirmedCount}개 정해짐
+            </span>
+            <span className="font-medium text-txt-muted">중간발표 D-12</span>
+          </div>
+          <div className="flex gap-1.5">
+            {roles.map((r) => {
+              const isConfirmed =
+                roleViewOf(wantersOf(members, r.key).length, draws[r.key] ?? null).kind === "confirmed";
+              return (
+                <div
+                  key={r.key}
+                  className={cn(
+                    "h-1.5 flex-1 rounded-full transition-colors",
+                    isConfirmed ? "bg-ok" : "bg-line-strong/40",
+                  )}
+                />
+              );
+            })}
+          </div>
+        </div>
 
-        <div className="mb-5 flex flex-col gap-2">
+        {/* 상단 히어로 액션 카드 (내 차례 / 협의 진행 배너) */}
+        {heroRole ? (
+          <div className="mb-5 rounded-[20px] border border-yellow-200/90 bg-yellow-50/80 p-4 shadow-2xs">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full bg-yellow-200/90 px-2 py-0.5 text-[11.5px] font-bold text-yellow-900">
+                <Icon name="clock" size={12} strokeWidth={2.5} />
+                내 차례
+              </span>
+            </div>
+
+            <h2 className="t-h2 m-0 text-ink-900 text-[16.5px] font-extrabold leading-snug">
+              {otherHeroMember
+                ? `${heroRole.name}을 ${otherHeroMember.name}님도 원해요`
+                : `${heroRole.name} 역할을 정할 차례예요`}
+            </h2>
+            <p className="m-0 mt-1 text-[13px] leading-[1.5] text-txt-muted">
+              둘이 먼저 이야기해 보고, 정하기 어려우면 추첨해요.
+            </p>
+
+            {/* 5단계 조율 단계 노드 레일 */}
+            <div className="my-3.5 flex items-center justify-between px-1">
+              {[
+                { label: "원함", done: true, current: false },
+                { label: "이야기", done: false, current: true },
+                { label: "추첨", done: false, current: false },
+                { label: "수락", done: false, current: false },
+                { label: "확정", done: false, current: false },
+              ].map((step, idx, arr) => (
+                <div key={step.label} className="flex flex-1 items-center last:flex-none">
+                  <div className="flex flex-col items-center gap-1">
+                    <div
+                      className={cn(
+                        "grid size-6 place-items-center rounded-full text-[11px] font-bold border",
+                        step.done
+                          ? "border-transparent bg-yellow-400 text-ink-900"
+                          : step.current
+                            ? "border-yellow-600 bg-card text-yellow-800 ring-2 ring-yellow-200"
+                            : "border-line bg-card text-txt-faint",
+                      )}
+                    >
+                      {step.done ? <Icon name="check" size={13} strokeWidth={2.5} /> : idx + 1}
+                    </div>
+                    <span
+                      className={cn(
+                        "text-[11px] font-semibold",
+                        step.done || step.current ? "text-txt-strong" : "text-txt-muted",
+                      )}
+                    >
+                      {step.label}
+                    </span>
+                  </div>
+                  {idx < arr.length - 1 ? (
+                    <div className="mx-1 h-0.5 flex-1 bg-line-strong/30 -mt-4" />
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            {/* 히어로 카드 액션 버튼들 */}
+            <div className="flex gap-2">
+              <Btn
+                full
+                size="sm"
+                icon="messages-square"
+                onClick={() => {
+                  if (otherHeroMember) {
+                    router.push(`/chat/dm/${otherHeroMember.id}`);
+                  } else {
+                    router.push("/chat/team");
+                  }
+                }}
+              >
+                {otherHeroMember ? `${otherHeroMember.name}님과 이야기하기` : "이야기해서 정하기"}
+              </Btn>
+              <Btn
+                size="sm"
+                v="outline"
+                icon="dices"
+                onClick={() => setDrawingFor(heroRole.key)}
+              >
+                추첨
+              </Btn>
+            </div>
+          </div>
+        ) : null}
+
+        {/* 역할 목록 섹션 */}
+        <div className="mb-2 text-[15px] font-bold text-txt-strong">역할</div>
+        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
           {roles.map((role) => {
             const wanters = wantersOf(members, role.key);
+            const vetoers = members.filter((m) => m.veto === role.key);
             const result = draws[role.key];
             const excluded = rejected[role.key] ?? [];
-            // 상태 판정은 `roster-model` 한 곳에서. 예전에는 여기서 `clash` 로 직접
-            // 조건을 적어, 추첨이 남은 상태인데 아무것도 보이지 않는 상황이 생겼다.
             const view = roleViewOf(wanters.length, result ?? null);
-            const status = ROLE_VIEW_CHIP[view.kind];
             const iAmWinner = result !== undefined && myId !== null && result.winnerId === myId;
 
             return (
-              <Panel
-                key={role.key}
-                s={view.kind === "negotiating" || view.kind === "awaiting" ? "coral" : "card"}
-                pad={14}
-                r={16}
-              >
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="t-sec keep-all text-txt-strong">{role.name}</span>
-                  <Chip tone={status.tone} icon={status.icon}>
-                    {status.label}
-                  </Chip>
+              <div key={role.key} className="p-3.5">
+                {/* 헤더: 역할 이름 + 상태 칩 */}
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[15px] text-txt-strong">{role.name}</span>
+                  {view.kind === "confirmed" ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-ok-bg px-2.5 py-0.5 text-[12px] font-bold text-want">
+                      <Icon name="check" size={12} strokeWidth={2.5} />
+                      확정 · {view.winner}
+                    </span>
+                  ) : wanters.length > 1 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2.5 py-0.5 text-[12px] font-bold text-yellow-800">
+                      <Icon name="messages-square" size={12} />
+                      겹침 · 이야기 중
+                    </span>
+                  ) : wanters.length === 1 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-txt-muted">
+                      <Icon name="user-round" size={12} />
+                      한 명 원함
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-txt-muted">
+                      <Icon name="circle" size={11} />
+                      원하는 사람 없음
+                    </span>
+                  )}
                 </div>
 
-                <div className="keep-all mt-1 font-medium text-[13px] leading-[1.5] text-txt-muted">
-                  {wanters.length === 0
-                    ? "아무도 1순위로 고르지 않았습니다"
-                    : `희망자 ${wanters.length}명 · ${wanters.map((m) => m.name).join(" · ")}`}
-                </div>
-
-                {view.kind === "voided" ? (
-                  <p className="t-note m-0 mt-2.5 text-txt-muted">{voidedText(view.winner)}</p>
-                ) : null}
-
-                {/* **무효 추첨도 자리를 차지하고 있으므로 추첨 버튼이 살아야 한다.**
-                    예전에는 "협의 중" 일 때만 떠서, 갇힌 추첨을 꺼낼 수단이 없었다. */}
-                {canDrawIn(view) ? (
-                  <div className="mt-2.5 flex flex-wrap gap-[7px]">
-                    {view.kind === "negotiating" ? (
-                      <Btn
-                        size="sm"
-                        icon="messages-square"
-                        // 이야기는 단톡방에서 한다. 앱이 대신 안내문을 올리지는 않는다 —
-                        // 예전에는 "올렸습니다" 토스트만 뜨고 실제로는 아무것도 올라가지 않았다.
-                        onClick={() => router.push("/chat/team")}
-                      >
-                        이야기해서 정하기
-                      </Btn>
-                    ) : null}
-                    <Btn size="sm" v="outline" icon="dices" onClick={() => setDrawingFor(role.key)}>
-                      {view.kind === "voided" ? "다시 추첨하기" : "협의가 안 되면 추첨하기"}
-                    </Btn>
-                  </div>
-                ) : null}
-
-                {wanters.length === 1 && !result ? (
-                  <div className="mt-2.5">
-                    <Btn
-                      size="sm"
-                      icon="check"
-                      disabled={busy.claim}
-                      onClick={() =>
-                        void run(
-                          "claim",
-                          async () => {
-                            const answer = await claimSoleRole(role.key);
-                            router.refresh();
-                            return answer === "ok"
-                              ? `${role.name} 맡기로 정했습니다`
-                              : "이 역할은 이미 정해졌거나 다른 사람이 고른 역할입니다";
-                          },
-                          "정하지 못했습니다. 다시 눌러 주세요.",
-                        )
-                      }
-                    >
-                      {wanters[0].isMe ? "이 역할 맡기" : `${wanters[0].name}님에게 맡기기`}
-                    </Btn>
-                  </div>
-                ) : null}
-
-                {/* "수락 대기" 칩은 위 상태 칩이 이미 그린다. 여기서는 **누가 무엇을
-                    돌려받았는지**(추첨 도구 · 제외자)와 당사자가 할 수 있는 답만 더한다.
-                    조건은 `clash` 가 아니라 `view` 다 — 희망자 1명인 역할에 남은
-                    추첨도 여기서 보여야 답을 받을 사람이 생긴다. */}
-                {view.kind === "awaiting" && result ? (
-                  <div className="mt-2.5">
-                    <div className="mb-2 flex flex-wrap gap-[5px]">
-                      <Chip tone="warn" icon="circle-dashed">
-                        {result.tool} 결과 · {result.winner}님에게 후보 확인 요청
-                      </Chip>
-                      {excluded.map((name) => (
-                        <Chip key={name} tone="err" icon="x">
-                          {name} 제외됨
-                        </Chip>
-                      ))}
+                {/* 희망자 (맡을래) */}
+                {wanters.length > 0 ? (
+                  <div className="mt-2.5 flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] text-txt-muted flex-none">맡을래</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {wanters.map((w) => (
+                          <div key={w.id} className="flex items-center gap-1">
+                            <span className="grid size-6 place-items-center rounded-full bg-yellow-100 text-[11px] font-bold text-yellow-800">
+                              {w.name.charAt(0)}
+                            </span>
+                            <span className="text-[13.5px] font-semibold text-txt-strong">
+                              {w.isMe ? `${w.name} 나` : w.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {/* 수락·거절은 당첨자 본인만 한다 — 서버도 같은 규칙으로 막는다.
-                        판정은 id 로 한다(이름은 고칠 수 있으므로). */}
+
+                    {/* 1명만 원할 때 바로 정하기 버튼 */}
+                    {wanters.length === 1 && view.kind === "auto" ? (
+                      <button
+                        type="button"
+                        disabled={busy.claim}
+                        onClick={() =>
+                          void run(
+                            "claim",
+                            async () => {
+                              const answer = await claimSoleRole(role.key);
+                              router.refresh();
+                              return answer === "ok"
+                                ? `${role.name} 맡기로 정했습니다`
+                                : "이미 정해졌거나 다른 사람이 고른 역할입니다";
+                            },
+                            "정하지 못했습니다.",
+                          )
+                        }
+                        className="flex-none rounded-lg border border-line bg-card px-2.5 py-1 text-[12px] font-semibold text-txt-strong hover:bg-fill cursor-pointer active:scale-95"
+                      >
+                        {wanters[0].isMe ? "내가 맡기" : `${wanters[0].name}님으로 정하기`}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* 피할래 목록 */}
+                {vetoers.length > 0 ? (
+                  <div className="mt-2 flex items-center gap-2 text-[13px]">
+                    <span className="text-txt-muted flex-none">피할래</span>
+                    <span className="text-txt-strong font-medium">
+                      {vetoers.map((v) => (v.isMe ? `${v.name} (나)` : v.name)).join(" · ")}
+                    </span>
+                  </div>
+                ) : wanters.length === 0 ? (
+                  <div className="mt-2 text-[13px] text-txt-muted">피하는 사람은 없어요</div>
+                ) : null}
+
+                {/* 수락 대기 상태인 경우 */}
+                {view.kind === "awaiting" && result ? (
+                  <div className="mt-2.5 rounded-xl bg-fill p-2.5">
+                    <div className="mb-2 text-[12px] font-semibold text-txt">
+                      {result.tool} 결과 · {result.winner}님에게 확인 요청 중
+                      {excluded.length > 0 ? ` (제외: ${excluded.join(", ")})` : ""}
+                    </div>
                     {iAmWinner ? (
-                      <div className="flex flex-wrap gap-[7px]">
-                        {/* 둘 다 `disabled` 로 잠근다 — 수락과 거절이 거의 동시에 닿으면
-                            서버의 조건부 갱신 중 하나가 0 행을 맞고도 성공한 척한다. */}
+                      <div className="flex gap-2">
                         <Btn
                           size="sm"
                           icon="check"
@@ -348,7 +450,7 @@ export function RosterScreen({
                                 router.refresh();
                                 return answer === "ok" ? "확정되었습니다" : "이미 정리된 추첨입니다";
                               },
-                              "수락하지 못했습니다. 다시 시도해 주세요.",
+                              "수락하지 못했습니다.",
                             )
                           }
                         >
@@ -366,126 +468,90 @@ export function RosterScreen({
                                 const answer = await rejectRoleDraw(role.key);
                                 router.refresh();
                                 return answer === "ok"
-                                  ? "다음 추첨에서 제외됩니다 — 팀원이 다시 추첨할 수 있습니다"
+                                  ? "다음 추첨에서 제외됩니다"
                                   : "이미 정리된 추첨입니다";
                               },
-                              "거절하지 못했습니다. 다시 시도해 주세요.",
+                              "거절하지 못했습니다.",
                             )
                           }
                         >
                           거절하기
                         </Btn>
                       </div>
-                    ) : (
-                      <p className="t-note m-0 text-txt-muted">
-                        {result.winner}님이 수락하거나 거절하면 정해집니다.
-                      </p>
-                    )}
+                    ) : null}
                   </div>
                 ) : null}
-
-                {view.kind === "confirmed" ? (
-                  <div className="mt-2">
-                    <Chip tone="ok" icon="check">
-                      확정 · {view.winner}
-                    </Chip>
-                  </div>
-                ) : null}
-              </Panel>
+              </div>
             );
           })}
         </div>
 
-        <Note tone="info" icon="list-ordered" className="mb-5">
-          조율 순서: <b>선호 확인 → 협의 → (필요하면) 추첨 → 당사자 수락 → 최종 확정</b>. 거절은 오류가
-          아니라 남은 후보끼리 다시 추첨하는 정상 절차입니다. 이 과정 어디에도 MBTI는 쓰이지 않습니다.
-        </Note>
-
-        <SecTitle
-          note="각자 본인이 직접 고른 값입니다 · 아바타를 누르면 1:1 대화가 열립니다"
-        >
-          팀원별 선호
-        </SecTitle>
-        <Rows>
-          {members.map((member) => (
-            <div key={member.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px]">
-              <button
-                type="button"
-                disabled={member.isMe}
-                aria-label={member.isMe ? undefined : `${member.name}님과 대화하기`}
-                // DM 스레드 id 는 상대 팀원의 id 다(`getDmThreads`).
-                onClick={() => router.push(`/chat/dm/${member.id}`)}
-                className={`flex-none border-none bg-transparent p-0 ${
-                  member.isMe ? "cursor-default" : "cursor-pointer"
-                }`}
-              >
-                <Avatar name={member.name} mbti={member.mbti} size={38} />
-              </button>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-1.5">
-                  <span className="t-sec text-txt-strong">{member.name}</span>
-                  {member.isMe ? (
-                    <span className="t-cap-strong text-yellow-700">나</span>
-                  ) : null}
-                </div>
-
-                {member.want ? (
-                  <div className="mt-1.5 flex flex-wrap gap-[5px]">
-                    <Chip tone="want" icon="thumbs-up">
-                      희망 · {roleName(member.want)}
-                    </Chip>
-                    {member.veto ? (
-                      <Chip tone="veto" icon="hand">
-                        피함 · {roleName(member.veto)}
-                      </Chip>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="mt-1.5">
-                    <Chip icon="circle-dashed">아직 고르지 않음</Chip>
-                  </div>
-                )}
-              </div>
+        {/* 팀 관리 섹션 (아코디언 형태 그룹 리스트) */}
+        <div className="t-sec mt-6 mb-2.5 font-bold text-txt-strong">팀</div>
+        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
+          {/* 기여 기록 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/contrib")}
+            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon name="clipboard-check" size={17} className="text-txt-strong" />
+              <span className="font-semibold text-[15px] text-txt-strong">기여 기록</span>
             </div>
-          ))}
-        </Rows>
+            <div className="flex items-center gap-1.5">
+              <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[12px] font-bold text-yellow-800">
+                확인할 것 2
+              </span>
+              <Icon name="chevron-right" size={16} className="text-txt-muted" />
+            </div>
+          </button>
 
-        <SecTitle className="mt-5" note="합의한 역할과 실제 수행 내역만 모읍니다">기여 기록</SecTitle>
-        <Btn
-          full
-          v="outline"
-          icon="clipboard-check"
-          iconRight="chevron-right"
-          onClick={() => router.push("/team/contrib")}
-        >
-          내 기여 기록 확인하기
-        </Btn>
+          {/* 계정과 기기 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/access")}
+            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon name="lock" size={17} className="text-txt-strong" />
+              <span className="font-semibold text-[15px] text-txt-strong">계정과 기기</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {rejoinPending > 0 ? (
+                <span className="rounded-full bg-err-bg px-2 py-0.5 text-[12px] font-bold text-veto">
+                  승인 요청 {rejoinPending}건
+                </span>
+              ) : null}
+              <Icon name="chevron-right" size={16} className="text-txt-muted" />
+            </div>
+          </button>
 
-        <SecTitle
-          className="mt-5"
-          note="가입·재입장 승인 · 내 기기 · 재입장 코드"
-        >
-          계정과 기기
-        </SecTitle>
-        <Btn
-          v="outline"
-          size="sm"
-          icon="lock"
-          iconRight="chevron-right"
-          onClick={() => router.push("/team/access")}
-        >
-          {rejoinPending > 0 ? `승인할 요청 ${rejoinPending}건 확인하기` : "계정과 기기 관리"}
-        </Btn>
+          {/* 아이스브레이킹 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/icebreak")}
+            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon name="drama" size={17} className="text-txt-strong" />
+              <span className="font-semibold text-[15px] text-txt-strong">아이스브레이킹</span>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted" />
+          </button>
 
-        <SecTitle className="mt-5" note="가볍게 분위기를 푸는 도구들">팀 친목</SecTitle>
-        <div className="flex flex-wrap gap-2">
-          <Btn v="outline" size="sm" icon="drama" onClick={() => router.push("/team/icebreak")}>
-            아이스브레이킹
-          </Btn>
-          <Btn v="outline" size="sm" icon="disc-3" onClick={() => router.push("/team/roulette")}>
-            룰렛
-          </Btn>
+          {/* 메뉴 룰렛 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/roulette")}
+            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon name="disc-3" size={17} className="text-txt-strong" />
+              <span className="font-semibold text-[15px] text-txt-strong">메뉴 룰렛</span>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted" />
+          </button>
         </div>
       </Body>
 
@@ -516,8 +582,8 @@ export function RosterScreen({
         ) : (
           <>
             <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
-              결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 수락해야 최종 확정됩니다. Veto로 고른
-              사람은 추첨 대상에서 뺍니다.
+              결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 수락해야 최종 확정됩니다. 피할 일로
+              고른 사람은 추첨 대상에서 뺍니다.
             </p>
             <div className="grid grid-cols-2 gap-[9px]">
               {tools.map((tool) => (

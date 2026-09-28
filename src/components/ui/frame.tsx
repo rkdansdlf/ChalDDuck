@@ -74,6 +74,8 @@ export type AppBarProps = {
    */
   actionBadge?: number;
   onAction?: () => void;
+  /** 우측 영역에 커스텀 액션 버튼들을 나열할 때 쓴다. */
+  right?: ReactNode;
   tone?: "y";
   /**
    * 넓은 화면에서 뒤로가기를 숨긴다.
@@ -92,6 +94,7 @@ export function AppBar({
   actionLabel,
   actionBadge,
   onAction,
+  right,
   tone,
   hideBackOnWide,
 }: AppBarProps) {
@@ -136,7 +139,9 @@ export function AppBar({
         <div className="t-bar keep-all text-txt-strong">{title}</div>
         {sub ? <div className="font-medium text-[13px] leading-[1.35] text-txt-muted">{sub}</div> : null}
       </div>
-      {action ? (
+      {right ? (
+        <div className="flex items-center gap-1">{right}</div>
+      ) : action ? (
         <button
           type="button"
           onClick={onAction}

@@ -21,6 +21,7 @@ import type { PrismaClient } from "@/generated/prisma";
  * BEGIN
  *   JoinRequest FOR UPDATE      ← 경합의 시작점
  *   아직 pending 인지 다시 본다
+ *   같은 이름이 이미 팀에 있나    ← 있으면 여기서 멈춘다 (아래 "name-taken")
  *   TeamInvite  FOR UPDATE      ← 자리가 차는 것을 정확히 한 번만 세기 위해
  *   초대가 아직 쓸 만한지 다시 본다
  *   JoinRequest → approved | rejected
@@ -41,7 +42,7 @@ export async function settleJoinRequest(
     approve: boolean;
   },
   client: Pick<PrismaClient, "$transaction"> = db,
-): Promise<"ok" | "gone" | "stale-invite"> {
+): Promise<"ok" | "gone" | "stale-invite" | "name-taken"> {
   return client.$transaction(async (tx) => {
     // **우리 팀의 요청인지 먼저 좁힌 다음** 잠근다. 남의 팀 요청을 잠가 두면 팀장 한 명이
     // 자기 화면에 없는 요청을 계속 누르는 것만으로 남의 팀이 잠긴다.
@@ -56,9 +57,34 @@ export async function settleJoinRequest(
     // 잠근 **뒤에** 상태를 본다. `pending` 이 아니면 이미 처리된 것이고, 되돌리지 않는다.
     const request = await tx.joinRequest.findFirst({
       where: { id: visible.id, teamId: input.teamId, status: "pending" },
-      select: { id: true, inviteId: true },
+      select: { id: true, inviteId: true, name: true },
     });
     if (!request) return "gone";
+
+    /**
+     * **같은 이름이 이미 팀에 있으면 승인하지 않는다** (2026-09-28).
+     *
+     * `Member` 에 `@@unique([teamId, name])` 이 있어서 멤버를 만들 때 반드시 걸린다. 근데 그
+     * 제약은 **요청한 브라우저**(`checkJoinApproval`)가 팀원이 되는 순간에 터진다 — 즉
+     * **승인은 끝났는데** 팀원이 되지 못하는, 되돌릴 수 없는 상태다. 그리고 예전 그 곳의
+     * 처리는 이 예외를 "폴링이 겹쳤다" 로만 읽고 요청을 지워 버렸다. 신청인은 아무 설명
+     * 없이 다시 처음부터, 팀장 목록에서는 이미 사라진 요청을 갖게 된다(실측).
+     *
+     * 그래서 **승인하는 자리에서** 막는다. 여기서 막으면 세 가지를 모두 얻는다 —
+     * ① `pending` 이 그대로라 신청인이 자기 요청을 고쳐 다시 보낼 수 있다(요청 소유자는
+     * 값을 고칠 수 있다 — `actions/onboarding.ts`). ② 팀장 화면에 **무슨 일이 있었는지**가
+     * 보인다. ③ 되돌릴 수 없는 상태에 한 번도 가지 않는다.
+     *
+     * 해법은 예외에 맡기지 않고 **먼저 물어본다.** 예외 문구로 분기하면 같은 제약 위반이
+     * 다른 이유(동시 폴링)일 때 구분할 수 없다.
+     */
+    if (input.approve) {
+      const nameTaken = await tx.member.findUnique({
+        where: { teamId_name: { teamId: input.teamId, name: request.name } },
+        select: { id: true },
+      });
+      if (nameTaken) return "name-taken";
+    }
 
     let stale = false;
     if (input.approve && request.inviteId) {

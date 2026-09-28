@@ -28,12 +28,14 @@ export function UploadButton({
   onFinished,
   onBusyChange,
   className,
+  variant = "default",
 }: {
   boxId: string;
   /** 버전 기록 화면 — 올리는 파일이 이름과 상관없이 이 파일의 새 버전이 된다. 한 번에 하나만. */
   fileId?: string;
   label: string;
   dropzone?: boolean;
+  variant?: "default" | "primary-lg";
   /**
    * 고른 뒤 올리기 전에 "무엇을 바꿨나요"를 묻는다(비워도 된다). 버전 기록 화면에서 쓴다 —
    * 이 메모가 기여도 리포트의 근거가 되는데, 자동 문구("새 버전")로는 아무것도 말해 주지 않는다.
@@ -124,11 +126,30 @@ export function UploadButton({
     pick(event.dataTransfer.files);
   };
 
-  const button = (
-    <Btn v="outline" size="sm" icon="paperclip" disabled={busy} onClick={() => input.current?.click()}>
-      {busy ? "올리는 중" : label}
-    </Btn>
-  );
+  const button =
+    variant === "primary-lg" ? (
+      <Btn
+        full
+        size="lg"
+        icon="upload"
+        disabled={busy}
+        onClick={() => input.current?.click()}
+        className={className}
+      >
+        {busy ? "올리는 중…" : label}
+      </Btn>
+    ) : (
+      <Btn
+        v="outline"
+        size="sm"
+        icon="paperclip"
+        disabled={busy}
+        onClick={() => input.current?.click()}
+        className={className}
+      >
+        {busy ? "올리는 중" : label}
+      </Btn>
+    );
 
   return (
     <>

@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { sweepAttempts } from "@/server/auth/attempts";
 import { describePurification, purificationStats } from "@/server/ai/purify-stats";
 import { db } from "@/server/db";
@@ -38,6 +39,13 @@ export async function GET(request: Request) {
   }
 
   const confirmed = await confirmDueMeetings();
+
+  // **요청의 경계에서 화면을 다시 그리게 한다.** `confirmDueMeetings` 는 평범한 모듈이라
+  // 경계 밖에서 부를 수 있는데, `revalidatePath` 는 그 안에서 부르면 던진다
+  // (`Invariant: static generation store missing` — 그 모듈 머리말 참고). 캐시를 지우는
+  // 책임은 요청을 받은 이 자리로 모았다.
+  revalidatePath("/schedule", "layout");
+  revalidatePath("/home");
 
   // 같이 치우는 두 가지. 둘 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
   // 예약 작업이 이미 있는 이 자리에 붙인다. 회의 확정이 실패하면 여기까지 오지 않지만,

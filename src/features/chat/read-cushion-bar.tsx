@@ -1,4 +1,4 @@
-import { Chip, Icon, Switch, Undecided } from "@/components/ui";
+import { Chip, Icon, Sheet, Switch } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { toneOf, type ReadCushionSetting } from "@/lib/read-cushion";
 import type { CushionLevel, CushionTone } from "@/lib/types";
@@ -141,14 +141,120 @@ export function ReadCushionBar({
           ) : null}
         </>
       ) : null}
-
-      <Undecided>
-        <b>강도마다 가리는 규칙의 범위를 다르게 두는 게 맞는지</b> 정해지지 않았습니다. 지금은
-        단계마다 다릅니다 — LIGHT 는 욕설만, STRONG 는 책임 추궁까지 봅니다. 강도를 한 가지로
-        좁히는 쪽이 맞다면 이 차이를 없애야 합니다.
-        <br />
-        순화된 말을 <b>몇 시간 뒤에 같은 단계로 다시 만들지</b>도 정해지지 않았습니다.
-      </Undecided>
     </div>
+  );
+}
+
+/**
+ * 01 읽기 순화 바텀 시트 (Plan A: 상단 공간 확보형).
+ *
+ * 상단 바가 250px 넘게 화면을 가리는 문제를 해결하기 위해,
+ * 상단 AppBar 아이콘을 터치했을 때 열리는 시트로 분리한다.
+ */
+export function ReadCushionSheet({
+  open,
+  onClose,
+  setting,
+  tones,
+  levels,
+  quota,
+  notice,
+  onEnabled,
+  onLevel,
+  onTone,
+  onRetry,
+}: {
+  open: boolean;
+  onClose: () => void;
+  setting: ReadCushionSetting;
+  tones: CushionTone[];
+  levels: CushionLevel[];
+  quota: { left: number; perDay: number };
+  notice: string | null;
+  onEnabled: (next: boolean) => void;
+  onLevel: (key: string) => void;
+  onTone: (key: string) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <Sheet open={open} title="읽기 순화 설정" onClose={onClose}>
+      <div className="p-4 space-y-4">
+        {/* 스위치 박스 */}
+        <div className="rounded-[16px] bg-fill px-4 py-2.5">
+          <Switch
+            checked={setting.enabled}
+            onChange={onEnabled}
+            icon={<Icon name="wand-sparkles" size={18} className="text-yellow-600" />}
+            label="순화해서 읽기"
+            stateText={
+              setting.enabled
+                ? "상대방의 메시지를 AI로 다듬어 보여줍니다"
+                : "이 방의 대화는 원문 그대로 읽습니다"
+            }
+          />
+        </div>
+
+        {setting.enabled ? (
+          <>
+            {/* 읽기 강도 */}
+            <div>
+              <div className="mb-2 font-bold text-[13.5px] text-txt-strong">얼마까지 세게 다듬을까요?</div>
+              <TonePicker
+                tones={levels}
+                value={setting.mode}
+                onChange={onLevel}
+                label="읽기 강도"
+                className="mb-1"
+              />
+              <p className="t-cap mb-0 mt-1 text-txt-muted">
+                {levels.find((level) => level.key === setting.mode)?.desc ?? ""}
+              </p>
+            </div>
+
+            {/* 읽는 말투 */}
+            <div>
+              <div className="mb-2 font-bold text-[13.5px] text-txt-strong">어떤 말투로 읽을까요?</div>
+              <TonePicker
+                tones={tones}
+                value={toneOf(setting)}
+                onChange={onTone}
+                label="읽는 말투"
+                className="mb-1"
+              />
+            </div>
+
+            {/* 순화 몫 & 공지 안내 */}
+            <div className="rounded-[14px] border border-line bg-card p-3 text-[12.5px] leading-relaxed text-txt-muted">
+              <div className="flex items-center gap-1.5 font-semibold text-txt-strong mb-1">
+                <Icon name="info" size={14} />
+                <span>안내</span>
+              </div>
+              <p className="m-0">
+                • 원문은 말풍선 아래 버튼을 눌러 언제든지 다시 볼 수 있습니다.<br />
+                • 순화문은 나에게만 보이며, 상대방에게는 영향을 주지 않습니다.
+              </p>
+              {quota.perDay > 0 ? (
+                <p className="mt-1.5 mb-0 font-medium text-yellow-800">
+                  오늘 순화 잔여: {quota.left} / {quota.perDay}회
+                </p>
+              ) : null}
+            </div>
+
+            {notice ? (
+              <p className="t-cap mt-2 mb-0 text-err">
+                {notice}{" "}
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="cursor-pointer border-none bg-transparent p-0 font-bold text-err underline active:scale-95"
+                >
+                  다시 시도
+                </button>
+              </p>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </Sheet>
   );
 }

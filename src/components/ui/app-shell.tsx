@@ -36,6 +36,9 @@ export function AppShell({
    * 목록·대화·자료를 나란히 놓는다(33번). 860px 에 가두면 세 기둥이 들어가지 않는다.
    */
   const wide = pathname === "/chat" || pathname.startsWith("/chat/");
+  /** 단톡방(/chat/team) 및 1:1 대화방(/chat/dm/[threadId])에서는 입력창이 화면 하단에 밀착되도록 모바일 탭바를 숨긴다. */
+  const isChatRoom =
+    pathname === "/chat/team" || (pathname.startsWith("/chat/dm/") && pathname !== "/chat/dm");
 
   return (
     <div className="flex h-dvh bg-cr-100">
@@ -49,9 +52,10 @@ export function AppShell({
           )}
         >
           {children}
-          {/* 입력창에 포커스가 있는 동안은 숨긴다 — 키보드가 뜬 좁은 화면에서 탭바까지
-              자리를 차지하면 그 위의 대화 내용이 가려진다. */}
-          <div className="group-has-[[data-composer-input]:focus]:hidden lg:hidden">{tabBar}</div>
+          {/* 입력창에 포커스가 있거나 대화방 내부일 때는 탭바를 숨겨 대화 공간을 극대화한다. */}
+          {!isChatRoom ? (
+            <div className="group-has-[[data-composer-input]:focus]:hidden lg:hidden">{tabBar}</div>
+          ) : null}
         </div>
       </div>
     </div>

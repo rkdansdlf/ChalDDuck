@@ -1,6 +1,12 @@
 import { notFound } from "next/navigation";
 import { CUSHION_LEVELS, CUSHION_TONES } from "@/data/catalog";
-import { getCurrentTeam, getDmMessages, getDmReadCushion, getDmThread, getRoster } from "@/data/api";
+import {
+  getCurrentTeam,
+  getDmMessages,
+  getDmReadCushion,
+  getDmThread,
+  getRoster,
+} from "@/data/api";
 import { DmScreen } from "@/features/chat/dm-screen";
 
 /** 31 1:1 DM 대화. */

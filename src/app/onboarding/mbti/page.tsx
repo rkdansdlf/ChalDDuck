@@ -11,8 +11,12 @@ import { cn } from "@/lib/cn";
 /**
  * 03 MBTI 선택.
  *
- * MBTI 는 **캐릭터 발급과 소통 방식 이해에만** 쓴다. 역할 추천 계산에는 절대 들어가지 않는다 —
+ * MBTI 는 **캐릭터 발급과 소통 방식 이해에만** 쓴다. 역할 정하기에는 절대 들어가지 않는다 —
  * 이 약속은 화면에도 적혀 있고, 06 화면에서 한 번 더 확인시킨다.
+ *
+ * 주석에도 "역할 추천" 이라고 적혀 있었는데 **그런 기능이 없다** — 역할은 각자 고른 희망과
+ * 추첨으로만 정해진다(`roles/roster-model.ts`). 존재하지 않는 계산의 예외를 적으면 나중에
+ * 읽는 사람이 그 계산이 있는지 찾게 된다.
  */
 export default function MbtiPage() {
   const router = useRouter();
@@ -147,7 +151,7 @@ export default function MbtiPage() {
         </div>
 
         <Note tone="info" icon="lock" className="mt-2.5">
-          MBTI는 캐릭터 발급과 소통 방식 이해에만 씁니다. <b>역할 추천 계산에는 쓰지 않습니다.</b>
+          MBTI는 캐릭터 발급과 소통 방식 이해에만 씁니다. <b>역할 정하기에는 쓰지 않습니다.</b>
         </Note>
       </Body>
 

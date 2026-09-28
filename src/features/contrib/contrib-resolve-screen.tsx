@@ -108,7 +108,7 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
         ) : (
           <Note tone="warn" icon="info" className="mb-4">
             이 기록을 정리할 수 있는 사람은 <b>기록을 적은 사람</b>과 <b>의견을 적은 사람</b>뿐입니다.
-            남은 팀원은 17 화면에서 1:1로 이야기해 주세요 — 결론을 적는 자리는 두 사람의 몫입니다.
+            남은 팀원은 1:1 대화에서 이야기해 주세요 — 결론을 적는 자리는 두 사람의 몫입니다.
           </Note>
         )}
 

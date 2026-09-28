@@ -12,7 +12,6 @@ import {
   OTP_EXPIRY_MS,
   sendEmailOtp,
 } from "@/server/auth/email-token";
-import { sendSupabaseOtp, verifySupabaseOtp } from "@/server/auth/supabase";
 
 /**
  * **인증에 성공한 이메일**을 심어 두는 쿠키.
@@ -56,7 +55,21 @@ export type EmailVerifyResult =
   | { status: "wrong"; remainingAttempts: number }
   | { status: "expired" | "locked" | "error" };
 
-/** 이메일로 6자리 인증번호 및 매직링크 요청 */
+/**
+ * 이메일로 6자리 인증번호 및 매직링크 요청.
+ *
+ * ⚠️ **예전에는 Supabase Auth `signInWithOtp` 를 병행했다 — 그것이 "보냈는데 안 온다" 의
+ * 원인이었다.** 같은 주소로 6자리가 **두 개** 나갔다. 하나는 여기서 발급해 해시로 저장한
+ * 코드(Resend 가 나름), 다른 하나는 Supabase 가 알아서 만든 **다른** 코드였는데, 화면에는
+ * 어느 쪽인지 표시되지 않았다. 게다가 성공 판정이 이 둘의 "둘 다 실패했나"로 계산됐는데,
+ * Supabase 는 **메일을 하나도 안 보내도 성공을 보고한다** — API 호출이 200 이었다는 뜻일 뿐이고
+ * Supabase 기본 SMTP 는 시간당 몇 통 제한에 걸리면 조용히 버린다. 그래서 `RESEND_API_KEY` 가
+ * 비어 있어 실제로는 메일이 0통이어도 "전송했습니다"가 되어 있었다.
+ *
+ * 이 앱은 애초에 Supabase Auth 를 쓰지 않는다(가입·로그인이 없는 제품이고 Supabase 는
+ * 파일 저장소 전용이다 — `server/storage/client.ts`). 인증은 여기 발급한 해시 토큰만 보면
+ * 충분하므로, **발송자도 검증자도 하나씩만 남긴다.**
+ */
 export async function requestEmailAuth(email: string): Promise<EmailAuthRequestResult> {
   const norm = normalizeEmail(email);
   if (!isValidEmail(norm)) {
@@ -69,25 +82,17 @@ export async function requestEmailAuth(email: string): Promise<EmailAuthRequestR
       return { ok: false, reason: "cooldown" };
     }
 
-    // 1. Supabase Auth를 통해 실제 사용자 이메일로 6자리 OTP 발송
-    const supabaseRes = await sendSupabaseOtp(norm);
-
-    // 2. 개발 환경 또는 백업용 메일러/콘솔 로깅 병행
+    // Resend 가 이 앱에서 인증번호가 실제로 나가는 **유일한** 길이다.
     const resend = await sendEmailOtp(norm, code, token);
 
-    // Supabase 발송이 실패했을 때 콘솔 경고 남김
-    if (!supabaseRes.success) {
-      console.warn("[Email Auth] Supabase 발송 경고:", supabaseRes.error);
-    }
-
     /**
-     * **두 경로가 모두 실패했으면 성공이라고 말하지 않는다.**
+     * **보냈다고 말하지 않는 것이, 보내지 못한 것보다 낫다.**
      *
      * 토큰은 이미 발급됐으니 형식적으로는 "보냈다"가 되지만, 메일은 안 나갔고 운영에서는
      * 인증번호를 화면에 돌려줄 수도 없다. 그러면 사용자는 받은 것처럼 기다리다 10분 뒤에야
      * 만료됩니다. 성공처럼 보이게 하는 것이 발송 실패를 알리는 것보다 나쁩니다.
      */
-    if (!supabaseRes.success && !resend.success) {
+    if (!resend.success) {
       return { ok: false, reason: "send-failed" };
     }
 
@@ -98,7 +103,15 @@ export async function requestEmailAuth(email: string): Promise<EmailAuthRequestR
   }
 }
 
-/** 6자리 인증번호 검증 및 로그인 처리 */
+/**
+ * 6자리 인증번호 검증 및 로그인 처리.
+ *
+ * 예전에는 Supabase 검증을 **먼저** 돌리고 그 다음에 여기로 넘어왔다. 그 결과가 두 가지
+ * 나빴다. 하나는 두 발송자가 준 서로 다른 코드 중 어느 쪽도 검증되면 안 되는 상황이 생겼다는
+ * 것이고(오입력 5회가 두 코드 모두를 함께 무효화했다), 다른 하나는 **시도 횟수를 세지 않는
+ * 길이 생겼다** — Supabase 검증이 앞에서 실패하면 로컬 `attempts` 는 늘지 않아, 브루트포스가
+ * 사실상 무제한이었다. 검증 경로를 하나만 남기면 카운트가 곧 그 하나뿐이 된다.
+ */
 export async function verifyEmailAuthCode(
   email: string,
   code: string,
@@ -110,15 +123,7 @@ export async function verifyEmailAuthCode(
     return { status: "wrong", remainingAttempts: MAX_OTP_ATTEMPTS };
   }
 
-  // 1. Supabase Auth로 사용자가 메일로 받은 6자리 OTP 실제 검증 시도
-  const supabaseVerify = await verifySupabaseOtp(norm, cleanCode);
-  if (supabaseVerify.success) {
-    // Supabase 인증 성공 시 로컬 대기 토큰도 정리 후 즉시 로그인 완료
-    await db.emailAuthToken.deleteMany({ where: { email: norm } });
-    return completeEmailLogin(norm);
-  }
-
-  // 2. 로컬 백업 토큰 검증 (개발 콘솔/테스트용 코드 입력 시)
+  // 1. 대기 중인 토큰 조회
   const record = await db.emailAuthToken.findFirst({
     where: { email: norm },
     orderBy: { createdAt: "desc" },

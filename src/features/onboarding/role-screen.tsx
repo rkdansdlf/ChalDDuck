@@ -1,30 +1,28 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { usePoll } from "@/lib/use-poll";
 import {
   AppBar,
   AppFrame,
   Body,
   Btn,
-  Chip,
   Dock,
   Icon,
+  Input,
   Note,
   Panel,
   Progress,
-  Rows,
   Toast,
-  } from "@/components/ui";
+} from "@/components/ui";
 import { checkJoinApproval, joinTeam, type JoinBlock } from "@/server/actions/onboarding";
+import { updateMemberEmail } from "@/server/actions/email-auth";
 import { useAction } from "@/lib/use-action";
 import { cn } from "@/lib/cn";
 import type { Role, RoleKey } from "@/lib/types";
 import { resetOnboarding, setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
 import { useOnboardingGate } from "./use-onboarding-gate";
-
-type Mode = "want" | "veto";
 
 /**
  * 06 희망 역할 · Veto — 온보딩의 마지막 단계.
@@ -36,41 +34,30 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   const router = useRouter();
   const { teamCode, want, veto } = useOnboarding();
 
-  const [mode, setMode] = useState<Mode>("want");
   const [blocked, setBlocked] = useState<JoinBlock | null>(null);
   const { toast, busy, run } = useAction();
-  const ready = useOnboardingGate(true);
   /** 들어간 뒤 한 번만 보여 주는 재입장 코드. 서버에는 해시만 남아 다시 볼 수 없다. */
   const [issued, setIssued] = useState<{ rejoinCode: string; isLeader: boolean } | null>(null);
-  /** 팀장 승인을 기다리는 중. */
+
+  const ready = useOnboardingGate(!issued);
   const [waiting, setWaiting] = useState(false);
-  /**
-   * 여기서 더 나아갈 수 없는 상태. 승인을 기다리는 것과 **다른** 끝이다 — 폴링하면 되는
-   * 문제가 아니라, 팀장에게 확인받거나 시간이 지나야 하는 문제다. 기다리는 화면으로 보내면
-   * `{status:"none"}` 을 받아 `/join` 으로 튕겨나가므로, 그 대신 여기서 멈춰 세운다.
-   */
   const [stopped, setStopped] = useState<"taken" | "limited" | null>(null);
 
-  const picked = mode === "want" ? want : veto;
-
-  // 자동으로 Veto 탭으로 넘어간 적 있는지. **한 번만** 넘어간다.
-  const autoMoved = useRef(false);
-
-  /** 역할을 고를 때 쓰는 setter. 희망을 막 골랐으면 자동으로 Veto 탭으로 넘긴다. */
-  const set = (key: RoleKey | null) => {
-    if (mode === "want") {
+  const handleToggleWant = (key: RoleKey) => {
+    if (want === key) {
+      setWant(null);
+    } else {
       setWant(key);
-      // **처음 한 번만** 자동으로 넘어간다. 예전에는 `!veto` 만 보고 넘어가서, Veto 가 비어
-      // 있는 동안 **희망을 고칠 때마다** 다시 뒤집혔다 — "아 그 선택을 잘못했나" 하고
-      // 희망 탭으로 돌아와 Role 를 바꿨는데 확인도 보기 전에 Veto 탭으로 튕겨 나가,
-      // 왜 넘어갔는지 알 수 없었다. Veto 는 선택 사항(`submit` 은 `want` 만 요구)인데
-      // 화면은 강제처럼 여기서 멈추게 했다.
-      if (key && !veto && !autoMoved.current) {
-        autoMoved.current = true;
-        setMode("veto");
-      }
+      if (veto === key) setVeto(null);
+    }
+  };
+
+  const handleToggleVeto = (key: RoleKey) => {
+    if (veto === key) {
+      setVeto(null);
     } else {
       setVeto(key);
+      if (want === key) setWant(null);
     }
   };
 
@@ -80,17 +67,13 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
       "submit",
       async () => {
         setBlocked(null);
-        // 팀장이 있으면 바로 들어가지 못하고 승인을 기다린다.
         const result = await joinTeam(teamCode ?? "", toDraft());
         if (result.status === "name-taken") {
-          // 이름 단계에서 걸러지지만, 그 사이에 같은 이름이 들어왔을 수 있다.
           const query = new URLSearchParams({ code: teamCode ?? "", name: toDraft().name });
           router.push(`/join/rejoin?${query}`);
           return;
         }
         if (result.status === "invalid") {
-          // 서버가 거절한 이유를 그대로 옮긴다. 예전에는 여기가 `throw` 였고, 운영 빌드는
-          // 그 문구를 지워서 **유일한 버튼이 아무 일도 하지 않는 화면**이 되었다.
           setBlocked(result.reason);
           return;
         }
@@ -98,21 +81,14 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
           setWaiting(true);
           return;
         }
-        // 같은 이름으로 이미 처리 중인 요청이 있는데 이 브라우저가 그 소유자가 아니다.
-        // **누구의 것인지 말하지 않는다** — 알면 팀에 그 이름이 있는지와 승인 대기 여부가
-        // 드러난다. 팀장에게 확인하라고 안내하는 것이 전부다.
         if (result.status === "taken") {
           setStopped("taken");
           return;
         }
-        // abuse 제한. 막힌 것은 **신청**뿐이므로 시간이 지나면 같은 화면에서 다시 누를 수 있다.
         if (result.status === "limited") {
           setStopped("limited");
           return;
         }
-        // 이제 서버에 이름이 있다. 로컬 초안을 비운다 — 비우지 않으면 팀을 옮겼을 때
-        // 옛 이름과 MBTI 가 새 팀 명단 위에 남아 그려진다(07 화면의 수락 버튼이
-        // 엉뚱한 이름을 비교해 아예 안 뜨는 일까지 있었다).
         resetOnboarding();
         setIssued({ rejoinCode: result.rejoinCode, isLeader: result.isLeader });
       },
@@ -120,10 +96,13 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
     );
   };
 
-  if (!ready) return null;
   if (issued) return <RejoinCodePanel {...issued} onDone={() => router.push("/team")} />;
+  if (!ready) return null;
   if (stopped) return <JoinStoppedPanel reason={stopped} onRetry={() => setStopped(null)} />;
   if (waiting) return <WaitingPanel name={toDraft().name} onIssued={setIssued} />;
+
+  const wantRole = roles.find((r) => r.key === want);
+  const vetoRole = roles.find((r) => r.key === veto);
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
@@ -131,103 +110,70 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
       <Body dense>
         <Progress step={4} total={4} className="mt-1 mb-4" />
 
-        <h1 className="t-h1-sm keep-all m-0 mb-2 text-txt-strong">같은 유형이어도 원하는 일은 다릅니다</h1>
-        <p className="text-pretty-keep m-0 mb-4 text-[15px] leading-[1.62] text-txt">
-          1순위로 맡고 싶은 역할 하나와, 이번에는 피하고 싶은 역할 하나를 골라 주세요.
+        <h1 className="t-h1-sm keep-all m-0 mb-1.5 text-txt-strong">어떤 일을 맡고 싶나요?</h1>
+        <p className="text-pretty-keep m-0 mb-4 text-[14.5px] leading-[1.55] text-txt">
+          맡을 일은 꼭 하나, 피할 일은 하나까지 골라요.
         </p>
 
-        {/* 희망/Veto 전환 — 한 화면에서 두 가지를 고르되 한 번에 하나씩만 다룬다 */}
-        <div role="tablist" className="mb-3.5 flex gap-1.5 rounded-[13px] bg-fill p-1">
-          {(
-            [
-              ["want", "1순위 희망", want],
-              ["veto", "피하고 싶음", veto],
-            ] as const
-          ).map(([key, label, value]) => {
-            const on = mode === key;
+        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
+          {roles.map((role) => {
+            const isWant = want === role.key;
+            const isVeto = veto === role.key;
+
             return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                onClick={() => setMode(key)}
-                className={cn(
-                  "flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-[5px] rounded-[10px] border-none font-bold text-[13.5px] leading-[1.3]",
-                  on ? "bg-card text-txt-strong shadow-sm" : "bg-transparent text-txt-muted",
-                )}
+              <div
+                key={role.key}
+                className="flex items-center justify-between gap-3 px-4 py-3.5"
               >
-                {label}
-                {value ? (
-                  <span className={cn("inline-flex", key === "want" ? "text-want" : "text-veto")}>
-                    <Icon name="check" size={14} strokeWidth={3} />
-                  </span>
-                ) : null}
-              </button>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-[15.5px] leading-[1.3] text-txt-strong">
+                    {role.name}
+                  </div>
+                  <div className="keep-all mt-0.5 text-[13px] leading-[1.4] text-txt-muted">
+                    {role.note}
+                  </div>
+                </div>
+
+                <div className="flex flex-none items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-pressed={isWant}
+                    onClick={() => handleToggleWant(role.key as RoleKey)}
+                    className={cn(
+                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors cursor-pointer",
+                      isWant
+                        ? "border-want bg-ok-bg text-want font-bold"
+                        : "border-line bg-card text-txt hover:bg-fill active:bg-fill",
+                    )}
+                  >
+                    <Icon name={isWant ? "check" : "thumbs-up"} size={13.5} strokeWidth={isWant ? 2.5 : 2} />
+                    <span>맡을래요</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-pressed={isVeto}
+                    onClick={() => handleToggleVeto(role.key as RoleKey)}
+                    className={cn(
+                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors cursor-pointer",
+                      isVeto
+                        ? "border-veto bg-err-bg text-veto font-bold"
+                        : "border-line bg-card text-txt hover:bg-fill active:bg-fill",
+                    )}
+                  >
+                    <Icon name={isVeto ? "check" : "ban"} size={13.5} strokeWidth={isVeto ? 2.5 : 2} />
+                    <span>피할래요</span>
+                  </button>
+                </div>
+              </div>
             );
           })}
         </div>
 
-        <Rows>
-          {roles.map((role) => {
-            const isWant = want === role.key;
-            const isVeto = veto === role.key;
-            const on = picked === role.key;
-            // 반대편에서 이미 고른 역할은 여기서 고를 수 없다
-            const blocked = mode === "want" ? isVeto : isWant;
-
-            return (
-              <button
-                key={role.key}
-                type="button"
-                disabled={blocked}
-                aria-pressed={on}
-                onClick={() => set(on ? null : (role.key as RoleKey))}
-                className={cn(
-                  "box-border flex min-h-[56px] w-full items-center gap-3 border-none px-[15px] py-[13px] text-left",
-                  on ? (mode === "want" ? "bg-ok-bg" : "bg-err-bg") : "bg-transparent",
-                  blocked ? "cursor-default opacity-55" : "cursor-pointer",
-                )}
-              >
-                <span
-                  className={cn(
-                    "grid size-[22px] flex-none place-items-center border-[1.5px] text-white",
-                    mode === "want" ? "rounded-full" : "rounded-[7px]",
-                    on
-                      ? mode === "want"
-                        ? "border-transparent bg-want"
-                        : "border-transparent bg-veto"
-                      : "border-line-strong bg-transparent",
-                  )}
-                >
-                  {on ? <Icon name={mode === "want" ? "check" : "x"} size={13} strokeWidth={3} /> : null}
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="t-body-strong keep-all block text-txt-strong">{role.name}</span>
-                  <span className="keep-all mt-0.5 block text-[13px] leading-[1.45] text-txt-muted">
-                    {role.note}
-                  </span>
-                </span>
-
-                {isWant ? (
-                  <Chip tone="want" icon="thumbs-up">
-                    희망
-                  </Chip>
-                ) : null}
-                {isVeto ? (
-                  <Chip tone="veto" icon="hand">
-                    피함
-                  </Chip>
-                ) : null}
-              </button>
-            );
-          })}
-        </Rows>
-
-        <Note tone="info" icon="lock" className="mt-3">
-          역할은 <b>희망·Veto·경험·가능한 시간</b>으로만 조율합니다. MBTI 유형은 배정 계산에 들어가지 않습니다.
-        </Note>
+        <div className="mt-4 flex items-center gap-2 text-[13px] leading-[1.5] text-txt-muted">
+          <Icon name="lock" size={14} className="flex-none" />
+          <span>역할은 고른 것·경험·가능한 시간으로만 정해요. MBTI는 쓰지 않아요.</span>
+        </div>
 
         {blocked ? <JoinBlockedNote reason={blocked} onGoToTeam={() => router.push("/team")} /> : null}
       </Body>
@@ -235,6 +181,21 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
       <Toast msg={toast} />
 
       <Dock>
+        <div className="mb-2.5 grid grid-cols-2 gap-2">
+          <div className="rounded-[12px] bg-ok-bg/70 border border-want/20 px-3.5 py-2">
+            <span className="t-cap-strong block text-txt-muted text-[11.5px]">맡을 일</span>
+            <span className="font-bold text-[14px] text-txt-strong truncate block mt-0.5">
+              {wantRole ? wantRole.name : "선택 안 됨"}
+            </span>
+          </div>
+          <div className="rounded-[12px] bg-fill px-3.5 py-2 border border-line">
+            <span className="t-cap-strong block text-txt-muted text-[11.5px]">피할 일</span>
+            <span className="font-medium text-[14px] text-txt-strong truncate block mt-0.5">
+              {vetoRole ? vetoRole.name : "없음 (선택)"}
+            </span>
+          </div>
+        </div>
+
         <Btn
           full
           size="lg"
@@ -242,7 +203,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
           onClick={submit}
           iconRight="arrow-right"
         >
-          {want ? (busy.submit ? "알리는 중…" : "팀에 알리기") : "1순위 희망을 골라 주세요"}
+          {busy.submit ? "알리는 중…" : "팀에 알리기"}
         </Btn>
       </Dock>
     </AppFrame>
@@ -251,10 +212,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
 
 /**
  * 첫 입장 직후 재입장 코드를 **한 번만** 보여 준다.
- *
- * 서버에는 해시만 남아 이 화면을 지나면 아무도 다시 볼 수 없다. 그래서 "확인했습니다"를
- * 누르기 전에는 넘어가지 못하게 한다 — 그냥 넘겨 버리면 기기를 바꿨을 때
- * 팀장을 붙잡는 수밖에 없다.
+ * 개선안(Page 3): 이메일로 돌아오기(간편) 또는 재입장 코드 저장하기 중 하나를 선택.
  */
 function RejoinCodePanel({
   rejoinCode,
@@ -265,66 +223,122 @@ function RejoinCodePanel({
   isLeader: boolean;
   onDone: () => void;
 }) {
-  const [saved, setSaved] = useState(false);
+  const [email, setEmail] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { toast, flash } = useAction();
 
-  /** 코드를 눌러 클립보드에 옮긴다 — 화면에 있는 코드를 손으로 옮겨 적게 두지 않는다. */
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(rejoinCode);
+      setCopied(true);
       flash("코드를 복사했습니다. 메모장에 붙여 두세요");
     } catch {
       flash("복사하지 못했습니다. 코드를 직접 옮겨 적어 주세요.");
     }
   };
 
+  const hasEmail = email.trim().length > 3 && email.includes("@");
+  const canProceed = hasEmail || copied;
+
+  const handleFinish = async () => {
+    if (!canProceed) return;
+    if (hasEmail) {
+      setSaving(true);
+      try {
+        await updateMemberEmail(email.trim());
+      } catch {
+        // 백그라운드 저장 실패해도 진행
+      } finally {
+        setSaving(false);
+      }
+    }
+    onDone();
+  };
+
   return (
-    <AppFrame label="재입장 코드">
+    <AppFrame label="재입장 수단">
       <AppBar title="들어왔습니다" sub={isLeader ? "팀장" : undefined} />
       <Body>
-        <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">재입장 코드를 저장해 주세요</h1>
-        <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
-          기기를 바꾸거나 브라우저 기록을 지웠을 때 이 코드로 돌아옵니다.{" "}
-          <b>이 화면을 지나면 다시 볼 수 없습니다.</b>
+        <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">
+          다른 기기에서 돌아올 방법을 하나 정해 주세요
+        </h1>
+        <p className="text-pretty-keep m-0 mb-6 text-[15px] leading-[1.62] text-txt">
+          둘 중 하나만 해 두면 됩니다.
         </p>
 
-        <Panel s="yellow" pad={18} r={18} className="mb-2 text-center">
-          <div className="font-mono font-extrabold text-[22px] leading-[1.4] tracking-[.08em] text-ink-900">
-            {rejoinCode}
+        {/* 1. 이메일로 돌아오기 */}
+        <div className="rounded-[18px] border border-line bg-card p-4">
+          <div className="flex items-center gap-2">
+            <span className="text-txt-strong">
+              <Icon name="mail" size={18} />
+            </span>
+            <span className="font-bold text-[16px] text-txt-strong">이메일로 돌아오기</span>
+            <span className="ml-auto rounded-full bg-yellow-100 px-2.5 py-0.5 font-bold text-[12px] text-yellow-800">
+              간편
+            </span>
           </div>
-        </Panel>
+          <p className="t-note m-0 mt-1 mb-3 text-txt-muted">
+            메일로 온 인증번호로 들어와요.
+          </p>
+          <Input
+            type="email"
+            value={email}
+            onChange={setEmail}
+            placeholder="student@university.ac.kr"
+          />
+        </div>
 
-        <Btn v="outline" full icon="copy" onClick={copy} className="mb-3">
-          코드 복사하기
-        </Btn>
+        {/* 또는 구분선 */}
+        <div className="my-4 flex items-center justify-center gap-3 text-txt-muted">
+          <div className="h-px flex-1 bg-line" />
+          <span className="text-[13px] font-medium">또는</span>
+          <div className="h-px flex-1 bg-line" />
+        </div>
 
-        {isLeader ? (
-          <Note tone="info" icon="user-round" title="팀을 만드셨으니 팀장입니다" className="mb-3">
-            팀원이 기기를 바꿔 다시 들어올 때 <b>승인</b>하는 역할입니다. 팀 탭에 요청이 뜹니다.
-          </Note>
-        ) : null}
+        {/* 2. 재입장 코드 저장하기 */}
+        <div className="rounded-[18px] border border-line bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-txt-strong">
+              <Icon name="key-round" size={18} />
+            </span>
+            <span className="font-bold text-[16px] text-txt-strong">재입장 코드 저장하기</span>
+          </div>
 
-        <Note tone="warn" icon="shield" title="코드는 서버에도 남지 않습니다">
-          저장해 두지 않으면 재입장할 때 팀장 승인을 받아야 합니다. 팀 화면에서 새 코드를 다시
-          받을 수는 있습니다.
-        </Note>
+          <div className="flex items-center justify-between rounded-[14px] bg-yellow-100/90 px-4 py-3 border border-yellow-200">
+            <span className="font-mono font-extrabold text-[18px] tracking-[.06em] text-ink-900">
+              {rejoinCode}
+            </span>
+            <button
+              type="button"
+              onClick={copy}
+              className="flex items-center gap-1.5 rounded-lg border border-line-strong/20 bg-card px-3 py-1.5 text-[13.5px] font-bold text-txt-strong shadow-2xs cursor-pointer active:scale-95"
+            >
+              <Icon name={copied ? "check" : "copy"} size={14} />
+              <span>{copied ? "복사됨" : "복사"}</span>
+            </button>
+          </div>
 
-        <button
-          type="button"
-          aria-pressed={saved}
-          onClick={() => setSaved((v) => !v)}
-          className="mt-4 flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-control border border-line bg-card px-3.5 text-left"
-        >
-          <Icon name={saved ? "check" : "circle-dashed"} size={18} />
-          <span className="font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
-            따로 적어 두었습니다
-          </span>
-        </button>
+          <div className="mt-3 flex items-start gap-2 text-[13px] leading-[1.45] text-txt-muted">
+            <Icon name="lock" size={14} className="mt-0.5 flex-none" />
+            <span>지금 한 번만 보여요. 잃어버리면 팀장 승인으로 들어와요.</span>
+          </div>
+        </div>
       </Body>
 
       <Dock>
-        <Btn full size="lg" disabled={!saved} onClick={onDone} iconRight="arrow-right">
-          팀으로 가기
+        <Btn
+          full
+          size="lg"
+          disabled={!canProceed || saving}
+          onClick={handleFinish}
+          iconRight={canProceed ? "arrow-right" : undefined}
+        >
+          {saving
+            ? "저장 중…"
+            : canProceed
+              ? "팀으로 들어가기"
+              : "이메일을 적거나 코드를 복사해 주세요"}
         </Btn>
       </Dock>
 
@@ -351,6 +365,8 @@ function WaitingPanel({
 }) {
   const router = useRouter();
   const [rejected, setRejected] = useState(false);
+  /** 팀에 같은 이름이 이미 있다 — 예전엔 이 상태가 없어서 조용히 `/join` 으로 튕겼다. */
+  const [nameTaken, setNameTaken] = useState(false);
   /** 승인을 확인하는 호출이 한 번 실패했다. 조용히 멈춘 게 아니라 말해 준다. */
   const [stalled, setStalled] = useState(false);
 
@@ -371,6 +387,10 @@ function WaitingPanel({
           onIssued({ rejoinCode: result.rejoinCode, isLeader: false });
         } else if (result.status === "rejected") {
           setRejected(true);
+        } else if (result.status === "name-taken") {
+          // 예전엔 여기가 없었다 — 서버가 이름을 지운 뒤 `none` 이 돌아와서 아무 설명 없이
+          // `/join` 으로 튕겼다(2026-09-28 확인).
+          setNameTaken(true);
         } else if (result.status === "none") {
           router.push("/join");
         }
@@ -383,14 +403,29 @@ function WaitingPanel({
       }
     },
     POLL_MS,
-    !rejected,
+    !rejected && !nameTaken,
   );
 
   return (
     <AppFrame label="팀장 승인 대기">
       <AppBar title="승인을 기다립니다" sub={name} />
       <Body>
-        {rejected ? (
+        {nameTaken ? (
+          <>
+            <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">같은 이름이 이미 있습니다</h1>
+            <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
+              팀에 <b>{name}</b>님이 이미 계십니다. 팀 안에서는 이름이 겹치면 안 됩니다 — 그래야
+              누가 말하고 누가 했는지 구분됩니다. <b>다른 이름</b>으로 다시 신청해 주세요.
+            </p>
+            <Note tone="info" icon="circle-help" title="본인이 이미 계신 경우" className="mb-4">
+              기기를 바꿔 오신 거라면 재입장 코드가 필요합니다 — 첫 입장 때 받은 코드로
+              들어가면 기록이 이어집니다.
+            </Note>
+            <Btn full size="lg" v="outline" onClick={() => router.push("/join")}>
+              이름 바꾸어 다시 신청
+            </Btn>
+          </>
+        ) : rejected ? (
           <>
             <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">팀장이 거절했습니다</h1>
             <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">

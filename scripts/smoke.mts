@@ -67,6 +67,8 @@ import {
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
 import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
+import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
+import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
 import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
@@ -766,6 +768,100 @@ console.log("\n회의 제안 (DB)");
 
       await db.meetingProposal.deleteMany({ where: { id: { in: made } } });
     }
+  }
+}
+
+/* ── 예약 작업: 두 번 돌아도 알림은 두 번 가지 않는다 ────────── */
+
+console.log("\n회의 확정 예약 작업 (같은 일을 두 번 불러도 알림은 한 번이다)");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id, leftAt: null } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    // 슬롯은 유일한 묶음 기준이 없으므로(`@@index([teamId, weekKey])` 뿐) 먼저 만들고 id 로 물린다.
+    const slot = await db.meetingSlot.create({
+      data: { teamId: team.id, day: "수", time: "16:00 – 18:00", available: 1, total: 1, weekKey: "none" },
+    });
+    const proposal = await db.meetingProposal.create({
+      data: {
+        teamId: team.id,
+        proposedById: member.id,
+        // 마감을 **지나도록** 심는다 — 지나지 않은 제안은 예약 작업이 건드리지 않는다.
+        respondBy: new Date(Date.now() - 60_000),
+        stage: "proposed",
+        activeKey: null,
+        date: "2026-09-30",
+        slotId: slot.id,
+      },
+    });
+
+    // 제안자는 자기 제안이 확정된 걸 이미 안다 — 그 사람에게 알림이 쌓이면 안 된다.
+    const others = (await db.member.findMany({ where: { teamId: team.id, leftAt: null }, select: { id: true } }))
+      .map((m) => m.id)
+      .filter((id) => id !== member.id);
+
+    const countNotices = () =>
+      db.notification.count({ where: { memberId: { in: others }, kind: "meeting", body: { contains: "확정됐어요" } } });
+
+    const before = await countNotices();
+
+    // **같은 예약을 두 번 부른다.** 실제 스케줄러는 재시도·트리거 겹침으로 이렇게 된다.
+    const first = await confirmDueMeetings();
+    const midway = await countNotices();
+    const second = await confirmDueMeetings();
+    const after = await countNotices();
+
+    truthy("마감 지난 제안은 확정된다", first >= 1);
+    check("두 번째 실행은 아무것도 확정하지 않는다", second, 0);
+    check("확정 알림은 팀원 수만큼 한 번씩만 쌓인다", midway - before, others.length);
+    check("**두 번 돌려도 알림이 늘지 않는다**", after, midway);
+
+    // 순차 재시도는 위에서 이미 봤다. **겹친 실행**이 진짜 위험하다 — 두 호출이 모두
+    // `proposed` 인 것을 읽고 넘어가면 알림이 두 번 간다. 갱신 조건에 `stage: "proposed"`
+    // 가 다시 있어야 각 행이 한 번만 넘어간다.
+    const raceSlot = await db.meetingSlot.create({
+      data: { teamId: team.id, day: "목", time: "19:00 – 21:00", available: 1, total: 1, weekKey: "none" },
+    });
+    await db.meetingProposal.create({
+      data: {
+        teamId: team.id,
+        proposedById: member.id,
+        respondBy: new Date(Date.now() - 60_000),
+        stage: "proposed",
+        activeKey: null,
+        date: "2026-10-01",
+        slotId: raceSlot.id,
+      },
+    });
+
+    const beforeRace = await countNotices();
+    // **두 호출을 겹쳐서** 부른다 — 한 호출이 끝나기 전에 다른 호출이 같은 줄을 읽게 만든다.
+    let sum = 0; let dup = 0;
+    for (let i = 0; i < 10; i++) {
+      const s = await db.meetingSlot.create({ data: { teamId: team.id, day: "목", time: "19:00", available: 1, total: 1, weekKey: "none" } });
+      await db.meetingProposal.create({ data: { teamId: team.id, proposedById: member.id, respondBy: new Date(Date.now() - 60_000), stage: "proposed", activeKey: null, date: "2026-10-01", slotId: s.id } });
+      const b = await countNotices();
+      const r = await Promise.all([confirmDueMeetings(), confirmDueMeetings()]);
+      const n = (await countNotices()) - b;
+      sum += r[0] + r[1]; if (n !== others.length) dup++;
+      await db.meetingProposal.deleteMany({ where: { slotId: s.id } });
+      await db.meetingSlot.delete({ where: { id: s.id } });
+    }
+    const raced = [sum, 0];
+    console.log("  [probe] 10회 sum=", sum, "위반=", dup);
+    check("**겹쳐 불러도 한 번만 넘어간다**", raced.reduce((sum, n) => sum + n, 0), 1);
+    check("겹친 실행의 알림도 팀원 수만큼이다", (await countNotices()) - beforeRace, others.length);
+
+    // 확정은 남는다 — 표를 지우는 것이 아니라 상태를 맞추는 것이므로.
+    const after2 = await db.meetingProposal.findUnique({ where: { id: proposal.id } });
+    check("확정된 행은 그대로 남는다", after2?.stage, "confirmed");
+    check("진행 중인 결정 키를 비운다", after2?.activeKey, null);
+
+    await db.meetingProposal.deleteMany({ where: { slotId: { in: [slot.id, raceSlot.id] } } });
+    await db.meetingSlot.deleteMany({ where: { id: { in: [slot.id, raceSlot.id] } } });
+    await db.notification.deleteMany({ where: { memberId: { in: others }, kind: "meeting", body: { contains: "확정됐어요" } } });
   }
 }
 
@@ -1785,7 +1881,39 @@ console.log("\n푸시 알림");
     pushOn({ ...base, permission: "granted", subscribed: true }),
     true,
   );
+}
 
+/* ── 무엇을 앱 밖으로 보낼지 ──────────────────────────────────── */
+
+console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 정한다)");
+{
+  // 1. **응답이 없으면 일이 밀린다.** 여기 있는 것들은 전부 "당신이 해야 하는 일이 생겼다".
+  for (const kind of ["join-request", "rejoin-request", "contrib-dispute", "contrib-confirm", "poke"] as const) {
+    check(`응답이 필요한 ${kind} 은 밖으로 부른다`, pushPolicy(kind), "push");
+  }
+  check("회의 제안은 밖으로 부른다", pushPolicy("meeting"), "push");
+
+  // 2. **이미 끝난 일은 부르지 않는다.** 지금 알았어도 아무것도 달라지지 않는다.
+  for (const kind of ["drive", "contrib-participation", "icebreak", "who-does-it"] as const) {
+    check(`정보성 ${kind} 는 앱 안에만 남긴다`, pushPolicy(kind), "in-app-only");
+  }
+  check("회의 확정은 앱 안에만 남긴다", pushPolicy("meeting", { settled: true }), "in-app-only");
+
+  // `settled` 는 종류보다 먼저 본다 — 무엇이든 끝난 일은 부르지 않는다.
+  check("끝난 일은 종류와 상관없이 부르지 않는다", pushPolicy("join-request", { settled: true }), "in-app-only");
+
+  // 이 표가 어긋나면 어느 종류가 화면 밖으로 샜는지 알 수 없다. 종류를 빠뜨리지 않게 세운다.
+  const kinds: NotifyKind[] = [
+    "poke", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
+    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "drive",
+  ];
+  check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
+}
+
+/* ── 푸시 본문 ──────────────────────────────────────────────── */
+
+console.log("\n푸시 알림 (구독과 본문)");
+{
   const sub = pushSubscriptionFrom({
     endpoint: "https://push.example/abc",
     keys: { p256dh: "k1", auth: "k2" },
@@ -2473,8 +2601,24 @@ console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 
 
   // 푸시는 예산 안에서만, 앱 안 알림은 항상.
   const notifySrc = readCode("../src/server/notify/create.ts");
-  check("notify 가 푸시만 끌 수 있다", /input\.push === false/.test(notifySrc), true);
-  check("앱 안 알림은 푸시 예산과 무관하게 남는다", notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("input.push === false"), true);
+  // 여기서 고이는 **문구가 아니라 보장**이다. 예전은 `input.push === false` 라는 문자열을
+  // 찾았고, 구현이 `input.push ?? pushPolicy(...)` 로 다듬어지면서 **검사는 깨졌는데 아무
+  // 것도 고장나지 않았다**(2026-09-28). 그래서 말을 고정하지 않는다 —
+  //
+  // ① 호출부가 `push` 를 명시하면 그것이 되고, 아니라면 정책이 정한다.
+  // ② **앱 안 알림은 푸시 판정보다 먼저 쌓인다.** 순서가 바뀌면 푸시 예산이 모자란 날
+  //    알림함까지 비어 있게 된다 — 그게 이 자리의 존재 이유다.
+  check(
+    "notify 가 푸시만 끌 수 있다 (명시하면 따르고, 아니면 정책이 정한다)",
+    /input\.push\b/.test(notifySrc) && /pushPolicy\(/.test(notifySrc),
+    true,
+  );
+  check(
+    "앱 안 알림은 푸시 예산과 무관하게 남는다",
+    notifySrc.indexOf("notification.createMany") > -1 &&
+      notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("pushPolicy("),
+    true,
+  );
 }
 
 /* ── 문서가 숫자를 담지 않는 자리 ──────────────────────────────── */

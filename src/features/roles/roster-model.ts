@@ -106,7 +106,7 @@ export function drawPoolOf<T extends { id: string; name: string; veto: RoleKey |
 /** 후보가 비었을 때 화면에 보여 줄 문구. */
 export const NO_DRAW_POOL_TEXT: Record<NoDrawPool, string> = {
   "no-wanters": "이 역할을 1순위로 고른 팀원이 없습니다",
-  "all-vetoed": "이 역할을 1순위로 고른 사람이 전부 Veto 했습니다 — 추첨할 수 없습니다",
+  "all-vetoed": "이 역할을 1순위로 고른 사람이 모두 피할 일로 골랐습니다 — 추첨할 수 없습니다",
 };
 
 /** 화면(`roster-screen`)이 그리는 데 필요한 추첨 정보는 `RoleDrawResult` 다 — 하나만 쓴다. */

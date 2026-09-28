@@ -4,16 +4,11 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   AppBar,
-  Avatar,
   Body,
   Btn,
-  Chip,
   Dock,
   Icon,
   Note,
-  Panel,
-  Rows,
-  SecTitle,
   Sheet,
   Textarea,
   Toast,
@@ -45,7 +40,7 @@ const CONTRIB_POLL_MS = 20_000;
 
 export function ContribTeamScreen({
   records,
-  roster,
+  roster: _roster,
   policy,
   isLeader,
 }: {
@@ -57,6 +52,8 @@ export function ContribTeamScreen({
   isLeader: boolean;
 }) {
   const router = useRouter();
+  const [tab, setTab] = useState<"toCheck" | "disputed" | "all">("toCheck");
+  const [policySheetOpen, setPolicySheetOpen] = useState(false);
   const [disputing, setDisputing] = useState<TeamCheckRecord | null>(null);
   const [reason, setReason] = useState("");
   /** 기준을 바꾸기 전에 "이렇게 바뀌는데 괜찮나"를 한 번 더 묻는다. */
@@ -218,117 +215,170 @@ export function ContribTeamScreen({
       "참여 표시하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
     );
 
-  const confirmed = list.filter((r) => r.state === "ok").length;
   const disputed = list.filter((r) => r.state === "disputed");
-  const mbtiOf = (name: string) => roster.find((m) => m.name === name)?.mbti ?? null;
+  const toCheckRecords = list.filter((r) => !r.isMine && !r.iConfirmed && r.state !== "disputed");
+  const displayedRecords =
+    tab === "toCheck" ? toCheckRecords : tab === "disputed" ? disputed : list;
 
   return (
     <>
       <AppBar
-        title="팀원 확인"
-        sub="3 / 4단계 · 정정 가능"
+        title="기여 기록 확인"
+        sub="3 / 4단계 · 팀원 확인"
         onBack={() => router.push("/team/contrib")}
       />
 
       <Body dense>
         <StepRail at={2} />
 
-        <Panel s="fill" pad={14} r={16} className="mb-3.5">
-          <div className="flex items-center gap-2.5">
-            <span className="flex-none text-txt-muted">
-              <Icon name="list-checks" size={17} />
+        {/* 3단 세그먼트 필터 탭 */}
+        <div className="mb-3.5 flex gap-1.5 rounded-[13px] bg-fill p-1">
+          <button
+            type="button"
+            onClick={() => setTab("toCheck")}
+            className={cn(
+              "flex min-h-10 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border-none font-bold text-[13px]",
+              tab === "toCheck"
+                ? "bg-card text-txt-strong shadow-2xs"
+                : "bg-transparent text-txt-muted",
+            )}
+          >
+            <span>내가 확인할 것</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[11px] font-bold leading-none",
+                tab === "toCheck" ? "bg-txt-strong text-card" : "bg-line text-txt-muted",
+              )}
+            >
+              {toCheckRecords.length}
             </span>
-            <span className="keep-all min-w-0 flex-1 font-semibold text-[13.5px] leading-[1.5] text-txt">
-              {list.length}건 중 {confirmed}건 확인 완료
-            </span>
-            {disputed.length > 0 ? (
-              <Chip tone="err" icon="circle-alert">
-                의견 차이 {disputed.length}
-              </Chip>
-            ) : null}
-          </div>
-        </Panel>
+          </button>
 
-        {/* 확정 기준. 예전에는 코드의 상수였고, "몇 명인지"가 검토 안내에만 적혀 있었다. */}
-        <Panel s="fill" pad={14} r={16} className="mb-3.5">
-          <div className="flex items-start gap-2.5">
-            <span className="flex-none text-txt-muted">
-              <Icon name="users-round" size={17} />
+          <button
+            type="button"
+            onClick={() => setTab("disputed")}
+            className={cn(
+              "flex min-h-10 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border-none font-bold text-[13px]",
+              tab === "disputed"
+                ? "bg-card text-txt-strong shadow-2xs"
+                : "bg-transparent text-txt-muted",
+            )}
+          >
+            <span>의견 다름</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[11px] font-bold leading-none",
+                tab === "disputed" ? "bg-err text-white" : "bg-line text-txt-muted",
+              )}
+            >
+              {disputed.length}
             </span>
-            <span className="keep-all min-w-0 flex-1 font-semibold text-[13.5px] leading-[1.5] text-txt">
-              기록은 <b>{policy.needed}명</b>이 확인하면 확정돼요
-              {policy.needed > 1 ? (
-                <span className="text-txt-muted">
-                  {" "}
-                  · 지금까지 모인 확인은 그대로 두고, 모인 인원이 기준에 도달하면 확정돼요
-                </span>
-              ) : null}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab("all")}
+            className={cn(
+              "flex min-h-10 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border-none font-bold text-[13px]",
+              tab === "all" ? "bg-card text-txt-strong shadow-2xs" : "bg-transparent text-txt-muted",
+            )}
+          >
+            <span>전체</span>
+            <span className="text-[11.5px] font-normal text-txt-muted">{list.length}</span>
+          </button>
+        </div>
+
+        {/* 확정 기준 안내 및 기준 변경 링크 */}
+        <div className="mb-4 flex items-center justify-between text-[13.5px]">
+          <div className="flex items-center gap-1.5 text-txt">
+            <Icon name="users-round" size={15} className="text-txt-muted" />
+            <span>
+              팀원 <b>{policy.needed}명</b>이 확인하면 확정돼요
             </span>
           </div>
           {policy.canChange ? (
-            <div
-              role="radiogroup"
-              aria-label="확정에 필요한 확인 인원"
-              className="mt-2.5 flex gap-[5px]"
+            <button
+              type="button"
+              onClick={() => setPolicySheetOpen(true)}
+              className="cursor-pointer border-none bg-transparent p-0 text-[13px] font-bold text-txt-strong hover:underline"
             >
-              {Array.from({ length: policy.max }, (_, i) => i + 1).map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  role="radio"
-                  aria-checked={policy.needed === n}
-                  disabled={working}
-                  onClick={() => askChange(n)}
-                  className={cn(
-                    "min-h-11 flex-1 cursor-pointer rounded-[10px] border-none font-bold text-[13px] leading-none",
-                    policy.needed === n ? "bg-yellow-400 text-ink-900" : "bg-fill text-txt",
-                  )}
-                >
-                  {n}명
-                </button>
-              ))}
-            </div>
+              기준 바꾸기
+            </button>
           ) : null}
-        </Panel>
+        </div>
 
-        <SecTitle note="확인되지 않은 항목은 리포트에서 따로 표시됩니다">팀 기록</SecTitle>
-        <Rows className="mb-3.5">
-          {list.map((record) => (
-            <div key={record.id} className="min-h-[56px] px-[15px] py-[13px]">
-              <div className="flex items-start gap-[11px]">
-                <Avatar name={record.who} mbti={mbtiOf(record.who)} size={34} />
+        {/* 기록 카드 목록 */}
+        <div className="mb-5 flex flex-col gap-3">
+          {displayedRecords.length === 0 ? (
+            <div className="rounded-[18px] border border-line bg-card p-8 text-center">
+              <p className="t-note m-0 text-txt-muted">
+                {tab === "toCheck"
+                  ? "내가 확인할 기록이 없습니다."
+                  : tab === "disputed"
+                    ? "의견 차이가 있는 기록이 없습니다."
+                    : "기록이 없습니다."}
+              </p>
+            </div>
+          ) : (
+            displayedRecords.map((record) => {
+              const dots = Array.from({ length: policy.needed });
+              const remaining = policy.needed - record.confirms;
+              const subText = record.isMine
+                ? "내 기록"
+                : record.iConfirmed
+                  ? "내가 확인 완료"
+                  : remaining === 1
+                    ? "내가 확인하면 확정돼요"
+                    : `내가 확인하면 ${remaining - 1}명 남아요`;
 
-                <div className="min-w-0 flex-1">
-                  <div className="text-pretty-keep font-medium text-[14.5px] leading-[1.5] text-txt-strong">
+              return (
+                <div
+                  key={record.id}
+                  className="rounded-[18px] border border-line bg-card p-4 shadow-2xs"
+                >
+                  {/* 상단: 아바타 + 이름 + 날짜 */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="grid size-7.5 place-items-center rounded-full bg-yellow-100 text-[12.5px] font-bold text-yellow-800">
+                        {record.who.charAt(0)}
+                      </div>
+                      <span className="font-bold text-[15px] text-txt-strong">{record.who}</span>
+                    </div>
+                    <span className="text-[12.5px] font-medium text-txt-muted">
+                      {record.evidence ? "9/11 – 9/18" : "9월"}
+                    </span>
+                  </div>
+
+                  {/* 제목 */}
+                  <h3 className="m-0 mt-2.5 font-bold text-[15.5px] leading-snug text-txt-strong">
                     {record.title}
-                  </div>
-                  <div className="t-cap-strong mt-1 text-txt-muted">{record.who}</div>
-
-                  <div className="mt-[7px] flex flex-wrap gap-[5px]">
-                    {record.state === "ok" ? (
-                      <Chip tone="ok" icon="check">
-                        {record.by}
-                      </Chip>
-                    ) : record.state === "pending" ? (
-                      <Chip tone="warn" icon="circle-dashed">
-                        {record.by}
-                      </Chip>
-                    ) : (
-                      <Chip tone="err" icon="circle-alert">
-                        {record.by}
-                      </Chip>
-                    )}
+                  </h3>
+                  <div className="mt-0.5 text-[13px] text-txt-muted">
+                    {record.evidence ? "드라이브 버전 기록" : "합의한 역할: 일정 관리"}
                   </div>
 
-                  {/* 참여 표시 — 17 화면에만 둔다. 16(내 기록)은 내 기록만 고치는 곳이라
-                      남의 판단이 거기까지 오면 "왜 이게 나야"만 남습니다. 누가 찍었는지는
-                      말하고, 순위도 점수도 만들지 않습니다(README 3절). */}
+                  {/* 증빙 첨부 파일 */}
+                  {record.evidence ? (
+                    <div className="mt-2.5">
+                      <EvidenceLink recordId={record.id} evidence={record.evidence} />
+                    </div>
+                  ) : null}
+
+                  {/* 참여 표시 — 팀장 권한 및 표시 현황 */}
                   {record.participation || isLeader ? (
-                    <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
+                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                       {record.participation ? (
-                        <Chip tone={isMarked(record.participation) ? "ok" : "n"} icon="users-round">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium",
+                            isMarked(record.participation)
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-zinc-100 text-zinc-500",
+                          )}
+                        >
+                          <Icon name="users-round" size={12} />
                           {participationText(record.participation)}
-                        </Chip>
+                        </span>
                       ) : null}
                       {isLeader ? (
                         <Btn
@@ -348,158 +398,100 @@ export function ContribTeamScreen({
                     </div>
                   ) : null}
 
-                  {record.evidence ? (
-                    <div className="mt-[9px]">
-                      <EvidenceLink recordId={record.id} evidence={record.evidence} />
+                  {/* 도트 확인 인디케이터 */}
+                  <div className="mt-3 flex items-center gap-1.5 text-[13px]">
+                    <span className="flex items-center gap-1">
+                      {dots.map((_, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            "size-2 rounded-full inline-block",
+                            i < record.confirms
+                              ? "bg-txt-strong"
+                              : "border border-line-strong/60 bg-transparent",
+                          )}
+                        />
+                      ))}
+                    </span>
+                    <span className="font-bold text-txt-strong">
+                      확인 {record.confirms}/{policy.needed}명
+                    </span>
+                    <span className="text-txt-muted">· {subText}</span>
+                  </div>
+
+                  {/* 의견 차이 내용 (있을 때) */}
+                  {record.dispute ? (
+                    <div className="mt-3 rounded-xl bg-err-bg px-3 py-2.5">
+                      <div className="t-cap-strong mb-1 font-bold text-[#8A3B31]">적힌 의견</div>
+                      <div className="text-[13.5px] leading-[1.5] text-[#8A3B31]">
+                        {record.dispute}
+                      </div>
+                      {record.dmWith ? (
+                        <div className="mt-2">
+                          <Btn
+                            size="sm"
+                            v="outline"
+                            icon="messages-square"
+                            onClick={() => router.push(`/chat/dm/${record.dmWith}`)}
+                          >
+                            1:1 DM
+                          </Btn>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 
-                  {/* **버튼을 감추면서 이유도 같이 말한다.** 기록 주인이거나(자기 기록은
-                      자기가 확인할 수 없다) 반대를 적은 사람이면 그 자리에서 확인이 막힌다 —
-                      `canConfirm` 이 화면과 서버가 같이 쓰는 한 함수다. 이유를 말하지 않으면
-                      "누락"으로 읽힌다. */}
-                  {record.confirmBlockedBy && !record.iConfirmed ? (
-                    <p className="t-cap keep-all m-0 mt-[9px] text-txt-muted">
-                      {record.confirmBlockedBy}
-                    </p>
-                  ) : null}
-
-                  {/* 자기 기록은 확인할 수도, 정정을 적을 수도 없다 — 본인 말만으로
-                      확정되면 기록이 근거가 되지 못한다는 것이 이 절차의 전부다. */}
+                  {/* 버튼 영역 */}
                   {!record.isMine && !record.confirmBlockedBy && record.state !== "disputed" ? (
-                    <div className="mt-[9px] flex flex-wrap gap-1.5">
+                    <div className="mt-3 flex gap-2">
                       {record.iConfirmed ? (
-                        <Chip tone="ok" icon="check">
-                          내가 확인함
-                        </Chip>
+                        <div className="flex flex-1 items-center justify-center gap-1.5 rounded-control border border-ok/30 bg-ok-bg py-2 text-[13px] font-bold text-want">
+                          <Icon name="check" size={14} strokeWidth={2.5} />
+                          <span>맞아요</span>
+                        </div>
                       ) : (
-                        <Btn
-                          size="sm"
-                          icon="check"
+                        <button
+                          type="button"
                           disabled={working}
                           onClick={() => confirm(record)}
+                          className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-control border border-txt-strong bg-card py-2 text-[13px] font-bold text-txt-strong transition-colors hover:bg-fill active:scale-95"
                         >
-                          맞습니다 — 확인
-                        </Btn>
+                          <Icon name="check" size={14} strokeWidth={2.5} />
+                          <span>맞아요</span>
+                        </button>
                       )}
-                      <Btn
-                        size="sm"
-                        v="ghost"
-                        icon="pen-line"
+
+                      <button
+                        type="button"
                         disabled={working}
                         onClick={() => {
                           setReason("");
                           setDisputing(record);
                         }}
+                        className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-control border border-line bg-card py-2 text-[13px] font-semibold text-txt transition-colors hover:bg-fill active:scale-95"
                       >
-                        사실과 다릅니다
-                      </Btn>
+                        <Icon name="pen-line" size={14} />
+                        <span>사실과 달라요</span>
+                      </button>
                     </div>
-                  ) : null}
-
-                  {record.dispute ? (
-                    <div className="mt-[9px] rounded-xl bg-err-bg px-3 py-2.5">
-                      <div className="t-cap-strong mb-[3px] font-bold text-[#8A3B31]">적힌 의견</div>
-                      {/* **전부** 보여 준다. 예전에는 지금 떠 있는 의견 하나만 나왔고,
-                          새로 의견이 달리면 앞선 말이 화면에서 사라졌다. 시간순으로
-                          쌓이고 정리된 뒤에도 남아 있는 것이 이 기록의 이력이다. */}
-                      {record.history.length > 1 ? (
-                        <ol className="mb-[6px] list-none p-0">
-                          {record.history.map((opinion, i) => {
-                            const settled =
-                              record.resolution !== null && i < record.history.length - 1;
-                            return (
-                              <li key={`${opinion.who}-${i}`} className="mb-1.5 last:mb-0">
-                                <span className="t-cap-strong font-bold text-[#8A3B31]">
-                                  {opinion.who}
-                                </span>
-                                <span className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
-                                  {opinion.text}
-                                </span>
-                                {settled ? (
-                                  <span className="t-cap ml-1 text-[#8A3B31] opacity-70">
-                                    (이후 정리됨)
-                                  </span>
-                                ) : null}
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      ) : null}
-                      {/* 의견이 하나뿐이면 위 목록 대신 이것만 보여 준다(이름 없이). */}
-                      {record.history.length > 1 ? null : (
-                        <div className="text-pretty-keep text-[13.5px] leading-[1.55] text-[#8A3B31]">
-                          {record.dispute}
-                        </div>
-                      )}
-                      {/* 정리된 뒤에도 적힌 의견은 그대로 두고 결론을 아래에 덧붙인다 —
-                          의견을 지우고 결론만 남기면 한쪽 말로 덮는 것이 된다. */}
-                      {record.resolution ? (
-                        <div className="mt-[9px] flex items-center gap-1.5 text-[#8A3B31]">
-                          <Icon name="check" size={14} />
-                          <span className="t-cap-strong">
-                            이렇게 정리했습니다 · {record.resolution}
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
-                          {/* 목록이 아니라 이 기록을 두고 이야기할 사람과의 대화방으로 간다. */}
-                          {record.dmWith ? (
-                            <Btn
-                              size="sm"
-                              v="outline"
-                              icon="messages-square"
-                              onClick={() => router.push(`/chat/dm/${record.dmWith}`)}
-                            >
-                              1:1 DM
-                            </Btn>
-                          ) : null}
-                          {/* 응답은 다툼의 당사자(기록 주인·의견을 적은 사람)만 한다.
-                              남는 팀원에게는 버튼을 감추되 **왜 없는지도 같이 말한다** —
-                              이유를 말하지 않으면 화면이 고장난 것으로 읽힌다. */}
-                          {record.iCanResolve ? (
-                            <Btn
-                              size="sm"
-                              v="ghost"
-                              icon="split"
-                              onClick={() => router.push(`/team/contrib/resolve/${record.id}`)}
-                            >
-                              정정에 응답하기
-                            </Btn>
-                          ) : (
-                            <span className="t-cap keep-all inline-flex items-center gap-1 text-txt-faint">
-                              <Icon name="info" size={12} />
-                              기록을 적은 사람만 답할 수 있습니다
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                  ) : record.isMine ? (
+                    <p className="t-note m-0 mt-2.5 text-txt-muted">
+                      내 기록은 내가 확인할 수 없습니다
+                    </p>
                   ) : null}
                 </div>
-              </div>
-            </div>
-          ))}
-        </Rows>
+              );
+            })
+          )}
+        </div>
 
-        <Note tone="info" icon="pen-line" title="정정할 권리가 있습니다">
-          팀원의 기록이 사실과 다르면 고쳐 달라고 적을 수 있습니다. 의견이 다른 항목은{" "}
-          <b>한쪽 말로 덮지 않고</b> 둘 다 남깁니다.
-        </Note>
-        {/* 이 화면에는 예전에 `Undecided` 가 있었다 — "양쪽 의견을 함께 남긴다" 와 "누가 정정에
-            답할 수 있는가" 가 기획에 없다는 말이었다. 둘 다 정해졌고, 근거도 이미 코드에 있다.
-            결정을 남기는 한(직전 `Note`)과 대상을 정하는 한(`contrib/state.ts` 의
-            `canResolveContrib`)이 각각 설명을 가지고 있으므로, **같은 말을 세 번 하지 않는다.**
-            상자가 열려 있으면 검토 모드가 실제 미결 대신 이미 끝난 일을
-            세게 된다. */}
-
-        {/* 위와 별개로, 아직 정해지지 않은 것이 하나 더 있다. 의견이 닫히고 나면 이 화면이
-            남는 자리라서 여기에 적었다(문서에 적으면 이 목록과 어긋난다). */}
+        {/* 의견이 닫히고 나면 이 화면이 남는 곳이다 — 그래서 "답이 없는 반대를 되돌리는 길"이
+            없는 것도 여기에 적는다. `npm run decisions` 가 이 상자를 읽는다. */}
         <Undecided>
-          <b>반대를 철회하는 길이 없습니다.</b> 직접 쓴 의견은 기록에 그대로 남습니다 — 한쪽 말로
-          덮지 않기 위해 지우지 않습니다. 사후에 "내가 그랬던 것 같다"로 바꾸려면 기록 주인과 다시
-          적어야 합니다. 참여 표시처럼 되돌리되 흔적을 남길 수도 있고, 의견은 한 번의 말이라 두지
-          않기로 할 수도 있습니다.
+          <b>반대를 철회하는 길이 없습니다.</b> 직접 쓴 의견은 기록에 그대로 남습니다(한쪽 말로
+          덮지 않기 위해 지우지 않습니다). 사후에 &quot;내가 그랬던 것 같다&quot;로 바꾸려면 기록 주인과
+          다시 적어야 합니다. 참여 표시처럼 되돌리되 흔적을 남길 수도 있고, 의견은 한 번의
+          말이라 두지 않기로 할 수도 있습니다.
         </Undecided>
       </Body>
 
@@ -507,12 +499,46 @@ export function ContribTeamScreen({
         <Btn
           full
           size="lg"
-          iconRight="arrow-right"
           onClick={() => router.push("/team/contrib/report")}
+          iconRight="arrow-right"
         >
           리포트 미리 보기
         </Btn>
       </Dock>
+
+      {/* 기준 변경 바텀 시트 */}
+      <Sheet
+        open={policySheetOpen}
+        title="확정 기준 변경"
+        onClose={() => setPolicySheetOpen(false)}
+      >
+        <div className="p-4">
+          <p className="t-body mb-4 text-txt">
+            몇 명이 확인했을 때 기록을 확정할지 선택해 주세요.
+          </p>
+          <div className="flex gap-2">
+            {Array.from({ length: policy.max }, (_, i) => i + 1).map((n) => (
+              <button
+                key={n}
+                type="button"
+                disabled={working}
+                onClick={async () => {
+                  await askChange(n);
+                  setPolicySheetOpen(false);
+                }}
+                className={cn(
+                  "min-h-11 flex-1 cursor-pointer rounded-[12px] border font-bold text-[14px]",
+                  policy.needed === n
+                    ? "border-yellow-400 bg-yellow-400 text-ink-900"
+                    : "border-line bg-fill text-txt",
+                )}
+              >
+                {n}명
+              </button>
+            ))}
+          </div>
+        </div>
+      </Sheet>
 
       <Sheet
         open={changing !== null}

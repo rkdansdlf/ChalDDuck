@@ -27,6 +27,10 @@ import {
  * - `avgLatencyMs` — 호출이 얼마나 걸렸나. **행 기준 평균**이므로 큰 묶음에 끌려간다.
  *   호출 수(`calls`)와 함께 볼 때만 뜻가 있다.
  * - `calls` — 오늘 실제로 AI 를 부른 횟수(`AiUsage`).
+ * - `reuse` — **결과 하나가 몇 개의 읽기를 대신했나**(`행 ÷ 호출`). 이 값이 순화 구조의
+ *   성패를 말해 준다: 같은 말을 팀원 수만큼 다시 부르면 1.0, 공유하면 팀 인원만큼 올라간다.
+ *   예전 구조(말, 읽는 사람) 은 이 값이 **항상 1.0** 이었다. 호출이 0 이면(전부 규칙 가림)
+ *   AI 가 모든 읽기를 대신한 것이므로 행 수를 그대로 쓴다.
  *
  * **토큰 수는 세지 않는다.** 무료 라우터에서는 비용이 없으므로 비용 대비 판단에 그대로 쓰이지
  * 않고, `model.ts` 에 usage 를 올리기 위해 한 단계를 더 밟는 것은 지금 값보다 비싸다.
@@ -42,6 +46,8 @@ export type PurificationStats = {
   /** 읽는 사람이 끊김 없이 읽을 수 있는 비율(순화 + 가림). */
   coverage: number;
   calls: number;
+  /** 결과 하나가 대신한 읽기 수(행 ÷ 호출). 공유 전에는 1.0, 공유 후에는 팀 인원만큼 오른다. */
+  reuse: number;
   avgLatencyMs: number | null;
   /** 단계별 개수 — 약하게 읽는 사람이 몇 명인지. */
   modes: Record<string, number>;
@@ -56,9 +62,9 @@ export async function purificationStats(teamId: string, at = Date.now()): Promis
   const from = new Date(`${day}T00:00:00+09:00`);
 
   const [rows, usage, settings] = await Promise.all([
-    db.messageCushion.findMany({
+    db.messagePurification.findMany({
       where: { createdAt: { gte: from }, message: { teamId } },
-      select: { status: true, reason: true, source: true, latencyMs: true },
+      select: { status: true, reason: true, source: true, latencyMs: true, messageId: true, policyHash: true },
     }),
     db.aiUsage.count({ where: { teamId, tool: "read-cushion", day } }),
     db.readCushion.groupBy({
@@ -95,6 +101,9 @@ export async function purificationStats(teamId: string, at = Date.now()): Promis
     aiShare: purificationAiShare(buckets),
     coverage: purificationCoverage(buckets),
     calls: usage,
+    // **재사용**: 오늘 만들어진 결과를 몇 명이 나눠 봤나.
+    // 행 수(=순화된 말) 하나가 AI 호출 여러 번을 대신하면 이 값이 올라간다.
+    reuse: usage > 0 ? rows.length / usage : rows.length,
     avgLatencyMs: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
     modes: Object.fromEntries(settings.map((row) => [row.mode, row._count._all])),
   };
@@ -106,6 +115,7 @@ export function describePurification(stats: PurificationStats): string {
     `[순화 ${stats.day}] 말 ${stats.rows} · 커버리지 ${Math.round(stats.coverage * 100)}% · AI 비율 ${Math.round(
       stats.aiShare * 100,
     )}% · 거절 ${stats.buckets.refused} · 버림 ${stats.buckets.rejected} · 실패 ${stats.buckets.failed}`,
+    stats.calls > 0 ? ` · 공유 ${stats.reuse.toFixed(1)}배` : "",
     stats.avgLatencyMs === null ? "" : ` · 평균 ${(stats.avgLatencyMs / 1000).toFixed(1)}초`,
     Object.keys(stats.reasons).length ? ` · 사유 ${JSON.stringify(stats.reasons)}` : "",
   ]

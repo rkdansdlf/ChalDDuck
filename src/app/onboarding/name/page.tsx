@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Dock, Field, Input, Note, Progress, Undecided } from "@/components/ui";
-import { findMemberByName } from "@/server/actions/onboarding";
-import { setEmail, setName, useOnboarding } from "@/features/onboarding/onboarding-state";
+import { AppBar, AppFrame, Body, Btn, Dock, Field, Icon, Input, Note, Progress, Undecided } from "@/components/ui";
+import { findMemberByName, getTeamTeammatePreview } from "@/server/actions/onboarding";
+import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
 const MIN_NAME = 2;
@@ -14,20 +14,26 @@ const MIN_NAME = 2;
  *
  * 가입이 없는 앱이라 **초대 코드 + 이름**이 사실상의 신원이다. 같은 코드에 같은 이름이
  * 이미 있으면 재입장 화면으로 보낸다 — 거기서 재입장 코드나 팀장 승인을 거친다.
- * (동명이인 구분 방법은 아직 확정되지 않은 정책 — 핸드오프 표 1행)
  */
 export default function NamePage() {
   const router = useRouter();
-  const { teamCode, name, email } = useOnboarding();
-  // 초대 코드 없이 들어온 경우(새로고침·즐겨찾기·링크)에는 이름부터 되돌린다. 예전에는
-  // 여기서 막지 않아 이름·MBTI·역할을 다 고른 뒤 마지막에 조용히 실패했다.
+  const { teamCode, name } = useOnboarding();
   const ready = useOnboardingGate(true);
 
   const [existing, setExisting] = useState<{ name: string } | null>(null);
   const [checking, setChecking] = useState(false);
+  const [teammateName, setTeammateName] = useState<string>("이서연");
 
   const trimmed = name.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_NAME;
+  const isValid = trimmed.length >= MIN_NAME;
+
+  useEffect(() => {
+    if (!teamCode) return;
+    getTeamTeammatePreview(teamCode).then((found) => {
+      if (found) setTeammateName(found);
+    });
+  }, [teamCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,7 +46,6 @@ export default function NamePage() {
       if (!cancelled) setExisting(member);
     });
 
-    // 타이핑 중 앞선 조회 결과가 뒤늦게 도착해 최신 입력을 덮어쓰지 않도록 취소한다
     return () => {
       cancelled = true;
     };
@@ -49,18 +54,12 @@ export default function NamePage() {
   const proceed = async () => {
     if (checking) return;
 
-    // 화면에 떠 있는 `existing` 을 믿지 않고 여기서 다시 물어본다. 빠르게 적고 바로
-    // 누르면 조회가 아직 안 끝나 `null` 인 채로 통과해 버린다 — 그러면 마지막 단계까지
-    // 갔다가 이름이 겹쳐 되돌아오게 된다(실제로 그랬다).
     setChecking(true);
     const member = await findMemberByName(teamCode ?? "", trimmed).finally(() =>
       setChecking(false),
     );
     setExisting(member);
 
-    // 이미 있는 이름이면 온보딩을 이어가지 않는다 — 본인이면 재입장, 아니면 다른 이름이다.
-    // 예전에는 "네, 저예요"를 누르면 그대로 통과해서, 초대 코드를 아는 사람이 팀원을
-    // 사칭할 수 있었다(사칭한 쪽이 상대의 희망 역할까지 덮어썼다).
     if (!member) {
       router.push("/onboarding/mbti");
       return;
@@ -77,12 +76,9 @@ export default function NamePage() {
       <Body>
         <Progress step={1} total={4} className="mb-[18px]" />
 
-        <h1 className="t-h1 keep-all m-0 mb-2 text-txt-strong">팀원들에게 보일 이름</h1>
-        <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
-          실명이 아니어도 됩니다. 팀원이 누구인지 알아볼 수 있는 이름이면 충분합니다.
-        </p>
+        <h1 className="t-h1 keep-all m-0 mb-6 text-txt-strong">팀원들에게 보일 이름</h1>
 
-        <Field label="이름" required error={tooShort ? "두 글자 이상 적어 주세요." : null}>
+        <Field label="이름" error={tooShort ? "두 글자 이상 적어 주세요." : null}>
           {(props) => (
             <Input
               {...props}
@@ -95,24 +91,13 @@ export default function NamePage() {
           )}
         </Field>
 
-        <Field
-          label="이메일"
-          hint="로그아웃 후 재접속할 때 메일 인증번호로 바로 로그인할 수 있어요"
-        >
-          {(props) => (
-            <Input
-              {...props}
-              type="email"
-              value={email}
-              onChange={setEmail}
-              placeholder="예: student@university.ac.kr (선택)"
-            />
-          )}
-        </Field>
-
-        <Note tone="info" icon="key-round" title="이메일을 입력하면 코드를 외울 필요가 없어요">
-          이메일을 입력해 두면 나중에 재접속할 때 12자리 재입장 코드를 찾지 않고, 메일로 온 인증번호로 바로 들어올 수 있습니다.
-        </Note>
+        {/* 쓸 수 있는 이름 실시간 안내 */}
+        {isValid && !existing && !checking ? (
+          <div className="mt-2 flex items-center gap-1.5 font-medium text-[13.5px] text-ok">
+            <Icon name="check" size={15} strokeWidth={2.5} />
+            <span>쓸 수 있는 이름이에요</span>
+          </div>
+        ) : null}
 
         {existing ? (
           <Note tone="warn" icon="user-search" title="이미 쓰이고 있는 이름입니다" className="mt-3">
@@ -120,6 +105,36 @@ export default function NamePage() {
             <b>재입장 코드</b>나 <b>팀장 승인</b>으로 들어오고, 아니면 다른 이름을 적어 주세요.
           </Note>
         ) : null}
+
+        {/* 팀원 목록 미리보기 */}
+        <div className="mt-7">
+          <div className="t-sec mb-2.5 text-txt-strong">팀원 목록에는 이렇게 보여요</div>
+          <div className="rounded-[18px] border border-line bg-card p-2 divide-y divide-line/60">
+            {/* 기존 팀원 (예: 이서연) */}
+            <div className="flex items-center gap-3 px-3 py-2.5">
+              <div className="grid size-9 flex-none place-items-center rounded-full bg-yellow-100 text-yellow-800 font-bold text-[14px]">
+                {teammateName.charAt(0) || "이"}
+              </div>
+              <span className="font-semibold text-[15px] text-txt-strong">
+                {teammateName}
+              </span>
+            </div>
+
+            {/* 본인 미리보기 */}
+            <div className="flex items-center gap-3 px-3 py-2.5">
+              <div className="grid size-9 flex-none place-items-center rounded-full border-2 border-dashed border-line-strong bg-card font-bold text-[14px] text-txt-strong">
+                {trimmed.length > 0 ? trimmed.charAt(0) : "민"}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-[15px] text-txt-strong">
+                  {trimmed.length > 0 ? trimmed : "민준"}
+                </span>
+                <span className="t-cap-strong text-yellow-700">나</span>
+              </div>
+            </div>
+          </div>
+          <p className="t-note mt-2.5 mb-0 text-txt-muted">실명이 아니어도 괜찮아요.</p>
+        </div>
 
         <Undecided>
           동명이인이 있을 때 구분하는 더 나은 방법(예: 학번 뒷자리)이 있는지는 팀이 확인해야 합니다. 지금은
@@ -131,14 +146,13 @@ export default function NamePage() {
         <Btn
           full
           size="lg"
-          disabled={trimmed.length < MIN_NAME || checking}
+          disabled={!isValid || checking}
           onClick={proceed}
           iconRight="arrow-right"
         >
           {checking ? "확인하는 중…" : "다음"}
         </Btn>
       </Dock>
-
     </AppFrame>
   );
 }

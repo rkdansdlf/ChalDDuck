@@ -5,77 +5,54 @@ import { useState } from "react";
 import {
   AppBar,
   Body,
-  Chip,
   Icon,
-  Note,
-  Rows,
-  SecTitle,
-  Sheet,
-  StatusBadge,
   Toast,
 } from "@/components/ui";
-import type { DriveLimits, SubmissionBox, Team } from "@/lib/types";
+import type { DriveLimits, SubmissionBox, SubmittedFile, Team } from "@/lib/types";
 import { UploadButton, uploadSummary } from "./upload-button";
 import type { UploadDone } from "./use-uploads";
 
+function getDDay(dueAt: string | null, due: string) {
+  if (!dueAt) return due === "미정" ? "마감 미정" : `${due} 마감`;
+  const diff = Math.ceil((new Date(dueAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  const dDay = diff > 0 ? `D-${diff}` : diff === 0 ? "D-Day" : `D+${Math.abs(diff)}`;
+  const dateStr = due.split(" ")[0] || "";
+  return `${dDay} · ${dateStr} 마감`;
+}
+
+function getDDayShort(dueAt: string | null, due: string) {
+  if (!dueAt) return due === "미정" ? "" : due.split(" ")[0];
+  const diff = Math.ceil((new Date(dueAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  return diff > 0 ? `D-${diff}` : diff === 0 ? "D-Day" : `D+${Math.abs(diff)}`;
+}
+
 /**
- * 12 드라이브 — 역할별 제출함.
+ * 12 드라이브 — 역할별/내 제출함 (개선안 Page 11).
  *
- * 칸이 역할대로 나뉘어 있어 "누가 무엇을 내야 하는지"가 파일 목록만 봐도 드러난다.
- *
- * 마감이 지나도 제출함을 **잠그지 않는다** — 늦게라도 내는 편이 안 내는 것보다 낫다.
- * 대신 마감을 지난 파일에 "마감 후 제출" 라벨이 붙는다.
+ * 상단에 내 제출함과 파일 올리기 CTA를 강조하고,
+ * 하단에 팀원들의 제출함과 팀 용량 게이지를 배치한다.
  */
 export function DriveScreen({
   team,
   boxes,
   limits,
+  myBoxId,
+  myLatestFile,
 }: {
   team: Team;
   boxes: SubmissionBox[];
   limits: DriveLimits;
+  myBoxId?: string | null;
+  myLatestFile?: SubmittedFile | null;
 }) {
   const router = useRouter();
-  const [picking, setPicking] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  /** 제출함별로 올리는 중인가. 시트를 닫지 않기 위한 감시다. */
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
 
-  /**
-   * 제출함 하나의 올리는 중 상태를 바꾼다.
-   *
-   * **값이 같으면 같은 객체를 돌려준다.** 이 함수가 늘 새 객체를 만들면, 부르는 쪽의
-   * effect 가 무엇을 해도(그리고 언제 다시 불려도) React 는 bail-out 하지 못해
-   * setState → 렌더 → effect → setState 로 끝없이돈다. 실제로 그렇게 무한 렌더가 났다.
-   * 비교 한 줄로 그 연쇄를 끊는다 — 올리는 중인 칸 수나 시트를 막는 데에는 아무 차이가 없다.
-   */
   const markUploading = (boxId: string, busy: boolean) => {
     setUploading((prev) => (prev[boxId] === busy ? prev : { ...prev, [boxId]: busy }));
   };
 
-  /**
-   * 올리는 중에는 시트를 닫지 않는다.
-   *
-   * 대기열 목록이 시트 **안쪽**에 그려지므로 닫으면 진행도·실패 이유·"다시 시도"가 함께
-   * 사라진다. 업로드 자체는 살아서 끝나므로 파일은 올라가는데, 올리는 사람은 아무것도
-   * 보지 못하고 팀 알림만 받게 된다 — 본인이 올린 걸 모르는 채로.
-   */
-  const closePicking = () => {
-    if (Object.values(uploading).some(Boolean)) {
-      setToast("올리는 중입니다. 끝나면 닫을 수 있어요");
-      window.setTimeout(() => setToast(null), 2600);
-      return;
-    }
-    setPicking(false);
-  };
-
-  /**
-   * 시트에서 올리기가 끝났을 때.
-   *
-   * 전부 됐으면 시트를 닫고 **그 제출함으로 들어가 방금 올린 파일을 강조**한다 — 예전에는
-   * 시트가 열린 채 남아 뒤에서 목록이 바뀌어도 보이지 않았다. 실패가 남았으면 시트를
-   * 그대로 두어 이유와 "다시 시도"가 보이게 한다.
-   */
   const afterUpload = (boxId: string) => (done: UploadDone[], failedCount: number) => {
     if (failedCount > 0) {
       const msg = uploadSummary(done);
@@ -86,112 +63,141 @@ export function DriveScreen({
       return;
     }
     if (done.length === 0) return;
-    setPicking(false);
     const ids = done.map((d) => d.fileId).join(",");
     router.push(`/drive/${boxId}?uploaded=${encodeURIComponent(ids)}`);
   };
 
+  const myBox = (myBoxId ? boxes.find((b) => b.id === myBoxId) : null) ?? boxes[0] ?? null;
+  const teamBoxes = boxes.filter((b) => b.id !== myBox?.id);
+
   return (
     <>
-      <AppBar
-        title="드라이브"
-        sub={team.name}
-        action="upload"
-        actionLabel="파일 올리기"
-        // 파일은 제출함에 들어가므로 먼저 어느 칸인지 고른다. 업로드 자체는 제출함 화면과
-        // 같은 `UploadButton` 이다 — 예전에는 여기만 "준비 중"이라고 떴다.
-        onAction={() => setPicking(true)}
-      />
+      <AppBar title="드라이브" sub={team.name} />
 
       <Body dense>
-        <SecTitle note="맡은 역할대로 칸이 나뉘어 있습니다">역할별 제출함</SecTitle>
+        {/* 내 제출함 섹션 */}
+        <div className="t-sec mb-2.5 font-bold text-txt-strong">내 제출함</div>
+        {myBox ? (
+          <div className="mb-5 rounded-[20px] border border-yellow-200/90 bg-yellow-50/70 p-4 shadow-2xs">
+            {/* 헤더: 역할 이름 & 마감 디데이 */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="grid size-8 place-items-center rounded-[10px] bg-yellow-200/90 text-yellow-800">
+                  <Icon name="folder-open" size={17} />
+                </span>
+                <span className="font-extrabold text-[17px] text-ink-900">{myBox.name}</span>
+              </div>
+              <span className="inline-flex items-center gap-1 rounded-full border border-line bg-card/90 px-2.5 py-1 text-[12px] font-bold text-txt">
+                <Icon name="clock" size={12} className="text-txt-muted" />
+                <span>{getDDay(myBox.dueAt, myBox.due)}</span>
+              </span>
+            </div>
 
-        {/* 제출함은 서로 독립된 카드라 넓은 화면에서 두 줄로 세워도 읽는 순서가 깨지지 않는다 */}
-        <div className="mb-[18px] grid gap-[9px] lg:grid-cols-2">
-          {boxes.map((box) => {
-            const empty = box.fileCount === 0;
-            return (
+            {/* 최신 업로드 파일 */}
+            {myLatestFile ? (
+              <button
+                type="button"
+                disabled={Boolean(uploading[myBox.id])}
+                onClick={() => router.push(`/drive/${myBox.id}/${myLatestFile.id}`)}
+                className="my-3.5 flex w-full cursor-pointer flex-col rounded-[14px] border border-line bg-card p-3 text-left transition-all hover:border-txt-strong/30 disabled:pointer-events-none disabled:opacity-60"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Icon name="file-text" size={16} className="flex-none text-txt-strong" />
+                    <span className="truncate font-bold text-[14.5px] text-txt-strong">
+                      {myLatestFile.name}
+                    </span>
+                  </div>
+                  <span className="flex flex-none items-center gap-1 text-[12px] font-bold text-txt-muted">
+                    <Icon name="history" size={12} />
+                    {myLatestFile.latestLabel ?? "v1"}
+                  </span>
+                </div>
+                <div className="mt-1 text-[12px] text-txt-muted">
+                  {myLatestFile.latestWhen ?? "최근"} · 버전 {myLatestFile.versionCount}개
+                </div>
+              </button>
+            ) : (
+              <div className="my-3.5 rounded-[14px] border border-dashed border-line bg-card/50 p-4 text-center">
+                <p className="t-note m-0 text-txt-muted">아직 올린 파일이 없습니다</p>
+              </div>
+            )}
+
+            {/* 파일 올리기 대형 CTA 버튼 */}
+            <UploadButton
+              boxId={myBox.id}
+              label="파일 올리기"
+              variant="primary-lg"
+              onFinished={afterUpload(myBox.id)}
+              onBusyChange={(b) => markUploading(myBox.id, b)}
+            />
+
+            <p className="mt-2.5 mb-0 text-center text-[11.5px] leading-[1.4] text-txt-muted">
+              문서·PPT·PDF·이미지 · 한 파일 50MB까지 | 같은 이름으로 올리면 새 버전으로 쌓여요
+            </p>
+          </div>
+        ) : (
+          <div className="mb-5 rounded-[18px] border border-line bg-card p-6 text-center">
+            <p className="t-note m-0 text-txt-muted">아직 지정된 내 제출함이 없습니다.</p>
+          </div>
+        )}
+
+        {/* 팀 제출함 섹션 */}
+        <div className="t-sec mb-2.5 font-bold text-txt-strong">팀 제출함</div>
+        <div className="mb-6 divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
+          {teamBoxes.length === 0 ? (
+            <div className="p-4 text-center text-[13px] text-txt-muted">
+              다른 팀원의 제출함이 없습니다.
+            </div>
+          ) : (
+            teamBoxes.map((box) => (
               <button
                 key={box.id}
                 type="button"
                 onClick={() => router.push(`/drive/${box.id}`)}
-                className="box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 rounded-[18px] border border-line bg-card px-[15px] py-3.5 text-left"
+                className="flex min-h-14 w-full cursor-pointer items-center justify-between px-4 py-3 text-left transition-colors hover:bg-fill"
               >
-                <span
-                  className={`grid size-10 flex-none place-items-center rounded-[13px] ${
-                    empty ? "bg-fill text-txt-faint" : "bg-yellow-200 text-yellow-700"
-                  }`}
-                >
-                  <Icon name={empty ? "folder" : "folder-open"} size={19} />
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-[15px] text-txt-strong">{box.name}</div>
+                  <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-txt-muted">
+                    <span className="grid size-5.5 place-items-center rounded-full bg-yellow-100 text-[10.5px] font-bold text-yellow-800">
+                      {box.owner ? box.owner.charAt(0) : "?"}
+                    </span>
+                    <span className="font-medium text-txt-strong">
+                      {box.owner ?? "담당자 미정"}
+                    </span>
+                    <span>·</span>
+                    <span>{box.fileCount > 0 ? `파일 ${box.fileCount}개` : "아직 없음"}</span>
+                  </div>
+                </div>
 
-                <span className="min-w-0 flex-1">
-                  <span className="t-sec keep-all block text-txt-strong">{box.name}</span>
-                  <span className="mt-1.5 flex flex-wrap gap-[5px]">
-                    <Chip icon="user-round">{box.owner ?? "담당자 미정"}</Chip>
-                    {empty ? (
-                      <StatusBadge status="none">아직 없음</StatusBadge>
-                    ) : (
-                      <Chip tone="ok" icon="file">
-                        {box.fileCount}개
-                      </Chip>
-                    )}
-                    <Chip tone="warn" icon="calendar-clock">
-                      {box.due} 마감
-                    </Chip>
-                    {box.hasLate ? <StatusBadge status="late" /> : null}
-                  </span>
-                </span>
-
-                <span className="flex-none text-txt-muted">
-                  <Icon name="chevron-right" size={17} />
-                </span>
+                <div className="flex items-center gap-1 text-[13px] font-semibold text-txt-muted">
+                  <span>{getDDayShort(box.dueAt, box.due)}</span>
+                  <Icon name="chevron-right" size={16} />
+                </div>
               </button>
-            );
-          })}
+            ))
+          )}
         </div>
 
-        <Note tone="info" icon="history" title="올린 파일은 지워지지 않습니다">
-          같은 이름으로 다시 올리면 새 버전이 쌓입니다. 이전 버전은 언제든 다시 내려받을 수 있어,
-          덮어쓰기로 작업이 사라지지 않습니다.
-        </Note>
-
-        <Note tone="info" icon="database" title="드라이브 이용 제한" className="mt-2.5">
-          팀당 저장 용량{" "}
-          <b>
-            {limits.usedGB}GB / {limits.capGB}GB
-          </b>{" "}
-          사용 중. 허용 파일 형식은 {limits.types.join("·")}입니다. 마감 후에도 제출함은 잠그지 않고,
-          마감을 지난 파일에는 &ldquo;마감 후 제출&rdquo; 라벨이 자동으로 붙습니다.
-        </Note>
+        {/* 팀 용량 섹션 */}
+        <div className="rounded-[18px] border border-line bg-card p-4">
+          <div className="mb-2 flex items-center justify-between text-[13.5px]">
+            <span className="font-bold text-txt-strong">팀 용량</span>
+            <span className="font-medium text-txt-muted">
+              {limits.usedGB} / {limits.capGB}GB
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-fill overflow-hidden">
+            <div
+              className="h-full rounded-full bg-txt-strong transition-all"
+              style={{
+                width: `${Math.min(100, Math.round((limits.usedGB / (limits.capGB || 2)) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
       </Body>
-
-      <Sheet open={picking} title="어느 제출함에 올릴까요" onClose={closePicking}>
-        {boxes.length === 0 ? (
-          <Note tone="warn" icon="folder" title="아직 제출함이 없습니다">
-            역할이 정해지면 역할별 제출함이 생깁니다.
-          </Note>
-        ) : (
-          <Rows>
-            {boxes.map((box) => (
-              <div key={box.id} className="flex flex-wrap items-center gap-x-3 px-[15px] py-3">
-                <span className="min-w-0 flex-1">
-                  <span className="t-sec keep-all block text-txt-strong">{box.name}</span>
-                  <span className="t-note mt-0.5 block text-txt-muted">
-                    {box.owner ?? "담당자 미정"} · {box.due} 마감
-                  </span>
-                </span>
-                <UploadButton
-                  boxId={box.id}
-                  label="여기에 올리기"
-                  onFinished={afterUpload(box.id)}
-                  onBusyChange={(b) => markUploading(box.id, b)}
-                />
-              </div>
-            ))}
-          </Rows>
-        )}
-      </Sheet>
 
       <Toast msg={toast} />
     </>

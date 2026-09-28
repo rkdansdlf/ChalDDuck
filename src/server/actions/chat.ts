@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
+import { purifyPolicyHash } from "@/server/ai/purify-policy";
 import type { CushionLevelKey } from "@/lib/types";
 import {
   dmThreadKey,
@@ -17,6 +18,7 @@ import {
   FAILURE_BACKOFF_MS,
   PROMPT_VERSION,
   PURIFY_BATCH_LIMIT,
+  PURIFY_CONTEXT_MESSAGES,
   VALIDATOR_VERSION,
   canRetry,
   isCushionTone,
@@ -389,19 +391,24 @@ export async function setReadCushion(
   });
 
   /**
-   * **끓는 기준이 바뀌면 이 방의 순화본을 지운다.**
+   * **기준이 바뀌면 예전 순화본을 지우지 않는다 — 지우는 것이 오히려 버그가 된다.**
    *
-   * 강도나 말투가 달라졌는데 옛 순화본이 남아 있으면, 사용자는 "보통" 으로 골랐는데 화면은
-   * "강하게" 로 만든 말을 본다 — 라벨도 단계도 다른데 글은 옛 것이니 아무도 모른다.
+   * 예전에는 한 말에 사람당 한 줄이라 새 조건으로 덮어쓸 수 없어서 지웠다. 그래서 사용자가
+   * "보통" → "강하게" → **"보통"** 으로 되돌리면 AI 를 다시 불렀다. 결과는 그 강도·말투의
+   * **결정적 함수**이므로 이미 있다.
    *
-   * 한 말에는 사람당 한 줄이라 새 조건으로 덮어쓸 수 없다(`skipDuplicates` 가 조용히 버린다).
-   * 지우는 것은 **읽기에만 걸린 것**이고 원문은 그대로다. 재처리에는 AI 가 다시 붙는다.
+   * 지금은 순화본이 (말, 설정지문) 로 저장되므로 기준을 바꾸면 **읽는 지문만 달라진다.**
+   * 옛 지문의 행은 그 지문으로 읽는 사람(옛 teammate, 나중에 돌아온 나)을 위해 남겨 둔다.
+   *
+   * 화면이 옛 말을 보는 일은 없다 — 조회가 **현재 지문으로**만 일어나기 때문이다. 설정을
+   * 바꾸고 아직 순화가 안 붙은 말은 그 지문에 없으므로 `PENDING` 으로 보이고, 다음 부름에서
+   * 새 지문으로 만들어진다.
+   *
+   * 남는 것은 AI 한 번어치의 저장 공간뿐이고, 대신 되돌리기·부르기·다시 켜기가 **0회**다.
+   * 오래된 설정의 행을 없애는 일은 읽기 경로가 아니라 정리 작업이다(cron).
    */
-  if (previous.mode !== mode || previous.tone !== tone || previous.enabled !== enabled) {
-    await db.messageCushion.deleteMany({
-      where: { viewerId: me.id, message: { teamId: me.teamId, threadKey } },
-    });
-  }
+  void previous;
+
 
   return {
     ok: true,
@@ -471,6 +478,7 @@ function hashSource(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
+
 /**
  * 이 방에 도착한 남의 말을 순화해 **읽을 형태**로 만들어 둔다.
  *
@@ -480,7 +488,7 @@ function hashSource(text: string): string {
  * 다시 후보가 되었고, 새로고침하면 브라우저의 "시도함" 기록까지 리셋되어 하루 60회가
  * 몇 분 만에 Gone 이 되었다. 이제 흐름이 이렇게다.
  *
- * 1. **지금 다시 부를 수 있는지** 저���된 상태에 물어본다(`canRetry`). 성공·백오프·시도 횟수·
+ * 1. **지금 다시 부를 수 있는지** 저장된 상태에 물어본다(`canRetry`). 성공·백오프·시도 횟수·
  *    프롬프트/모델 버전을 본다.
  * 2. **선점한다.** `PENDING` 행을 먼저 만들고 `claimToken` 을 심는다. **토큰이 내 것인
  *    항목만 모델을 부른다** — 두 탭이 동시에 열려도 한 번만 부른다.
@@ -509,18 +517,27 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
    * 오래된 것부터 — 읽는 사람이 위에서부터 보며 순화가 붙는 것을 보기 때문이다.
    */
   const rows = await db.message.findMany({
-    where: { teamId: me.teamId, threadKey, authorId: { not: me.id } },
-    select: { id: true, text: true },
+    where: { teamId: me.teamId, threadKey },
+    select: { id: true, text: true, authorId: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  const texts = rows.filter((row) => isPurifiableText(row.text));
-  if (texts.length === 0) return { ok: true, cushions: {}, called: 0, remaining: 0 };
+  /**
+   * **앞 문맥은 방의 모든 말에서 쓴다 — 내 말까지.**
+   *
+   * "누가 누구에게 말했는지" 가 순화의 질을 결정한다. 앞을 **남의 말만** 으로 자르면
+   * 내 말("나도 내일 안에 낼게")이 빠지고, 그 결과 **약속이 사라진 순화본**이 나온다 —
+   * 가장 나쁜 실패다(요구·마감을 지키지 못한다).
+   */
+  const contextOf = (index: number) =>
+    rows
+      .slice(Math.max(0, index - PURIFY_CONTEXT_MESSAGES), index)
+      .map((row) => ({ text: row.text.trim() }))
+      .filter((row) => row.text.length > 0);
 
-  // 저장된 상태를 먼저 읽는다 — "이 말은 이미 어떻게 됐나" 가 이번 호출의 전부다.
-  const existing = await db.messageCushion.findMany({
-    where: { viewerId: me.id, messageId: { in: texts.map((row) => row.id) } },
-  });
-  const stored = new Map(existing.map((row) => [row.messageId, row]));
+  const texts = rows
+    .map((row, index) => ({ ...row, before: contextOf(index) }))
+    .filter((row) => row.authorId !== me.id && isPurifiableText(row.text));
+  if (texts.length === 0) return { ok: true, cushions: {}, called: 0, remaining: 0 };
 
   const toneRow = await db.readCushion.findUnique({
     where: { memberId_threadKey: { memberId: me.id, threadKey } },
@@ -542,6 +559,24 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   };
   const level = levelOf(setting);
   const tone = toneOf(setting);
+
+  /**
+   * **설정 지문: 순화 결과를 만드는 조건을 한 문자열로.**
+   *
+   * 열쇠가 (말, 읽는 사람)이 아니라 (말, 이 지문)이다. **사람이 열쇠에 없다** — 같은 말이라
+   * 읽는 조건(강도·말투·프롬프트·모델·검사기)이 같으면 결과는 같고, 팀원 5명이 방에서 같이
+   * 읽어도 **모델을 한 번만** 부른다.
+   *
+   * 지문에 **팀 ID 를 넣지 않는다.** 동명이 다른 팀이 같은 이야기를 하고 있어도 순화 결과는
+   * 같다(원문이 같으면). 팀을 섞으면 사람이 보는 것보다 더 많이 공유할 수 있다.
+   */
+  const policyHash = purifyPolicyHash({ level, tone, model, promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+
+  // 저장된 상태를 먼저 읽는다 — "이 말은 이 설정으로 이미 어떻게 됐나" 가 이번 호출의 전부다.
+  const existing = await db.messagePurification.findMany({
+    where: { messageId: { in: texts.map((row) => row.id) }, policyHash },
+  });
+  const stored = new Map(existing.map((row) => [row.messageId, row]));
 
   // 1) 지금 부를 수 있는 것만 고른다.
   const claimable = texts.filter((row) =>
@@ -566,12 +601,13 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   const claimIds = claimable.slice(0, PURIFY_BATCH_LIMIT).map((row) => row.id);
   const sourceOf = new Map(texts.map((row) => [row.id, row.text]));
   if (claimIds.length > 0) {
-    await db.messageCushion.createMany({
+    await db.messagePurification.createMany({
       data: claimIds.map((id) => {
         const source = sourceOf.get(id) ?? "";
         return {
           messageId: id,
-          viewerId: me.id,
+          policyHash,
+          level,
           status: "PENDING",
           sourceHash: hashSource(source),
           tone,
@@ -586,8 +622,8 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
     });
   }
 
-  const afterClaim = await db.messageCushion.findMany({
-    where: { viewerId: me.id, messageId: { in: texts.map((row) => row.id) } },
+  const afterClaim = await db.messagePurification.findMany({
+    where: { messageId: { in: texts.map((row) => row.id) }, policyHash },
   });
   const mine = afterClaim.filter((row) => row.claimToken === claimToken).map((row) => row.messageId);
   const textOf = new Map(texts.map((row) => [row.id, row.text.trim()]));
@@ -607,7 +643,10 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   if (mine.length === 0) return { ok: true, cushions, called: 0, remaining: uncontested };
 
   // 3) 묶어서 한 번 부른다.
-  const items = packPurifyItems(mine.map((id) => ({ id, text: textOf.get(id) ?? "" })));
+  const beforeOf = new Map(texts.map((row) => [row.id, row.before]));
+  const items = packPurifyItems(
+    mine.map((id) => ({ id, text: textOf.get(id) ?? "", before: beforeOf.get(id) ?? [] })),
+  );
   const modelId = model;
   const attempt = claimable.find((row) => mine.includes(row.id));
   const priorAttempts = attempt ? (stored.get(attempt.id)?.attemptCount ?? 0) : 0;
@@ -640,8 +679,8 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
     extra: { reason?: CushionReason | null; text?: string; source?: "ai" | "mask" } = {},
   ) => {
     cushions[id] = view;
-    await db.messageCushion.update({
-      where: { messageId_viewerId: { messageId: id, viewerId: me.id } },
+    await db.messagePurification.update({
+      where: { messageId_policyHash: { messageId: id, policyHash } },
       data: {
         status: view.status,
         reason: extra.reason ?? null,

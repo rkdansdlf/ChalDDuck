@@ -209,7 +209,7 @@ export async function claimSoleRole(role: RoleKey): Promise<AnswerResult> {
   ]);
   // 이미 결과가 있으면 예전과 같다 — 거절하듯 다시 만들 수 없다.
   if (taken) return "settled";
-  // 겹치는 사람이 있으면 그건 추첨 몫이다 — 이 길은 "혼자 인 경우" 에만 다��인다.
+  // 겹치는 사람이 있으면 그건 추첨 몫이다 — 이 길은 "혼자 인 경우" 에만 다진다.
   if (wanters.length !== 1 || wanters[0].id !== me.id) return "not-yours";
 
   try {

@@ -5,6 +5,7 @@ import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
+import { resolveReadPolicy } from "@/server/ai/purify-policy";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
 import { contribTotals } from "./contrib-report-totals";
@@ -809,8 +810,8 @@ type MessageRow = {
   /** 정렬용 실제 시각. `whenLabel` 은 "21:12" 라 사람이 읽는 문자열이라 비교할 수 없다. */
   createdAt: Date;
   viaCushion: boolean;
-  /** **나에게** 이 말을 어떻게 보여 줄지(읽기 순화). 성공·실패 상태가 모두 담긴다. */
-  cushions: CushionRow[];
+  /** **이 사람의 지금 설정으로** 이 말을 어떻게 보여 줄지(읽기 순화). 성공·실패가 모두 담긴다. */
+  purifications: CushionRow[];
   attachPath: string | null;
   attachName: string | null;
   attachBytes: number | null;
@@ -829,7 +830,7 @@ type MessageRow = {
   savedVersion: { id: string; file: { id: string; boxId: string } } | null;
 };
 
-/** `MessageCushion` 한 줄 — 화면이 그릴 상태. */
+/** `MessagePurification` 한 줄 — 화면이 그릴 상태. */
 type CushionRow = {
   status: string;
   text: string | null;
@@ -839,17 +840,23 @@ type CushionRow = {
 };
 
 /**
- * 순화 상태는 **읽는 사람 것만** 가져온다.
+ * 순화 상태는 **이 사람이 지금 읽는 지문의 것만** 가져온다.
  *
- * 한 말마다 팀원 전원의 순화 상태를 실으면 그만큼 무겁다 — 순화는 그 사람이 보는 데 필요한
- * 것일 뿐이다. `where` 에 그 사람이 들어가는 것이 곧 권한이다.
+ * 예전에는 (말, 읽는 사람) 으로 저장했으므로 팀원 수만큼 행이 있었다. 지금은 (말, 지문) 이라
+ * 한 말에 한 줄이고, `where` 에는 사람이 아니라 **지문**이 들어간다.
+ *
+ * 화면에는 **자기 지문의 순화본만** 보여야 한다 — 남의 강도나 남의 말투로 만든 글은 이 사람의
+ * 화면에 있으면 안 된다. 지문이 곧 그 경계다.
  */
-const messageInclude = (meId: string | null) => ({
+const messageInclude = (policyHash: string) => ({
   author: { select: { id: true, name: true, mbti: true } },
   reactions: { select: { icon: true } },
-  cushions: {
-    where: { viewerId: meId ?? "" },
+  purifications: {
+    // **읽는 사람의 지문으로만** 건다 — 지금 쓰는 조건의 결과만 그린다. 옛 설정의 행은
+    // 남겨 두었지만 지문이 다르므로 실려 오지 않는다(되돌리면 재사용된다).
+    where: { policyHash },
     select: { status: true, text: true, source: true, reason: true, retryAfter: true },
+    take: 1,
   },
   // 드라이브 연결은 **말풍선을 그릴 때 필요한 만큼만** 가져온다 — 주소는 화면이 만든다.
   // 여기에 서명 주소를 넣지 않는다: 비공개 버킷이라 주소를 저장하면 만료 뒤에도 남아 있고,
@@ -888,7 +895,6 @@ function toChatPurified(row: CushionRow): ChatPurified {
   };
 }
 
-
 function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
   const counts = new Map<string, number>();
   for (const r of m.reactions) counts.set(r.icon, (counts.get(r.icon) ?? 0) + 1);
@@ -905,7 +911,7 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     viaCushion: m.viaCushion,
     // 순화 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
     // 실패한 말은 `text: null` 이라 화면에서 원문으로 넘어간다.
-    purified: m.cushions[0] ? toChatPurified(m.cushions[0]) : null,
+    purified: m.purifications[0] ? toChatPurified(m.purifications[0]) : null,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
     attachment:
       m.attachPath && m.attachName
@@ -946,9 +952,10 @@ async function loadMessages(
   cursor?: string | null,
   limit: number = MESSAGE_PAGE_SIZE,
 ): Promise<MessagePage> {
+  const { policyHash } = await resolveReadPolicy(meId, threadKey);
   const rows = await db.message.findMany({
     where: { teamId, threadKey },
-    include: messageInclude(meId),
+    include: messageInclude(policyHash),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -977,9 +984,10 @@ export async function getTeamMessages(teamId: string): Promise<MessagePage> {
 export async function getTeamLastMessage(teamId: string): Promise<ChatMessage | null> {
   const session = await getSessionMember();
   const meId = session?.id ?? null;
+  const { policyHash } = await resolveReadPolicy(meId, "team");
   const row = await db.message.findFirst({
     where: { teamId, threadKey: "team" },
-    include: messageInclude(meId),
+    include: messageInclude(policyHash),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
   return row ? toChatMessage(row, meId) : null;
@@ -1019,9 +1027,10 @@ export async function getNewerMessages(
   meId: string,
   afterId: string | null,
 ): Promise<ChatMessage[]> {
+  const { policyHash } = await resolveReadPolicy(meId, threadKey);
   const rows = await db.message.findMany({
     where: { teamId, threadKey },
-    include: messageInclude(meId),
+    include: messageInclude(policyHash),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: MESSAGE_PAGE_SIZE,
     ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
@@ -1054,7 +1063,7 @@ async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
     where: { memberId_threadKey: { memberId: session.id, threadKey } },
     select: { enabled: true, mode: true, tone: true },
   });
-  // **행이 없으면 팀 전체 기본값**이다. 방마다 따로 고르지 않은 사람��� 그 기본을 갖는다 —
+  // **행이 없으면 팀 전체 기본값**이다. 방마다 따로 고르지 않은 사람은 그 기본을 갖는다 —
   // 한 명만 세게 읽히면 대화의 공기가 갈린다.
   if (!row) return READ_CUSHION_DEFAULT;
   return {
@@ -1065,11 +1074,9 @@ async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
   };
 }
 
-
 export async function getTeamReadCushion(): Promise<ReadCushionSetting> {
   return readCushionOf("team");
 }
-
 
 export async function getDmReadCushion(teamId: string, threadId: string): Promise<ReadCushionSetting> {
   const session = await getSessionMember();
@@ -1077,12 +1084,10 @@ export async function getDmReadCushion(teamId: string, threadId: string): Promis
   return readCushionOf(dmThreadKey(session.id, threadId));
 }
 
-
 export async function getConfirmsPolicy(teamId: string) {
   const session = await getSessionMember();
   return confirmsPolicy(teamId, session?.isLeader === true);
 }
-
 
 export type FileViewContext = { box: SubmissionBox; file: SubmittedFile };
 
@@ -1139,7 +1144,6 @@ export async function getFileViewContext(
 
   return { box, file };
 }
-
 
 export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   const session = await getSessionMember();

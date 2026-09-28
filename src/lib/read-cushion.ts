@@ -126,6 +126,20 @@ export const FAILURE_BACKOFF_MS = 30 * 60 * 1000;
 export const CLAIM_TTL_MS = 90 * 1000;
 
 /** 한 번에 묶어서 부르는 말의 수. */
+/**
+ * **몇 개의 앞말을 문맥으로 줄 것인가 — 정확히 2개.**
+ *
+ * 0개면 "이게 뭐야" 를 몰라서 순화가 느슨해지고(한국어 욕설은 앞뒤로 세어야 하는 경우가 많다),
+ * 많으면 **캐시가 깨진다.** "이 방의 최근 N 말" 을 문맥으로 주면 같은 말을 읽는 사람마다
+ * 뒤에 있는 말의 수가 달라져 결과가 사람마다 달라진다 — 순화본 공유(한 결과를 여럿이 씀)가
+ * 그것으로 무너진다. 그래서 **각 말의 앞 2개로 고정**한다: 같은 말은 어디서 읽든 같은 입력을
+ * 갖는다. 그래서 순화는 결정함수이고 캐시가 맞다.
+ *
+ * 실측: 앞 2개를 주니 "약속" 을 지키지 못한 말도 문장만 다듬어 남길 수 있었다(앞말에
+ * 약속이 있었음을 모델이 알았다).
+ */
+export const PURIFY_CONTEXT_MESSAGES = 2;
+
 export const PURIFY_BATCH_LIMIT = 10;
 
 type StoredRow = {
@@ -234,11 +248,46 @@ export type PurifyResult = { id: string; text: string };
  * 2. **입력 경계**: 본문을 `{"task":…,"items":[{"id":…,"text":…}]}` **데이터**로 준다.
  *    글로 붙이면 "이전 지시를 무시해" 같은 문장이 **지시로 읽힐 수 있다.**
  */
-export function buildPurifyRequest(items: PurifyItem[]): string {
-  return JSON.stringify({
+/**
+ * **문맥 항목 하나.**
+ *
+ * 앞에 붙는 말은 **읽을 대상이 아니다.** 순화하지도, 출력하지도, 답하지도 않는다.
+ * 이것을 `{ id, text }` 와 같은 모양으로 주면 모델이 **문맥을 고쳐 적는다** — 실측에서
+ * 정확히 그 일이 났다(인사한 말에 답을 붙여 보내는 모델). 그래서 모양이 다르다.
+ */
+export type PurifyContext = { text: string };
+
+export type PurifyRequest = {
+  task: "rewrite_for_reader_comfort";
+  items: Array<{ id: string; text: string; before: PurifyContext[] }>;
+};
+
+/**
+ * 모델에게 넘기는 형태로 만든다.
+ *
+ * ## 왜 `before` 를 항목마다 붙이는가 (P2)
+ *
+ * **"이 방의 최근 N 말"** 을 문맥으로 주면 안 된다. 그건 **읽는 사람마다 시점이 달라**
+ * 같은 말의 결과가 사람마다 달라지고, 공유(한 결과를 여럿이 씀)가 깨진다. 화면을 여는
+ * 사람에 따라 뒤에 오는 말의 개수가 달라진다는 뜻이다.
+ *
+ * 그래서 **각 말의 바로 앞 2개로 고정한다.** 같은 말은 어디서 읽든 같은 문맥을 갖는다 —
+ * 그래서 결과는 결정함수이고 캐시가 맞다. "지금 이 방의 뒷부분"은 순화의 **입력** 이 될 수
+ * 있어도 **읽기 결과** 를 만들 근거가 될 수 없다.
+ *
+ * `before` 는 항목마다 붙는다. 묶음 하나에 앞문맥 하나만 주면 **묶음에서 두 번째 이후의
+ * 말은 문맥을 잘못 받는다**(이전 묶음의 말).
+ */
+export function buildPurifyRequest(items: Array<PurifyItem & { before?: PurifyContext[] }>): string {
+  const request: PurifyRequest = {
     task: "rewrite_for_reader_comfort",
-    items: items.map((item) => ({ id: item.id, text: item.text })),
-  });
+    items: items.map((item) => ({
+      id: item.id,
+      text: item.text,
+      before: (item.before ?? []).map((ctx) => ({ text: ctx.text })),
+    })),
+  };
+  return JSON.stringify(request);
 }
 
 /**

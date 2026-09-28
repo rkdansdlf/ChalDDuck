@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Avatar, Chip, Icon, type IconName } from "@/components/ui";
+import { Avatar, Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { displayTextOf } from "@/lib/read-cushion";
 import type { ChatMessage } from "@/lib/types";
@@ -106,28 +106,27 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         ) : null}
 
-        <div className="mt-1 flex items-center gap-1.5">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
           {message.viaCushion ? (
-            <Chip tone="y" icon="wand-sparkles" iconClassName="animate-wiggle">
-              쿠션 번역기
-            </Chip>
+            <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-[11px] font-semibold text-yellow-800">
+              <Icon name="wand-sparkles" size={11} className="animate-wiggle" />
+              <span>쿠션 번역</span>
+            </span>
           ) : null}
 
           {changed ? (
-            // **누를 수 있어야 한다.** 표시만 남기고 대조할 수 없으면 사용자는 AI 가
-            // 상대의 말을 어떻게 바꿨는지 알 방법이 없다 — 그게 이 기능의 실패다.
             <button
               type="button"
               onClick={() => setShowOriginal((prev) => !prev)}
               aria-pressed={showOriginal}
-              className="min-h-11 cursor-pointer border-none bg-transparent p-0 align-middle"
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line bg-card/90 px-2 py-0.5 text-[11px] font-medium text-txt-muted shadow-2xs transition-colors hover:bg-fill active:scale-95"
             >
-              <Chip
-                tone={kind === "FALLBACK" ? "n" : "y"}
-                icon={showOriginal ? "eye" : kind === "FALLBACK" ? "shield" : "wand-sparkles"}
-              >
-                {showOriginal ? `원문 · ${label} 보기` : `${label} · 원문 보기`}
-              </Chip>
+              <Icon
+                name={showOriginal ? "eye" : kind === "FALLBACK" ? "shield" : "wand-sparkles"}
+                size={11}
+                className={kind === "FALLBACK" ? "text-amber-600" : "text-yellow-600"}
+              />
+              <span>{showOriginal ? `원문 · ${label} 보기` : `${label} · 원문 보기`}</span>
             </button>
           ) : null}
 

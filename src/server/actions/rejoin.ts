@@ -245,11 +245,16 @@ export async function regenerateRejoinCode(): Promise<string> {
  *
  * `stale-invite` 는 **승인이 반영되었지만** 이 초대가 이미 닫혀 있다는 뜻이다. 팀장에게
  * 말해 주되 막지는 않는다 — 만든 사람이 팀장 자신이고, 신청인은 아무 잘못이 없다.
+ *
+ * `name-taken` 는 **승인하지 않았다** — 팀에 같은 이름이 이미 있다(2026-09-28). 예전엔 여기서
+ * 막지 않고 `approved` 로 넘겼는데, `Member` 의 이름 유일 제약이 **신청인의 브라우저가
+ * 폴링할 때** 터졌다. 즉 팀장이 승인한 뒤에야 고장나고, 그때 서버는 그 예외를 "폴링이 겹쳤다"
+ * 고 읽어 요청을 지워 버렸다. 막는 자리를 승인으로 옮겼다(`invite/settle.ts`).
  */
 export async function resolveJoinRequest(
   requestId: string,
   approve: boolean,
-): Promise<"ok" | "gone" | "stale-invite"> {
+): Promise<"ok" | "gone" | "stale-invite" | "name-taken"> {
   const leader = await requireLeader();
 
   const result = await settleJoinRequest({

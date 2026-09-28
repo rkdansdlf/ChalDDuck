@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppBar, Body, Btn, Icon, Note, Sheet, Toast, Undecided } from "@/components/ui";
+import { AppBar, Body, Btn, Icon, Sheet, Toast } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import type { ChatMessage, CushionLevel, CushionTone, Member, SubmissionBox, Team } from "@/lib/types";
 import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
@@ -16,7 +17,7 @@ import { setReadCushion } from "@/server/actions/chat";
 import { pollNavBadges } from "@/server/actions/nav";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
-import { ReadCushionBar } from "./read-cushion-bar";
+import { ReadCushionSheet } from "./read-cushion-bar";
 import { useCushionQuota } from "@/features/tools/use-ai-quota";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
@@ -116,6 +117,7 @@ export function TeamChatScreen({
   const { toast, flash, run } = useAction();
 
   const [picking, setPicking] = useState<ChatMessage | null>(null);
+  const [cushionSheetOpen, setCushionSheetOpen] = useState(false);
 
   /**
    * "다시 보내기" — **거절 사유를 알림으로 남긴다.**
@@ -217,30 +219,56 @@ export function TeamChatScreen({
     <>
       <AppBar
         title={team.name}
-        sub={`${team.memberCount}명 · 단체 채팅방 1개`}
+        sub={`${team.memberCount}명`}
         onBack={() => router.push("/chat")}
         hideBackOnWide
-        action="users-round"
-        actionLabel="참여자 보기"
-        onAction={() => router.push("/team")}
+        right={
+          <>
+            <button
+              type="button"
+              onClick={() => setCushionSheetOpen(true)}
+              aria-label="읽기 순화 설정"
+              title={cushion.enabled ? "읽기 순화 켜짐" : "읽기 순화 설정"}
+              className={cn(
+                "relative grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none select-none transition-all duration-150 active:scale-95",
+                cushion.enabled
+                  ? "bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+                  : "bg-transparent text-txt-muted hover:bg-fill hover:text-txt",
+              )}
+            >
+              <Icon
+                name="wand-sparkles"
+                size={19}
+                className={purifyWorking ? "animate-wiggle" : undefined}
+              />
+              {cushion.enabled ? (
+                <span className="absolute top-2 right-2 size-2 rounded-full bg-yellow-500 ring-2 ring-page" />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/team")}
+              aria-label="참여자 보기"
+              className="grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt select-none transition-all duration-150 hover:bg-fill active:scale-90"
+            >
+              <Icon name="users-round" size={19} />
+            </button>
+          </>
+        }
       />
 
-      <ReadCushionBar
-        setting={cushion}
-        tones={tones}
-        levels={levels}
-        working={purifyWorking}
-        notice={purifyNotice}
-        quota={cushionQuota}
-        onEnabled={(next) => void changeCushion({ enabled: next })}
-        onLevel={(key) => void changeCushion({ mode: key })}
-        onTone={(key) => void changeCushion({ tone: key })}
-        onRetry={retryPurify}
-      />
-
-      <Note tone="info" icon="wand-sparkles" className="mx-4 mt-2.5">
-        쿠션 번역기로 다듬은 말은 <b>표시가 남습니다</b>. 원문을 숨기지 않습니다.
-      </Note>
+      {purifyNotice ? (
+        <div className="mx-4 mt-2 flex items-center justify-between rounded-xl bg-err-bg px-3 py-1.5 text-[12px] text-err">
+          <span>{purifyNotice}</span>
+          <button
+            type="button"
+            onClick={retryPurify}
+            className="cursor-pointer font-bold underline"
+          >
+            다시 시도
+          </button>
+        </div>
+      ) : null}
 
       <Body ref={scrollRef} dense className="flex flex-col gap-3">
         <div ref={topRef} />
@@ -260,16 +288,6 @@ export function TeamChatScreen({
             onSaveToDrive={setPicking}
           />
         ))}
-
-              <Undecided>
-        <b>채널을 여러 개 둘지</b>가 정해지지 않았습니다. 지금은 팀 전체가 보는 방 하나입니다.
-        <br />
-        <b>메시지 삭제가 될지</b>도 정해지지 않았습니다. 지금은 지울 수 없습니다.
-        <br />
-        이 방에 <b>붙인 파일이 드라이브 용량(2GB)에 들어갈지</b>도 정하지 않았습니다. 지금은
-        드라이브에 올린 파일만 용량에 들어갑니다 — 붙인 원본까지 세면, 대화창에서 한 번 꺼낸
-        것 때문에 드라이브 업로드가 막히기 때문이다.
-      </Undecided>
 
         <div ref={bottomRef} />
       </Body>
@@ -349,6 +367,20 @@ export function TeamChatScreen({
           </ul>
         )}
       </Sheet>
+
+      <ReadCushionSheet
+        open={cushionSheetOpen}
+        onClose={() => setCushionSheetOpen(false)}
+        setting={cushion}
+        tones={tones}
+        levels={levels}
+        quota={cushionQuota}
+        notice={purifyNotice}
+        onEnabled={(next) => void changeCushion({ enabled: next })}
+        onLevel={(key) => void changeCushion({ mode: key })}
+        onTone={(key) => void changeCushion({ tone: key })}
+        onRetry={retryPurify}
+      />
 
       <Toast msg={toast} />
     </>

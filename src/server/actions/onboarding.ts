@@ -115,6 +115,16 @@ export async function findMemberByName(
   return member;
 }
 
+/** 팀원 목록 미리보기를 위해 팀의 기존 팀원 중 한 명을 조회한다(없으면 null). */
+export async function getTeamTeammatePreview(teamCode: string): Promise<string | null> {
+  if (!teamCode) return null;
+  const team = await db.team.findUnique({
+    where: { code: teamCode.trim().toUpperCase() },
+    select: { members: { where: { leftAt: null }, select: { name: true }, take: 1 } },
+  });
+  return team?.members[0]?.name ?? null;
+}
+
 /** 새 팀을 만들고 초대 코드를 발급한다. */
 /** 팀 이름 길이 상한. 앱바·DM·알림 제목에 들어간다. */
 const MAX_TEAM_NAME = 60;
@@ -460,7 +470,7 @@ export async function joinTeam(
  * 브라우저 자신**뿐이라, 팀장의 브라우저에서 만들 수 없다.
  */
 export async function checkJoinApproval(): Promise<
-  { status: "approved"; rejoinCode: string } | { status: "pending" | "rejected" | "none" }
+  { status: "approved"; rejoinCode: string } | { status: "pending" | "rejected" | "none" } | { status: "name-taken" }
 > {
   const store = await cookies();
   const token = store.get(JOIN_COOKIE)?.value;
@@ -498,11 +508,30 @@ export async function checkJoinApproval(): Promise<
       return { member, rejoinCode: code };
     }));
   } catch (error) {
-    // 폴링이 겹쳐 두 번 불리면 이름이 겹쳐 실패한다. 이미 팀원이 된 것이니 요청만 정리한다.
+    /**
+     * P2002 는 **두 가지** 이유로 온다. 예전에는 "폴링이 겹쳤다" 고만 읽고 두 번째를
+     * 요청 삭제로 처리했는데, 그랬더니 **같은 이름의 다른 사람**이 승인된 경우까지
+     * 조용히 사라졌다(2026-09-28 확인). 신청인은 아무 설명 없이 처음부터, 팀장 목록에는
+     * 이미 없는 요청으로 남았다.
+     *
+     * 구분은 **세션이 이미 있는지**로 한다. 겹친 폴링에서 이긴 쪽이 `startSession(memberId,
+     * token)` 으로 **요청 토큰을 그대로 세션 토큰으로** 쓰므로, 이길 쪽이 처리했다면 그 토큰의
+     * 세션이 있다. 없으면 그 이름을 가진 사람은 **다른 사람**이고, 여기서 지우면 안 된다.
+     *
+     * 그래도 막는 곳을 앞세웠다면 이 도달하지 않는다 — 승인이 이름 충돌을 먼저 확인한다
+     * (`server/invite/settle.ts` 의 `"name-taken"`). 여기는 안전망이다.
+     */
     if ((error as { code?: string }).code === "P2002") {
-      await db.joinRequest.delete({ where: { token } });
-      store.delete(JOIN_COOKIE);
-      return { status: "none" };
+      const alreadyOurs = await db.session.findUnique({ where: { token }, select: { memberId: true } });
+      if (alreadyOurs) {
+        // 이길 쪽이 이미 팀원으로 만들었다. 요청만 정리한다.
+        await db.joinRequest.delete({ where: { token } });
+        store.delete(JOIN_COOKIE);
+        return { status: "none" };
+      }
+      // 다른 사람이 그 이름을 쓰고 있다. **요청을 지우지 않는다** — 신청인이 이름을 고쳐
+      // 다시 보낼 수 있어야 하고, 팀장에게도 아직 해결되지 않은 요청으로 보여야 한다.
+      return { status: "name-taken" };
     }
     throw error;
   }

@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppBar, Body, Note } from "@/components/ui";
+import { AppBar, Body, Icon, Sheet } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import type { ChatMessage, CushionLevel, CushionTone, DmThread, Member } from "@/lib/types";
 import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
@@ -11,7 +12,7 @@ import { markThreadRead, setReadCushion } from "@/server/actions/chat";
 import { getMbtiMeta } from "@/lib/mbti";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
-import { ReadCushionBar } from "./read-cushion-bar";
+import { ReadCushionSheet } from "./read-cushion-bar";
 import { useCushionQuota } from "@/features/tools/use-ai-quota";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
@@ -45,7 +46,8 @@ export function DmScreen({
 }) {
   const router = useRouter();
   const me = useMe(fromRoster);
-  const [showTip, setShowTip] = useState(false);
+  const [cushionSheetOpen, setCushionSheetOpen] = useState(false);
+  const [tipSheetOpen, setTipSheetOpen] = useState(false);
   const otherMeta = getMbtiMeta(thread.mbti);
   const { flash, run } = useAction();
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
@@ -127,50 +129,59 @@ export function DmScreen({
     <>
       <AppBar
         title={thread.name}
-        sub={otherMeta ? `${otherMeta.type} · ${otherMeta.characterName}` : (thread.mbti ?? "MBTI 미입력")}
+        sub={otherMeta ? `${otherMeta.type} · ${otherMeta.characterName}` : (thread.mbti ?? undefined)}
         onBack={() => router.push("/chat/dm")}
         hideBackOnWide
-      />
-
-      {otherMeta ? (
-        <div className="mx-4 mt-2.5 rounded-xl border border-yellow-200/80 bg-linear-to-r from-yellow-50 to-amber-50/50 p-2.5 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-bold text-[12px] text-yellow-900">
-              <span className="font-mono text-yellow-800">{otherMeta.type}</span>
-              <span>{otherMeta.characterName}</span>
-            </div>
+        right={
+          <>
             <button
               type="button"
-              onClick={() => setShowTip(!showTip)}
-              className="text-[11.5px] font-bold text-yellow-800 hover:underline cursor-pointer"
+              onClick={() => setCushionSheetOpen(true)}
+              aria-label="읽기 순화 설정"
+              title={cushion.enabled ? "읽기 순화 켜짐" : "읽기 순화 설정"}
+              className={cn(
+                "relative grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none select-none transition-all duration-150 active:scale-95",
+                cushion.enabled
+                  ? "bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+                  : "bg-transparent text-txt-muted hover:bg-fill hover:text-txt",
+              )}
             >
-              {showTip ? "접기" : "소통 팁"}
+              <Icon
+                name="wand-sparkles"
+                size={19}
+                className={purifyWorking ? "animate-wiggle" : undefined}
+              />
+              {cushion.enabled ? (
+                <span className="absolute top-2 right-2 size-2 rounded-full bg-yellow-500 ring-2 ring-page" />
+              ) : null}
             </button>
-          </div>
-          {showTip ? (
-            <div className="mt-1.5 pt-1.5 border-t border-yellow-200/60 text-[12px] leading-[1.45] text-txt">
-              <p className="m-0 text-pretty-keep">💡 {otherMeta.communicationTip.good}</p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <ReadCushionBar
-        setting={cushion}
-        tones={tones}
-        levels={levels}
-        working={purifyWorking}
-        notice={purifyNotice}
-        quota={cushionQuota}
-        onEnabled={(next) => void changeCushion({ enabled: next })}
-        onLevel={(key) => void changeCushion({ mode: key })}
-        onTone={(key) => void changeCushion({ tone: key })}
-        onRetry={retryPurify}
+            {otherMeta ? (
+              <button
+                type="button"
+                onClick={() => setTipSheetOpen(true)}
+                aria-label="소통 팁 보기"
+                title={`${thread.name}님과의 소통 팁`}
+                className="grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt select-none transition-all duration-150 hover:bg-fill active:scale-90"
+              >
+                <Icon name="sparkles" size={19} className="text-yellow-700" />
+              </button>
+            ) : null}
+          </>
+        }
       />
 
-      <Note tone="info" icon="lock" className="mx-4 mt-2.5">
-        이 대화는 <b>{thread.name}님과 나만</b> 봅니다. 팀 전체 단톡방과는 분리되어 있습니다.
-      </Note>
+      {purifyNotice ? (
+        <div className="mx-4 mt-2 flex items-center justify-between rounded-xl bg-err-bg px-3 py-1.5 text-[12px] text-err">
+          <span>{purifyNotice}</span>
+          <button
+            type="button"
+            onClick={retryPurify}
+            className="cursor-pointer font-bold underline"
+          >
+            다시 시도
+          </button>
+        </div>
+      ) : null}
 
       <Body ref={scrollRef} dense className="flex flex-col gap-3">
         <div ref={topRef} />
@@ -201,6 +212,49 @@ export function DmScreen({
           send(text);
         }}
       />
+
+      <ReadCushionSheet
+        open={cushionSheetOpen}
+        onClose={() => setCushionSheetOpen(false)}
+        setting={cushion}
+        tones={tones}
+        levels={levels}
+        quota={cushionQuota}
+        notice={purifyNotice}
+        onEnabled={(next) => void changeCushion({ enabled: next })}
+        onLevel={(key) => void changeCushion({ mode: key })}
+        onTone={(key) => void changeCushion({ tone: key })}
+        onRetry={retryPurify}
+      />
+
+      {otherMeta ? (
+        <Sheet
+          open={tipSheetOpen}
+          title={`${thread.name}님과의 소통 팁`}
+          onClose={() => setTipSheetOpen(false)}
+        >
+          <div className="space-y-3 p-4">
+            <div className="flex items-center gap-2 rounded-2xl bg-yellow-100 p-3.5">
+              <span className="font-mono font-bold text-[16px] text-yellow-900">{otherMeta.type}</span>
+              <span className="font-bold text-[15px] text-ink-900">{otherMeta.characterName}</span>
+            </div>
+            <div className="rounded-xl border border-line bg-card p-3.5">
+              <div className="mb-1.5 flex items-center gap-1.5 font-bold text-[13.5px] text-txt-strong">
+                <Icon name="wand-sparkles" size={15} className="text-yellow-600" />
+                <span>이렇게 대화하면 좋아요</span>
+              </div>
+              <p className="m-0 text-[13px] leading-relaxed text-txt">{otherMeta.communicationTip.good}</p>
+            </div>
+            <div className="rounded-xl border border-line bg-card p-3.5">
+              <div className="mb-1.5 flex items-center gap-1.5 font-bold text-[13.5px] text-err">
+                <Icon name="ban" size={15} />
+                <span>이런 표현은 피하는 게 좋아요</span>
+              </div>
+              <p className="m-0 text-[13px] leading-relaxed text-txt">{otherMeta.communicationTip.caution}</p>
+            </div>
+          </div>
+        </Sheet>
+      ) : null}
     </>
   );
 }
