@@ -34,6 +34,7 @@ import {
   transferLeadership,
 } from "@/server/actions/team";
 import { updateMemberEmail } from "@/server/actions/email-auth";
+import { TeamMbti } from "@/features/team/team-mbti";
 import { resetOnboarding } from "./onboarding-state";
 
 /**
@@ -52,6 +53,7 @@ export function AccessScreen({
   isLeader,
   teamName,
   others,
+  members,
   myEmail,
 }: {
   requests: RejoinRequest[];
@@ -70,6 +72,14 @@ export function AccessScreen({
   teamName: string;
   /** 나를 뺀 지금 팀원. 팀장을 넘길 상대를 고를 때 쓴다. */
   others: Member[];
+  /**
+   * 나까지 포함한 지금 팀원 전체.
+   *
+   * `others` 는 팀장을 넘길 대상을 고르는 용도라 나를 뺀다. **내 MBTI 집계는 자기 자신을
+   * 포함해야 하므로** 둘을 나눈다 — `others` 로 세면 내 값이 빠진 숫자가 팀의 숫자로
+   * 나가는, 조용히 틀린 통계가 된다.
+   */
+  members: Member[];
   myEmail?: string | null;
 }) {
   const router = useRouter();
@@ -337,6 +347,10 @@ export function AccessScreen({
             </Btn>
           </div>
         </Panel>
+
+        {/* MBTI 는 계정 값이다 — 캐릭터와 소통 방식에만 쓰고 역할 배정과는 무관하다.
+            07 역할 조율에 두지 않는 이유는 그쪽 화면 주석에 적어 두었다. */}
+        <TeamMbti members={members} />
 
         <SecTitle note="잃어버렸다면 새로 받으세요">재입장 코드</SecTitle>
         {fresh ? (

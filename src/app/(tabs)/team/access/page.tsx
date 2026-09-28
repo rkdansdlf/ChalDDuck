@@ -36,6 +36,7 @@ export default async function AccessPage() {
       isLeader={me.isLeader}
       teamName={team.name}
       others={roster.filter((m) => !m.isMe)}
+      members={roster}
       myEmail={myEmail}
     />
   );
