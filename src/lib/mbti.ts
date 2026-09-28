@@ -264,6 +264,8 @@ export function calculateTeamMbtiStats(mbtiList: (MbtiType | null | undefined)[]
   const ratioE = count > 0 ? Math.round((e / count) * 100) : 50;
   const ratioI = 100 - ratioE;
   const ratioS = count > 0 ? Math.round((s / count) * 100) : 50;
+  /// 아래 `summaryParts` 의 S/N 구절이 **이 값부터** 본다 — E/I 도 `ratioI` 를 먼저 보므로
+  /// 짝을 이룬다. 여기를 지우면 S/N 은(summary 문장에서) 조용히 사라진다.
   const ratioN = 100 - ratioS;
   const ratioT = count > 0 ? Math.round((t / count) * 100) : 50;
   const ratioF = 100 - ratioT;
@@ -292,6 +294,14 @@ export function calculateTeamMbtiStats(mbtiList: (MbtiType | null | undefined)[]
       collaborationTips.push("대화로 나온 다양한 의견 중 핵심 액션 아이템을 바로 서기로 기록해 두세요.");
     } else {
       summaryParts.push("대면 소통과 텍스트 소통의 균형이 좋은 분위기");
+    }
+
+    if (ratioN > 55) {
+      summaryParts.push("가능성을 먼저 펼쳐 보고 새 아이디어를 탐구하는 분위기");
+      collaborationTips.push("안건마다 '왜'와 '대안은 무엇인지'를 한 줄 먼저 적어 주면 아이디어가 더 쉽게 나와요.");
+    } else if (ratioS > 55) {
+      summaryParts.push("검증된 근거를 하나씩 확인하며 나아가는 분위기");
+      collaborationTips.push("안건마다 참고할 사례나 숫자를 미리 붙여 주면 판단이 훨씬 빨라져요.");
     }
 
     if (ratioJ > 55) {

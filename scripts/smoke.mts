@@ -25,7 +25,7 @@ import {
   scoreAxes,
   sideLetter,
 } from "../src/lib/mbti-quiz.js";
-import { MBTI_AXES, type MbtiAxis } from "../src/lib/mbti.js";
+import { MBTI_AXES, calculateTeamMbtiStats, type MbtiAxis, type MbtiType } from "../src/lib/mbti.js";
 import { lastMessagePerThread } from "../src/data/last-message.js";
 import {
   candidateDates,
@@ -1469,6 +1469,42 @@ console.log("\nDM 목록 조회 비용");
       0,
     );
   }
+}
+
+/* ── 팀 분위기는 네 축을 모두 말한다 ──────────────────────── */
+
+console.log("\n팀 분위기 요약에 네 축이 모두 반영된다");
+{
+  // 이 검사는 **문구 자체** 를 박아 두지 않는다. 문구는 바뀔 수 있다. 대신 **네 축이
+  // 요약에 들어갔는지** 만 본다 — 어느 한 축의 분기만 지워도 세어 보면 드러난다.
+  //
+  // 실제로 그렇게 놓쳤었다. `calculateTeamMbtiStats` 는 ratio 를 여덟 개 계산했는데
+  // `ratioN` 만 어디에서도 읽히지 않았다 — E/I·S/N·T/F·J/P 중 S/N 구절이 통째로 없는
+  // 상태였다. 어느 팀을 넣어도 S 축 팀과 N 축 팀의 요약이 같다면 그것은 요약이 아니라
+  // **한쪽이 없는 것**이다.
+  const allS = calculateTeamMbtiStats(["ISTJ", "ISFP", "ESTJ", "ISFJ"]);
+  const allN = calculateTeamMbtiStats(["INTJ", "INFP", "ENTJ", "INFJ"]);
+
+  check("전부 S 인 팀과 전부 N 인 팀의 요약이 다르다", allS.dominantSummary !== allN.dominantSummary, true);
+  check("한쪽이 요약에서 사라지지 않는다", allS.dominantSummary.length > 0 && allN.dominantSummary.length > 0, true);
+  // **배열 전체를** 본다. 첫째 항목만 보면 E/I 팁이 같아서 항상 같다 — E/I 가 가장 먼저
+  // 팁을 넣으므로 어느 팀이든 0번이 그 팁이다. S/N 의 차이는 그 뒤에 쌓인다.
+  check(
+    "협업 팁이 두 팀에서 다르다",
+    allS.collaborationTips.join("|") !== allN.collaborationTips.join("|"),
+    true,
+  );
+  // S/N 구절이 있으면 팁이 붙는다 — E/I·J/P 와 같은 규칙이다.
+  check("S 도 팀에게 팁이 붙는다", allS.collaborationTips.length > 0, true);
+  check("N 도 팀에게 팁이 붙는다", allN.collaborationTips.length > 0, true);
+  // 균형 잡힌 팀은 어느 쪽도 아니라 판단한다 — S/N 이 균형이면 어느 구절도 붙지 않는다.
+  const mixed = calculateTeamMbtiStats(["ISFP", "INFP"]);
+  check("S/N 이 갈리면 요약은 나머지 축으로만 말한다", mixed.dominantSummary.length > 0, true);
+
+  // 빈 팀이 50/50 으로 떨어지지 않는지 — `count === 0` 일 때 50 을 쓰고, 그 합이 100 인지.
+  const nobody = calculateTeamMbtiStats([null, null]);
+  check("아무도 없으면 축이 반반이다", [nobody.axes.sn.ratioS, 100 - nobody.axes.sn.ratioS], [50, 50]);
+  check("아무도 없으면 요약이 모으는 중이라고 말한다", nobody.dominantSummary.includes("모으는 중"), true);
 }
 
 /* ── 13/22 화면은 파일 하나만 읽는다 ───────────────────────── */
