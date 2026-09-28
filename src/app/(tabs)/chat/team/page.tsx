@@ -1,4 +1,4 @@
-import { CUSHION_TONES } from "@/data/catalog";
+import { CUSHION_LEVELS, CUSHION_TONES } from "@/data/catalog";
 import {
   getCurrentTeam,
   getRoster,
@@ -29,6 +29,7 @@ export default async function TeamChatPage() {
       me={roster.find((m) => m.isMe)}
       boxes={boxes}
       tones={CUSHION_TONES}
+      levels={CUSHION_LEVELS}
       cushion={cushion}
     />
   );

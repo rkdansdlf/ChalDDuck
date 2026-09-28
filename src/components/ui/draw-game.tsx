@@ -18,7 +18,47 @@ import { Icon } from "./icon";
 
 export type DrawCandidate = { name: string; mbti: MbtiType | null };
 
+/**
+ * 이름만 필요한 후보 — 29 누가 하지처럼 **사람이 아니라 값을** 뽑을 때 쓴다.
+ * 바퀴·제비·사다리는 이름만 읽고, MBTI 는 오직 `WinnerCard` 만 쓴다.
+ */
+type DrawName = { name: string };
+
 const REVEAL_DELAY_MS = 1100;
+
+/**
+ * 도구별 연출 **만**.
+ *
+ * `DrawGame` 은 여기에 사람 전용 당첨자 카드(`Avatar`)를 얹은 한 겹이다. 값을 뽑는 화면은
+ * `Avatar` 가 들어갈 자리가 없어서 — 그래서 여기만 빌려 쓴다. **결과 표시는 호출한 화면이 자기
+ * 모양으로 한다**(`onLanded` 로 "연출이 끝났다"는 신호만 받는다).
+ */
+export function DrawStage({
+  toolKey,
+  candidates,
+  winner,
+  onLanded,
+}: {
+  toolKey: string;
+  candidates: DrawName[];
+  winner: string;
+  /** 연출이 끝났을 때 한 번 온다 — 결과를 여는 시점이 여기서 정해진다. */
+  onLanded: () => void;
+}) {
+  return (
+    <>
+      {toolKey === "roulette" ? (
+        <RouletteStage candidates={candidates} winner={winner} onLanded={onLanded} />
+      ) : toolKey === "draw" ? (
+        <TicketStage candidates={candidates} winner={winner} onLanded={onLanded} />
+      ) : toolKey === "ladder" ? (
+        <LadderStage candidates={candidates} winner={winner} onLanded={onLanded} />
+      ) : (
+        <DiceStage onLanded={onLanded} />
+      )}
+    </>
+  );
+}
 
 export function DrawGame({
   toolKey,
@@ -46,23 +86,18 @@ export function DrawGame({
     [candidates, winner],
   );
 
-  const onLanded = () => setLanded(true);
-
   return (
     <div className="flex flex-col items-center gap-5 py-1">
       <p className="t-note keep-all text-txt-muted">
         {landed ? `${toolName} 결과가 나왔어요` : `${toolName} 추첨 중…`}
       </p>
 
-      {toolKey === "roulette" ? (
-        <RouletteStage candidates={candidates} winner={winner} onLanded={onLanded} />
-      ) : toolKey === "draw" ? (
-        <TicketStage candidates={candidates} winner={winner} onLanded={onLanded} />
-      ) : toolKey === "ladder" ? (
-        <LadderStage candidates={candidates} winner={winner} onLanded={onLanded} />
-      ) : (
-        <DiceStage onLanded={onLanded} />
-      )}
+      <DrawStage
+        toolKey={toolKey}
+        candidates={candidates}
+        winner={winner}
+        onLanded={() => setLanded(true)}
+      />
 
       {landed ? <WinnerCard candidate={target} /> : null}
     </div>
@@ -120,7 +155,7 @@ function RouletteStage({
   winner,
   onLanded,
 }: {
-  candidates: DrawCandidate[];
+  candidates: DrawName[];
   winner: string;
   onLanded: () => void;
 }) {
@@ -227,7 +262,7 @@ function TicketStage({
   winner,
   onLanded,
 }: {
-  candidates: DrawCandidate[];
+  candidates: DrawName[];
   winner: string;
   onLanded: () => void;
 }) {
@@ -300,7 +335,7 @@ function LadderStage({
   winner,
   onLanded,
 }: {
-  candidates: DrawCandidate[];
+  candidates: DrawName[];
   winner: string;
   onLanded: () => void;
 }) {

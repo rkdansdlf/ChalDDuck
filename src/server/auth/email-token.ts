@@ -75,6 +75,29 @@ export async function issueEmailToken(email: string): Promise<{
   return { code, token, isCooldown: false };
 }
 
+/**
+ * 이메일이 나가지 않았을 때의 결과.
+ *
+ * `previewCode` 는 인증번호를 **화면으로 되돌려** 메일을 못 받아도 로그인을 붙여 주는 개발용
+ * 편의다. 이 값이 운영에 새면 발송 경로가 우회된다 — 메일은 실패했는데 인증번호는 그대로
+ * 도착하니까, Resend 가 죽어도 아무도 로그인 못 한다는 보장이 사라진다. 그래서 프로덕션에서는
+ * 만들지 않는다.
+ *
+ * 실패를 `success: false` 로 돌려주는 것도 같은 이유다. "성공인데 안 온 것"은 사용자가 이유를
+ * 알 수 없는 가장 말 없는 실패다(`server/actions/team.ts` 도 같은 이유로 조용함을 피한다).
+ */
+function undelivered(
+  email: string,
+  magicLink: string,
+  code: string,
+  reason: string,
+): { success: boolean; previewCode?: string } {
+  console.log(
+    `\n========================================\n[찰떡 이메일 인증 · ${reason}] ${email}\n인증번호: ${code}\n매직링크: ${magicLink}\n========================================\n`,
+  );
+  return process.env.NODE_ENV === "production" ? { success: false } : { success: true, previewCode: code };
+}
+
 /** 이메일 전송 (Resend 또는 개발 콘솔 로깅) */
 export async function sendEmailOtp(
   email: string,
@@ -122,20 +145,15 @@ export async function sendEmailOtp(
 
       if (!res.ok) {
         console.error("[Email Auth] Resend API Error:", await res.text());
-        // 실패 시 개발 환경을 위해 콘솔에도 출력
-        console.log(`\n========================================\n[찰떡 이메일 인증] ${email}\n인증번호: ${code}\n매직링크: ${magicLink}\n========================================\n`);
-        return { success: true, previewCode: code };
+        return undelivered(email, magicLink, code, "Resend 가 거절했습니다");
       }
 
       return { success: true };
     } catch (err) {
       console.error("[Email Auth] Failed to send email via Resend:", err);
-      console.log(`\n========================================\n[찰떡 이메일 인증] ${email}\n인증번호: ${code}\n매직링크: ${magicLink}\n========================================\n`);
-      return { success: true, previewCode: code };
+      return undelivered(email, magicLink, code, "발송 중 오류");
     }
   }
 
-  // API 키가 없는 경우 개발/테스트용 콘솔 출력
-  console.log(`\n========================================\n[찰떡 이메일 인증] ${email}\n인증번호: ${code}\n매직링크: ${magicLink}\n========================================\n`);
-  return { success: true, previewCode: code };
+  return undelivered(email, magicLink, code, "RESEND_API_KEY 가 없습니다");
 }

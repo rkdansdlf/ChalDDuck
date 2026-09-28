@@ -21,9 +21,9 @@
  * 이 파일은 DOM 도 DB 도 없다 — `scripts/smoke.mts` 가 그대로 불러 규칙을 확인한다.
  */
 
-import { CUSHION_TONES } from "@/data/catalog";
+import { CUSHION_DEFAULT_MODE, CUSHION_TONES } from "@/data/catalog";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, CushionLevelKey } from "@/lib/types";
 
 /* ── 상태와 이유 ─────────────────────────────────────────────── */
 
@@ -70,6 +70,20 @@ export const CUSHION_REASON = {
   RATE_LIMITED: "RATE_LIMITED",
   /** AI 키가 없다. */
   NO_MODEL: "NO_MODEL",
+  /**
+   * 한국어 입력을 **영어(또는 다른 언어)** 로 되돌려왔다.
+   *
+   * 실측: 무료 모델이 두 번 중 한 번은 영어로 답했다. 한국어 채팅에 영어가 올라오면 그건
+   * 순화가 아니라 **번역**이고, 그대로 보이면 사람이 말이 다른 사람이 된 것처럼 읽힌다.
+   */
+  LANGUAGE_DRIFT: "LANGUAGE_DRIFT",
+  /**
+   * 고치는 대신 **되물었다.** ("왜 그러세요? 좀비 같아 보여요.")
+   *
+   * 순화의 대상은 "고쳐서 보여 줄 문장" 이지 상대에게 할 말이다. 되물은 결과는 원문의
+   * 뜻이 뒤집힌 셈이라 버린다.
+   */
+  REPLY_INSTEAD_OF_REWRITE: "REPLY_INSTEAD_OF_REWRITE",
 } as const;
 export type CushionReason = (typeof CUSHION_REASON)[keyof typeof CUSHION_REASON];
 
@@ -86,10 +100,10 @@ const REFUSAL_MARKS =
  * 낡은 정보가 된다 — `PARSE_FAILED` 나 `TOXICITY_REMAINED` 가 프롬프트 때문에 났을 수 있기
  * 때문이다. 버전을 올리면 실패가 자동으로 다시 열린다(몇 달 뒤 재생성이 되는 근거).
  */
-export const PROMPT_VERSION = "p1";
+export const PROMPT_VERSION = "p2";
 
 /** 검사 버전. 규칙을 손보면 올린다(위와 같은 이유로 실패가 다시 열린다). */
-export const VALIDATOR_VERSION = "v1";
+export const VALIDATOR_VERSION = "v2";
 
 /** 같은 설정으로는 몇 번까지 시도할지. 이 값을 넘으면 **포기 상태**로 고정한다. */
 export const MAX_ATTEMPTS = 2;
@@ -157,6 +171,30 @@ export function canRetry(
   if (changed) return true;
 
   return row.retryAfter !== null && new Date(row.retryAfter).getTime() <= now.at;
+}
+
+/**
+ * 이 묶음을 보낸 뒤 **앞으로 더 손대야 할 말**이 몇 개 남았나.
+ *
+ * 화면이 멈추는 기준이 이 값이다 — 0 이 아니면 다음 묶음을 예약한다(그리고 그 사이는
+ * `DRAIN_RETRY_MS` 다). 그래서 **음수가 나면 안 된다.** 음수(`!== 0`)는 "남았다" 와 같아서,
+ * AI 를 쓸 이유가 없는 상태에서 묶음을 계속 부른다.
+ *
+ * ## "선점에서 진 말"도 남은 것으로 센다
+ *
+ * 같은 사람이 두 탭에서 같은 방을 보고 있으면 그럴 수 있다. 그 말은 이 요청이 **못 가져간
+ * 것**이지 사라진 것이 아니다 — 순화본이 아직 없다. 그래서 0 이 아니다.
+ *
+ * 그러면 언제 0 이 되는가. `canRetry` 이 **아직 유효한 선점(`PENDING`)** 을 걸러내기 때문이다.
+ * 상대가 부르는 중이던 말은 다음 부름의 후보에 **아예 들어가지 않고**, 그래서 이 수에서 빠진다.
+ * `claimable` 이 `canRetry` 의 결과로 이미 걸러진 목록이라는 것이 이 계약의 전부다 — 그
+ * 필터를 빼면 남은 수는 영영 줄지 않는다.
+ *
+ * @param claimable 지금 부를 수 있다고 판정된 대상 말의 수(`canRetry` 통과)
+ * @param processed 이번에 **모델에 보내 처리한** 말의 수
+ */
+export function remainingPurify(claimable: number, processed: number): number {
+  return Math.max(0, claimable - processed);
 }
 
 /* ── 순화 대상 판정 ─────────────────────────────────────────── */
@@ -325,23 +363,149 @@ const MAX_GROWTH_CHARS = 40;
 const MAX_GROWTH_RATIO = 2;
 
 /**
+ * 말의 **마무리 강도**가 사라졌는지 보는 표.
+ *
+ * 실측 반례: "나 진짜 짜증나 죽겠어" → "나 진짜 짜증나". 길이는 67% 라 길이 규칙으로는 안 잡히고,
+ * 욕도 지워지지 않았다. 그런데 **"죽겠어" 라는 말의 마무리가 통째로 사라졌다** — 사람이 한 말의
+ * 온기가 줄었는데, 순화는 말투를 바꾸는 것이지 말을 짧게 만드는 것이 아니다.
+ *
+ * 그래서 **원문의 끝부분에 이런 마무리가 있으면 순화문에도 하나는 남아 있어야 한다.**
+ * 순화가 필요한 말은 대개 길이가 비슷하므로, 이것만으로 "요약으로 잘린 경우"를 거의 걸러 낸다.
+ */
+// **강한 마무리만** 넣는다. "해" 같은 흔한 어미를 넣으면 "가능해?" → "가능할까요?" 처럼
+// 정상적인 순화가 잘못 걸린다(실제로 걸렸다).
+const ENDING_MARKS = ["겠어", "겠다", "거든", "잖아", "겠냐", "해라", "이래", "이거야"];
+
+/**
+ * 원문의 끝에 있던 마무리 강도가 순화문에서 사라졌는가 — **단, 순화문이 짧을 때만.**
+ *
+ * 이 검사는 **잘라내기**를 잡는 것이다. 그런데 모든 경우에 적용하면 **정상적인 다시쓰기까지
+ * 막는다** — 실측으로 막혔다: "너 때문에 다 꼬였잖아" 를 "이 부분이 어떻게 됐는지 확인해볼게요"
+ * 로 고치는 것은 완전히 정상인데, 원문의 "잖아" 가 사라졌다는 이유로 버렸다.
+ *
+ * 그래서 **순화문이 짧을 때(원문의 85% 미만)만** 본다. 길이가 비슷하면 말의 끝을 바꿔도
+ * "잘라낸 것" 이 아니며, 그때는 다른 검사가(요구·마감·숫자) 지킨다.
+ */
+function lostEnding(original: string, purified: string): boolean {
+  if (purified.length >= original.trim().length * 0.85) return false;
+  const tail = original.trim().slice(-10);
+  const had = ENDING_MARKS.filter((mark) => tail.includes(mark));
+  if (had.length === 0) return false;
+  return !had.some((mark) => purified.includes(mark));
+}
+
+/**
+ * 순화본이 원문의 몇 퍼센트까지 짧아져도 되는가.
+ *
+ * 실측에서 나온 반례: "나 진짜 짜증나 죽겠어" → **"나 진짜 짜증나"**. 욕은 지워지지 않았고
+ * 길이도 폭주하지 않아 기존 검사를 통과했다 — 그런데 **말의 끝이 잘려 있었다.** 순화는
+ * 말투의 일이지 요약을 하는 일이 아니다. 절반 아래로 줄면 요구·사정이 통째로 사라질 수 있다.
+ *
+ * 순화가 정말 필요한 말은 보통 길이가 비슷하다. 절반 아래로 줄인 결과는 **버린다**
+ * (`INFO_LOST`) — 그 말은 원문이 보인다.
+ */
+const MIN_LENGTH_RATIO = 0.5;
+
+/**
  * 순화본에 **남으면 안 되는 낱말**.
  *
  * 이건 **표시를 가리는 목록이 아니다.** 화면에 `***` 로 대신 보여 주기 위한 것이 아니라
  * "이건 순화가 아니다" 하고 **결과를 버리기 위한** 표다. 그래서 가리는 기능과 목적이
  * 정반대다 — 가리는 게 아니라 **거부**한다.
  */
-const MUST_NOT_REMAIN = [
-  // 욕설
-  "씨발", "씨바", "시발", "새끼", "병신", "지랄", "썅", "개새",
-  // 비꼼·조롱하는 비유 (사람에게 붙이는 것만)
-  "좀비", "바보", "멍청이", "멍청한", "한심", "바보같", "쓰레기같",
-  // 상대를 지목해 탓하는 표현
-  "니 탓", "네 탓", "다 니 탓", "다 네 탓", "다 니가", "다 네가",
-  // 비웃음
-  "ㅋㅋ", "대충이네", "대충이야", "대충인데", "재미없네", "맘에 안 드", "실망이다", "한심하",
+/**
+ * 강도별 프로필 — **세 곳을 한 표로 묶는다.**
+ *
+ * 1. `guide`  : 모델에게 줄 지시(몇까지 고치라)
+ * 2. `banned` : 순화본에 남으면 버릴 낱말(몇까지 지워졌나 확인)
+ * 3. `mask`   : AI 가 거절했을 때 규칙으로 가릴 패턴(몇까지 가릴 수 있나)
+ *
+ * 이것을 셋으로 따로 두면 "약하게 순화하라 고 했는데 검사는 강하게 한다" 같은 어긋남이
+ * 생기고, 어느 쪽이 문제인지 알 수 없다. **세 기준은 반드시 같은 표에서 나온다.**
+ */
+type LevelProfile = {
+  guide: string;
+  banned: string[];
+  mask: RegExp[];
+};
+
+const PROFANITY: RegExp[] = [/씨[발박빡바](?:이요|이야|을|은|가)?|시[발빡바]/g, /개새끼|개새/g, /병신|지랄|썅/g];
+/**
+ * NORMAL 이 걸러 내는 가림 패턴.
+ *
+ * **낱말 목록(`INSULT_WORDS`)과 같은 땅을 져야 한다.**实测 반례: 낱말 목록에는 "한심" 이
+ * 있는데 패턴이 `한심한|한심하` 뿐이라 **"한심해" 가 그대로 통과했다** — 검사는 버리지만
+ * 거짓말은 통과하고, 사람이 보는 화면에는 욕이 남는다. 코퍼스가 이 구멍을 찾았다.
+ */
+const INSULT: RegExp[] = [
+  /좀비|바보같이|바보야|바보|멍청이|멍청한|한심(한|하|해|하다)|쓰레기같이/g,
+  /다 니 탓|니 탓|다 네 탓|네 탓|다 니가|다 네가|니가 한 거|네가 한 거/g,
+  // "너 때문에" — 실측에서 **실제로 살아남았던** 책임 전가 표현. 인과를 상대에게 돌리는
+  // 가장 흔한 형태인데 목록에 없었다(코퍼스가 찾았다).
+  /너 때문에|니가 때문에|네가 때문에/g,
+  /ㅋㅋ+/g, /대충이네|대충이야|대충인데/g,
+];
+const ACCUSE: RegExp[] = [
+  /처음부터 다 버려라|버려라/g, /닥쳐|조용히 해|그만해/g,
+  /너는 진짜|너 진짜/g, /한심하게|한심하다/g,
 ];
 
+/** 욕설·비속어만. */
+const PROFANITY_WORDS = ["씨발", "씨박", "씨빡", "씨바", "시발", "새끼", "병신", "지랄", "썅", "개새"];
+
+/**
+ * ## 알려진 한계 (G 단계의 회귀 코퍼스가 다룰 자리)
+ *
+ * 여기서는 **패턴으로 잡히지 않는다**: "니가 왜 그랬어요" 처럼 **대명사만 남은** 탓.
+ * "니가" 를 낱말로 막으면 정상적인 요청("니가 알아서 해 줘")까지 걸리고, "왜" 로 막으면
+ * "왜 이렇게 됐어요?" 라는 정당한 질문까지 버려진다. 그래서 **하지 않았다** —
+// 검사가 말을 막는 쪽이 더 나쁘다. 이 자리는 코퍼스로 실제 사례를 모은 뒤 판단한다.
+ */
+
+/** 욕설 + 비꼼·조롱·"니 탓". NORMAL 이상에서 남으면 버린다. */
+const INSULT_WORDS = [
+  ...PROFANITY_WORDS,
+  "좀비", "바보", "멍청이", "멍청한", "한심", "바보같", "쓰레기같",
+  "니 탓", "네 탓", "다 니 탓", "다 네 탓", "다 니가", "다 네가",
+  // 인과를 상대에게 돌리는 표현 — 실측에서 실제로 남았던 "너 때문에" 포함.
+  "너 때문에", "니가 때문에", "네가 때문에",
+  "ㅋㅋ", "대충이네", "대충이야", "대충인데", "재미없네", "맘에 안 드", "실망이다",
+];
+
+/** STRONG 에서까지 남으면 버린다 — 책임 추궁과 구제 명령. */
+const ACCUSE_WORDS = [...INSULT_WORDS, "버려라", "닥쳐", "조용히 해", "그만해", "너는 진짜", "너 진짜"];
+
+const LEVEL_PROFILES: Record<CushionLevelKey, LevelProfile> = {
+  LIGHT: {
+    guide: "욕설과 비속어만 바꿉니다. **뜻과 말투는 그대로 두고 그 낱말만 가벼운 말로 바꿉니다.** 탓하는 말이나 조롱은 건드리지 마라.",
+    banned: PROFANITY_WORDS,
+    mask: PROFANITY,
+  },
+  NORMAL: {
+    guide: "욕설과 비속어를 없애고, 비꼼과 상대를 지목해 탓하는 말은 부드럽게 바꿉니다. 요구와 마감, 시각은 그대로 둡니다.",
+    banned: INSULT_WORDS,
+    mask: [...PROFANITY, ...INSULT],
+  },
+  STRONG: {
+    guide: "욕설·비속어·비꼼·책임 추궁까지 완화합니다. 상대를 지목해 미는 말은 내가 진지하게 걱정하는 말로 바꿉니다. **요구·마감·시각·이름·숫자는 하나도 지우지 마라.**",
+    banned: ACCUSE_WORDS,
+    mask: [...PROFANITY, ...INSULT, ...ACCUSE],
+  },
+};
+
+/** 한국어를 쓰는 말인지. */
+const HANGUL = /[가-힣]/;
+
+/**
+ * 고친 글이 **되물은 것**인지.
+ *
+ * "왜 그러세요?", "어떻게 하셨어요?" 처럼 **상대를 지목해 되묻는** 모양만 좁게 잡는다.
+ * "내일 몇 시로 가능할까요?" 처럼 원문에도 있던 질문은 통과시킨다 — 다듬는 동안 질문을
+ * 만드는 것은 정상이고, 그것까지 막으면 순화가 될 말을 지운다.
+ */
+const ASKS_BACK = /왜\s*(그러|그래|합|해|하|했)|어떻게\s*(했|하|했어|하셨어)/;
+
+/** 남으면 버리는 낱말은 **강도별로** 다르다 — `LEVEL_PROFILES` 를 본다. */
 /** 위험 표현을 **가릴** 자리표. 문장을 새로 쓰지 않고 그 자리만 대체한다. */
 const REDACTION = "••";
 
@@ -358,13 +522,28 @@ const REDACTION = "••";
  * **감정 표현은 걸러 내지 않는다**("짜증", "실망"…). 순화는 말투의 일이지 감정을 지우는 일이
  * 아니다 — 그것까지 지우면 사람이 한 말을 사람이 안 한 것처럼 읽힌다.
  */
-export function rejectsPurified(original: string, purified: string): CushionReason | null {
+export function rejectsPurified(
+  original: string,
+  purified: string,
+  level: CushionLevelKey = CUSHION_DEFAULT_MODE,
+): CushionReason | null {
+  const profile = LEVEL_PROFILES[level];
   const text = purified.trim();
   if (text.length === 0) return CUSHION_REASON.EMPTY_OUTPUT;
-  if (MUST_NOT_REMAIN.some((word) => text.includes(word))) return CUSHION_REASON.TOXICITY_REMAINED;
+  if (profile.banned.some((word) => text.includes(word))) return CUSHION_REASON.TOXICITY_REMAINED;
+
+  // **언어와 방향은 나머지 검사보다 먼저 본다.** 길이·마무리·정보 검사는 모두 한국어라고
+  // 가정하고 있는데, 영어로 돌아온 결과에 그 검사들을 적용하면 "INFO_LOST" 라는 **엉뚱한
+  // 이유**로 남는다(실측: 영어 응답이 INFO_LOST 로 기록됐다). 원인이 드러는 자리가 없다.
+  if (HANGUL.test(original) && !HANGUL.test(text)) return CUSHION_REASON.LANGUAGE_DRIFT;
+  if (ASKS_BACK.test(text) && !ASKS_BACK.test(original)) return CUSHION_REASON.REPLY_INSTEAD_OF_REWRITE;
+
   if (text.length > original.trim().length * MAX_GROWTH_RATIO + MAX_GROWTH_CHARS) {
     return CUSHION_REASON.TOO_LONG;
   }
+  // **요약으로 잘린 결과**는 순화가 아니다. 욕은 그대로 두고 말의 끝만 사라졌다.
+  if (text.length < original.trim().length * MIN_LENGTH_RATIO) return CUSHION_REASON.INFO_LOST;
+  if (lostEnding(original, text)) return CUSHION_REASON.INFO_LOST;
 
   const lost = mustKeepTokens(original).filter((token) => !text.includes(token));
   if (lost.length > 0) return CUSHION_REASON.INFO_LOST;
@@ -384,9 +563,10 @@ export function rejectsPurified(original: string, purified: string): CushionReas
 export function judgeOne(
   item: PurifyItem,
   got: string | undefined,
+  level: CushionLevelKey = CUSHION_DEFAULT_MODE,
 ): { status: "PURIFIED" | "REJECTED"; text?: string; reason?: CushionReason } {
   if (got === undefined) return { status: "REJECTED", reason: CUSHION_REASON.EMPTY_RESPONSE };
-  const reason = rejectsPurified(item.text, got);
+  const reason = rejectsPurified(item.text, got, level);
   if (reason) return { status: "REJECTED", reason };
   return { status: "PURIFIED", text: got.trim() };
 }
@@ -402,13 +582,14 @@ export function judgeOne(
 export function judgeAll(
   items: PurifyItem[],
   response: { items: Map<string, string>; unknown: string[] },
+  level: CushionLevelKey = CUSHION_DEFAULT_MODE,
 ): Array<{ id: string; status: "PURIFIED" | "REJECTED"; text?: string; reason?: CushionReason }> {
   const unknown = new Set(response.unknown);
   return items.map((item) => {
     if (unknown.has(item.id)) {
       return { id: item.id, status: "REJECTED" as const, reason: CUSHION_REASON.UNKNOWN_ID };
     }
-    return { id: item.id, ...judgeOne(item, response.items.get(item.id)) };
+    return { id: item.id, ...judgeOne(item, response.items.get(item.id), level) };
   });
 }
 
@@ -438,23 +619,13 @@ export function isRefusal(raw: unknown): boolean {
  *
  * 위험한 말이 **하나도 없으면** 가림본을 만들지 않는다 — 없는 것을 가렸다고 말하지 않는다.
  */
-export function maskRiskyParts(text: string): { text: string; masked: number } {
-  const patterns: RegExp[] = [
-    // 욕설
-    /씨발이요|씨발이야|씨발을|씨발은|씨발|씨바|시발/g,
-    /개새끼|개새/g,
-    /병신|지랄|썅/g,
-    // 사람에게 붙이는 비꼼
-    /좀비|바보같이|바보야|바보|멍청이|멍청한|한심한|한심하|쓰레기같이/g,
-    // 원인을 상대에게 돌리는 말
-    /다 니 탓|니 탓|다 네 탓|네 탓|다 니가|다 네가|니가 한 거|네가 한 거/g,
-    // 비웃음
-    /ㅋㅋ+/g,
-    /대충이네|대충이야|대충인데/g,
-    // 구제 명령
-    /처음부터 다 버려라|버려라/g,
-    /닥쳐|조용히 해|그만해/g,
-  ];
+export function maskRiskyParts(
+  text: string,
+  level: CushionLevelKey = CUSHION_DEFAULT_MODE,
+): { text: string; masked: number } {
+  // **가릴 범위도 단계마다 다르다.** `LEVEL_PROFILES` 와 같은 표에서 나온다 — 검사만
+  // 단계에 따라 가리는 범위가 그대로면, 약한 단계에서 걸러 낼 것을 약하게 읽는 사람이 버린다.
+  const patterns: RegExp[] = LEVEL_PROFILES[level].mask;
 
   let masked = 0;
   let out = text;
@@ -480,8 +651,63 @@ function isBrokenAfterMask(text: string): boolean {
 }
 
 /** 규칙으로 가릴 수 있는 표현이 남아 있는가 — 즉 이 방에 fallback 이 필요한가. */
-export function needsMask(original: string): boolean {
-  return maskRiskyParts(original).masked > 0;
+export function needsMask(original: string, level: CushionLevelKey = CUSHION_DEFAULT_MODE): boolean {
+  return maskRiskyParts(original, level).masked > 0;
+}
+
+/* ── 측정(F) ─────────────────────────────────────────────────── */
+
+/**
+ * 이 행이 **무엇을 말하는지** — 한 계단짜리 말로.
+ *
+ * 상태·이유를 그대로 세면(`REJECTED` 12개) **왜** 줄었는지 알 수 없다. 지표는 사람이
+ * 다음 결정을 내릴 수 있는 크기여야 한다: 모델을 바꿀까, 프롬프트를 고칠까, 검사를
+ * 느슨하게 할까.
+ */
+export type CushionBucket = "done" | "masked" | "refused" | "rejected" | "failed" | "pending";
+
+export function cushionBucketOf(row: {
+  status: CushionStatus;
+  reason: CushionReason | null;
+  source: string | null;
+}): CushionBucket {
+  if (row.status === "PENDING") return "pending";
+  if (row.status === "PURIFIED") return "done";
+  if (row.status === "FALLBACK") return "masked";
+  // 거절·한도는 **모델 문제**고, 검사로 버린 것은 **검사(또는 프롬프트) 문제**다.
+  if (row.reason === CUSHION_REASON.MODEL_REFUSAL || row.reason === CUSHION_REASON.RATE_LIMITED) {
+    return "refused";
+  }
+  if (row.reason === CUSHION_REASON.NO_MODEL || row.reason === CUSHION_REASON.EMPTY_RESPONSE) {
+    return "failed";
+  }
+  return "rejected";
+}
+
+/**
+ * **순화 커버리지** — 순화 대상 말 중, 읽는 사람에게 안전하게 닿은 비율.
+ *
+ * `보통 · 강하게` 모드에서 메시지는 세 갈래로 갈린다: AI 가 다듬어 보여 줌(PURIFIED),
+ * AI 가 거절해 규칙이 가림(FALLBACK), 아무것도 못 해 원문으로 보임(FAILED/REJECTED).
+ * 읽는 사람이 **끊김 없이 읽을 수 있는** 비율이 이 숫자다 — "순화됨" 칩이 붙은 비율과
+ * "원문이 그대로 보인" 비율의 합.
+ *
+ * 측정값의 해석(실측 16말): 협조적 11말은 PURIFIED, 다툰 말은 대부분 FALLBACK →
+ * 커버리지는 높게 나오지만 **AI 가 한 일의 비율은 낮다.** 두 숫자를 따로 봐야
+ * "모델을 바꿀지" 를 판단할 수 있다 — 커버리지만 높으면 기능은 돌아가고 있는 것이다.
+ */
+export function purificationCoverage(counts: Record<CushionBucket, number>): number {
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  if (total === 0) return 0;
+  const safe = counts.done + counts.masked;
+  return Math.round((safe / total) * 1000) / 1000;
+}
+
+/** AI 가 실제로 일을 한 비율(PURIFIED ÷ 전체). 커버리지와 함께 본다. */
+export function purificationAiShare(counts: Record<CushionBucket, number>): number {
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  if (total === 0) return 0;
+  return Math.round((counts.done / total) * 1000) / 1000;
 }
 
 /* ── 표시 ───────────────────────────────────────────────────── */
@@ -505,14 +731,41 @@ export function displayTextOf(
 }
 
 /**
- * 읽기 순화 설정 — **끄는 길은 없다**(이건 기획 결정이다). `tone` 만 있다.
+ * 읽기 순화 설정 — **사람마다, 방마다**.
+ *
+ * - `enabled` — 끄면 AI 호출 후보를 **아예 만들지 않는다.** 원문으로만 읽는다.
+ * - `mode`    — 몇까지 세게 읽을지(LIGHT/NORMAL/STRONG).
+ * - `tone`    — 같은 단계 안에서 말투(15 쿠션 번역기와 같은 세 값).
  *
  * `tone` 이 null 이면 아직 고르지 않았다. 규칙상 첫 순화는 첫 말투로 돈다.
  */
-export type ReadCushionSetting = { tone: string | null };
+export type ReadCushionSetting = {
+  enabled: boolean;
+  mode: CushionLevelKey;
+  tone: string | null;
+};
 
-/** 아무것도 정하지 않은 상태. */
-export const READ_CUSHION_DEFAULT: ReadCushionSetting = { tone: null };
+/** 아무것도 정하지 않은 상태 — 팀 전체가 처음 갖는다. */
+export const READ_CUSHION_DEFAULT: ReadCushionSetting = {
+  enabled: true,
+  mode: CUSHION_DEFAULT_MODE,
+  tone: null,
+};
+
+/** 읽기 순화가 꺼져 있는가. 꺼져 있으면 후보를 만들지 않는다. */
+export function cushionOff(setting: ReadCushionSetting): boolean {
+  return setting.enabled === false;
+}
+
+/** 모르는 값이 들어와도 있는 것으로 본다 — 조용히 다른 단계로 읽지 않는다. */
+export function levelOf(setting: ReadCushionSetting): CushionLevelKey {
+  return setting.mode === "LIGHT" || setting.mode === "STRONG" ? setting.mode : CUSHION_DEFAULT_MODE;
+}
+
+/** 이 단계가 모델에게 줄 지시. */
+export function levelGuide(level: CushionLevelKey): string {
+  return LEVEL_PROFILES[level].guide;
+}
 
 /** 읽는 말투. 고른 것이 없으면 첫 말투. */
 export function toneOf(setting: { tone: string | null }): string {

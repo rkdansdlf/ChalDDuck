@@ -18,7 +18,7 @@ import { fromKstInputValue } from "@/lib/when";
 import { teamUsedBytes } from "@/server/drive/usage";
 import { DRIVE_READ_KEY, readNavBadges, type NavBadges } from "@/server/nav/badges";
 import { notify, teamMemberIds } from "@/server/notify/create";
-import { isStorageConfigured, storage } from "@/server/storage/client";
+import { isStorageConfigured, explainStorageFailure, storage } from "@/server/storage/client";
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
 
@@ -200,8 +200,11 @@ export async function prepareUpload(
 
   const { data, error } = await storage().createSignedUploadUrl(path);
   if (error) {
-    console.error("[storage] 올리기 주소 발급 실패:", error);
-    throw new Error("저장소가 응답하지 않습니다.");
+    // 버킷이 없으면 "저장소가 응답하지 않습니다" 로 넘기지 않는다 — 원인이 다르다.
+    // 버킷 부재는 `npm run db:storage` 한 줄로 끝나고, 잠깐 실패한 것과 메시지도 다르다.
+    const problem = await explainStorageFailure("올리기 주소 발급", error);
+    if (problem.missingBucket) return { status: "not-configured" };
+    throw new Error(problem.message);
   }
   return { status: "ok", path, signedUrl: data.signedUrl, contentType: type.contentType };
 }
@@ -561,7 +564,9 @@ export async function getDownloadUrl(versionId: string): Promise<string | null> 
     download: version.file.name,
   });
   if (error) {
-    console.error("[storage] 서명 주소 실패:", error);
+    // 조용히 `null` 을 돌려주면 멀쩡한 파일을 없는 파일이라고 말하게 된다. 버킷 부재와
+    // 잠깐 실패를 나눠 **서버 로그에**는 원인을 남긴다.
+    await explainStorageFailure("내려받기 주소 발급", error);
     return null;
   }
   return data.signedUrl;
@@ -598,10 +603,10 @@ export async function getPreviewUrl(versionId: string, fileId?: string): Promise
 
   // 서명 주소를 못 만들면 **왜인지 서버에 남긴다.** 조용히 `null` 을 돌려주면 화면은
   // "이 버전에는 저장된 파일이 없어 미리 볼 수 없습니다"라고 말해 — 멀쩡한 파일을
-  // 없는 파일이라고 Saying 때문이다.
+  // 없는 파일이라고 말하기 때문이다.
   const { data, error } = await storage().createSignedUrl(version.storagePath, PREVIEW_URL_SECONDS);
   if (error) {
-    console.error("[storage] 미리보기 주소 실패:", version.storagePath, error);
+    await explainStorageFailure(`미리보기 주소 발급 (${version.storagePath})`, error);
     return null;
   }
   return data?.signedUrl ?? null;

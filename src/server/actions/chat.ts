@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
+import type { CushionLevelKey } from "@/lib/types";
 import {
   dmThreadKey,
   getDmThreads,
@@ -21,9 +23,11 @@ import {
   isPurifiableText,
   isRefusal,
   judgeOne,
+  levelOf,
   maskRiskyParts,
   packPurifyItems,
   parsePurifyResponse,
+  remainingPurify,
   toneChanged,
   toneOf,
   type CushionReason,
@@ -337,54 +341,76 @@ async function touchReadMark(memberId: string, threadKey: string): Promise<void>
 /* ── 읽기 순화(19 · 31) ────────────────────────────────────── */
 
 /**
- * 이 방의 말을 **어떤 말투로 읽는지** 고른다.
+ * 이 방의 말을 **어떻게 읽는지** 고른다 — 끄기·강도·말투.
  *
- * **끄는 길이 없다.** 순화는 이 앱의 약속이다(받는 사람은 순화된 표현을 받는다) —
- * 켜고 끄는 스위치를 두면 아무도 켜지 않아 약속이 그대로 남고, 꺼진 화면을 본 사람은
- * 그 말이 순화본인지 원문인지 알 수 없다. 원문은 말풍선을 누르면 된다.
+ * ## 왜 `enabled` 와 `mode` 가 둘인가
  *
- * 말투는 방마다 따로다. "단톡방은 부드럽게, DM 은 담담하게"가 되어야 한다.
+ * 둘을 한 칸(`mode: "OFF"`)으로 합치면 **끄기 전에 고른 단계를 잃는다.** 다시 켰을 때
+ * 어디까지 세게 읽을지 몰라 처음부터 골라야 한다. 끄기는 `enabled=false` 이고 `mode` 는
+ * 그대로 남는다 — 대화를 잠깐 원문으로 읽다가 **내 자리로 돌아오는** 길이다.
+ *
+ * 말투는 같은 단계 안에서 고른다. 단계가 "얼마까지" 면 말투는 "어떤 톤으로" 다.
+ * 둘을 한 칸에 섞으면 9개를 고르는 셈이 되고, 사람은 그중 하나만 본다.
  */
-export async function setReadCushionTone(
+export async function setReadCushion(
   threadId: string,
-  tone: string,
+  setting: { enabled?: boolean; mode?: string; tone?: string },
 ): Promise<{ ok: true; setting: ReadCushionSetting } | { ok: false; message: string }> {
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
 
-  // 모르는 말투는 그대로 넣지 않는다 — 프롬프트가 `TONE_GUIDE` 에서 못 찾으면 말투 없는
-  // 순화가 되고, 사용자는 왜 다른지 알 수 없다.
-  const key = isCushionTone(tone) ? tone : toneOf({ tone: null });
-
   const before = await db.readCushion.findUnique({
     where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    select: { tone: true },
+    select: { enabled: true, mode: true, tone: true },
   });
+  // 모르는 값은 그대로 넣지 않는다 — 프롬프트가 못 찾는 강도는 "보통 없는" 순화가 되고,
+  // 검사는 통과 기준이 없다. 없는 것으로 보고 지금 쓰는 기본을 쓴다.
+  const mode = setting.mode === "LIGHT" || setting.mode === "STRONG" ? setting.mode : CUSHION_DEFAULT_MODE;
+  const enabled = setting.enabled !== false;
+  const tone = isCushionTone(setting.tone) ? setting.tone : (before?.tone ?? toneOf({ tone: null }));
 
-  await db.readCushion.upsert({
+  /**
+   * **이전 기준은 "행이 없을 때의 기본값"과 비교한다.**
+   *
+   * 예전에는 `before` 가 있을 때만 지웠다. 그랬더니 **한 번도 설정을 건드리지 않은 방**에서
+   * 처음으로 강도를 고르면(순화본은 이미 기본값으로 만들어진 상태) 지워지지 않았다 —
+   * 사용자는 "강하게" 를 골랐는데 화면에는 "보통" 으로 만든 말이 그대로 있었다(실측).
+   */
+  const previous = {
+    enabled: before?.enabled ?? true,
+    mode: before?.mode ?? CUSHION_DEFAULT_MODE,
+    tone: before?.tone ?? toneOf({ tone: null }),
+  };
+
+  const saved = await db.readCushion.upsert({
     where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    update: { tone: key },
-    create: { memberId: me.id, threadKey, tone: key },
+    update: { enabled, mode, tone },
+    create: { memberId: me.id, threadKey, enabled, mode, tone },
   });
 
   /**
-   * 말투가 실제로 바뀌었으면 **이 방의 순화본을 지운다.**
+   * **끓는 기준이 바뀌면 이 방의 순화본을 지운다.**
    *
-   * 한 말에는 사람당 한 줄(`@@unique([messageId, memberId])`)이다 — 새 말투로 다시
-   * 만들어도 예전 글 위에 덮어쓸 수 없다(`skipDuplicates` 는 조용히 버린다). 그러면
-   * 사용자는 "부드럽게" 를 눌렀는데 계속 담담하게 된 글을 읽게 된다. 화면에는
-   * "다듬는 중" 이 뜨는데 글은 그대로라, 가장 말 없는 실패다.
+   * 강도나 말투가 달라졌는데 옛 순화본이 남아 있으면, 사용자는 "보통" 으로 골랐는데 화면은
+   * "강하게" 로 만든 말을 본다 — 라벨도 단계도 다른데 글은 옛 것이니 아무도 모른다.
    *
-   * 지우는 것은 **읽기에만 걸린 것**이다. 원문(`Message.text`)은 그대로 남고, 다시 만들면
-   * 새 말투로 돌아온다. 같은 말투를 다시 누른 경우에는 지우지 않는다(그냥 저장한다).
+   * 한 말에는 사람당 한 줄이라 새 조건으로 덮어쓸 수 없다(`skipDuplicates` 가 조용히 버린다).
+   * 지우는 것은 **읽기에만 걸린 것**이고 원문은 그대로다. 재처리에는 AI 가 다시 붙는다.
    */
-  if (toneChanged(before?.tone, key)) {
+  if (previous.mode !== mode || previous.tone !== tone || previous.enabled !== enabled) {
     await db.messageCushion.deleteMany({
       where: { viewerId: me.id, message: { teamId: me.teamId, threadKey } },
     });
   }
 
-  return { ok: true, setting: { tone: key } };
+  return {
+    ok: true,
+    setting: {
+      enabled: saved.enabled,
+      mode: levelOf({ enabled: saved.enabled, mode: saved.mode as CushionLevelKey, tone: saved.tone }),
+      tone: saved.tone,
+    },
+  };
 }
 
 /** 순화 상태 하나 — 화면이 그대로 그리는 값. */
@@ -498,9 +524,24 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
 
   const toneRow = await db.readCushion.findUnique({
     where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    select: { tone: true },
+    select: { enabled: true, mode: true, tone: true },
   });
-  const tone = toneOf({ tone: toneRow?.tone ?? null });
+  /**
+   * **꺼져 있으면 모델을 부르지 않는다.**
+   *
+   * 끄는 뜻은 "이 방의 말은 원문으로 읽겠다" 이지 "AI 를 쓰되 조용히" 가 아니다. 그래서 후보를
+   * 아예 만들지 않는다 — 사용하지 않을 AI 를 부르는 것이 이 기능을 가장 이상하게 만드는 방법이다.
+   */
+  if (toneRow && toneRow.enabled === false) {
+    return { ok: true, cushions: {}, called: 0, remaining: 0 };
+  }
+  const setting: ReadCushionSetting = {
+    enabled: true,
+    mode: levelOf({ enabled: true, mode: (toneRow?.mode ?? CUSHION_DEFAULT_MODE) as CushionLevelKey, tone: toneRow?.tone ?? null }),
+    tone: toneOf({ tone: toneRow?.tone ?? null }),
+  };
+  const level = levelOf(setting);
+  const tone = toneOf(setting);
 
   // 1) 지금 부를 수 있는 것만 고른다.
   const claimable = texts.filter((row) =>
@@ -525,7 +566,6 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   const claimIds = claimable.slice(0, PURIFY_BATCH_LIMIT).map((row) => row.id);
   const sourceOf = new Map(texts.map((row) => [row.id, row.text]));
   if (claimIds.length > 0) {
-    const now = new Date(at);
     await db.messageCushion.createMany({
       data: claimIds.map((id) => {
         const source = sourceOf.get(id) ?? "";
@@ -551,16 +591,20 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   });
   const mine = afterClaim.filter((row) => row.claimToken === claimToken).map((row) => row.messageId);
   const textOf = new Map(texts.map((row) => [row.id, row.text.trim()]));
-  /**
-   * 아직 손대지 않은 것이 남았나 — 화면이 **곧바로** 다음 묶음을 부를 수 있게 알려 준다.
-   * 화면이 이 수 대신 3초를 기다리면 순화가 붙는 속도가 폴링 주기에 묶인다.
-   */
-  const remaining = claimable.length - mine.length;
 
   const cushions: Record<string, CushionView> = {};
   for (const row of afterClaim) cushions[row.messageId] = toCushionView(row);
 
-  if (mine.length === 0) return { ok: true, cushions, called: 0, remaining };
+  /**
+   * 내가 선점을 못 가져간 말은 **남은 일로 센다.**
+   *
+   * 같은 사람이 두 탭에서 같은 방을 보고 있으면 그럴 수 있고, 그 말은 이 요청이 못 가져간 것이지
+   * 사라진 것이 아니다. `canRetry` 이 아직 유효한 `PENDING` 을 걸러내므로, 상대가 끝난 다음
+   * 부름에서 이 수는 0 이 되고 그때까지 화면은 AI 를 추가로 쓰지 않는다.
+   */
+  const uncontested = remainingPurify(claimable.length, mine.length);
+
+  if (mine.length === 0) return { ok: true, cushions, called: 0, remaining: uncontested };
 
   // 3) 묶어서 한 번 부른다.
   const items = packPurifyItems(mine.map((id) => ({ id, text: textOf.get(id) ?? "" })));
@@ -568,7 +612,26 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   const attempt = claimable.find((row) => mine.includes(row.id));
   const priorAttempts = attempt ? (stored.get(attempt.id)?.attemptCount ?? 0) : 0;
 
-  const result = await runTool("read-cushion", () => softenIncoming(items, tone));
+  /**
+   * 이 묶음을 보낸 뒤 **앞으로 더 손대야 할 말**이 몇 개 남았나.
+   *
+   * `claimable` 에서 **이번에 처리한 것만** 뺀다. `mine` 을 한 번 더 빼면(내 이전 버그) 이 값이
+   * 음수가 되고, 화면은 `remaining !== 0` 이니 계속 묶음을 부른다 — AI 를 쓸 이유가 없는
+   * 상태로. 화면이 멈추는 기준이 이 값이라 **음수가 나면 안 된다.**
+   */
+  const remaining = remainingPurify(claimable.length, items.length);
+
+
+  /**
+   * 이 묶음의 **호출 시간**을 잰다.
+   *
+   * 지연을 재지 않으면 "느려서 안 쓰는 것" 과 "못 해서 안 쓰는 것" 을 구분할 수 없다 —
+   * 둘 다 화면에서는 "안 바뀌는 말" 처럼 보인다. 모델을 바꿀지 판단할 때 이 숫자가
+   * 절반이다. 묶음의 모든 행이 같은 값을 갖는다(호출이 하나였으므로).
+   */
+  const calledAt = Date.now();
+  const result = await runTool("read-cushion", () => softenIncoming(items, tone, level));
+  const latencyMs = result.ok ? Date.now() - calledAt : null;
 
   /** 이 항목의 결과를 저장한다. 실패도 저장한다 — 안 하면 다시 부른다. */
   const save = async (
@@ -588,6 +651,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
         promptVersion: PROMPT_VERSION,
         validatorVersion: VALIDATOR_VERSION,
         attemptCount: priorAttempts + 1,
+        latencyMs,
         claimToken: null,
         // 실패는 **같은 설정으로는 다시 부르지 않게** 닫아 둔다. `canRetry` 가 버전을 보고
         // 열어 준다 — 프롬프트를 고쳤거나 모델을 바꿨을 때만.
@@ -602,7 +666,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
       ? CUSHION_REASON.RATE_LIMITED
       : CUSHION_REASON.MODEL_REFUSAL;
     for (const item of items) {
-      const masked = maskRiskyParts(item.text);
+      const masked = maskRiskyParts(item.text, level);
       if (masked.masked > 0) {
         await save(item.id, {
           status: "FALLBACK",
@@ -615,7 +679,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
       }
       await save(item.id, { status: "FAILED", text: null, kind: null, reason, retryAfter: null }, { reason });
     }
-    return { ok: true, cushions, called: 1, remaining: remaining - items.length };
+    return { ok: true, cushions, called: 1, remaining };
   }
 
   // 4) 항목별 판정.
@@ -624,7 +688,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
 
   for (const item of items) {
     if (refused) {
-      const masked = maskRiskyParts(item.text);
+      const masked = maskRiskyParts(item.text, level);
       if (masked.masked > 0) {
         await save(item.id, {
           status: "FALLBACK",
@@ -645,7 +709,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
       continue;
     }
 
-    const verdict = judgeOne(item, parsed.items.get(item.id));
+    const verdict = judgeOne(item, parsed.items.get(item.id), level);
     if (verdict.status === "PURIFIED" && verdict.text) {
       await save(item.id, {
         status: "PURIFIED",
@@ -660,7 +724,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
     // AI 가 실패한 항목 — **가릴 수 있으면 가린다.** 가장 순화해야 할 말이 원문으로
     // 남는 것을 막는 것이 이 단계의 목적이다.
     const reason = verdict.reason ?? CUSHION_REASON.EMPTY_RESPONSE;
-    const masked = maskRiskyParts(item.text);
+    const masked = maskRiskyParts(item.text, level);
     if (masked.masked > 0) {
       await save(item.id, {
         status: "FALLBACK",
@@ -680,6 +744,6 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
     }, { reason });
   }
 
-  return { ok: true, cushions, called: 1, remaining: Math.max(0, remaining - items.length) };
+  return { ok: true, cushions, called: 1, remaining };
 }
 

@@ -8,8 +8,11 @@ import {
   SENTENCE_SAMPLE_OUTPUT,
 } from "@/data/catalog";
 import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
-import { buildPurifyRequest, isRefusal, type PurifyItem } from "@/lib/read-cushion";
+import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
+import { levelGuide, type PurifyItem } from "@/lib/read-cushion";
+import type { CushionLevelKey } from "@/lib/types";
 import { askShape, askText, askWithSearch, isAiConfigured } from "./model";
+import { defaultProvider, type CushionProvider } from "./cushion-provider";
 
 /**
  * 모델이 "없음"을 적는 방식이 제각각이다 — 빈 문자열, "null", "미정", "<UNKNOWN>".
@@ -97,13 +100,18 @@ export async function rewriteWithCushion(text: string, tone: string): Promise<st
 export async function softenIncoming(
   items: PurifyItem[],
   tone: string,
+  level: CushionLevelKey = CUSHION_DEFAULT_MODE,
+  /** 어느 모델로 부를지. 기본은 지금 설정된 provider — 벤치(`npm run cushion:bench`)가 갈아 끼운다. */
+  provider: CushionProvider = defaultProvider(),
 ): Promise<{ raw: string; refused: boolean }> {
   // 키가 없으면 **샘플로 대신하지 않는다.** 보낸 사람은 그 글이 그대로 전달되었는데
   // 읽는 사람에게만 가짜 문장이 붙으면 대화가 거짓말을 하게 된다. 원문 그대로 두고
   // "AI 가 없다"고 알리는 쪽이 정직하다(액션이 `NO_MODEL` 로 기록한다).
   if (!isAiConfigured()) throw new Error("AI 가 연결되어 있지 않습니다.");
 
-  const raw = await askText({
+  return provider.purify({
+    items,
+    level,
     system: `${BASE}
 
 # 네가 하는 일
@@ -122,7 +130,11 @@ export async function softenIncoming(
 4. **요청한 id 를 그대로 써서, 빠짐없이, 각각 한 문장으로** 돌려준다.
 5. 이미 순화된 말은 그대로 통과시켜도 좋다.
 
-말투: ${TONE_GUIDE[tone] ?? TONE_GUIDE.soft}
+# 이번 읽기 강도 (읽는 사람이 고른 단계)
+- ${levelGuide(level)}
+
+# 이번 말투
+- ${TONE_GUIDE[tone] ?? TONE_GUIDE.soft}
 
 # 입력 형식과 출력 형식
 입력은 이렇게 온다(JSON):
@@ -133,11 +145,7 @@ export async function softenIncoming(
 
 예를 들어 items 에 id "m1","m2" 가 있으면 items 에 m1, m2 **둘 다** 넣는다.
 일부만 고쳤다면 **고친 항목만** 넣어도 된다.`,
-    user: buildPurifyRequest(items),
-    maxTokens: 1200,
   });
-
-  return { raw, refused: isRefusal(raw) };
 }
 
 /* ── 20 AI 서기 ─────────────────────────────────────────────── */

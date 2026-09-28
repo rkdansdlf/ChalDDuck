@@ -1,6 +1,7 @@
 import "../scripts/load-env.mjs";
 
 import { readFileSync } from "node:fs";
+import { stripComments } from "../scripts/strip-comments.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import {
@@ -17,7 +18,18 @@ import {
   toRoleKey,
   voidedText,
 } from "../src/features/roles/roster-model.js";
-import { AI_POLICY, MENU_OPTIONS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "../src/data/catalog.js";
+import {
+  AI_POLICY,
+  CUSHION_DEFAULT_MODE,
+  CUSHION_LEVELS,
+  MENU_OPTIONS,
+  RANDOM_TOOLS,
+  ROLES,
+  SCHEDULE_DAYS,
+  SCHEDULE_HOURS,
+} from "../src/data/catalog.js";
+import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
+import { contribTotals } from "../src/data/contrib-report-totals.js";
 import {
   QUIZ_QUESTIONS,
   pickSide,
@@ -35,6 +47,25 @@ import {
   weekName,
 } from "../src/features/schedule/week.js";
 import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
+import { effectiveStage, isPastDeadline } from "../src/features/schedule/meeting-model.js";
+import { softenProfanity } from "../src/lib/profanity.js";
+import {
+  MAX_BYTES,
+  canOpenInApp,
+  humanSize,
+  isLateVersion,
+  resolveFileType,
+} from "../src/features/drive/file-rules.js";
+import {
+  formatDeadline,
+  formatDue,
+  formatWhen,
+  fromKstInputValue,
+  toKstInputValue,
+} from "../src/lib/when.js";
+import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
+import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
+import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
   markAside,
   markCell,
@@ -56,19 +87,30 @@ import {
   MAX_ATTEMPTS,
   PROMPT_VERSION,
   PURIFY_BATCH_LIMIT,
+  READ_CUSHION_DEFAULT,
   buildPurifyRequest,
   canPurify,
   canRetry,
+  cushionBucketOf,
+  cushionOff,
   displayTextOf,
   isCushionDone,
   isRefusal,
   judgeAll,
+  levelGuide,
+  levelOf,
   maskRiskyParts,
+  needsMask,
   packPurifyItems,
   parsePurifyResponse,
+  purificationAiShare,
+  remainingPurify,
+  purificationCoverage,
   rejectsPurified,
   toneChanged,
   toneOf,
+  type CushionReason,
+  type CushionStatus,
 } from "../src/lib/read-cushion.js";
 import type { ChatMessage, MeetingProposal, RoleDrawResult } from "../src/lib/types.js";
 import {
@@ -114,6 +156,31 @@ import {
  *
  * **로컬 DB 에서만 돈다.** 시드와 같은 이유다.
  */
+
+/**
+ * 소스를 읽되 **주석을 지운다** — 구조를 세는 검사는 전부 이쪽을 쓴다.
+ *
+ * ## 왜 하나뿐의 경로인가
+ *
+ * 이 파일은 화면을 실행할 수 없어 **소스 문자열에서 구조를 고정한다**(어떤 함수를 부르는가,
+ * 몇 줄을 지나는가, 이 말을 쓰지 않는다). 그 대가로 두 가지가 씌어 있었고 둘 다 실제로
+ * 잘못된 판정을 냈다.
+ *
+ * - **주석을 센다.** 2026-09-28: `actions/invite.ts` 의 액션 2개가 모두 팀장 검사를 하고
+ *   있었는데 검사가 실패했다 — 16행 **주석**에 `requireLeader()` 라는 글자가 있어서 3개로
+ *   센 것이었다.
+ * - **조용히 다른 것을 검사한다.** 함수를 `indexOf` 로 찾으면 못 찾았을 때 `-1` 이 되고,
+ *   그 뒤 슬라이스는 **다른 지점**이 된다. 컴파일은 통과하고 검사는 초록불이었다.
+ *
+ * 주석을 **공백으로 치환**하기 때문에 위치가 그대로다 — "A 가 B 보다 먼저 온다" 류의 순서
+ * 검사가 의도대로 계속 동작한다. 자세한 내용은 [`scripts/strip-comments.mjs`](strip-comments.mjs).
+ *
+ * ⚠️ **`.ts`·`.tsx` 에만 쓴다.** 마크다운에 쓰면 URL 의 `//` 이 정규식으로 읽혀 글자가 지워진다.
+ * 문서(`README.md`)는 `readFileSync` 를 그대로 쓴다.
+ */
+function readCode(rel: string): string {
+  return stripComments(readFileSync(new URL(rel, import.meta.url), "utf8"));
+}
 
 const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DIRECT_URL 이 없습니다.");
@@ -699,7 +766,262 @@ console.log("\n누가 하지");
   }
 }
 
+/* ── 29 누가 하지: 도구와 결과는 짝이다 ─────────────────────── */
+
+console.log("\n누가 하지 · 추첨 도구");
+{
+  const read = readCode;
+
+  // `DrawStage` 는 **모르는 키를 주사위로 흘린다**(else 가지). 목록의 키를 하나라도 바꿔
+  // 놓치면 컴파일은 통과하고, 사용자는 자기가 고른 룰렛 대신 주사위를 본다. 서버는 이름으로
+  // 검증하니 저장은 정상으로 되고 — 고른 것과 보여준 것이 어긋난다.
+  const handled = ["dice", "draw", "ladder", "roulette"];
+  check("연출이 아는 키와 목록이 같다", [...RANDOM_TOOLS.map((t) => t.key)].sort(), handled);
+  check("도구 이름이 겹치지 않는다", new Set(RANDOM_TOOLS.map((t) => t.name)).size, RANDOM_TOOLS.length);
+
+  // 이름이 겹치면 서버의 `RANDOM_TOOLS` 검색이 어느 쪽을 골랐는지 몰라 "무엇으로 정했는지"가
+  // 팀마다 갈린다 — 도구는 결과의 짝이라 이름이 곧 값이다.
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (team) {
+    const before = await db.team.findUniqueOrThrow({
+      where: { id: team.id },
+      select: { menuPick: true, menuTool: true },
+    });
+    await db.team.update({
+      where: { id: team.id },
+      data: { menuPick: "라멘", menuTool: "사다리타기" },
+    });
+    const got = await db.team.findUniqueOrThrow({
+      where: { id: team.id },
+      select: { menuPick: true, menuTool: true },
+    });
+    check("결과와 도구가 짝으로 저장된다", got, { menuPick: "라멘", menuTool: "사다리타기" });
+    await db.team.update({
+      where: { id: team.id },
+      data: { menuPick: before.menuPick, menuTool: before.menuTool },
+    });
+  }
+
+  // 여기 뽑히는 건 사람이 아니라 밥이다. 공용 `DrawGame` 을 쓰면 사람 전용 당첨자 카드
+  //(`Avatar` + MBTI)가 같이 떠서, 이름도 MBTI 도 없는 밥에 프로필이 얹힌다.
+  const screen = read("../src/features/social/roulette-screen.tsx");
+  check("연출만 빌린다", /<DrawStage/.test(screen), true);
+  check("사람 전용 당첨자 카드를 쓰지 않는다", /\bDrawGame\b/.test(screen), false);
+}
+
 /* ── 기여도 의견은 덮어쓰지 않는다 ─────────────────────────── */
+
+/* ── 18 리포트는 희망이 아니라 확정 배정을 말한다 ─────────────── */
+
+console.log("\n확정 역할 배정 (DB)");
+{
+  const seed = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!seed) {
+    console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    // 이번 검사에 쓸 팀을 따로 만든다 — 시드의 역할 배정과 섞이지 않게 한다.
+    const team = await db.team.create({
+      data: {
+        name: "역할 배정 확인용",
+        course: "검증",
+        code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      },
+    });
+    const min = await db.member.create({
+      data: { teamId: team.id, name: "김민준", wantRole: "research" },
+    });
+    const seo = await db.member.create({
+      data: { teamId: team.id, name: "이서연", wantRole: "present" },
+    });
+
+    const known = ROLES.map((r) => r.key as string);
+    // 리포트가 말하는 역할 — 없으면 "미정" 이다. **희망으로 대신 메우지 않는다.**
+    const said = async (id: string) => {
+      const roles = (await acceptedRoleAssignments(db, team.id, known)).get(id) ?? [];
+      return roles.length > 0 ? roles.join("·") : "미정";
+    };
+
+    // 1) 추첨 결과가 아직 **수락 전**이면 누구도 확정 배정이 아니다.
+    const pending = await db.roleDraw.create({
+      data: { teamId: team.id, role: "research", tool: "룰렛", winnerId: seo.id },
+    });
+    check("추첨만 있고 수락 전이면 둘 다 미정", [await said(min.id), await said(seo.id)], ["미정", "미정"]);
+
+    // 2) 수락하면 **당첨자만** 그 역할을 말한다. 희망을 가진 사람이 아니다 —
+    //    김민준은 자료조사를 희망했지만 이 역할은 받지 않았다.
+    await db.roleDraw.update({ where: { id: pending.id }, data: { accepted: true } });
+    check("수락하면 당첨자만 그 역할을 말한다", [await said(min.id), await said(seo.id)], ["미정", "research"]);
+
+    // 3) **희망을 바꿔도 배정은 따라가지 않는다.** hope 의 의미를 바꾸지 않기 때문이다.
+    await db.member.update({ where: { id: min.id }, data: { wantRole: "deck" } });
+    await db.member.update({ where: { id: seo.id }, data: { wantRole: "script" } });
+    check("희망을 바꿔도 배정은 그대로다", [await said(min.id), await said(seo.id)], ["미정", "research"]);
+
+    // 4) **거절은 행을 지운다** — 거절된 결과는 배정 근거가 되지 않는다.
+    await db.roleDraw.update({ where: { id: pending.id }, data: { accepted: false } });
+    await db.roleDraw.delete({ where: { id: pending.id } });
+    const rejected = await db.roleDraw.create({
+      data: { teamId: team.id, role: "research", tool: "룰렛", winnerId: min.id },
+    });
+    await db.roleDraw.delete({ where: { id: rejected.id } });
+    check("거절된 결과는 배정되지 않는다", [await said(min.id), await said(seo.id)], ["미정", "미정"]);
+
+    // 5) 다시 뽑아 **다른 사람**이 이겼고 그 사람이 수락하면 그 사람이 말한다.
+    //    "가장 최근 추첨" 이 아니라 "수락이 끝난 것" 이 근거여야 한다.
+    const again = await db.roleDraw.create({
+      data: { teamId: team.id, role: "research", tool: "주사위", winnerId: min.id },
+    });
+    await db.roleDraw.update({ where: { id: again.id }, data: { accepted: true } });
+    check("재추첨 후에는 최종 수락자가 말한다", [await said(min.id), await said(seo.id)], ["research", "미정"]);
+
+    // 6) 역할은 팀마다 하나씩 — 한 사람이 여러 역할을 맡을 수는 있다.
+    const second = await db.roleDraw.create({
+      data: { teamId: team.id, role: "present", tool: "룰렛", winnerId: min.id, accepted: true },
+    });
+    check("여러 역할을 맡으면 모두 적는다", await said(min.id), "research·present");
+
+    // 7) 모르는 역할 값이 들어오면 없는 이름을 지어내지 않고 조용히 뺀다.
+    await db.roleDraw.update({ where: { id: second.id }, data: { role: "없는역할" } });
+    check("모르는 역할 값은 버린다", await said(min.id), "research");
+
+    // 8) 수락한 사람이 팀을 나가도 **배정은 유효하다** — 이미 끝난 사실이기 때문이다.
+    //    담당자가 누구였는지가 이력에서 사라져서는 안 된다.
+    await db.member.update({ where: { id: min.id }, data: { leftAt: new Date() } });
+    check("나간 사람도 배정은 남는다", await said(min.id), "research");
+
+    // 9) **다른 팀의 배정은 새어 나오지 않는다.**
+    const other = await db.team.create({
+      data: {
+        name: "다른 팀",
+        course: "검증",
+        code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      },
+    });
+    const stranger = await db.member.create({ data: { teamId: other.id, name: "남" } });
+    await db.roleDraw.create({
+      data: { teamId: other.id, role: "manage", tool: "룰렛", winnerId: stranger.id, accepted: true },
+    });
+    check("다른 팀의 배정은 보이지 않는다", await said(stranger.id), "미정");
+
+    await db.team.delete({ where: { id: other.id } });
+    await db.team.delete({ where: { id: team.id } });
+    check("검사용 팀을 지우면 아무 것도 남지 않는다", await db.member.count({ where: { teamId: team.id } }), 0);
+  }
+}
+
+console.log("\n기여도 의견: 하나만 붙는다는 판정이 잠금 안에 있다");
+{
+  // 세션이 필요한 액션이라 **소스**로 고정한다 — 위의 가입 요청 검사와 같은 관례.
+  // 되돌리면 컴파일도 통과하고 smoke 도 통과하므로, 규칙이 코드에 남아 있는지만 본다.
+  const src = readCode("../src/server/actions/contrib.ts");
+  const from = src.indexOf("export async function disputeContribRecord");
+  const fn = src.slice(from, src.indexOf("\nexport async function", from + 10));
+
+  // "이미 의견이 있으면 기다린다" 는 판정이 **읽기만 하고** 6줄 뒤에 적으면, 두 사람이
+  // 동시에 달라고 할 때 둘 다 "비어 있다"를 보고 둘 다 적는다. 코드가 막으려는 상황이
+  // 그대로 열린다 — 그래서 판정과 기록이 한 잠금 안에 있어야 한다.
+  const lock = fn.indexOf("FOR UPDATE");
+  const guard = fn.indexOf('status: "taken"');
+  const write = fn.indexOf("contribDispute.create");
+
+  truthy("기록 행을 잠근다", lock > 0);
+  check("잠근 다음에 판정한다", lock > 0 && guard > lock, true);
+  check("판정 다음에 적는다", guard > 0 && write > guard, true);
+  check("판정과 기록이 한 트랜잭션 안이다", fn.indexOf("db.$transaction(async (tx)") < lock, true);
+  check("상태 재계산도 같은 안이다", fn.indexOf("refreshContribState(record.id, tx)") > write, true);
+  // 앞선 의견은 지우지 않는다. 17 화면과 스키마 주석이 약속한 그 사실.
+  check(
+    "덮어쓰는 갱신이 없다",
+    /contribRecord\.update\([\s\S]{0,400}?dispute:\s*text,\s*disputedById:\s*me\.id,\s*resolution:\s*null/.test(fn),
+    true,
+  );
+}
+
+console.log("\n리포트 집계: 어느 기록이 어느 칸에 들어가는가");
+{
+  const seed = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!seed) {
+    console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const team = await db.team.create({
+      data: {
+        name: "리포트 집계 확인용",
+        course: "검증",
+        code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      },
+    });
+    const a = await db.member.create({ data: { teamId: team.id, name: "가" } });
+    const b = await db.member.create({ data: { teamId: team.id, name: "나" } });
+
+    // 리포트와 **똑같은 조회**를 그대로 쓴다 — 다른 쿼리를 쓰면 아무래도 같은 결과가 나온다.
+    const read = async () => {
+      const [states, shown, unresolved] = await Promise.all([
+        db.contribRecord.groupBy({
+          by: ["memberId", "state"],
+          where: { member: { teamId: team.id } },
+          _count: { _all: true },
+        }),
+        db.contribRecord.findMany({
+          where: { member: { teamId: team.id } },
+          select: {
+            memberId: true,
+            _count: { select: { participations: { where: { activeKey: { not: null } } } } },
+          },
+        }),
+        db.contribRecord.groupBy({
+          by: ["memberId"],
+          where: {
+            member: { teamId: team.id },
+            dispute: { not: null },
+            resolution: RESOLUTION_WAYS.noAgreement,
+          },
+          _count: { _all: true },
+        }),
+      ]);
+      return contribTotals({
+        states: states.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
+        shownPerRecord: shown.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
+        unresolved: unresolved.map((r) => ({ memberId: r.memberId, n: r._count._all })),
+      });
+    };
+
+    await db.contribRecord.create({ data: { memberId: a.id, kind: "task", title: "1", detail: "d", source: "self", state: "ok" } });
+    await db.contribRecord.create({ data: { memberId: a.id, kind: "task", title: "2", detail: "d", source: "self", state: "ok" } });
+    const pend = await db.contribRecord.create({ data: { memberId: a.id, kind: "task", title: "3", detail: "d", source: "self", state: "pending" } });
+    const disp = await db.contribRecord.create({ data: { memberId: a.id, kind: "task", title: "4", detail: "d", source: "self", state: "disputed" } });
+    await db.contribRecord.create({ data: { memberId: b.id, kind: "task", title: "5", detail: "d", source: "self", state: "ok" } });
+
+    // 참여 표시 **둘 중 하나만 살아 있다** — 취소한 것은 세지 않아야 한다.
+    await db.contribParticipation.create({ data: { recordId: (await db.contribRecord.findFirstOrThrow({ where: { memberId: a.id, title: "1" } })).id, shownById: a.id, activeKey: "살아있음" } });
+    await db.contribParticipation.create({ data: { recordId: (await db.contribRecord.findFirstOrThrow({ where: { memberId: a.id, title: "2" } })).id, shownById: a.id, activeKey: null, clearedById: a.id, clearedAt: new Date() } });
+
+    // "답이 없어 닫힌 의견" — 결론이 "합의 없음" 인 것만 센다.
+    await db.contribRecord.update({ where: { id: disp.id }, data: { dispute: "다르다", disputedById: b.id, resolution: RESOLUTION_WAYS.noAgreement } });
+    await db.contribRecord.update({ where: { id: pend.id }, data: { dispute: "이건 다름", disputedById: b.id, resolution: RESOLUTION_WAYS.accept } });
+
+    const t = await read();
+    check(
+      "상태가 각 칸에 들어간다",
+      [t.get(a.id)?.confirmed, t.get(a.id)?.pending, t.get(a.id)?.disputed],
+      [2, 1, 1],
+    );
+    check("표시 중인 것만 센다", t.get(a.id)?.participations, 1);
+    check("답이 없어 닫힌 의견만 센다", [t.get(a.id)?.unresolved, t.get(b.id)?.unresolved], [1, 0]);
+    check("다른 사람은 자기 것만 센다", [t.get(b.id)?.confirmed, t.get(b.id)?.participations], [1, 0]);
+    check("기록이 없으면 0 이지 undefined 가 아니다", contribTotals({ states: [], shownPerRecord: [], unresolved: [] }).get("없음"), undefined);
+
+    // **모르는 상태는 어디에도 넣지 않는다** — 모르는 칸에 몰아 넣으면 사람이 아닌 기록이 된다.
+    const stray = contribTotals({
+      states: [{ memberId: "x", state: "정체불명", n: 5 }],
+      shownPerRecord: [],
+      unresolved: [],
+    }).get("x");
+    check("모르는 상태는 세지 않는다", [stray?.confirmed, stray?.pending, stray?.disputed], [0, 0, 0]);
+
+    await db.team.delete({ where: { id: team.id } });
+    check("검사용 팀을 지우면 아무 것도 남지 않는다", await db.member.count({ where: { teamId: team.id } }), 0);
+  }
+}
 
 console.log("\n기여도 의견 (DB)");
 {
@@ -842,6 +1164,43 @@ console.log("\n읽기 순화: 언제 다시 부르는가 (무한 재호출 차�
   check("성공과 가림만 끝난 상태다", [isCushionDone("PURIFIED"), isCushionDone("FALLBACK"), isCushionDone("FAILED")], [true, true, false]);
 }
 
+console.log("\n읽기 순화: 남은 수 (언제 멈추는가)");
+{
+  // **화면이 멈추는 기준은 남은 수가 0 인 것이다.** 그래서 이 수가 음수가 되면 멈추지 않는다 —
+  // `!== 0` 은 음수도 "남았다" 로 읽히기 때문이다.
+  const now = { model: "openrouter/free", promptVersion: PROMPT_VERSION, at: 1_000_000_000 };
+  check("전부 처리했다", remainingPurify(3, 3), 0);
+  check("일부만 남았다", remainingPurify(3, 2), 1);
+  check("처음부터 없으면 남은 것도 없다", remainingPurify(0, 0), 0);
+  // 처리한 수가 후보보다 많게 계산되어도(묶음 규칙이 바뀌면 생긴다) 음수로 새지 않는다.
+  check("음수가 되지 않는다", remainingPurify(2, 5), 0);
+
+  // ## 선점 경합 — 같은 사람이 두 탭에서 같은 방을 보고 있는 경우
+  //
+  // 이 말을 **상대가 먼저 잡았다.** 내가 못 가져간 것이지 사라진 것이 아니다: 순화본이 없다.
+  // 그래서 남은 것으로 세고, 상대가 끝난 뒤에야 0 이 된다.
+  const pendingByOther = {
+    status: "PENDING" as const,
+    reason: null,
+    attemptCount: 0,
+    retryAfter: new Date(now.at + CLAIM_TTL_MS).toISOString(),
+    model: now.model,
+    promptVersion: now.promptVersion,
+    createdAt: new Date(now.at - 1000).toISOString(),
+  };
+  check("상대가 부르는 중인 말은 내 후보가 아니다", canRetry(pendingByOther, now), false);
+  // `claimable` 은 `canRetry` 를 통과한 목록이다. 위에서 걸러졌으므로 후보 2개 중 남은 것도 2개다.
+  check("선점에서 진 말은 남은 것으로 센다", remainingPurify(2, 0), 2);
+
+  // 상대가 끝났다 — 그 말은 `PURIFIED` 가 됐고, **끝난 것은 다시 열리지 않는다.**
+  const done = { ...pendingByOther, status: "PURIFIED" as const, attemptCount: 1, retryAfter: null };
+  check("상대가 끝나도 다시 열리지 않는다", canRetry(done, now), false);
+  // 선점 유효 시간이 지나면 PENDING 은 **사라진 요청**이므로 가져갈 수 있다 — 이때는 후보로
+  // 돌아오고, 그때를 기다리지 않고 내가 가져간 경우가 바로 위의 `remainingPurify(2, 2)` 다.
+  check("선점이 사라지면 가져갈 수 있다", canRetry(pendingByOther, { ...now, at: now.at + CLAIM_TTL_MS + 1 }), true);
+  check("내가 가져간 것과 상대가 끝난 것은 남은 수가 없다", remainingPurify(2, 2), 0);
+}
+
 console.log("\n읽기 순화: id 기반 계약");
 {
   const items = [
@@ -912,6 +1271,63 @@ console.log("\n읽기 순화: 항목별 판정 (묶음 전체를 버리지 않�
   check("감정 표현은 남아도 통과한다", rejectsPurified("짜증나 죽겠어", "정말 힘들 것 같아요"), null);
 }
 
+console.log("\n읽기 순화: 강도 3단계");
+{
+  // **단계는 세 곳을 바꾼다** — 모델에게 줄 지시(`guide`), 결과를 버릴 기준(`banned`),
+  // AI 가 실패했을 때 가릴 범위(`mask`). 한 곳만 바꾸면 "약하게 순화하라 고 했는데
+  // 검사는 엄격하게 한다" 같은 어긋남이 생기고 어느 쪽이 문제인지 알 수 없다.
+  //
+  // 그래서 여기서는 **셋이 같은 표에서 나오는지** 를 본다. 어느 한 항목만 조용히 다른 값을
+  // 쓰기 시작하면 이 검사가 그걸 잡는다.
+  check("단계는 3개뿐이다", CUSHION_LEVELS.map((l) => l.key), ["LIGHT", "NORMAL", "STRONG"]);
+  check("기본은 NORMAL 이다", CUSHION_DEFAULT_MODE, "NORMAL");
+  // **셋(지시·버릴 기준·가릴 범위)이 같은 표에서 나온다.** `levelGuide` 로 공개된 지시를
+  // 확인한다 — 내부 표를 직접 들여다보지 않고, 이 함수가 그 표에서 나온 값인지 본다.
+  for (const level of CUSHION_LEVELS.map((l) => l.key)) {
+    truthy(`${level} 에는 모델 지시가 있다`, levelGuide(level).length > 0);
+  }
+  truthy(
+    "세 단계의 지시가 모두 같지는 않다",
+    new Set(CUSHION_LEVELS.map((l) => levelGuide(l.key))).size === CUSHION_LEVELS.length,
+  );
+
+  // **같은 문장, 다른 단계, 다른 판정.** 이게 단계 기능 그 자체다. 세 단계가 같은 답을 내면
+  // 사용자가 고른 단계가 아무 소용이 없고, 서버는 화면이 고른 값을 무시한다.
+  //
+  // 단계는 "얼마까지 거르느냐" 의 차이다 — 약하게 골랐는데 더 세게 걸린다면 그건 단계가
+  // 아니라 버그다. 그래서 **어디서부터 걸리는지** 를 문장 하나로 비교한다.
+  const accuse = "처음부터 다 버려라";
+  check("LIGHT 는 그 구제 명령을 둔다", rejectsPurified("야", accuse, "LIGHT"), null);
+  check("NORMAL 도 둔다", rejectsPurified("야", accuse, "NORMAL"), null);
+  check("STRONG 에 책임 추궁까지 걸린다", rejectsPurified("야", accuse, "STRONG"), CUSHION_REASON.TOXICITY_REMAINED);
+
+  // 욕설은 **어느 단계에서나** 남아 있으면 버린다. 강도를 낮추어도 욕설 통과는 안 된다 —
+  // 단계는 "무엇을 더 거를지" 를 정하는 것이지 "욕설을 허용할지" 를 정하는 게 아니다.
+  for (const level of CUSHION_LEVELS.map((l) => l.key)) {
+    check(
+      `${level} 도 욕설은 남기면 버린다`,
+      rejectsPurified("야 씨발", "야 씨발이야", level),
+      CUSHION_REASON.TOXICITY_REMAINED,
+    );
+  }
+
+  // **감정 표현은 어느 단계에서도 순화 대상이 아니다.** 지우면 사람이 한 말을 사람이 안
+  // 한 것처럼 읽힌다. 강도를 올렸다고 욕이 되돌아오면 안 된다.
+  for (const level of CUSHION_LEVELS.map((l) => l.key)) {
+    check(
+      `${level} 도 감정 표현은 둔다`,
+      rejectsPurified("짜증나 죽겠어", "정말 힘들 것 같아요", level),
+      null,
+    );
+  }
+
+  // 가림도 단계에 따라 달라야 한다 — 이게 AI 가 실패했을 때 남는 화면이다.
+  check("LIGHT 는 욕설만 가린다", maskRiskyParts("야 씨발 니가 잘못했다", "LIGHT").masked, 1);
+  check("LIGHT 는 책임 추궁을 그대로 둔다", maskRiskyParts("야 니가 처음부터 다 버려라", "LIGHT").masked, 0);
+  truthy("STRONG 는 책임 추궁까지 가린다", maskRiskyParts("야 니가 처음부터 다 버려라", "STRONG").masked > 0);
+  check("가릴 수 없으면 가린 것이 아니다", needsMask("안 올려", "STRONG"), false);
+}
+
 console.log("\n읽기 순화: AI 실패 시 결정론적 가림");
 {
   // 실측: 무료 모델은 욕설에 `User Safety: unsafe (Profanity, Harassment)` 를 돌려준다.
@@ -967,11 +1383,93 @@ console.log("\n읽기 순화: 말투가 바뀌면");
   // 한 말에는 사람당 한 줄이다. 새 말투로 다시 만들어도 예전 글 위에 덮어쓸 수 없으니
   // **바뀐 순간 예전 순화본을 지워야 한다** — 그렇지 않으면 고른 말투가 아닌 글을 읽는다.
   check("처음 고르는 것은 지울 것이 없다", toneChanged(null, "plain"), false);
+  // **기준은 "행이 없을 때의 기본값"과 비교한다.** 행이 없는 방에서 처음으로 고르면 지워야 한다
+  // — 지우지 않으면 "강하게" 를 골랐는데 "보통" 으로 만든 말이 화면에 남는다(실측).
+  // 이전 기준은 **"행이 없을 때 실제로 쓰이던 값"** 이다 — 저장된 null 이 아니라 첫 말투다.
+  check("설정 행이 없어도 기준이 바뀌면 지운다", toneChanged(toneOf(READ_CUSHION_DEFAULT), "plain"), true);
+  check("기본값 그대로면 지우지 않는다", toneChanged(toneOf(READ_CUSHION_DEFAULT), toneOf(READ_CUSHION_DEFAULT)), false);
   check("말투가 바뀌었으면 지운다", toneChanged("soft", "plain"), true);
   check("같은 말투를 다시 고르면 남긴다", toneChanged("plain", "plain"), false);
   check("고른 것이 없으면 첫 말투로 읽는다", toneOf({ tone: null }), "soft");
   check("고른 말투는 그대로 읽는다", toneOf({ tone: "firm" }), "firm");
   check("모르는 말투는 없는 것으로 본다", toneOf({ tone: "존나" }), "soft");
+}
+
+console.log("\n읽기 순화: 지표가 말해주는 것");
+{
+  // 지표는 상태를 그대로 세지 않는다. `REJECTED 12개` 만으로는 **무엇을 고쳐야 하는지**
+  // 알 수 없다 — 모델인가, 프롬프트인가, 검사가 과한가. 한 계단짜리 말로 내려야 한다.
+  const row = (status: CushionStatus, reason: CushionReason | null = null, source: string | null = null) =>
+    cushionBucketOf({ status, reason, source });
+  check("AI 가 다듬은 말", row("PURIFIED"), "done");
+  check("규칙으로 가린 말", row("FALLBACK", CUSHION_REASON.MODEL_REFUSAL, "mask"), "masked");
+  check("모델이 거절한 것", row("FAILED", CUSHION_REASON.MODEL_REFUSAL), "refused");
+  check("한도 exhausted", row("REJECTED", CUSHION_REASON.RATE_LIMITED), "refused");
+  check("검사로 버린 것", row("REJECTED", CUSHION_REASON.TOXICITY_REMAINED), "rejected");
+  check("형식이 깨진 것", row("REJECTED", CUSHION_REASON.PARSE_FAILED), "rejected");
+  check("키가 없는 것", row("FAILED", CUSHION_REASON.NO_MODEL), "failed");
+  check("아직 처리 중", row("PENDING"), "pending");
+
+  // 실측에서 나온 모양: 협조적 말은 다 이어지고, 다툰 말은 **규칙 가림**으로 버틴다.
+  // 커버리지는 높지만 AI 비율은 낮다 — 두 숫자를 따로 봐야 "모델을 바꿀까" 를 알 수 있다.
+  const counts = { done: 11, masked: 2, refused: 0, rejected: 3, failed: 0, pending: 0 };
+  check("커버리지 = 순화 + 가림", purificationCoverage(counts), 0.813);
+  check("AI 비율은 따로 본다", purificationAiShare(counts), 0.688);
+  check("커버리지만 높아도 AI 가 한 일은 적다", purificationCoverage(counts) > purificationAiShare(counts), true);
+  check("아무것도 없으면 0 으로 나누지 않는다", purificationCoverage({ done: 0, masked: 0, refused: 0, rejected: 0, failed: 0, pending: 0 }), 0);
+}
+
+console.log("\n읽기 순화: 회귀 코퍼스(모델 없이 검사하는 부분)");
+{
+  // 코퍼스(`scripts/cushion-corpus.mts`)는 **문장**이 아니라 **성질**을 약속한다
+  // (요구·마감은 남고, 이 단계에서 지워야 할 것은 사라진다). 모델을 부르지 않고도
+  // 검사할 수 있는 두 방향을 여기서 고정한다.
+  //
+  // 1. **원문은 검사를 통과하면 안 된다.** 통과한다는 것은 "순화됨" 라벨이 욕설이 그대로인
+  //    글에 붙는다는 뜻이다. (실측에서 바로 이게 무서운 실패였다)
+  // 2. **깨끗한 말은 버리면 안 된다.** 협조적인 말을 검사가 걸어내면 순화가 말을 막는 셈이다.
+  // 3. **가림은 약속한 것만 가려야 한다.** innocent 한 말에서 가린 것이 있으면 계기가 없다.
+  for (const item of CUSHION_CORPUS) {
+    const level = item.level;
+    const originalVerdict = rejectsPurified(item.text, item.text, level);
+    if (item.drop.length > 0) {
+      check(`원문이 통과하지 않는다 [${item.id}]`, originalVerdict !== null, true);
+      // **코퍼스 자체가 제때여야 한다.** `drop` 에 적은 낱말이 원문에 없으면 그 항목은
+      // 아무것도 보장하지 않는다 — 지워야 할 것이 원문에 있었는지조차 확인되지 않는다.
+      check(`코퍼스가 지워야 할 것을 실제로 짚는다 [${item.id}]`, item.drop.some((w) => item.text.includes(w)), true);
+      // `keep` 도 마찬가지 — 원문에 없으면 "살아남아야 한다" 는 빈 약속이다.
+      for (const token of item.keep) {
+        check(`코퍼스의 생존 대상이 원문에 있다 [${item.id}/${token}]`, item.text.includes(token), true);
+      }
+    } else {
+      // 욕설이 없는 말은 그 단계에서 통과해야 한다 — 버리면 그 말은 원문으로 남는다.
+      check(`깨끗한 말은 버리지 않는다 [${item.id}]`, originalVerdict, null);
+    }
+  }
+
+  // **가림 규칙의 약속**: `maskable: true` 인 말은 반드시 something 을 가릴 수 있어야 하고,
+  // `false` 인 말(조용한 공격)은 **아무것도 가리지 않아야 한다** — 가릴 게 없다는 사실을
+  // 알지 못하면 "안전하다" 고 잘못 믿는다.
+  for (const item of CUSHION_CORPUS) {
+    const masked = maskRiskyParts(item.text, item.level).masked;
+    if (item.maskable && item.drop.length > 0) {
+      check(`가릴 수 있다 [${item.id}]`, masked > 0, true);
+    }
+    if (!item.maskable) {
+      check(`가릴 것이 없다 [${item.id}]`, masked, 0);
+    }
+  }
+
+  // **요구는 살아남아야 한다.** 가린 뒤에도 마감·자료·시각이 있으면 일이 굴러간다.
+  for (const item of CUSHION_CORPUS.filter((c) => c.maskable && c.drop.length > 0 && c.keep.length > 0)) {
+    const masked = maskRiskyParts(item.text, item.level);
+    for (const token of item.keep) {
+      // 원문에 없으면 무의미하다 — keep 는 원문에 있는 것만 적는다.
+      if (item.text.includes(token)) {
+        check(`가려도 ${token} 는 남는다 [${item.id}]`, masked.text.includes(token), true);
+      }
+    }
+  }
 }
 
 console.log("\n읽기 순화 (DB)");
@@ -1287,10 +1785,7 @@ console.log("\nAI 초안: 언제 부르는가");
   // 화면 파일을 문자열로 읽어 확인한다 — 이 검증은 화면을 실행할 수 없어서,
   // "실행했을 때 무엇이 일어나는지" 대신 "자동 부르는 경로가 존재하는가"를 고정한다.
   // 자동 호출이 다시 들어오면(효과·타이머) 여기서 즉시 걸린다.
-  const source = readFileSync(
-    new URL("../src/features/tools/use-ai-draft.ts", import.meta.url),
-    "utf8",
-  );
+  const source = readCode("../src/features/tools/use-ai-draft.ts");
   check("원문이 바뀌면 자동으로 부르는 효과가 없다", /useEffect/.test(source), false);
   check("타이핑을 기다리는 타이머가 없다", /setTimeout|SETTLE_MS/.test(source), false);
   // 명시적으로 누를 때만 부른다.
@@ -1301,7 +1796,7 @@ console.log("\nAI 초안: 언제 부르는가");
 
 console.log("\nAI 결과의 출처");
 {
-  const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+  const read = readCode;
 
   // 예전이 여기서 틀렸다. 서버는 성공을 "일했다"로만 봤고, 키가 없으면 다섯 도구 전부가
   // **예시를 결과 자리에 그대로 돌려주었다.** 화면은 그것을 모른 채 `aiReady` 로 자기 방식대로
@@ -1426,7 +1921,7 @@ console.log("\nDM 목록 조회 비용");
     // 함수가 올바르다고 호출부가把它를 버리면 또 그대로다. 실제로 있었던 일이 이것이다 —
     // `getDmThreads` 가 이 경로를 두고 Prisma `distinct` 로 직접 읽었다. 함수를 고쳐 놓아도
     // **누가 부르는지**를 함께 고정해야 한다.
-    const api = readFileSync(new URL("../src/data/api.ts", import.meta.url), "utf8");
+    const api = readCode("../src/data/api.ts");
     const body = api.slice(api.indexOf("export async function getDmThreads("), api.indexOf("export async function getDmThreads(") + 2600);
     check("getDmThreads 가 이 함수를 부른다", /lastMessagePerThread\(db, teamId, threadKeys\)/.test(body), true);
     check("getDmThreads 가 Prisma distinct 로 직접 읽지 않는다", /distinct: \["threadKey"\]/.test(body), false);
@@ -1455,8 +1950,10 @@ console.log("\nDM 목록 조회 비용");
     // 붙이는데 여기에 또 붙여서 `::text[]::text[]` 인 **다른 질문을** EXPLAIN 하고 있었다.
     // 앱이 보내는 SQL 을 그대로 받는다(위에서 잡아 둔 `capturedSql`·`capturedParams`).
     // **실행마다 다른 표식.** 이 검사는 로컬 DB 를 쓴다. 다른 사람이 같은 저장소에서
-  // `npm test` 를 동시에 돌리면 둘이 같은 방에 같은 접두사로 줄을 세우고, 그럼 "치운 뒤에도
-  // 남았나" 를 재는 쪽이 **상대의 줄을 뒤집어쓴다.** 실제로 났다.
+  // `npm test` 를 동시에 돌리면, 둘이 같은 방에 같은 접두사로 줄을 세운다 — 그럼
+  // "치운 뒤에도 남았나" 를 재는 쪽이 **상대의 줄을 뒤집어쓴다.**
+  //(`계속 같은 방을 쓰는另一个 검사와 함께 돌 때 실제로 났다.)
+  // 접두사에 실행마다 다른 값을 넣어 **내 줄만** 세고 치운다.
   const runTag = `${process.pid}-${Date.now().toString(36)}`;
   const mine = `규모 확인 ${runTag} `;
   const mineWhere = { threadKey: key, text: { startsWith: mine } };
@@ -1502,8 +1999,6 @@ console.log("\nDM 목록 조회 비용");
     // 어떤 것이 던지면(앞으로의 새 검사라든가) 치우는 대참이 건너뛰어진다. 그때 개발 DB 에
     // 메시지 5,000줄이 남고, 다음 실행은 "원래대로" 에서 실패한다 — **첫 실패의 잔재가
     // 두 번째 실패를 만든다.** 그래서 `finally` 다.
-    // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 measurement 행을 먼저 치운다. 이 검사가
-    // 스스로를 고치지 못하면 **비교 기준이 조용히 오염되고**, 어느 쪽이 옳은지 알 수 없게 된다.
     // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 **내 표식의** 행을 먼저 치운다. 안 그러면
     // 비교 기준이 조용히 오염된다 — 작은 방에서 10행을 읽는 쿼리가, 5,000개 방에서 5,166행을
     // 읽는 것처럼 보인다. **남의 실행이 만든 행은 만지지 않는다.**
@@ -1569,7 +2064,7 @@ console.log("\n파일 보기 화면의 조회 범위");
 {
   // 쿼리 수를 재는 대신 **구조**를 고정한다. 화면을 실행할 수 없으므로, "무엇을 요구하는가"를
   // 본다 — 전체 목록을 읽고 하나를 고르는 함수가 남아 있으면 즉시 걸린다.
-  const api = readFileSync(new URL("../src/data/api.ts", import.meta.url), "utf8");
+  const api = readCode("../src/data/api.ts");
   const context = api.slice(
     api.indexOf("export async function getFileViewContext"),
     api.indexOf("export async function getFileViewContext") + 2200,
@@ -1578,10 +2073,7 @@ console.log("\n파일 보기 화면의 조회 범위");
   check("팀의 모든 제출함을 읽지 않는다", /db\.submissionBox\.findMany/.test(context), false);
   check("그 제출함의 모든 파일을 읽지 않는다", /db\.submittedFile\.findMany/.test(context), false);
   // 화면이 그 함수를 **한 번만** 부르는지.
-  const page = readFileSync(
-    new URL("../src/app/(tabs)/drive/[boxId]/[fileId]/page.tsx", import.meta.url),
-    "utf8",
-  );
+  const page = readCode("../src/app/(tabs)/drive/[boxId]/[fileId]/page.tsx");
   check("13 화면은 컨텍스트를 한 번 읽는다", (page.match(/getFileViewContext/g) ?? []).length, 2); // import 1 + 호출 1
   check("13 화면이 따로 부르는 함수가 없다", /getSubmissionBox\(|getSubmittedFile\(/.test(page), false);
 }
@@ -1669,11 +2161,82 @@ console.log("\n가입 요청 토큰 불변식 (동시에 같은 이름으로 신
   await db.joinRequest.delete({ where: { id: row.id } });
 }
 
+console.log("\n초대 선택지 (서버가 다시 보는 값)");
+{
+  // **화면이 고른 값을 서버가 다시 본다.** 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수
+  // 있으므로, 여기서 확인하지 않으면 "9999명"이나 "3650일"이 그대로 들어간다 — 그건 1회용의
+  // 반대편이다(사실상 아무도 못 쓰는 초대, 혹은 사실상 영구 초대).
+  check("인원은 1·2·3·5·10 만 받는다", [...USE_CHOICES], [1, 2, 3, 5, 10]);
+  check("기한은 1·3·7·30 일만 받는다", [...EXPIRY_CHOICES], [1, 3, 7, 30]);
+  check("0명은 없다", USE_CHOICES.includes(0 as never), false);
+  check("음수는 없다", USE_CHOICES.includes(-1 as never), false);
+  check("무한대는 없다", USE_CHOICES.includes(Infinity as never), false);
+  // **0일 = "그 순간부터 닫힌다"** — 고를 수 있게 해서는 안 된다. 만료가 즉시라 실효상 폐기다.
+  check("0일은 없다 (만료 즉시 닫히는 초대가 된다)", EXPIRY_CHOICES.includes(0 as never), false);
+  // 액션이 이 규칙을 실제로 거르는지 — 상수만 맞아도 액션이 안 거르면 통과한다.
+  const action = readCode("../src/server/actions/invite.ts");
+  check("팀장 확인이 초대 발급보다 먼저 온다", action.indexOf("requireLeader()") < action.indexOf("createTeamInvite(leader.teamId"), true);
+  check("화면 값을 서버가 다시 거른다", /!isUseChoice\(maxUses\)/.test(action) && /!isExpiryChoice\(days\)/.test(action), true);
+  check("이름도 서버에서 자른다", /label\.length > INVITE_LABEL_MAX/.test(action), true);
+}
+
+console.log("\n초대가 지금 들어오는 길을 열어 주는가");
+{
+  // 순수 판정이라 서버 액션 없이도 부를 수 있다(`rules.ts` 머리말).
+  const now = 1_000_000_000;
+  const fresh = { maxUses: null, useCount: 0, expiresAt: null, revokedAt: null };
+  const at = (ms: number) => new Date(now + ms);
+
+  check("처음 발급된 초대", isInviteUsable(fresh, now), true);
+  check("되돌린 초대는 막는다", isInviteUsable({ ...fresh, revokedAt: at(-1) }, now), false);
+  check("지난 시각은 막는다", isInviteUsable({ ...fresh, expiresAt: at(-1) }, now), false);
+  check("아직 안 지난 시각은 열어 둔다", isInviteUsable({ ...fresh, expiresAt: at(1) }, now), true);
+  // **경계는 닫힌 쪽이다.** "그 시각까지 유효" 가 아니라 "그 시각부터 무효" — 정확히 그
+  // 순간에 도착한 사람이 행운에 따라 들어갈 수 없게 하지 않는다.
+  check("만료 시각과 같은 순간은 이미 막힌다", isInviteUsable({ ...fresh, expiresAt: at(0) }, now), false);
+  // 경계의 양옆 — 만료 1ms 뒤는 아직 열려 있고, 그 순간부터 닫힌다.
+  check("만료 1ms 뒤는 아직 열려 있다", isInviteUsable({ ...fresh, expiresAt: new Date(now + 1) }, now), true);
+  check("만료 1ms 전은 이미 닫혔다", isInviteUsable({ ...fresh, expiresAt: new Date(now - 1) }, now), false);
+
+  // **자리는 승인 횟수로 찬다.** 거절과 취소를 세지 않는다는 약속이 여기서 성립한다.
+  check("1회용에 아무도 안 왔으면 열려 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 0 }, now), true);
+  check("1회용의 자리를 썼으면 닫힌다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 1 }, now), false);
+  check("초과해서도 닫혀 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 2 }, now), false);
+  check("3회용은 두 명까지 열린다", isInviteUsable({ ...fresh, maxUses: 3, useCount: 2 }, now), true);
+  // 무제한은 숫자 제한을 두지 않는다 — 0 과 구분된다.
+  check("maxUses 가 null 이면 무제한이다", isInviteUsable({ ...fresh, maxUses: null, useCount: 999 }, now), true);
+  // 세 조건 중 하나만 있어도 막는다.
+  check("셋 중 하나만 있어도 막는다", isInviteUsable({ maxUses: 1, useCount: 1, expiresAt: at(1), revokedAt: null }, now), false);
+}
+
+console.log("\n입장 해석: 초대가 팀 정보를 지어내지 않는다");
+{
+  // 01 화면은 "초대받은 팀" 카드에서 사람 수와 마감일을 그대로 그린다. 초대가 그 값을
+  // 세어 오지 않으면, 팀이 비어 있지 않아도 **"0명"** 으로 보인다 — 코드 길과 같은 정보를
+  // 두 길이 다르게 보여 주는 셈이라 화면이 스스로를 모순한다.
+  const joinPage = readCode("../src/app/join/page.tsx");
+  check("초대 길이 사람 수를 지어내지 않는다", /memberCount: 0/.test(joinPage), false);
+  check("초대가 센 사람 수를 그대로 쓴다", /memberCount: fromLink\.memberCount/.test(joinPage), true);
+  check("마감일도 초대가 가져온 값을 쓴다", /dday: fromLink\.teamDday/.test(joinPage), true);
+
+  // `?t=` 는 **명시적인 권한 증명**이다. 실패했을 때 조용히 `Team.code` 길로 넘어가면
+  // 되돌린 초대가 그 사실조차 숨긴다(`resolve-target.ts` 머리말).
+  const target = readCode("../src/server/invite/resolve-target.ts");
+  const tokenBranch = target.slice(
+    target.indexOf("if (token)"),
+    target.indexOf("const code = input.code"),
+  );
+  check("토큰이 있으면 그 길로만 판정한다", tokenBranch.includes("return null"), true);
+  check("토큰 분기에 코드 길로 넘어가지 않는다", tokenBranch.includes("input.code"), false);
+  // 초대를 세는 쿼리는 **관여자** 기준이다 — 나간 사람의 행은 기록을 위해 남는다.
+  check("초대가 세는 것도 나간 사람을 뺀다", /members: \{ where: ACTIVE \}/.test(target), true);
+}
+
 console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 남아 있다");
 {
   // 순수 함수를 부를 수 없는 지점(쿠키가 필요한 액션)은 **소스**로 고정한다. 이 저장소는
   // 이미 화면·서버가 같은 계산을 쓰는 관례로 그랬다.
-  const src = readFileSync(new URL("../src/server/actions/onboarding.ts", import.meta.url), "utf8");
+  const src = readCode("../src/server/actions/onboarding.ts");
   const from = src.indexOf("export async function joinTeam");
   const fn = src.slice(from, src.indexOf("export async function checkJoinApproval", from));
 
@@ -1697,9 +2260,227 @@ console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 
   check("팀 예산은 요청 생성보다 먼저 온다", fn.indexOf("takeTeamCreation") < fn.indexOf("joinRequest.create"), true);
 
   // 푸시는 예산 안에서만, 앱 안 알림은 항상.
-  const notifySrc = readFileSync(new URL("../src/server/notify/create.ts", import.meta.url), "utf8");
+  const notifySrc = readCode("../src/server/notify/create.ts");
   check("notify 가 푸시만 끌 수 있다", /input\.push === false/.test(notifySrc), true);
   check("앱 안 알림은 푸시 예산과 무관하게 남는다", notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("input.push === false"), true);
+}
+
+/* ── 문서가 숫자를 담지 않는 자리 ──────────────────────────────── */
+
+console.log("\n문서가 숫자를 담지 않는다");
+{
+  /**
+   * "확정이 필요한 정책이 N건" 같은 **개수를 문서에 적지 않게** 지킨다.
+   *
+   * 화면이 원래 목록이고(`?review=1` 로 한 번에 보인다) 목록은 계속 늘어난다. 문서에 개수를
+   * 적어 두면 화면을 추가한 사람이 그 숫자를 고치기 전까지 문서는 조용히 틀어 있고, 읽는
+   * 사람은 그 수를 전체로 믿는다 — 실제로 겪었다. 헤드오프 표는 10행짜리 원본이고 지금은
+   * 25곳이다.
+   *
+   * 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 쓰지 못하게** 막는다.
+   */
+  const docs = ["../README.md", "../CLAUDE.md"];
+  for (const rel of docs) {
+    const text = readFileSync(new URL(rel, import.meta.url), "utf8");
+    check(`${rel} 은 정책 개수를 적지 않는다`, /정책\s*\d+\s*건/.test(text), false);
+    check(`${rel} 은 컴포넌트 개수를 적지 않는다`, /컴포넌트\s*\d+\s*종/.test(text), false);
+  }
+
+  // 제거했다면 목록을 읽을 자리는 남아 있어야 한다 — 화면 안의 검토 표시와 그 열기.
+  const note = readCode("../src/components/ui/note.tsx");
+  check("검토 표시는 화면에서 쓸 수 있다", /export function Undecided/.test(note), true);
+  check("검토 표시는 사용자에게 항상 보이지 않는다", /if \(!review\) return null/.test(note), true);
+  const review = readCode("../src/lib/review-mode.tsx");
+  check("검토 모드를 켜는 방법이 남아 있다", review.includes("__CD_REVIEW__"), true);
+}
+
+/* ── 회의 확정 규칙: 저절로 오는 마감 ─────────────────────────── */
+
+console.log("\n회의 확정 규칙 (마감은 아무도 앱을 열지 않아도 지난다)");
+{
+  const DAY = 86_400_000;
+  const soon = new Date(Date.now() + DAY);
+  const past = new Date(Date.now() - DAY);
+  const base = { respondBy: null as Date | null, against: 0 };
+
+  /**
+   * **`effectiveStage` 는 이 저장소에서 가장 값싸게 검증할 수 있는 불변식이다.**
+   *
+   * 마감은 시각이 지나면 저절로 오는 일이라, 예약을 돌리기 전에도 누군가 화면을 열면 이미 지난
+   * 마감이 "제안 대기 중"으로 보인다. 화면(09·홈·배지), 예약 작업, 응답 액션이 **같은 판단**을
+   * 해야 하는데 그 판단이 이 함수 하나뿐이다. 여기서 틀어지면 화면은 확정이라는데 눌러 보니
+   * 아직 대기 중인 일이 생긴다.
+   */
+  check("저장된 확정은 그대로 확정이다", effectiveStage({ ...base, stage: "confirmed" }), "confirmed");
+  check("저장된 대기는 시간과 상관없이 대기로 보인다", effectiveStage({ ...base, stage: "proposed" }), "proposed");
+  check("저장된 이월은 그대로 이월이다", effectiveStage({ ...base, stage: "carried" }), "carried");
+  check("아직 안 지난 마감은 대기다", effectiveStage({ ...base, stage: "proposed", respondBy: soon }), "proposed");
+  check("지나간 마감은 저절로 확정된다", effectiveStage({ ...base, stage: "proposed", respondBy: past }), "confirmed");
+  // 마감이 **아예 없으면** 저절로 확정될 일도 없다 — "확정"을 보여 줄 근거가 없다.
+  check("마감 없는 제안은 저절로 확정되지 않는다", effectiveStage({ ...base, stage: "proposed" }), "proposed");
+  // 반대가 하나라도 있으면 마감이 지나도 확정되지 않는다.
+  check(
+    "반대가 하나라도 있으면 마감이 지나도 확정되지 않는다",
+    effectiveStage({ stage: "proposed", respondBy: past, against: 1 }),
+    "proposed",
+  );
+  // 경계: 마감과 **같은 순간**은 지난 것이다(`<=` 다).
+  check("마감과 같은 순간은 지난 것으로 센다", isPastDeadline(new Date(Date.now())), true);
+
+  check("마감이 아직이면 지난 것이 아니다", isPastDeadline(soon), false);
+  check("마감이 없으면 지난 것이 아니다", isPastDeadline(null), false);
+
+  /**
+   * 예약 작업은 이 함수를 **불러오지 않는다.** 같은 규칙을 SQL 로 다시 적어 둔다
+   * (`respondBy: { lte: new Date() }`) — 작업자가 여러 줄을 한 번에 갱신하므로 화면이 쓰는
+   * 계산값을 한 줄씩 돌릴 수는 없기 때문이다. 실제로는 이쪽이 더 정확하다(DB 시계).
+   *
+   * 그러니 "함수를 부른다"를 검사하면 안 된다. 대신 **두 쪽의 경계가 같은지** 를 본다.
+   * 아래 두 조건이 어긋나면 화면은 확정이라는데 예약 작업은 확정시키지 않거나 그 반대가 된다.
+   */
+  const cron = readCode("../src/server/meetings/confirm-due.ts");
+  check("읽는 쪽(화면이 쓰는)이 계산한 값을 보여 준다", readCode("../src/data/api.ts").includes("effectiveStage"), true);
+  check("배지도 같은 계산값을 쓴다", readCode("../src/server/nav/badges.ts").includes("effectiveStage"), true);
+  check("예약 작업의 경계도 '지금까지'다 — <= 여야 한다", /respondBy: \{ lte: new Date\(\) \}/.test(cron), true);
+  check("예약 작업도 반대가 있으면 확정하지 않는다", /agree: false/.test(cron), true);
+  check("확정하며 진행 중 키를 함께 비운다", /activeKey: null/.test(cron), true);
+}
+
+/* ── 욕설 순화 ────────────────────────────────────────────────── */
+
+console.log("\n욕설 순화 (멀쩡한 말을 가리지 않는 게 먼저다)");
+{
+  // 이 함수는 순서가 반대다. 실수한 방향으로는 한 번의 커밋("30 욕설 순화가 멀쩡한 말을
+  // 가렸다")으로 돌아간다 — 그래서 예외를 나열한다.
+  const keeps = [
+    "강아지 새끼가 산책했어요",
+    "병아지가 우다다lx",
+    "고양이새가来了",
+    "시발점에서 출발",
+    "시발역이 가까워요",
+    "시발지부터 간다",
+    "허리띠를 졸라매다",
+    "졸라맨다",
+    "다가오는 위기가 닥쳐온다",
+    "곧 닥쳐올 마감",
+    "불이 꺼져 있다",
+    "전원이 꺼져 버렸",
+    "화면이 꺼져 가고",
+  ];
+  for (const text of keeps) {
+    check(`멀쩡한 말을 가리지 않는다 — "${text}"`, softenProfanity(text).masked, false);
+  }
+
+  // 안 가리면 안 되는 것.
+  const masks = ["씨발", "존나", "개새끼", "병신", "지랄", "썅"];
+  for (const text of masks) {
+    check(`가린다 — "${text}"`, softenProfanity(text).masked, true);
+  }
+
+  // **겹친 구간은 글자 수가 어긋나면 안 된다.** "개새끼" 안에 "개새"와 "새끼"가 모두 걸린다.
+  // 합치지 않으면 가림 표시가 늘어 원문보다 길어지고, 그것을 겹침이라 부른다.
+  const once = softenProfanity("개새끼");
+  check("겹친 규칙을 한 번만 가린다", once.text, "***");
+  check("겹친 규칙은 글자 수가 어긋나지 않는다", once.text.length, "개새끼".length);
+
+  // 같은 규칙이 두 번 걸려도 두 번이 아니라 구간 수만큼이다.
+  const twice = softenProfanity("씨발 씨발");
+  check("두 번 걸리면 두 번 가린다", twice.text, "** **");
+  check("두 번 걸린 글자 수가 어긋나지 않는다", twice.text.length, "씨발 씨발".length);
+
+  // 애매하면 가리지 않는다 — 이게 이 함수의 방향이다.
+  check("일부러 가린 말도 표시가 남는다", softenProfanity("씨발").text, "**");
+  check("가린 말이 없으면 원문 그대로다", softenProfanity("회의 자료 올렸습니다").text, "회의 자료 올렸습니다");
+}
+
+/* ── 드라이브 파일 규칙 ───────────────────────────────────────── */
+
+console.log("\n드라이브 파일 규칙 (받는 것과 그리는 것을 구분한다)");
+{
+  check("그림은 앱에서 바로 그린다", canOpenInApp("image"), true);
+  // 2026-09-25 결정: PDF 도 브라우저 내장 뷰어로 연다.
+  check("PDF 도 앱에서 바로 본다", canOpenInApp("pdf"), true);
+  check("문서는 앱에서 그리지 않는다", canOpenInApp("docx"), false);
+  check("슬라이드도 앱에서 그리지 않는다", canOpenInApp("pptx"), false);
+
+  // 받는 형식은 mime 를 먼저 본다.
+  check("알려진 mime 은 그대로 받는다", resolveFileType("a.pdf", "application/pdf")?.kind, "pdf");
+  // zip·octet-stream 은 브라우저가 형식을 모른다고 보내는 자리라 **확장자로** 본다.
+  check("확장자를 모르는 mime 도 확장자로 받는다", resolveFileType("a.png", "application/octet-stream")?.kind, "image");
+  check("형식을 알 수 없으면 받지 않는다", resolveFileType("a.exe", "application/octet-stream"), null);
+  check("허용되지 않는 mime 은 받지 않는다", resolveFileType("a.exe", "application/x-msdownload"), null);
+
+  /** 마감 판단은 저장해 두지 않는다. 마감을 옮기면 라벨도 따라와야 한다. */
+  const due = new Date("2026-09-20T00:00:00Z");
+  check("마감 뒤에 올린 버전은 늦었다", isLateVersion({ createdAt: new Date("2026-09-21T00:00:00Z"), restoredFromId: null }, due), true);
+  check("마감 전 버전은 늦지 않았다", isLateVersion({ createdAt: new Date("2026-09-19T00:00:00Z"), restoredFromId: null }, due), false);
+  check("마감과 같은 순간은 늦지 않았다", isLateVersion({ createdAt: due, restoredFromId: null }, due), false);
+  // 복원으로 생긴 버전은 마감과 무관한 작업이라 세지 않는다.
+  check(
+    "복원본은 마감과 무관하다",
+    isLateVersion({ createdAt: new Date("2026-09-21T00:00:00Z"), restoredFromId: "v1" }, due),
+    false,
+  );
+  check("마감이 없으면 늦은 것이 아니다", isLateVersion({ createdAt: new Date("2026-09-21T00:00:00Z"), restoredFromId: null }, null), false);
+
+  check("바이트는 바이트로 보인다", humanSize(512), "512B");
+  check("킬로바이트를 올림하지 않는다", humanSize(1536), "2KB");
+  check("메가바이트는 한 자리까지", humanSize(1_500_000), "1.4MB");
+}
+
+/* ── "언제"를 한국 시간으로 ───────────────────────────────────── */
+
+console.log("\n시간 표기 (서버가 한국 시간으로 정한다)");
+{
+  const now = new Date("2026-09-28T12:00:00Z"); // 한국 21:00
+  check("방금 전은 방금", formatWhen(new Date("2026-09-28T11:59:30Z"), now), "방금");
+  // **경계가 두 갈래다.** 60분 미만은 "N분 전"이고, **정확히 60분부터는** 시계로 넘어간다.
+  check("59분 전은 분으로 말한다", formatWhen(new Date("2026-09-28T11:01:00Z"), now), "59분 전");
+  check("정확히 60분부터는 시계로 말한다", formatWhen(new Date("2026-09-28T11:00:00Z"), now), "오늘 20:00");
+  // 아래는 **한국 시간** 9/28 14:20 이다(UTC 9/28 05:20).
+  check("같은 날은 오늘", formatWhen(new Date("2026-09-28T05:20:00Z"), now), "오늘 14:20");
+  // 한국 시간 9/27 21:14(UTC 9/27 12:14).
+  check("어제는 어제", formatWhen(new Date("2026-09-27T12:14:00Z"), now), "어제 21:14");
+  // 같은 해면 짧게, 다른 해면 연도를 붙인다.
+  check("같은 해는 연도를 붙이지 않는다", formatWhen(new Date("2026-09-14T13:05:00Z"), now), "9/14 22:05");
+  check("다른 해는 연도를 붙인다", formatWhen(new Date("2025-12-31T14:59:00Z"), now), "2025. 12/31");
+
+  // 입력창 값은 한국 시간으로 읽고 쓴다 — **왕복이 깨지면 그 사람이 9시간씩 어긋나게 넣는다.**
+  const utc = new Date("2026-09-15T14:59:00Z"); // 한국 9/15 23:59
+  check("마감 입력을 한국 시간으로 쓴다", toKstInputValue(utc), "2026-09-15T23:59");
+  check("마감 입력을 되읽으면 같은 순간이다", fromKstInputValue(toKstInputValue(utc))?.getTime(), utc.getTime());
+  check("형식이 아니면 null 이고 예외가 아니다", fromKstInputValue("2026-09-15"), null);
+  check("빈 값도 null 이다", fromKstInputValue(""), null);
+  check("마감 표시에도 같은 규칙이 든다", formatDue(utc), "9/15 23:59");
+}
+
+/* ── 문서가 숫자를 담지 않는 자리 ──────────────────────────────── */
+
+console.log("\n문서가 숫자를 담지 않는다");
+{
+  /**
+   * "확정이 필요한 정책이 N건" 같은 **개수를 문서에 적지 않게** 지킨다.
+   *
+   * 화면이 원래 목록이고(`?review=1` 로 한 번에 보인다) 목록은 계속 늘어난다. 문서에 개수를
+   * 적어 두면 화면을 추가한 사람이 그 숫자를 고치기 전까지 문서는 조용히 틀어 있고, 읽는
+   * 사람은 그 수를 전체로 믿는다. 실제로 겪었다 — 문서는 "10건"이라 했고 화면은 25곳이었다.
+   *
+   * 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 못 쓰게** 막는다. 대신 "목록을 읽을
+   * 자리는 남아 있는가"를 본다.
+   */
+  const docs = ["../README.md", "../CLAUDE.md"];
+  for (const rel of docs) {
+    const text = readFileSync(new URL(rel, import.meta.url), "utf8");
+    check(`${rel} 은 정책 개수를 적지 않는다`, /정책\s*\d+\s*건/.test(text), false);
+    check(`${rel} 은 컴포넌트 개수를 적지 않는다`, /컴포넌트\s*\d+\s*종/.test(text), false);
+  }
+
+  // 제거했다면 목록을 읽을 자리는 남아 있어야 한다 — 화면 안의 검토 표시와 그 열기.
+  const note = readCode("../src/components/ui/note.tsx");
+  check("검토 표시는 화면에서 쓸 수 있다", /export function Undecided/.test(note), true);
+  check("검토 표시는 사용자에게 항상 보이지 않는다", /if \(!review\) return null/.test(note), true);
+  const review = readCode("../src/lib/review-mode.tsx");
+  check("검토 모드를 켜는 방법이 남아 있다", review.includes("__CD_REVIEW__"), true);
 }
 
 await db.$disconnect();

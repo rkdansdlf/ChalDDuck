@@ -33,6 +33,12 @@ model Team {
   menuPick String?
   menuDrawnBy String?
   menuPickedAt DateTime?
+  /// 29 누가 하지에서 **무엇으로** 정했는지 — `RANDOM_TOOLS` 의 이름("사다리타기" 등).
+  ///
+  /// 도구는 누가 눌렀는지만 고르지만, **결과와 짝으로 팀에 하나**여야 한다. 결과만 남기고
+  /// 도구를 버리면 팀원마다 "저 건 무슨 것으로 뽑혔지"가 달라져, "정한 건 팀에 하나"라는
+  /// 화면의 약속이 그 자리에서 어긋난다.
+  menuTool String?
   /// 기록이 `ok` 되려면 몇 명이 확인해야 하는가 — **팀이 정하는 값**이다.
   ///
   /// 예전에는 코드 상수(`CONFIRMS_NEEDED = 1`)였다. 상수로 두면 기준을 정하는 사람이
@@ -669,6 +675,13 @@ model ReadCushion {
   id        String   @id @default(cuid())
   memberId  String
   threadKey String
+  /// 읽기 순화를 **끄는지**. 끄면 AI 호출 후보를 **아예 만들지 않는다** — 원문으로만 읽는다.
+  ///
+  /// 강도(`mode`)와 따로 둔다. 둘을 한 칸(`mode: "OFF"`)으로 합치면 **끄기 전에 고른
+  /// 단계를 잃는다** — 다시 켰을 때 몇 단계였는지 몰라 다시 골라야 한다.
+  enabled   Boolean  @default(true)
+  /// 읽기 강도: `LIGHT`(욕설만) · `NORMAL`(공격성까지) · `STRONG`(책임 추궁·비꼼까지).
+  mode      String   @default("NORMAL")
   /// 말투("soft" | "plain" | "firm"). 처음엔 15 쿠션 번역기와 같은 첫 값으로 읽는다.
   tone      String   @default("soft")
   updatedAt DateTime @updatedAt
@@ -701,6 +714,9 @@ model MessageCushion {
   tone      String   @default("soft")
   /// 실제로 모델을 부른 횟수. 무한 재호출의 근거이자, 몇 번을 더 시도할지 정하는 값.
   attemptCount Int    @default(0)
+  /// 이 행을 만든 **호출**이 걸린 시간(ms). 묶음의 모든 행이 같은 값을 갖는다 —
+  /// 그래서 "행 기준 평균"은 큰 묶음에 끌려간다. 호출 수와 함께 볼 때만 뜻가 있다.
+  latencyMs   Int?
   /// 이 시각 전에는 다시 부르지 않는다. 재생성 가능해지면 서버가 지금으로 옮긴다.
   retryAfter DateTime?
   /// `PENDING` 선점 토큰. **이 값이 내 것인 요청만 모델을 부른다** — 두 탭 경합 방지.

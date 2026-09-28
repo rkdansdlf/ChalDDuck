@@ -1,4 +1,6 @@
 import { sweepAttempts } from "@/server/auth/attempts";
+import { describePurification, purificationStats } from "@/server/ai/purify-stats";
+import { db } from "@/server/db";
 import { sweepAiUsage } from "@/server/ai/limit";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
 
@@ -47,5 +49,24 @@ export async function GET(request: Request) {
     sweepAiUsage(),
   ]);
 
-  return Response.json({ confirmed, swept: { attempts, aiUsage } });
+  /**
+   * 읽기 순화의 하루 지표.
+   *
+   * 예약 작업에는 세션이 없으니 **모든 팀**을 돈다. 순화 기록은 팀 안에만 있으므로 팀별로
+   * 나눠 세고, 응답에는 사람에게 읽히는 총계만 보낸다.
+   *
+   * **화면을 만들지 않는다.** 이 기능은 느낌으로 튜닝하면 안 되고(실측으로 이미
+   * "협조적인 말은 되고 싸운 말은 안 된다" 가 나왔으므로) 판단 근거가 되는 숫자가
+   * 있으면 된다. 그 숫자를 매일 로그와 응답에 남긴다 — 모델을 바꿀지 결정할 때 본다.
+   */
+  const byTeam = await db.team.findMany({ select: { id: true, name: true } });
+  const purifications = [];
+  for (const team of byTeam) {
+    const stats = await purificationStats(team.id);
+    if (stats.rows === 0) continue;
+    console.log(`[${team.name}] ${describePurification(stats)}`);
+    purifications.push({ team: team.name, ...stats });
+  }
+
+  return Response.json({ confirmed, swept: { attempts, aiUsage }, purification: purifications });
 }

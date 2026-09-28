@@ -8,6 +8,8 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
+import { readInviteToken } from "@/server/invite/cookie";
+import { createTeamInvite, findInviteByToken } from "@/server/invite/service";
 import { takeClientAttempt, takePushSlot, takeTeamCreation } from "@/server/rate-limit/join-throttle";
 import {
   describeDevice,
@@ -158,11 +160,21 @@ export async function createTeam(input: { name: string; course: string }): Promi
     maxAge: 60 * 60 * 24, // 하루 — 만들고 바로 이어서 들어오는 흐름이다.
   });
 
+  // **첫 초대 한 장을 함께 낸다.** 팀을 만들면 그것부터 공유할 수 있어야 "공유 한 번 = 초대
+  // 한 장"이 지금부터 사실이 된다. 예전엔 팀 코드가 곧 공유였고, 그래서 되돌릴 방법이 없었다.
+  //
+  // `shortCode` 는 **비워 둔다.** 같은 값을 `Team.code` 에도 두면, 그 초대를 되돌려도
+  // `Team.code` 길로 그대로 들어올 수 있어 폐기가 헛것이 된다. 직접 입력길을 초대로 옮기는
+  // 것은 `Team.code` 를 없애는 마이그레이션과 함께 한다(`schema.prisma` TeamInvite 주석).
+  const { token: inviteToken } = await createTeamInvite(team.id);
+
   return {
     id: team.id,
     name: team.name,
     course: team.course,
     code: team.code,
+    /** 초대 링크 토큰의 **원문.** 여기서 한 번만 나오고, 서버에는 해시만 남는다. */
+    inviteToken,
     memberCount: 0,
     dday: team.dday,
   };
@@ -335,6 +347,17 @@ export async function joinTeam(
     // 기기 설명을 두 번 읽었다. 한 번만 읽는다 — 값이 같으므로 결과도 같다.
     const label = await describeDevice();
 
+    // **이 요청이 어느 공유로 왔는지.**
+    //
+    // `/join?t=` 로 들어온 브라우저에만 심겨 있다(`invite/cookie.ts`). **찾아서 기록할 뿐,
+    // 막는 데 쓰지 않는다** — 초대가 있어도 팀장 승인은 그대로 받고, 없어도 `Team.code` 로
+    // 똑같이 신청된다. 초대는 출처를 정해 줄 뿐 자격이 아니다.
+    //
+    // 유효성은 **지금 다시 확인한다.** 링크를 열 때 유효했더라도 그 뒤에 폐기되었거나
+    // 만료됐다면 여기서 빠진다 — 그 사이에 들어온 요청에 출처를 붙이면 안 된다.
+    const invitedBy = await readInviteToken();
+    const invite = invitedBy ? await findInviteByToken(invitedBy) : null;
+
     // **2) 기존 요청이 있으면, 이 브라우저가 그 소유자인지가 전부다.**
     //
     // 여기서부터가 이 액션의 보안 불변식이다:
@@ -379,6 +402,8 @@ export async function joinTeam(
       // 둔다. 알림은 다시 울리지 않는다 — 같은 요청에 대한 알림이 쌓이면 그것도 폭탄이다.
       await db.joinRequest.update({
         where: { id: found.id },
+        // `inviteId` 는 **고치지 않는다.** 처음 신청할 때 온 공유가 그 요청의 출처이고,
+        // 나중에 링크를 바꿔 붙여도 그건 "처음에 이 공유로 왔다"의 증거가 바뀌지 않는다.
         data: { ...values, label },
       });
       store.set(JOIN_COOKIE, found.token, JOIN_COOKIE_OPTIONS);
@@ -401,7 +426,7 @@ export async function joinTeam(
     const token = randomUUID();
     try {
       await db.joinRequest.create({
-        data: { teamId: team.id, name, ...values, token, label },
+        data: { teamId: team.id, inviteId: invite?.id ?? null, name, ...values, token, label },
       });
     } catch (error) {
       if ((error as { code?: string }).code === "P2002") return { status: "taken" };

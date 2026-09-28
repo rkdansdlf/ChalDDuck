@@ -234,14 +234,22 @@ export async function getMenuOptions(_teamId: string): Promise<string[]> {
 }
 
 /**
- * 팀이 정한 밥. 없으면 아직 아무도 돌리지 않았다.
+ * 팀이 정한 밥과 **무엇으로** 정했는지. 없으면 아직 아무도 돌리지 않았다.
  *
  * 이 값을 화면에 내려야 하는 이유: **각자 돌리면 각자 다른 값이 나온다.** 예전에는
  * 서버를 부르지 않고 폰에서만 `Math.random()` 을 돌렸고, 새로고침하면 값이 바뀌었다.
+ *
+ * 도구(`tool`)도 결과와 짝으로 내려간다. 결과를 하나만 두고 도구를 빼면 팀원마다 "그건
+ * 뭘로 뽑힌 거지"가 달라지고, 이 화면이 약속한 "팀에 하나"가 도구 자리에서 어긋난다.
  */
-export async function getMenuPick(teamId: string): Promise<string | null> {
-  const team = await db.team.findUnique({ where: { id: teamId }, select: { menuPick: true } });
-  return team?.menuPick ?? null;
+export async function getMenuDraw(
+  teamId: string,
+): Promise<{ pick: string | null; tool: string | null }> {
+  const team = await db.team.findUnique({
+    where: { id: teamId },
+    select: { menuPick: true, menuTool: true },
+  });
+  return { pick: team?.menuPick ?? null, tool: team?.menuTool ?? null };
 }
 export async function getScheduleOptions(): Promise<{
   kinds: BusyKind[];

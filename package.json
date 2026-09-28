@@ -15,8 +15,9 @@
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
     "test": "tsx --conditions=react-server scripts/smoke.mts",
+    "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
     "db:storage": "node scripts/setup-storage.mjs",
-    "verify": "npm run db:check && npm run build && npx tsc --noEmit && npm run lint"
+    "verify": "npm run db:check && npm test && npm run build && npx tsc --noEmit && npm run lint"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

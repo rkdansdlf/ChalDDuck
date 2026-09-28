@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { CUSHION_TONES } from "@/data/catalog";
+import { CUSHION_LEVELS, CUSHION_TONES } from "@/data/catalog";
 import { getCurrentTeam, getDmMessages, getDmReadCushion, getDmThread, getRoster } from "@/data/api";
 import { DmScreen } from "@/features/chat/dm-screen";
 
@@ -24,6 +24,7 @@ export default async function DmPage({ params }: PageProps<"/chat/dm/[threadId]"
       initialCursor={page.nextCursor}
       me={roster.find((m) => m.isMe)}
       tones={CUSHION_TONES}
+      levels={CUSHION_LEVELS}
       cushion={cushion}
     />
   );

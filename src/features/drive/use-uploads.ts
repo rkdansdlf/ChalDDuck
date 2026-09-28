@@ -36,7 +36,10 @@ export const REJECTION_TEXT: Record<UploadRejection | "missing", string> = {
   "too-big": "50MB 가 넘는 파일은 올릴 수 없습니다.",
   "bad-type": "문서·이미지·PPT·PDF 만 올릴 수 있습니다.",
   empty: "빈 파일은 올릴 수 없습니다.",
-  "not-configured": "파일 저장소가 아직 연결되지 않았습니다(SUPABASE_SECRET_KEY).",
+  // 원인을 특정하지 않는다 — 환경변수가 없어서일 수도, 버킷이 없어서일 수도 있다
+  // (`isStorageConfigured` 는 값의 존재만 보고, 버킷의 존재는 `isBucketMissing` 가 본다).
+  // 이름 하나를 지목하면 틀린 원인을 말하게 된다. 무엇이 맞는지 서버 로그에 있다.
+  "not-configured": "서버의 파일 저장소가 준비되지 않았습니다.",
   "kind-mismatch": "이 파일과 같은 형식만 새 버전으로 올릴 수 있습니다.",
   "over-quota": "팀 저장 용량(2GB)이 모자랍니다. 팀장에게 알려 주세요.",
   missing: "저장소에 파일이 들어오지 않았습니다. 다시 시도해 주세요.",

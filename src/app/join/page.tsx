@@ -1,26 +1,58 @@
 import { getTeamByCode } from "@/data/api";
 import { getRemembered } from "@/server/session";
 import { JoinScreen } from "@/features/onboarding/join-screen";
+import { rememberInviteToken } from "@/server/invite/cookie";
+import { resolveJoinTarget } from "@/server/invite/resolve-target";
 
 /**
  * 01 초대 링크 입장.
  *
- * 초대 링크는 `/join?code=CD-AB12` 형태다. 코드가 없거나 맞지 않으면 팀 정보를 보여 줄 수
- * 없으므로 코드를 묻는 화면이 된다 — 아무 팀이나 대신 보여 주면 잘못된 팀에 들어간다.
+ * ## 두 종류의 입장이 있다
+ *
+ * - `/join?code=CD-AB12` — 사람이 옮겨 적은 코드. 예전부터 있던 길이다.
+ * - `/join?t=<토큰>` — 초대 **링크**. 공유 한 번마다 다른 토큰이고, 각각 따로 되돌릴 수 있다.
+ *
+ * `?t=` 로 들어오면 팀 코드 해석이 아니라 `TeamInvite` 한 장을 해석한다(`resolve-target.ts`).
+ * 해석에 성공한 **원문 토큰만 쿠키에 심는다** — 화면이 이 값을 다시 보게 하려 하지 않는다.
+ * 심은 값은 온보딩이 끝날 때까지 `joinTeam` 이 "이 요청은 어느 공유로 왔나"를 적는 데 쓴다.
+ *
+ * ⚠️ **`?t=` 는 권한이 아니다.** 심어도 팀장 승인은 그대로 받는다. 그건 초대가 "신청할 수
+ * 있음"이지 "들어갈 수 있음"이 아니기 때문이다 — `cookie.ts` 머리말.
  *
  * **기억 쿠키**(`cd_remember`)가 있으면 이전에 로그아웃한 팀·이름을 꺼내, 초대 코드와
  * 이름 입력을 건너뛰는 바로가기를 보여 준다. 초대 링크가 있을 때는 그쪽이 우선이다.
  */
 export default async function JoinPage({ searchParams }: PageProps<"/join">) {
-  const { code } = await searchParams;
+  const { code, t } = await searchParams;
   // **서버는 저장소를 모른다** — `sessionStorage` 는 브라우저에만 있다. 그래서 기억한 팀은
   // 클라이언트 주소로 되돌린다(`JoinScreen` 의 effect).
   const requested = typeof code === "string" ? code.trim() : "";
-  const team = requested ? await getTeamByCode(requested) : null;
+  const token = typeof t === "string" ? t.trim() : "";
 
-  // 기억 쿠키: 초대 코드가 주소에 없을 때만 — 초대 링크로 들어왔으면 그 팀을 보여 준다.
+  // 링크 토큰이 있으면 **그 길로만** 판정한다. 실패했을 때 코드 길로 조용히 넘어가지 않는다 —
+  // 되돌린 초대가 그 사실조차 숨기면 안 된다(`resolve-target.ts` 머리말).
+  const fromLink = token ? await resolveJoinTarget({ token }) : null;
+  if (fromLink) await rememberInviteToken(token);
+
+  const team = fromLink
+    ? {
+        id: fromLink.teamId,
+        name: fromLink.teamName,
+        course: fromLink.teamCourse,
+        code: fromLink.teamCode,
+        // 사람 수와 마감일을 **초대가 세어 온다.** 여기서 0 / null 로 박아 넣으면, 팀이
+        // 비어 있지 않아도 "0명" 으로 보인다 — 코드 길과 같은 정보를 두 길이 다르게 보여 주는
+        // 셈이라 화면이 스스로를 모순한다.
+        memberCount: fromLink.memberCount,
+        dday: fromLink.teamDday,
+      }
+    : requested
+      ? await getTeamByCode(requested)
+      : null;
+
+  // 기억 쿠키: 어느 입장이든 없을 때만 — 초대 링크로 들어왔으면 그 팀을 보여 준다.
   let returning: { teamCode: string; name: string; teamName: string; course: string } | null = null;
-  if (!requested) {
+  if (!fromLink && !requested) {
     const saved = await getRemembered();
     if (saved) {
       const savedTeam = await getTeamByCode(saved.teamCode);

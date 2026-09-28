@@ -118,16 +118,30 @@ function fail(where: string, error: unknown): never {
   );
 }
 
-/** 글 하나를 받아 글 하나를 돌려준다(쿠션 번역기·문장 변환). */
+/**
+ * 글 하나를 받아 글 하나를 돌려준다(쿠션 번역기·문장 변환·읽기 순화).
+ *
+ * `model` 을 주면 **그 모델로** 부른다. 기본값은 아래의 무료 라우터.
+ *
+ * ## 왜 호출마다 모델을 고를 수 있게 했나
+ *
+ * 읽기 순화의 실측 결과가 이러다: 협조적 말은 3/3, 심한 욕설은 **0/3**(안전 필터 거절),
+ * 거절하지 않는 무료 모델을 직접 골라도 욕을 그대로 남겼다(3/3). 이걸 보고 "유료 모델로 바꾸면
+ * 될까" 를 결정하려면 **같은 입력으로 나란히 비교**할 수 있어야 한다. 그래서 호출마다 모델을
+ * 지정할 수 있게 했다 — 벤치(`npm run cushion:bench`)가 이 통로를 쓴다.
+ */
 export async function askText(input: {
   system: string;
   user: string;
   maxTokens?: number;
+  /** 이 호출만 다른 모델로 부른다. 없으면 `OPENROUTER_MODEL` 또는 무료 라우터. */
+  model?: string;
 }): Promise<string> {
+  const model = input.model ?? MODEL;
   try {
     const completion = await client().chat.completions.create(
       {
-        model: MODEL,
+        model,
         max_tokens: input.maxTokens ?? 1024,
         messages: [
           { role: "system", content: input.system },

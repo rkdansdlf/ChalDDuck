@@ -10,6 +10,7 @@ import {
   Chip,
   DrawGame,
   Icon,
+  Input,
   Note,
   Panel,
   Rows,
@@ -20,9 +21,12 @@ import {
   type DrawCandidate,
   type IconName,
 } from "@/components/ui";
+import type { InviteRow } from "@/data/api";
 import type { Member, RandomTool, Role, RoleKey, RoleNegotiation, Team } from "@/lib/types";
+import { cn } from "@/lib/cn";
 import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
+import { createInviteLink, disableInviteLink } from "@/server/actions/invite";
 import { acceptRoleDraw, claimSoleRole, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
 import {
   NO_DRAW_POOL_TEXT,
@@ -68,6 +72,8 @@ export function RosterScreen({
   tools,
   negotiation,
   rejoinPending,
+  invites,
+  isLeader,
 }: {
   team: Team;
   roles: Role[];
@@ -76,6 +82,9 @@ export function RosterScreen({
   negotiation: RoleNegotiation;
   /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
   rejoinPending: number;
+  /** 팀이 나눈 초대들. 팀장이 아니면 빈 목록 — 링크를 다시 보여줄 수는 없다(아래 주석). */
+  invites: InviteRow[];
+  isLeader: boolean;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -85,6 +94,14 @@ export function RosterScreen({
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  /**
+   * **방금 만든 초대 링크의 원문.** 여기서만 산다.
+   *
+   * 서버에는 해시만 남으므로 다시 못 가져온다. 시트를 닫으면 사라지고, 다시 열어도 돌아오지
+   * 않는다 — 링크를 잃어버린 팀장은 "새로 만들어 달라"로 가야 한다. 그게 되돌릴 수 있다는
+   * 사실과 같은 약속이다.
+   */
+  const [freshLink, setFreshLink] = useState<{ label: string; url: string } | null>(null);
   /** 서버 응답을 기다리는 동안 고른 도구 — 다 오면 바로 연출로 넘어간다. */
   const [rollingTool, setRollingTool] = useState<RandomTool | null>(null);
   /** 연출 중인 결과 — 서버가 이미 정한 당첨자를 쥐고 있다가 연출이 끝나면 확정 대기로 넘긴다. */
@@ -467,7 +484,7 @@ export function RosterScreen({
             아이스브레이킹
           </Btn>
           <Btn v="outline" size="sm" icon="disc-3" onClick={() => router.push("/team/roulette")}>
-            누가 하지
+            룰렛
           </Btn>
         </div>
       </Body>
@@ -519,7 +536,16 @@ export function RosterScreen({
         )}
       </Sheet>
 
-      <Sheet open={inviteOpen} title="팀원 초대하기" onClose={() => setInviteOpen(false)}>
+      <Sheet
+        open={inviteOpen}
+        title="팀원 초대하기"
+        onClose={() => {
+          setInviteOpen(false);
+          // 나갔다 들어오면 **새로 만든 링크를 다시 못 본다.** 시트를 닫는 순간 그 사실을
+          // 명시적으로 받아야, "어디 갔지" 하다가 아무것도 못 찾고 헤매지 않는다.
+          setFreshLink(null);
+        }}
+      >
         <Panel s="yellow" pad={20} className="mb-4 text-center">
           <div className="t-cap-strong mb-2.5 text-yellow-700" style={{ letterSpacing: ".04em" }}>
             초대 코드
@@ -536,9 +562,258 @@ export function RosterScreen({
             초대 링크 공유하기
           </Btn>
         </div>
+
+        <Note tone="info" icon="info" title="코드와 초대 링크는 다릅니다" className="mt-3.5">
+          <b>초대 코드</b>는 팀 전체가 나눠 쓰는 값이라 되돌릴 수 없습니다 — 바꾸면 이미 나간
+          사람들도 못 들어옵니다. <b>초대 링크</b>는 하나를 만들면 그 공유 하나만 끌 수
+          있습니다.
+        </Note>
+
+        {isLeader ? (
+          <InviteManager
+            invites={invites}
+            freshLink={freshLink}
+            onCreated={setFreshLink}
+            onCleared={() => setFreshLink(null)}
+          />
+        ) : null}
       </Sheet>
 
       <Toast msg={toast} />
     </>
+  );
+}
+
+/**
+ * 팀장의 초대 관리.
+ *
+ * ## 왜 **링크를 다시 보여줄 수 없는가**
+ *
+ * 초대 토큰의 원문은 발급할 때 한 번만 나오고 서버에는 해시만 남는다(재입장 코드와 같다).
+ * 그래서 이 화면은 링크를 **복사해 주는 일이 없다** — 할 수 있는 일은 "그 공유를 끌까" 뿐이다.
+ *
+ * 그게 약점으로 보이지만 반대가 맞다. 되돌릴 수 있으려면 **새로 만들어야 하고**, 새 것을
+ * 만들지 않고 낡은 링크를 계속 돌리면 그 링크가 살아 있는 시간이 길어질 뿐이다. 새 초대를
+ * 만들면 그때 화면이 URL 을 한 번 보여 주고, 닫으면 사라진다.
+ *
+ * ## 세 값을 고르게 한다
+ *
+ * 이름 · 몇 명분 · 며칠. **셋 다 없어도 되는 값**으로 두되, 하나를 정하면 그 약속을 지키는
+ * 쪽은 화면이다 — "3명분이라면서 네 명이 들어오면 이상하지 않나요" 를 팀장이 듣지 않게.
+ */
+function InviteManager({
+  invites,
+  freshLink,
+  onCreated,
+  onCleared,
+}: {
+  invites: InviteRow[];
+  freshLink: { label: string; url: string } | null;
+  onCreated: (link: { label: string; url: string }) => void;
+  onCleared: () => void;
+}) {
+  const { busy, flash, run } = useAction();
+  const [label, setLabel] = useState("");
+  const [uses, setUses] = useState<string | null>(null);
+  const [days, setDays] = useState<string | null>(null);
+
+  const copy = async () => {
+    if (!freshLink) return;
+    try {
+      await navigator.clipboard.writeText(freshLink.url);
+      flash("초대 링크를 복사했습니다");
+    } catch {
+      flash("복사하지 못했습니다. 화면의 링크를 직접 옮겨 적어 주세요.");
+    }
+  };
+
+  const create = () =>
+    run(
+      "invite",
+      async () => {
+        const result = await createInviteLink({
+          label: label.trim() || null,
+          maxUses: uses === null ? null : Number(uses),
+          expiresInDays: days === null ? null : Number(days),
+        });
+        if (!result.ok) {
+          // 서버가 던진 오류 문구는 운영 빌드에서 지워진다. **왜 안 됐는지 서버가
+          // 돌려주는 값**을 그대로 옮긴다 — 그게 없으면 버튼이 아무 일도 하지 않는다.
+          flash(
+            result.reason === "long-label"
+              ? "이름이 너무 깁니다. 20자 안으로 적어 주세요."
+              : "초대를 만들지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+          );
+          return null;
+        }
+        const origin = typeof window === "undefined" ? "" : window.location.origin;
+        onCreated({ label: result.label ?? "새 초대", url: `${origin}/join?t=${result.token}` });
+        setLabel("");
+        return "초대를 만들었습니다";
+      },
+      "초대를 만들지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
+
+  const disable = (id: string, name: string) =>
+    run(
+      "invite",
+      async () => {
+        const result = await disableInviteLink(id);
+        return result === "gone" ? "이미 꺼진 초대입니다" : `“${name}” 초대를 껐습니다`;
+      },
+      "끄지 못했습니다. 다른 기기에서 이미 꺼졌을 수 있어요.",
+    );
+
+  const live = invites.filter((i) => !i.revoked);
+  const dead = invites.filter((i) => i.revoked);
+
+  return (
+    <div className="mt-4">
+      <SecTitle note="공유 한 번마다 하나씩 — 그 공유만 끌 수 있습니다">초대 링크</SecTitle>
+
+      {freshLink ? (
+        <Panel s="fill" pad={16} r={16} className="mb-3.5">
+          <div className="t-cap-strong mb-1.5 text-txt-muted">{freshLink.label}</div>
+          <div className="mb-3 break-all font-mono text-[13px] leading-[1.5] text-txt-strong">
+            {freshLink.url}
+          </div>
+          <Note tone="warn" icon="circle-alert" title="이 링크는 지금 한 번만 보입니다">
+            창을 닫으면 다시 볼 수 없습니다 — 서버에는 해시만 남습니다. 나눠 쓰지 못했다면
+            새로 만들어 주세요.
+          </Note>
+          <div className="mt-3 flex gap-2">
+            <Btn size="sm" icon="copy" onClick={copy}>
+              복사
+            </Btn>
+            <Btn size="sm" v="outline" onClick={onCleared}>
+              확인했습니다
+            </Btn>
+          </div>
+        </Panel>
+      ) : null}
+
+      {live.length > 0 ? (
+        <Rows className="mb-3.5">
+          {live.map((invite) => (
+            <div key={invite.id} className="flex items-start gap-[11px] px-[15px] py-[13px]">
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-[14.5px] leading-[1.4] text-txt-strong">
+                  {invite.label}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-[5px]">
+                  <Chip icon="users-round">
+                    {invite.allowed === null
+                      ? `${invite.used}명 사용`
+                      : `${invite.used} / ${invite.allowed}명`}
+                  </Chip>
+                  <Chip icon={invite.expiresSoon ? "clock" : "calendar-clock"}>
+                    {invite.expiresAt ?? "기한 없음"}
+                  </Chip>
+                  {invite.allowed !== null && invite.used >= invite.allowed ? (
+                    <Chip tone="n" icon="lock">
+                      모두 사용됨
+                    </Chip>
+                  ) : null}
+                </div>
+                <div className="mt-[9px]">
+                  <Btn
+                    size="sm"
+                    v="outline"
+                    icon="x"
+                    disabled={busy.invite}
+                    onClick={() => disable(invite.id, invite.label)}
+                  >
+                    이 공유 끄기
+                  </Btn>
+                </div>
+              </div>
+            </div>
+          ))}
+        </Rows>
+      ) : (
+        <Panel s="fill" pad={16} className="mb-3.5">
+          <p className="t-note m-0 text-center text-txt-muted">
+            아직 나눈 초대 링크가 없습니다.
+          </p>
+        </Panel>
+      )}
+
+      {dead.length > 0 ? (
+        <p className="t-note mb-3.5 text-txt-muted">
+          끈 초대 {dead.length}건은 아래에 남습니다. 기록이므로 지우지 않습니다.
+        </p>
+      ) : null}
+
+      <Input
+        value={label}
+        onChange={setLabel}
+        placeholder="이름 (예: 발표 준비)"
+        maxLength={20}
+        className="mb-2.5"
+      />
+
+      <div className="mb-2.5">
+        <div className="t-cap mb-1.5 text-txt-muted">몇 명분</div>
+        <div className="flex flex-wrap gap-[6px]">
+          <PickChip on={uses === null} onClick={() => setUses(null)}>
+            제한 없음
+          </PickChip>
+          {["1", "2", "3", "5", "10"].map((n) => (
+            <PickChip key={n} on={uses === n} onClick={() => setUses(n)}>
+              {n}명
+            </PickChip>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-3.5">
+        <div className="t-cap mb-1.5 text-txt-muted">얼마나 열어 둘까</div>
+        <div className="flex flex-wrap gap-[6px]">
+          <PickChip on={days === null} onClick={() => setDays(null)}>
+            기한 없음
+          </PickChip>
+          {[
+            ["1", "하루"],
+            ["3", "3일"],
+            ["7", "일주일"],
+            ["30", "한달"],
+          ].map(([v, name]) => (
+            <PickChip key={v} on={days === v} onClick={() => setDays(v)}>
+              {name}
+            </PickChip>
+          ))}
+        </div>
+      </div>
+
+      <Btn full icon="link" disabled={busy.invite} onClick={create}>
+        {busy.invite ? "만드는 중…" : "새 초대 만들기"}
+      </Btn>
+    </div>
+  );
+}
+
+/** 고르기 한 개. 눌린 쪽만 진하게 — 라디오인데 라디오처럼 보이면 되돌리기 어렵다. */
+function PickChip({
+  on,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1.5 text-[13.5px] leading-none",
+        on
+          ? "border-line bg-ink-900 font-bold text-white"
+          : "border-line bg-card text-txt",
+      )}
+    >
+      {children}
+    </button>
   );
 }

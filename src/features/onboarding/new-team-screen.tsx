@@ -40,8 +40,17 @@ export function NewTeamScreen() {
     );
   };
 
+  /**
+   * 나눌 링크.
+   *
+   * **초대 링크(`?t=`)를 먼저 건다.** 초대 한 장은 따로 되돌릴 수 있지만 `?code=` 는 팀 전체가
+   * 공유하는 값이라 되돌리면 정상적으로 나간 모든 공유까지 죽는다. 코드는 "직접 옮겨 적는
+   * 길"로 남기고, 링크는 되돌릴 수 있는 쪽으로 보낸다.
+   */
   const inviteUrl = created
-    ? `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${created.code}`
+    ? created.inviteToken
+      ? `${typeof window === "undefined" ? "" : window.location.origin}/join?t=${created.inviteToken}`
+      : `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${created.code}`
     : "";
 
   const copyCode = async () => {

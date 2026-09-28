@@ -10,7 +10,7 @@ import {
   sendChatMessage,
   softenThreadMessages,
 } from "@/server/actions/chat";
-import { canPurify, type ReadCushionSetting } from "@/lib/read-cushion";
+import { canPurify, cushionOff, type ReadCushionSetting } from "@/lib/read-cushion";
 import type { ChatMessage, ChatPurified } from "@/lib/types";
 import type { MbtiType } from "@/lib/mbti";
 import { usePoll } from "@/lib/use-poll";
@@ -37,13 +37,22 @@ const NEW_MESSAGE_POLL_MS = 3000;
  * 한 번 화면에 머물 때 순화를 **몇 묶음**까지 연속으로 부르는가.
  *
  * 묶음 하나가 AI 한도 1회다. 대화가 40개 쌓여 있으면 4회분이 필요하고, 그걸 한 번에 다 쓰면
- * 대화방을 연 한 사람이 팀 한도의 큰 몫을 사용한다. 그래서 몇 묶음만 싣고 나머지는 다음
- * 폴링이 이어받는다.
+ * 대화방을 연 한 사람이 팀 한도의 큰 몫을 사용한다. 그래서 몇 묶음만 싣고 나머지는 나중에
+ * 이어받는다.
  */
 const DRAIN_ROUNDS = 3;
 
 /** 묶음 사이 한 박자. 결과를 화면에 붙이고 연속 호출로 한도를 훑지 않게. */
 const DRAIN_PAUSE_MS = 250;
+
+/**
+ * 묶음 예산을 다 썼는데 아직 손볼 말이 남았을 때, **언제** 다시 부르는가.
+ *
+ * **여기가 그 상한이다.** 남은 것이 있다는 이유만으로 곧바로 다시 부르면 이 예산은 아무런
+ * 역할도 하지 못한다 — 끝까지 부르는 것이 되므로. 3초는 새 말 폴링(`NEW_MESSAGE_POLL_MS`)과
+ * 같은 주기라, 순화가 붙는 속도가 "방을 연 뒤 몇 초 동안인가" 로 읽힌다.
+ */
+const DRAIN_RETRY_MS = NEW_MESSAGE_POLL_MS;
 
 /**
  * 낙관적 말풍선의 `clientId`.
@@ -179,20 +188,31 @@ export function useChatThread(
   /**
    * 순화를 진행시킨다. **무엇을 순화할지는 서버가 정한다** — 화면은 이 방을 보라고만 한다.
    *
-   * ## 왜 화면이 시계를 두지 않나
+   * ## 두 가지 시간
    *
-   * 예전에는 3초 폴링이 AI 를 부르는 트리거였다. 그래서 순화가 붙는 속도가 **3초 주기에 묶였고**,
-   * AI 가 20초나 걸리는 동안 대화는 이미 지나가 버렸다. 이제 서버가 "아직 남은 게 있다"고
-   * 알려 주면 화면은 **곧바로** 다음 묶음을 부른다 — 기다리는 기준이 AI 속도다.
+   * **묶음 안에서는 기다리지 않는다.** 예전에는 3초 폴링이 AI 를 부르는 유일한 트리거였고,
+   * 그래서 순화가 붙는 속도가 **3초 주기에 묶였다** — AI 가 20초나 걸리는 동안 대화는 이미
+   * 지나가 버렸다. 서버가 "아직 남은 게 있다"고 알려 주면 같은 묶음 안에서는 곧바로 다음 묶음으로
+   * 넘어간다. 기다리는 기준이 AI 속도다.
    *
-   * ## 한 번에 몇 묶음인가
-   *
-   * 연속으로 `DRAIN_ROUNDS` 묶음까지만 싣는다. 40개가 쌓여 있으면 4회(4회분 한도)를 한 번에
-   * 쓰고, 나머지는 다음 폴링이 이어받는다. 한 번에 끝까지 싣으면 한 사람이 대화방을 여는 것만으로
-   * 팀 한도의 상당 부분을 쓸 수 있다 — 그건 이 기능의 일이 아니다.
+   * **묶음 사이에는 3초다.** 이게 한도를 지키는 지점이다(`DRAIN_RETRY_MS`). 남은 것이 있다는
+   * 이유만으로 곧바로 다시 걸면 `DRAIN_ROUNDS` 는 상한이 아니라 잠깐의 쉼이 되고, 40개가 쌓인 방은
+   * 몇 초 되지 않아 끝까지 부른다. 한 사람이 대화방을 여는 것만으로 그 팀의 하루 한도가 사라지는
+   * 일이므로, 남은 일은 새 말 폴링과 같은 리듬으로 이어받는다.
    */
+  // 읽기 순화가 켜져 있는가 — **값**으로 만들어 놓는다(아래 효과의 주석 참고).
+  const cushionOn = !cushionOff(cushion);
+
   useEffect(() => {
-    if (drainingRef.current) return;
+    // **꺼져 있으면 후보를 만들지 않는다.** 서버도 부르지 않지만, 화면이 부르는 것까지
+    // 막아야 "조용히 안 쓰는 것" 이지 "조용히 쓰는 것" 이 아니다.
+    //
+    // **`cushion` 이 아니라 `cushionOn` 을 의존한다.** 이 효과에서 가장 무서운 실패는
+    // **조건이 놓치는 것**이다 — 예전에는 `cushion` 이 의존 배열에 없어서, 이미 열려 있는
+    // 방에서 순화를 켜도 **새 말이 도착할 때까지 아무 일도 일어나지 않았다.** 반대로
+    // `cushion` 을 그대로 넣으면 부모가 매 렌더 새 객체를 줄 때 효과가 매번 다시 돌아
+    // AI 를 계속 부른다. 조건이 그대로 **값**이면 두 실패가 모두 사라진다.
+    if (!cushionOn || drainingRef.current) return;
     // 아직 손볼 것이 없는지 **화면이 아는 것만** 보고 부른다. 모르는 새 말은 서버가 찾는다.
     const maybe = messages.some((message) => canPurify(message) && message.purified === null);
     if (!maybe) return;
@@ -209,6 +229,25 @@ export function useChatThread(
      */
     let truncated = false;
 
+    /**
+     * 예산이 바닥났는데 말이 남았을 때 — **3초 뒤에 한 번만** 다시 부른다.
+     *
+     * 여기가 "한 번에 다 쓰지 않는다" 의 전부다. 남았다는 이유만으로 곧바로 다시 걸면
+     * `DRAIN_ROUNDS` 가 상한이 아니라 **한 묶음 사이의 잠깐 쉼**이 되어 버린다 — 40개가 쌓인
+     * 방은 묶음 수와 상관없이 3초 기다리지 않고 끝까지 부른다. 한 사람이 대화방을 여는 것만으로
+     * 그 팀의 하루 한도가 사라지는 일이 되므로, 남은 일은 새 말 폴링과 같은 리듬으로 이어받는다.
+     *
+     * 예약은 하나뿐이다. 방을 떠나면 정리에서 취소하고, 살아 있는 동안 두 번 걸리지 않는다.
+     */
+    let retryTimer: number | null = null;
+    const scheduleDrain = () => {
+      if (retryTimer !== null) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (alive) setDrain((n) => n + 1);
+      }, DRAIN_RETRY_MS);
+    };
+
     const run = async () => {
       for (let round = 0; round < DRAIN_ROUNDS; round++) {
         const result = await softenThreadMessages(threadId);
@@ -220,9 +259,9 @@ export function useChatThread(
         setCushions((prev) => ({ ...prev, ...result.cushions }));
         // 남은 게 없으면 여기서 끝. 다음에 새 말이 오면 그때 다시 시작한다.
         if (result.remaining === 0) return;
-        // 묶음 사이에 한 박자 둔다 — 결과를 화면에 붙이고, 연속 호출로 한도를 훑지 않게.
+        // 묶음 사이에 한 박자 둔다 — 결과를 화면에 붙이고, 연속 호출으로 한도를 훑지 않게.
         await new Promise((resolve) => window.setTimeout(resolve, DRAIN_PAUSE_MS));
-        // 마지막 묶음까지 싣고도 남았으면 —— 다음 신호가 이어받는다.
+        // 마지막 묶음까지 싣고도 남았으면 —— 이 실행의 예산은 끝났다. 이어받기는 예약한다.
         if (round === DRAIN_ROUNDS - 1) truncated = true;
       }
     };
@@ -239,17 +278,23 @@ export function useChatThread(
         if (!alive) return;
         drainingRef.current = false;
         setPurifyWorking(false);
-        // 더 싣을 것이 남았을 때만(묶음 수에 잘렸을 때만) 신호를 한 번 더 준다.
+        // 더 싣을 것이 남았을 때만(묶음 수에 잘렸을 때만) **3초 뒤에** 신호를 준다.
         // 실패했다면 주지 않는다 — 효과의 조건("순화본이 없는 말이 있다")이 여전히 참이라,
         // 부르면 실패하고 또 부르고가 된다. 다음 폴링은 멈춘 순화를 대신해주지 않지만
         // 새 말이 도착해 `messages` 가 바뀌면 자연히 다시 시도한다.
-        if (truncated) setDrain((n) => n + 1);
+        if (truncated) scheduleDrain();
       });
 
     return () => {
       alive = false;
+      // 방을 떠난 뒤 예약된 재시도가 남으면 안 된다 — 화면이 없는 곳에서 AI 를 다시 부른다.
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
     };
-  }, [drain, messages, threadId]);
+  }, [drain, messages, threadId, cushionOn]);
+
 
   // 서버가 알고 있는 마지막 말. 여기서부터 뒤를 물어본다 — 보내는 중인 내 말풍선은
   // 아직 서버에 없으므로 기준이 될 수 없다.
@@ -427,6 +472,12 @@ export function useChatThread(
 
   return {
     messages,
+    /**
+     * 이 화면이 아는 순화 상태. **끄는 즉시 비워야 한다** — 설정이 꺼졌는데 화면에만 남은
+     * 순화문이 있으면 사용자는 "꺼졌는데 왜 여전히 순화된 말이지" 라고 본다.
+     */
+    cushions,
+    setCushions,
     send,
     sendFile,
     retry,

@@ -82,6 +82,8 @@ export function EmailLoginSheet({
           setError("올바른 이메일 주소를 입력해 주세요.");
         } else if (res.reason === "cooldown") {
           setError("방금 인증 메일이 발송되었습니다. 1분 후 다시 시도해 주세요.");
+        } else if (res.reason === "send-failed") {
+          setError("인증 메일을 보내지 못했습니다. 메일 주소와 인터넷 연결을 확인해 주세요.");
         } else {
           setError("메일 발송 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
         }

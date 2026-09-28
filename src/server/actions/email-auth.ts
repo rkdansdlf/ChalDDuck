@@ -38,7 +38,7 @@ const EMAIL_COOKIE_OPTIONS = {
 
 export type EmailAuthRequestResult =
   | { ok: true; previewCode?: string }
-  | { ok: false; reason: "invalid-email" | "cooldown" | "error" };
+  | { ok: false; reason: "invalid-email" | "cooldown" | "send-failed" | "error" };
 
 export type EmailVerifyResult =
   | { status: "ok"; teamName: string }
@@ -73,14 +73,25 @@ export async function requestEmailAuth(email: string): Promise<EmailAuthRequestR
     const supabaseRes = await sendSupabaseOtp(norm);
 
     // 2. 개발 환경 또는 백업용 메일러/콘솔 로깅 병행
-    const { previewCode } = await sendEmailOtp(norm, code, token);
+    const resend = await sendEmailOtp(norm, code, token);
 
     // Supabase 발송이 실패했을 때 콘솔 경고 남김
     if (!supabaseRes.success) {
       console.warn("[Email Auth] Supabase 발송 경고:", supabaseRes.error);
     }
 
-    return { ok: true, previewCode };
+    /**
+     * **두 경로가 모두 실패했으면 성공이라고 말하지 않는다.**
+     *
+     * 토큰은 이미 발급됐으니 형식적으로는 "보냈다"가 되지만, 메일은 안 나갔고 운영에서는
+     * 인증번호를 화면에 돌려줄 수도 없다. 그러면 사용자는 받은 것처럼 기다리다 10분 뒤에야
+     * 만료됩니다. 성공처럼 보이게 하는 것이 발송 실패를 알리는 것보다 나쁩니다.
+     */
+    if (!supabaseRes.success && !resend.success) {
+      return { ok: false, reason: "send-failed" };
+    }
+
+    return { ok: true, previewCode: resend.previewCode };
   } catch (err) {
     console.error("[Email Auth] requestEmailAuth error:", err);
     return { ok: false, reason: "error" };

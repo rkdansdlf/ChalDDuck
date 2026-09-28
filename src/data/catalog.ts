@@ -4,6 +4,8 @@ import type {
   BusyKind,
   ClerkDraft,
   ContribKind,
+  CushionLevel,
+  CushionLevelKey,
   CushionTone,
   IceGame,
   PresentDraft,
@@ -138,12 +140,55 @@ export const AI_POLICY: AiPolicy = {
   retentionDays: 90,
   perTeamPerDay: 200,
   perMemberPerDay: 60,
+  // 읽기 순화는 누가 누를 때만 일어나지 않는다 — 대화방을 열면 알아서 돈다. 같은 장부를
+  // 쓰면 그것만으로 쿠션 번역기 몫이 바닥나므로 따로 세운다(2026-09-28 결정).
+  //
+  // 값이 200·60 보다 작은 이유: 두 장부를 합친 총 호출량이 늘기 때문이다. 순화가 자주 돈다는
+  // 전제하에 보수적으로 잡았다 — 순화가 부족하면 화면이 원문을 보여 주며, 그것은 기능이 꺼진
+  // 상태가 아니라 **안전한 상태**다. AI 도구 몫이 모자라면 사용자가 직접 누르는 기능이 막히지만,
+  // 순화 몫이 모자라면 읽는 것만으로 그것이 말하는 대로 fallback(규칙 가림) 으로 넘어간다.
+  readCushionPerTeamPerDay: 150,
+  readCushionPerMemberPerDay: 40,
 };
 
 /**
  * 쿠션 번역기 말투 3종.
  * 개수와 이름이 기획안에 없어 임시로 정한 값이다.
  */
+
+/**
+ * 읽기 순화의 **강도** 3단계.
+ *
+ * 예전에는 "끄거나 켜는 것"만 있었다. 그랬더니 두 사람이 같은 대화를 봤는데 한 사람에게는
+ * 이미 순화되어 보이고 다른 사람에게는 원문이 보여 차이를 알 수 없었다(표시는 남아 있지만
+ * **얼마나** 순화했는지는 달랐다). 그래서 "몇까지 세게" 를 고를 수 있게 한다.
+ *
+ * 단계는 **세 곳**을 바꾼다 — 모델에게 주는 지시, 결과를 검사하는 기준, 규칙 가림의 범위.
+ * 하나만 바꾸면 "약하게 순화하라 고 했는데 검사는 엄격하게 한다" 같은 어긋남이 생긴다.
+ * 세 곳은 [`lib/read-cushion.ts`](src/lib/read-cushion.ts) 의 `LEVEL_PROFILES` 한 곳에 있다.
+ *
+ * 개수와 이름은 기획안에 없어 세 단계로 두었다(15 번 말투와 같은 사정).
+ */
+export const CUSHION_LEVELS: CushionLevel[] = [
+  {
+    key: "LIGHT",
+    name: "욕설만",
+    desc: "욕설과 비속어만 가립니다. 말의 뜻은 그대로 둡니다.",
+  },
+  {
+    key: "NORMAL",
+    name: "보통",
+    desc: "욕설에 더해 비꼼과 탓하는 말을 완화합니다.",
+  },
+  {
+    key: "STRONG",
+    name: "강하게",
+    desc: "책임 추궁·조롱까지 완화합니다. 원문은 언제든 보입니다.",
+  },
+];
+
+/** 처음 읽는 강도. 전원이 같은 기본을 갖는다 — 하나만 세게 읽히면 대화의 공기가 갈린다. */
+export const CUSHION_DEFAULT_MODE: CushionLevelKey = "NORMAL";
 
 export const CUSHION_TONES: CushionTone[] = [
   { key: "soft", name: "부드럽게" },

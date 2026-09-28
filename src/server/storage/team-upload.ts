@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { MAX_BYTES, resolveFileType } from "@/features/drive/file-rules";
 import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
-import { isStorageConfigured, storage } from "./client";
+import { isStorageConfigured, explainStorageFailure, storage } from "./client";
 
 /**
  * 드라이브 밖에서 파일을 받는 곳(기여 기록의 근거, 단톡방 첨부)이 함께 쓰는 두 단계.
@@ -27,8 +27,10 @@ export async function signTeamUpload(
   const path = `${prefix}${randomUUID()}`;
   const { data, error } = await storage().createSignedUploadUrl(path);
   if (error) {
-    console.error("[storage] 올리기 주소 발급 실패:", error);
-    throw new Error("저장소가 응답하지 않습니다.");
+    // 버킷이 없으면 "저장소가 응답하지 않습니다" 로 넘기지 않는다 — 원인이 다르다.
+    const problem = await explainStorageFailure("올리기 주소 발급", error);
+    if (problem.missingBucket) return { status: "not-configured" };
+    throw new Error(problem.message);
   }
   return { status: "ok", path, signedUrl: data.signedUrl, contentType: type.contentType };
 }
@@ -74,7 +76,9 @@ export async function signTeamFileUrl(path: string, name: string, mime: string |
   const inline = mime === "application/pdf" || mime?.startsWith("image/");
   const { data, error } = await storage().createSignedUrl(path, 10 * 60, inline ? undefined : { download: name });
   if (error) {
-    console.error("[storage] 서명 주소 실패:", error);
+    // 조용히 `null` 을 돌려주면 원인이 남지 않는다 — 버킷이 없는 것과 잠깐 실패한 것을
+    // 나눠 서버 로그에 남긴다. 화면은 "볼 수 없습니다" 만 말해도 된다.
+    await explainStorageFailure("서명 주소 발급", error);
     return null;
   }
   return data.signedUrl;

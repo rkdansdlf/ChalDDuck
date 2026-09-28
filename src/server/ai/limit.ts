@@ -39,7 +39,26 @@ export type AiQuota = {
   teamLeft: number;
   /** 하루 총량. 화면이 "60회 중 N회" 라고 보여 준다. */
   perDay: number;
+  /** 순화 몫은 따로다 — 도구 화면이 아니라 읽기 화면이 이 숫자를 본다. */
+  cushion: {
+    mineLeft: number;
+    teamLeft: number;
+    perDay: number;
+  };
 };
+
+/**
+ * 이 도구가 **어느 장부**를 쓰는지.
+ *
+ * 읽기 순화만 따로 센다(`AI_POLICY` 주석 참고). 판정을 한 함수로 모아야 화면의 숫자와
+ * 실제로 막히는 지점이 어긋나지 않는다 — **읽는 쪽(`aiQuotaFor`)과 쓰는 쪽
+ * (`consumeAiQuota`)이 같은 이 함수를 불러야** 그것이 보장된다.
+ */
+export function quotaPicks(tool: AiToolKey): { team: number; member: number } {
+  return tool === "read-cushion"
+    ? { team: AI_POLICY.readCushionPerTeamPerDay, member: AI_POLICY.readCushionPerMemberPerDay }
+    : { team: AI_POLICY.perTeamPerDay, member: AI_POLICY.perMemberPerDay };
+}
 
 /**
  * 남은 횟수만 센다. **아무것도 적지 않는다.**
@@ -49,14 +68,25 @@ export type AiQuota = {
  */
 export async function aiQuotaFor(me: SessionMember): Promise<AiQuota> {
   const day = todayInSeoul();
-  const [teamUsed, mineUsed] = await Promise.all([
-    db.aiUsage.count({ where: { teamId: me.teamId, day } }),
-    db.aiUsage.count({ where: { memberId: me.id, day } }),
+  const picks = quotaPicks("read-cushion");
+  // **본 장부는 순화를 세지 않는다.** 세면 분리가 아니라 두 번 차감이다 — 순화가 도구 몫까지
+  // 먹으므로, 순화 몫이 남아 있는데도 쿠션 번역기가 막히는 상황이 그대로 생긴다.
+  const withoutCushion = { tool: { not: "read-cushion" as const } };
+  const [teamUsed, mineUsed, cushionTeam, cushionMine] = await Promise.all([
+    db.aiUsage.count({ where: { teamId: me.teamId, day, ...withoutCushion } }),
+    db.aiUsage.count({ where: { memberId: me.id, day, ...withoutCushion } }),
+    db.aiUsage.count({ where: { teamId: me.teamId, day, tool: "read-cushion" } }),
+    db.aiUsage.count({ where: { memberId: me.id, day, tool: "read-cushion" } }),
   ]);
   return {
     mineLeft: Math.max(0, AI_POLICY.perMemberPerDay - mineUsed),
     teamLeft: Math.max(0, AI_POLICY.perTeamPerDay - teamUsed),
     perDay: AI_POLICY.perMemberPerDay,
+    cushion: {
+      mineLeft: Math.max(0, picks.member - cushionMine),
+      teamLeft: Math.max(0, picks.team - cushionTeam),
+      perDay: picks.member,
+    },
   };
 }
 
@@ -102,24 +132,35 @@ export async function consumeAiQuota(
   tool: AiToolKey,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const day = todayInSeoul();
+  // 읽는 쪽(`aiQuotaFor`)과 **같은 선택**을 한다. 여기서만 다르면 화면의 숫자는 남았는데
+  // 실제로는 막히는(또는 그 반대) 상태가 조용히 생긴다.
+  const picks = quotaPicks(tool);
+  // 순화는 자기 장부에만 적는다 — 본 장부에서 빼지 않으면 두 번 차감된다.
+  const inBook =
+    tool === "read-cushion"
+      ? { tool: "read-cushion" as const }
+      : { tool: { not: "read-cushion" as const } };
 
   return db.$transaction(async (tx): Promise<{ ok: true } | { ok: false; message: string }> => {
     // 한 팀의 한도를 한 명씩 지킨다.
     await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
 
-    const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day } });
-    if (teamUsed >= AI_POLICY.perTeamPerDay) {
+    const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day, ...inBook } });
+    if (teamUsed >= picks.team) {
       return {
         ok: false,
-        message: `오늘 팀이 쓸 수 있는 AI 횟수(${AI_POLICY.perTeamPerDay}회)를 다 썼습니다. 내일 0시(한국)에 다시 채워집니다.`,
+        message: cushionRefusal(tool, `오늘 팀이 쓸 수 있는 AI 횟수(${picks.team}회)를 다 썼습니다. 내일 0시(한국)에 다시 채워집니다.`),
       };
     }
 
-    const mineUsed = await tx.aiUsage.count({ where: { memberId: me.id, day } });
-    if (mineUsed >= AI_POLICY.perMemberPerDay) {
+    const mineUsed = await tx.aiUsage.count({ where: { memberId: me.id, day, ...inBook } });
+    if (mineUsed >= picks.member) {
       return {
         ok: false,
-        message: `오늘 내가 쓸 수 있는 AI 횟수(${AI_POLICY.perMemberPerDay}회)를 다 썼습니다. 팀의 남은 횟수와는 별개입니다 — 내일 0시(한국)에 다시 채워집니다.`,
+        message: cushionRefusal(
+          tool,
+          `오늘 내가 쓸 수 있는 AI 횟수(${picks.member}회)를 다 썼습니다. 팀의 남은 횟수와는 별개입니다 — 내일 0시(한국)에 다시 채워집니다.`,
+        ),
       };
     }
 
@@ -129,6 +170,17 @@ export async function consumeAiQuota(
 
     return { ok: true };
   });
+}
+
+/**
+ * 순화가 멈췄을 때 **왜**를 덧붙인다.
+ *
+ * 순화 몫이 바닥나면 원문이 보인다(안전한 실패다). 그런데 그 문장이 다른 AI 도구의 그것과
+ * 같으면, 순화가 앱의 일부라는 사실이 사라진다 — "AI 한도를 다 썼습니다" 만 보면 무엇이
+ * 멈춘 건지 알 수 없다.
+ */
+function cushionRefusal(tool: AiToolKey, message: string): string {
+  return tool === "read-cushion" ? `${message} 읽는 순화만 멈췄습니다 — 다른 AI 도구는 쓸 수 있습니다.` : message;
 }
 
 /**

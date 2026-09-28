@@ -8,6 +8,7 @@ import { attemptKey, clearAttempts, countFailure, isLocked } from "@/server/auth
 import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
+import { settleJoinRequest } from "@/server/invite/settle";
 import { leaderIds, notify } from "@/server/notify/create";
 import { describeDevice, deviceIdOf, requireLeader, requireSessionMember, startSession } from "@/server/session";
 
@@ -231,28 +232,34 @@ export async function regenerateRejoinCode(): Promise<string> {
   return issueRejoinCode(me.id);
 }
 
-/** 팀장이 새로 들어오려는 사람을 승인하거나 거절한다. */
+/**
+ * 팀장이 새로 들어오려는 사람을 승인하거나 거절한다.
+ *
+ * 판정과 갱신, 그리고 **초대 자리 세기**는 전부 `invite/settle.ts` 의 한 트랜잭션 안이다.
+ * 예전에는 "아직 pending 이지?" 를 읽고 **그 뒤에** 따로 갱신했다 — 그 사이가 구멍이었다.
+ * 두 번 누른 손이 모두 통과하면 같은 요청을 두 번 처리하고, 초대 자리도 두 번 센다.
+ *
+ * ⚠️ **여기서는 `Member` 를 만들지 않는다.** 팀원이 되는 것은 요청한 그 브라우저에서
+ * 일어난다(`checkJoinApproval`) — 세션 쿠키를 심을 수 있는 곳이 거기뿐이다. 여기서 만들면
+ * 팀장 기기에 그 사람의 계정이 생겨 버린다.
+ *
+ * `stale-invite` 는 **승인이 반영되었지만** 이 초대가 이미 닫혀 있다는 뜻이다. 팀장에게
+ * 말해 주되 막지는 않는다 — 만든 사람이 팀장 자신이고, 신청인은 아무 잘못이 없다.
+ */
 export async function resolveJoinRequest(
   requestId: string,
   approve: boolean,
-): Promise<"ok" | "gone"> {
+): Promise<"ok" | "gone" | "stale-invite"> {
   const leader = await requireLeader();
 
-  const request = await db.joinRequest.findFirst({
-    where: { id: requestId, status: "pending", teamId: leader.teamId },
-  });
-  if (!request) return "gone";
-
-  await db.joinRequest.update({
-    where: { id: request.id },
-    data: {
-      status: approve ? "approved" : "rejected",
-      resolvedAt: new Date(),
-      approvedById: leader.id,
-    },
+  const result = await settleJoinRequest({
+    requestId,
+    teamId: leader.teamId,
+    approverId: leader.id,
+    approve,
   });
 
   revalidatePath("/team", "layout");
   revalidatePath("/home");
-  return "ok";
+  return result;
 }
