@@ -17,7 +17,6 @@ import {
   Sheet,
   Textarea,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ConfirmsPolicy, Member, TeamCheckRecord } from "@/lib/types";
@@ -486,12 +485,12 @@ export function ContribTeamScreen({
           팀원의 기록이 사실과 다르면 고쳐 달라고 적을 수 있습니다. 의견이 다른 항목은{" "}
           <b>한쪽 말로 덮지 않고</b> 둘 다 남깁니다.
         </Note>
-
-        <Undecided>
-          의견 차이가 끝까지 안 좁혀졌을 때 최종 기재 방식이 기획안에 없습니다. 지금은 양쪽 의견을 함께
-          남기는 안입니다. <b>누가 정정에 답할 수 있는지</b>도
-          정했습니다: 기록 주인과 그 의견을 적은 사람뿐입니다(화면·서버가 같은 조건을 봅니다).
-        </Undecided>
+        {/* 이 화면에는 예전에 `Undecided` 가 있었다 — "양쪽 의견을 함께 남긴다" 와 "누가 정정에
+            답할 수 있는가" 가 기획에 없다는 말이었다. 둘 다 정해졌고, 근거도 이미 코드에 있다.
+            결정을 남기는 한(직전 `Note`)과 대상을 정하는 한(`contrib/state.ts` 의
+            `canResolveContrib`)이 각각 설명을 가지고 있으므로, **같은 말을 세 번 하지 않는다.**
+            상자가 열려 있으면 검토 모드가 실제 미결 대신 이미 끝난 일을
+            세게 된다. */}
       </Body>
 
       <Dock>
