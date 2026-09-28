@@ -239,11 +239,30 @@ export type TeamMbtiStats = {
     tf: { t: number; f: number; ratioT: number };
     jp: { j: number; p: number; ratioJ: number };
   };
-  dominantSummary: string;
-  collaborationTips: string[];
 };
 
-/** 팀원 목록을 기반으로 MBTI 축별 통계 및 소통 조언 산출 */
+/**
+ * 팀원들이 **직접 입력한** MBTI 의 축별 집계.
+ *
+ * ## 왜 여기서 해석하지 않는가
+ *
+ * 이 함수는 예전에 `dominantSummary`(예: "차분하게 텍스트로 생각을 정리하는 분위기")와
+ * `collaborationTips`(예: "회의 전 안건을 미리 공유하면 좋은 의견이 많이 나와요")도
+ * 함께 돌려줬다. 전자는 55% 를 넘는 축에서 **팀이 실제로 그렇게 일하는지를 서술**하고,
+ * 후자는 **그 값이 실제 결과로 이어진다고 예측**한다.
+ *
+ * 둘 다 뒷받음이 없다. 입력이 "나는 INFP 다" 라는 자기보고 한 줄인데, 여기서 팀이 실제로
+ * 조용한지, 안건을 미리 주면 의견이 늘지는지를 알 수는 없다. 그럼에도 문장은 "~입니다",
+ * "~해 주세요" 라고 **단정**이라, 거짓이면 그것이 팀에 대한 사실 주장으로 남는다 — 읽은
+ * 사람은 확인하기 전에 믿기 시작하고, 틀렸을 때의 손해는 사람이 감당한다.
+ *
+ * 그래서 **센 것만 돌려준다.** `withMbti` 와 네 축 인원수는 입력값을 더한 것이므로 사실이다.
+ * 해석은 사람이 한다 — 화면은 숫자를 보여 주고 해석을 지어내지 않는다.
+ *
+ * (`dominantAxes` 라는 네 축 요약 배열이 한때 있었는데, `summaryParts` 로 옮겨지면서
+ * **채워 놓고 반환하지 않아** 이미 죽어 있었다. 함께 뺐다. 계산을 남겨 둔 것보다 없는
+ * 쪽이 정직하다 — 읽는 사람이 "이게 왜 빠졌나" 하고 규칙을 되짚는 수를 줄인다.)
+ */
 export function calculateTeamMbtiStats(mbtiList: (MbtiType | null | undefined)[]): TeamMbtiStats {
   const valid = mbtiList.filter((m): m is MbtiType => isMbtiType(m));
   const total = mbtiList.length;
@@ -262,64 +281,9 @@ export function calculateTeamMbtiStats(mbtiList: (MbtiType | null | undefined)[]
   }
 
   const ratioE = count > 0 ? Math.round((e / count) * 100) : 50;
-  const ratioI = 100 - ratioE;
   const ratioS = count > 0 ? Math.round((s / count) * 100) : 50;
-  /// 아래 `summaryParts` 의 S/N 구절이 **이 값부터** 본다 — E/I 도 `ratioI` 를 먼저 보므로
-  /// 짝을 이룬다. 여기를 지우면 S/N 은(summary 문장에서) 조용히 사라진다.
-  const ratioN = 100 - ratioS;
   const ratioT = count > 0 ? Math.round((t / count) * 100) : 50;
-  const ratioF = 100 - ratioT;
   const ratioJ = count > 0 ? Math.round((j / count) * 100) : 50;
-  const ratioP = 100 - ratioJ;
-
-  // 팀 분위기 요약 산출
-  const dominantAxes: string[] = [];
-  if (count > 0) {
-    dominantAxes.push(ratioE >= 55 ? "활발한 외향(E)" : ratioE <= 45 ? "차분한 내향(I)" : "균형 잡힌 소통(E/I)");
-    dominantAxes.push(ratioS >= 55 ? "현실적 팩트(S)" : ratioS <= 45 ? "아이디어 탐구(N)" : "현실과 창의 조화(S/N)");
-    dominantAxes.push(ratioT >= 55 ? "논리적 완성도(T)" : ratioT <= 45 ? "공감과 유대(F)" : "논리와 배려 균형(T/F)");
-    dominantAxes.push(ratioJ >= 55 ? "철저한 계획형(J)" : ratioJ <= 45 ? "유연한 실행형(P)" : "계획과 유연성 조화(J/P)");
-  }
-
-  let dominantSummary = "아직 MBTI를 등록한 팀원이 적어 성향 분석을 모으는 중입니다.";
-  const collaborationTips: string[] = [];
-
-  if (count > 0) {
-    const summaryParts: string[] = [];
-    if (ratioI > 55) {
-      summaryParts.push("차분하게 텍스트로 생각을 정리하는 분위기");
-      collaborationTips.push("회의 전 안건을 미리 공유해 충분히 생각할 시간을 주면 좋은 의견이 많이 나와요.");
-    } else if (ratioE > 55) {
-      summaryParts.push("대화와 아이디어 교환이 빠르고 활기찬 분위기");
-      collaborationTips.push("대화로 나온 다양한 의견 중 핵심 액션 아이템을 바로 서기로 기록해 두세요.");
-    } else {
-      summaryParts.push("대면 소통과 텍스트 소통의 균형이 좋은 분위기");
-    }
-
-    if (ratioN > 55) {
-      summaryParts.push("가능성을 먼저 펼쳐 보고 새 아이디어를 탐구하는 분위기");
-      collaborationTips.push("안건마다 '왜'와 '대안은 무엇인지'를 한 줄 먼저 적어 주면 아이디어가 더 쉽게 나와요.");
-    } else if (ratioS > 55) {
-      summaryParts.push("검증된 근거를 하나씩 확인하며 나아가는 분위기");
-      collaborationTips.push("안건마다 참고할 사례나 숫자를 미리 붙여 주면 판단이 훨씬 빨라져요.");
-    }
-
-    if (ratioJ > 55) {
-      summaryParts.push("마감 일정과 순서를 중시하는 팀");
-      collaborationTips.push("마감 2~3일 전 중간 점검 일정을 두면 팀 전체가 편안하게 작업할 수 있어요.");
-    } else if (ratioP > 55) {
-      summaryParts.push("상황에 따라 유연하게 결과물을 발전시키는 팀");
-      collaborationTips.push("최종 제출 마감 시각만 확실하게 약속하고 중간 단계는 유연하게 진행해 보세요.");
-    }
-
-    if (ratioT > 55) {
-      collaborationTips.push("피드백 시 논리적 근거를 바탕으로 하되, 쿠션어를 곁들이면 완성도가 더 높아져요.");
-    } else if (ratioF > 55) {
-      collaborationTips.push("서로 칭찬과 리액션을 아끼지 않을 때 시너지가 배가되는 팀이에요.");
-    }
-
-    dominantSummary = summaryParts.join(", ") + "입니다.";
-  }
 
   return {
     total,
@@ -331,62 +295,5 @@ export function calculateTeamMbtiStats(mbtiList: (MbtiType | null | undefined)[]
       tf: { t, f, ratioT },
       jp: { j, p, ratioJ },
     },
-    dominantSummary,
-    collaborationTips: collaborationTips.length > 0 ? collaborationTips : ["팀원들과 대화를 나누며 서로의 협업 스타일을 맞춰가 보세요."],
   };
-}
-
-/** 두 MBTI 사이의 소통 시너지 및 협업 팁 */
-export type MbtiSynergy = {
-  score: number; // 3~5
-  title: string;
-  tip: string;
-};
-
-export function getMbtiSynergy(a: MbtiType | null | undefined, b: MbtiType | null | undefined): MbtiSynergy {
-  if (!a || !b || !isMbtiType(a) || !isMbtiType(b)) {
-    return {
-      score: 3,
-      title: "서로 알아가는 중",
-      tip: "대화를 나누며 나만의 소통 방식을 편안하게 공유해 보세요.",
-    };
-  }
-
-  if (a === b) {
-    return {
-      score: 5,
-      title: "척하면 척! 찰떡 동반자",
-      tip: "일하는 방식과 소통 리듬이 매우 비슷해 별다른 설명 없이도 편하게 협업할 수 있어요.",
-    };
-  }
-
-  // 상호보완 분석
-  const diffs = [a[0] !== b[0], a[1] !== b[1], a[2] !== b[2], a[3] !== b[3]].filter(Boolean).length;
-  
-  if (diffs === 1) {
-    return {
-      score: 5,
-      title: "최상의 호흡과 시너지",
-      tip: "기본적인 파장이 잘 맞으면서도 한 축의 차이가 서로의 사각지대를 완벽히 보완해 줍니다.",
-    };
-  } else if (diffs === 2) {
-    return {
-      score: 4,
-      title: "든든한 상호보완 콤비",
-      tip: "각자의 강점이 뚜렷해 역할을 나누어 작업하면 매우 높은 퀄리티의 결과물을 낼 수 있어요.",
-    };
-  } else if (diffs === 3) {
-    return {
-      score: 4,
-      title: "새로운 시야를 여는 파트너",
-      tip: "서로 다른 관점으로 접근하기 때문에 회의할 때 신선한 아이디어가 많이 발굴됩니다.",
-    };
-  } else {
-    // 4축 모두 반대 (예: INTJ vs ESFP)
-    return {
-      score: 4,
-      title: "극과 극의 완벽한 조화",
-      tip: "완전히 다른 렌즈로 과제를 바라보므로, 역할을 확실히 나누어 협력하면 무적의 팀이 됩니다.",
-    };
-  }
 }

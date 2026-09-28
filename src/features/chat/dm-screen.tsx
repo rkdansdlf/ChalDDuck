@@ -8,7 +8,7 @@ import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
 import { useMe } from "@/features/onboarding/use-me";
 import { markThreadRead, setReadCushion } from "@/server/actions/chat";
-import { getMbtiMeta, getMbtiSynergy } from "@/lib/mbti";
+import { getMbtiMeta } from "@/lib/mbti";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
 import { ReadCushionBar } from "./read-cushion-bar";
@@ -46,7 +46,6 @@ export function DmScreen({
   const me = useMe(fromRoster);
   const [showTip, setShowTip] = useState(false);
   const otherMeta = getMbtiMeta(thread.mbti);
-  const synergy = getMbtiSynergy(me.mbti, thread.mbti);
   const { flash, run } = useAction();
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
 
@@ -130,7 +129,6 @@ export function DmScreen({
             <div className="flex items-center gap-1.5 font-bold text-[12px] text-yellow-900">
               <span className="font-mono text-yellow-800">{otherMeta.type}</span>
               <span>{otherMeta.characterName}</span>
-              <span className="text-yellow-600 font-normal">· {synergy.title}</span>
             </div>
             <button
               type="button"
