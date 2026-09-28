@@ -160,10 +160,7 @@ model Member {
   messages        Message[]
   reactions       MessageReaction[]
   readMarks       ReadMark[]
-  /// 이 사람의 순화 읽기 설정과, 이 사람에게 보여 줄 순화문.
   readCushions    ReadCushion[]
-  /// 이 사람에게 보여 줄 순화 결과(성공·실패 상태 포함).
-  messageCushions MessageCushion[]
   contribRecords  ContribRecord[]   @relation("ContribOwner")
   contribDisputes ContribRecord[]   @relation("ContribDisputer")
   contribConfirms ContribConfirm[]
@@ -596,8 +593,9 @@ model Message {
   driveVersion FileVersion?     @relation("MessageSharesVersion", fields: [driveVersionId], references: [id], onDelete: SetNull)
   savedVersion  FileVersion?     @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
   reactions MessageReaction[]
-  /// 이 말을 **읽는 사람별로** 순화해 둔 문장(19 화면의 읽기 순화).
-  cushions MessageCushion[]
+  /// 이 말을 읽기 설정별로 순화해 둔 결과(19·31 화면의 읽기 순화). **사람이 아니라
+  /// 설정(강도·말투·프롬프트·모델)마다 한 줄**이라 팀원 수만큼 중복 계산되지 않는다.
+  purifications MessagePurification[]
 
   @@unique([authorId, clientId])
   /// DM 목록은 "이 대화의 마지막 말 한 개" 를 4초마다 다시 읽는다. 그 정렬이
@@ -635,33 +633,64 @@ model ReadMark {
   @@unique([memberId, threadKey])
 }
 
-/// 이 말을 **읽는 사람 한 명에게** 어떻게 보여 줄 것인가.
+/// 이 말을 **어떤 읽기 설정으로** 순화해 둔 결과.
+model MessagePurification {
+  id        String   @id @default(cuid())
+  messageId String
+  /// 이 결과를 만든 설정의 지문. 같은 말 + 같은 설정 = 같은 결과다.
+  ///
+  /// **사람을 열쇠에 넣지 않는다** — 이것이 이 구조의 전부다. 예전에는 (말, 읽는 사람)마다
+  /// 한 줄이 있어서 팀원 5명이면 **같은 말을 5번** 모델에 불렀다(AI 한도 1회씩). 팀플은
+  /// 4~5명이 방에서 같이 읽는데, 그만큼 같은 대화가 중복 계산되었다.
+  ///
+  /// 지문에는 **결과를 바꾸는 것만** 넣는다: 읽기 강도·말투·프롬프트 버전·모델·검사 버전.
+  /// 읽는 사람이 바뀐다고 결과가 바뀌지는 않는다.
+  policyHash String
+  /// 이 결과를 만든 조건 — 지문이 왜 그런 값인지 남긴다(재생성 판단용).
+  level    String
+  tone     String
+  model    String
+  promptVersion    String
+  validatorVersion String
+  /// 원문 지문. 원문은 안 바뀌지만, "같은 입력으로 만든 것인가" 를 판정하는 기준이다.
+  sourceHash String
+  /// 화면에 그릴 문장. 실패 상태면 `null` 이고 그때는 **원문이 보인다**.
+  text   String?
+  /// 이 문장을 누가 썼나: `ai`(모델) / `mask`(규칙). **표시가 다르므로 반드시 남긴다.**
+  source String?
+  /// PENDING | PURIFIED | FALLBACK | REJECTED | FAILED
+  status String   @default("PENDING")
+  /// 실패 taxonomy(실패할 때만). 지표와 재생성 판단에 쓴다 — 화면에는 안 보여 준다.
+  reason  String?
+  /// 실제로 모델을 부른 횟수. 무한 재호출의 근거이자, 몇 번을 더 시도할지 정하는 값.
+  attemptCount Int    @default(0)
+  /// 이 묶음의 **호출 시간**(ms). 묶음의 모든 행이 같은 값을 갖는다 — 그래서 "행 기준 평균"은
+  /// 큰 묶음에 끌려간다. 호출 수와 함께 볼 때만 뜻가 있다.
+  latencyMs Int?
+  /// 이 시각 전에는 다시 부르지 않는다. 재생성 가능해지면 서버가 지금으로 옮긴다.
+  retryAfter DateTime?
+  /// `PENDING` 선점 토큰. **이 값이 내 것인 요청만 모델을 부른다** — 두 사람·두 탭이 같은
+  /// 설정으로 같은 말을 동시에 시켜도 한 번만 부른다.
+  claimToken String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, policyHash])
+  /// 실패 캐시 조회: "이 말이 이 설정으로 이미 어떻게 됐나" 를 id 목록으로 한 번에 본다.
+  @@index([messageId])
+}
+
+/// 실패 캐시는 **읽는 사람 사이에 공유된다.** 한 사람이 거절당하면 그 결과(상태·사유·
+/// 시도 횟수·재시도 시각)는 그 말을 같은 설정으로 읽을 사람에게 그대로 전달된다 —
 ///
-/// 원문(`Message.text`)은 고치지 않는다. 순화는 **보기에만** 걸린다는 약속이라 읽는 쪽이
-/// 원문 대조를 언제든 할 수 있어야 한다.
+/// 5명이 각자 한 번씩 거절을 시도할 이유가 없다. `ReadCushion` 이 읽는 조건을 정하고,
+/// 여기에는 **조건별 결과**만 있다.
 ///
-/// ## 왜 결과가 아니라 **상태**인가
-///
-/// 예전에는 "행이 있다 = 순화 성공", "행이 없다 = 실패 또는 아직 안 함" 이었다.
-/// 그랬더니 **거절된 말도 지워진 게 아니라 "아직 없는 것"** 으로 남아 3초마다 AI 후보가
-/// 되었고, 새로고침하면 브라우저 메모리의 "시도함" 기록도 리셋되어 **하루치 한도가 몇 분
-/// 만에 Gone** 되었다. 실패를 저장하지 않으면 실패를 셀 수도 없다.
-///
-/// 그래서 성공·실패를 **같은 표에 상태로** 남긴다. 이 표가 곧 캐시이고, 곧 관측 기록이다.
-///
-/// ## 상태 계약
-///
-/// - `PENDING`  — 누군가 AI 를 부르는 중. **선점(claim)** 이 있어 두 탭이 같이 불러도 1회다.
-/// - `PURIFIED` — AI 가 쓴 순화문. `source="ai"`.
-/// - `FALLBACK` — AI 가 거절·실패했고 **규칙으로 위험 표현만 가린** 것. `source="mask"`.
-///   AI 결과인 척 하지 않는다 — 화면 라벨이 다르다.
-/// - `REJECTED` — 응답을 받았지만 **검사를 통과하지 못함**(욕이 남음, 정보 손실 등).
-/// - `FAILED`   — 모델이 못 만들었음(거절·빈 응답·형식 깨짐·한도).
-///
-/// `PURIFIED` / `FALLBACK` 는 끝(terminal)이다. 나머지는 **같은 설정으로는 다시 부르지
-/// 않는다** — `attemptCount` 와 `retryAfter` 가 그 증거고, `model` 이나 `promptVersion` 이
-/// 바뀌었을 때만 다시 열린다. 그래야 "몇 달 뒤 프롬프트를 개선했다"가 실제 재생성이 되고,
-/// 그전까지는 조용히 재호출되지 않는다.
+/// 사람별로 "이 화면에서 무엇을 보여 줄지" 를 따로 고르는 기능이 생기면 그때 두 번째 표가
+/// 돌아온다(말 → 순화본, 사람 → 화면 선택). 지금은 그 선택이 없으므로 **표가 하나여야
+/// 중복 계산이 없다.**
 
 /// 한 사람이 이 방의 말을 **어떤 말투로 읽는지**. 읽기 전용이라 저장된 원문은 그대로다.
 ///
@@ -691,46 +720,6 @@ model ReadCushion {
   @@unique([memberId, threadKey])
 }
 
-model MessageCushion {
-  id        String   @id @default(cuid())
-  messageId String
-  /// 이 순화를 **보는 사람**. 같은 팀원이 5명 있으면 같은 말이 5줄이 생긴다 — 각각의
-  /// 읽기(말투·강도)가 다르기 때문이다.
-  viewerId  String
-  status    String   @default("PENDING")
-  /// 실패 taxonomy(아래 `CushionReason`). 성공이면 null.
-  reason    String?
-  /// 화면에 그릴 문장. `PURIFIED` / `FALLBACK` 일 때만 있다 — 실패 상태에 글은 없다.
-  text      String?
-  /// 이 문장을 누가 썼나: `ai`(모델) / `mask`(규칙). **표시가 다르므로 반드시 남긴다.**
-  source    String?
-  /// 이 결과를 만든 조건. 재생성 정책을 정하려면 남겨야 한다.
-  model           String?
-  promptVersion   String?
-  validatorVersion String?
-  /// 원문 지문. 원문은 안 바뀌지만, "같은 입력으로 만든 것인가"를 판정하는 기준이다.
-  sourceHash String
-  /// 이 순화를 만들 때 고른 말투.
-  tone      String   @default("soft")
-  /// 실제로 모델을 부른 횟수. 무한 재호출의 근거이자, 몇 번을 더 시도할지 정하는 값.
-  attemptCount Int    @default(0)
-  /// 이 행을 만든 **호출**이 걸린 시간(ms). 묶음의 모든 행이 같은 값을 갖는다 —
-  /// 그래서 "행 기준 평균"은 큰 묶음에 끌려간다. 호출 수와 함께 볼 때만 뜻가 있다.
-  latencyMs   Int?
-  /// 이 시각 전에는 다시 부르지 않는다. 재생성 가능해지면 서버가 지금으로 옮긴다.
-  retryAfter DateTime?
-  /// `PENDING` 선점 토큰. **이 값이 내 것인 요청만 모델을 부른다** — 두 탭 경합 방지.
-  claimToken String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  viewer  Member  @relation(fields: [viewerId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, viewerId])
-  /// 실패 캐시 조회: "이 사람에게 이미 뭐가 붙어 있는가" 를 id 목록으로 한 번에 본다.
-  @@index([viewerId, status])
-}
 
 /// 기여 기록.
 ///
@@ -820,7 +809,7 @@ model ContribConfirm {
 /// 회의 참여 표시 — **팀장이 직접 찍는다.** 앱이 판정하지 않는다.
 ///
 /// 정책이 정해졌다(README 3절): 입장과 발언을 앱이 정확히 아는 쪽이 아니라 자동 판정이
-/// 정직하지 않으��, 팀장이 표시한다. 그 표시가 **어디에 붙는지**가 이 표의 모양이다.
+/// 정직하지 않으면, 팀장이 표시한다. 그 표시가 **어디에 붙는지**가 이 표의 모양이다.
 ///
 /// - **기록 하나**에 붙는다. 참여자는 따로 적지 않는다 — `record.memberId` 가 곧 참여자라
 ///   두 곳에 적으면 서로 어긋난다. 공동 작업은 23 화면의 정정 응답("공동 작업으로 나눔")이

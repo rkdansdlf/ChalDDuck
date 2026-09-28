@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:check": "node scripts/check-schema-in-sync.mjs",
+    "db:migrations": "node scripts/check-migrations-committed.mjs",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
@@ -18,7 +19,9 @@
     "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
     "decisions": "node scripts/list-open-decisions.mjs",
     "db:storage": "node scripts/setup-storage.mjs",
-    "verify": "npm run db:check && npm test && npm run build && npx tsc --noEmit && npm run lint"
+    "storage:check": "node scripts/check-storage.mjs",
+    "storage:check:gate": "node scripts/check-storage.mjs --if-configured",
+    "verify": "npm run db:check && npm run db:migrations && npm test && npm run build && npx tsc --noEmit && npm run lint"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
