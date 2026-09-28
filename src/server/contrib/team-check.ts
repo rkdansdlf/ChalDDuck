@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma";
 import { humanSize } from "@/features/drive/file-rules";
 import type { ConfirmsPolicy, ContribEvidence, TeamCheckRecord } from "@/lib/types";
 import { isMarked, type Participation } from "@/features/contrib/participation";
+import { confirmBlockReason, unresolvedAfter } from "@/features/contrib/resolution";
 import { db } from "@/server/db";
 import { canResolveContrib, contribByLabel, maxConfirmsNeeded } from "@/server/contrib/state";
 import { getSessionMember } from "@/server/session";
@@ -91,7 +92,17 @@ export async function teamCheckRecords(teamId: string, meId: string | null): Pro
         confirms: r.confirms.length,
         needed: r.member.team.confirmsNeeded,
         disputedBy: r.disputedBy?.name ?? null,
+        unresolved: unresolvedAfter(r),
       }),
+      // 왜 확인 버튼이 없는가 — 화면이 숨기는 이유를 **같이** 말한다(17 화면).
+      confirmBlockedBy: confirmBlockReason({
+        memberId: r.memberId,
+        disputedById: r.disputedById,
+        meId: meId ?? "",
+        who: r.disputedBy?.name ?? undefined,
+      }),
+      // 답이 없는 의견이 닫힌 상태인가 — 23·17 화면과 리포트가 같은 값을 본다.
+      unresolved: unresolvedAfter(r),
       evidence,
       participation: latestParticipation(r.participations),
       dispute: r.dispute,

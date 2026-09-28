@@ -87,6 +87,13 @@ import {
   isMarked,
   participationText,
 } from "../src/features/contrib/participation.js";
+import {
+  RESOLUTION_WAYS,
+  canConfirm,
+  confirmBlockReason,
+  isResolutionWay,
+  unresolvedAfter,
+} from "../src/features/contrib/resolution.js";
 
 /**
  * 업무 규칙을 확인하는 불변식 모음.
@@ -440,9 +447,58 @@ console.log("\n기록 확정 기준 (팀이 정한다)");
   check("4명이면 기준 3명까지", maxConfirmsNeeded(4), 3);
   check("아무도 없으면 1명에서 멈춘다", maxConfirmsNeeded(0), 1);
 
-  check("분모는 2명 이상일 때만", contribByLabel({ state: "ok", confirms: 1, needed: 1, disputedBy: null }), "1명 확인");
-  check("2명 기준은 진행을 보여 준다", contribByLabel({ state: "pending", confirms: 1, needed: 2, disputedBy: null }), "1/2명 확인");
-  check("아직 모인 확인이 없으면", contribByLabel({ state: "pending", confirms: 0, needed: 2, disputedBy: null }), "팀원 확인 대기");
+  check("분모는 2명 이상일 때만", contribByLabel({ state: "ok", confirms: 1, needed: 1, disputedBy: null, unresolved: false }), "1명 확인");
+  check("2명 기준은 진행을 보여 준다", contribByLabel({ state: "pending", confirms: 1, needed: 2, disputedBy: null, unresolved: false }), "1/2명 확인");
+  check("아직 모인 확인이 없으면", contribByLabel({ state: "pending", confirms: 0, needed: 2, disputedBy: null, unresolved: false }), "팀원 확인 대기");
+}
+
+/* ── 정정(의견 차이)의 결론 ──────────────────────────────────── */
+
+console.log("\n정정 결론 — 답이 없어도 닫힌다");
+{
+  // 서버가 받아들이는 결론은 셋뿐이다 — 화면이 보낸 문자열을 그대로 쓰지 않는다.
+  check("집합 밖의 말은 결론이 아니다", isResolutionWay("내 말이 맞다"), false);
+  check("빈 문자열도 아니다", isResolutionWay(""), false);
+  check("합의 없음은 결론이다", isResolutionWay("noAgreement"), true);
+  check("세 가지만 있다", Object.keys(RESOLUTION_WAYS).length, 3);
+
+  const disputed = { dispute: "제가 한 게 아닙니다", resolution: null as string | null };
+  check("열린 의견", unresolvedAfter(disputed), false);
+  check(
+    "답이 없어 닫힌 의견",
+    unresolvedAfter({ ...disputed, resolution: RESOLUTION_WAYS.noAgreement }),
+    true,
+  );
+  check("합의된 것은 세지 않는다", unresolvedAfter({ ...disputed, resolution: RESOLUTION_WAYS.split }), false);
+  check(
+    "의견이 없으면 정리되지 않은 것도 아니다",
+    unresolvedAfter({ dispute: null, resolution: RESOLUTION_WAYS.noAgreement }),
+    false,
+  );
+
+  // 닫힌 뒤에도 절차가 돌아간다 — `disputed` 가 아니면 확인 수로 계산한다.
+  check(
+    "합의 없이 닫히면 대기로 돌아온다",
+    contribState({ ...disputed, confirms: 0, resolution: RESOLUTION_WAYS.noAgreement, needed: 1 }),
+    "pending",
+  );
+  check(
+    "확인이 모이면 그대로 확정된다",
+    contribState({ dispute: "이의 있음", resolution: RESOLUTION_WAYS.noAgreement, needed: 1, confirms: 2 }),
+    "ok",
+  );
+
+  // 확인을 막는 이유 — 자기 기록과 자기 반대.
+  const me = "m1";
+  check("자기 기록은 확인 못 한다", canConfirm({ memberId: me, disputedById: null, meId: me }), false);
+  check("반한 사람은 자기 반대를 확인 못 한다", canConfirm({ memberId: "m2", disputedById: me, meId: me }), false);
+  check("남은 팀원은 된다", canConfirm({ memberId: "m2", disputedById: "m3", meId: me }), true);
+  check(
+    "막힌 이유를 말해 준다",
+    confirmBlockReason({ memberId: "m2", disputedById: me, meId: me, who: "제 의견" }),
+    "제 의견은 내가 적은 의견입니다 — 같은 기록에 확인을 남길 수 없습니다",
+  );
+  check("막히지 않으면 이유는 없다", confirmBlockReason({ memberId: "m2", disputedById: "m3", meId: me }), null);
 }
 
 /* ── 회의 참여 표시 ────────────────────────────────────────── */
@@ -765,8 +821,9 @@ console.log("\n읽기 순화: 언제 다시 부르는가 (무한 재호출 차�
   };
   // **같은 설정이면 다시 부르지 않는다.** 한도를 깎으면서 결과는 같기 때문이다.
   check("같은 설정의 실패는 다시 부르지 않는다", canRetry(failed, now), false);
-  // 프롬프트를 고쳤다면 예전 실패는 낡았다 — 재생성된다.
-  check("프롬프트가 바뀌면 다시 열린다", canRetry({ ...failed, promptVersion: "p2" }, now), true);
+  // 프롬프트를 고쳤다면 예전 실패는 낡았다 — 재생성된다. **다음 버전**을 직접 적는다
+  // (현재 버전을 쓰면 "바뀌지 않은" 경우를 검사하는 셈이 된다).
+  check("프롬프트가 바뀌면 다시 열린다", canRetry({ ...failed, promptVersion: `${PROMPT_VERSION}-next` }, now), true);
   check("모델이 바뀌면 다시 열린다", canRetry({ ...failed, model: "anthropic/claude-sonnet-5" }, now), true);
   // 시간이 지나도 시도 횟수가 남아 있으면 한 번만 더 시도한다.
   check("백오프가 지나면 한 번 더 시도한다", canRetry({ ...failed, retryAfter: ago(1) }, now), true);

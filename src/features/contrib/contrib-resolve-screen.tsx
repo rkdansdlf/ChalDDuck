@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, Body, Btn, Note, Panel, SecTitle, Toast, Undecided } from "@/components/ui";
+import { AppBar, Body, Btn, Note, Panel, SecTitle, Toast } from "@/components/ui";
 import { useAction } from "@/lib/use-action";
 import type { TeamCheckRecord } from "@/lib/types";
 import { resolveContribDispute } from "@/server/actions/contrib";
@@ -70,7 +70,8 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
 
         <Note tone="info" icon="pen-line" className="mb-4">
           의견이 다른 항목은 한쪽 말로 덮지 않습니다. 둘 중 하나로 정리하거나, 공동 작업으로 나눠 적을
-          수 있습니다.
+          수 있습니다. <b>답이 없으면</b> 마지막 길로 원문 그대로 두고 닫을 수도 있습니다 — 그쪽 말은
+          그대로 남고 리포트에 &ldquo;정리되지 않은 의견&rdquo;으로 세어집니다.
         </Note>
 
         {record.iCanResolve ? (
@@ -79,7 +80,7 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
               full
               icon="check"
               disabled={answering}
-              onClick={() => void resolve("정정 동의 · 의견대로 수정")}
+              onClick={() => void resolve("accept")}
             >
               정정 의견에 동의하기
             </Btn>
@@ -88,9 +89,20 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
               v="outline"
               icon="split"
               disabled={answering}
-              onClick={() => void resolve("공동 작업으로 나눔")}
+              onClick={() => void resolve("split")}
             >
               공동 작업으로 나누기
+            </Btn>
+            {/* 세 번째 길 — 이것이 없으면 답하지 않은 의견이 영영 닫히지 않는다.
+                "합의 없음"은 실패가 아니라 **기록된 사실**이라 원문 그대로 두고 닫는다. */}
+            <Btn
+              full
+              v="ghost"
+              icon="circle-help"
+              disabled={answering}
+              onClick={() => void resolve("noAgreement")}
+            >
+              합의 없음 · 원문 그대로 두기
             </Btn>
           </div>
         ) : (
@@ -100,7 +112,6 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
           </Note>
         )}
 
-        <Undecided>정정에도 합의가 안 되면 어떻게 되는지는 기획안에 없어 다루지 않았습니다.</Undecided>
       </Body>
 
       <Toast msg={toast} />

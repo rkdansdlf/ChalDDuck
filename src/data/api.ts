@@ -6,6 +6,8 @@ import { isMbtiType } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { lastMessagePerThread } from "./last-message";
+import { acceptedRoleAssignments } from "./accepted-roles";
+import { contribTotals } from "./contrib-report-totals";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -19,6 +21,7 @@ import type {
   BusyKind,
   ChatMessage,
   ChatPurified,
+  CushionLevelKey,
   ContribKind,
   ContribRecord,
   ContribReportRow,
@@ -59,6 +62,7 @@ import {
   weekRange,
   type CandidateDate,
 } from "@/features/schedule/week";
+import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { iceViewFor } from "@/server/ice/view";
@@ -67,7 +71,7 @@ import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
 import { pushConfigured } from "@/server/notify/push";
-import { READ_CUSHION_DEFAULT, isCushionTone, type ReadCushionSetting } from "@/lib/read-cushion";
+import { READ_CUSHION_DEFAULT, isCushionTone, levelOf, type ReadCushionSetting } from "@/lib/read-cushion";
 import { confirmsPolicy, teamCheckRecords } from "@/server/contrib/team-check";
 import {
   AI_POLICY,
@@ -262,6 +266,21 @@ export async function getScheduleOptions(): Promise<{
 
 /* ── 07 역할 조율 ───────────────────────────────────────────── */
 
+/**
+ * 팀의 **확정된** 역할 배정 — 사람 하나가 맡은 역할들.
+ *
+ * 계산은 `data/accepted-roles.ts` 한 곳에 있다(`acceptedRoleAssignments`) — 규칙과 그 근거는
+ * 거기 적어 두었고, 그 파일이 순수 조회만이라 `scripts/smoke.mts` 가 이 불변식을 직접 돌릴
+ * 수 있다. 여기서는 화면에 넘길 형태로 감싼다.
+ *
+ * **희망(`Member.wantRole`)으로 대신 채우지 않는다.** 역할이 없으면 키가 없다.
+ */
+export async function getAcceptedRoleAssignments(
+  teamId: string,
+): Promise<Map<string, RoleKey[]>> {
+  return acceptedRoleAssignments(db, teamId, ROLES.map((r) => r.key as string));
+}
+
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
   const [draws, rejections] = await Promise.all([
@@ -377,6 +396,59 @@ export async function getJoinRequests(
       when: formatDeadline(r.createdAt),
     })),
   };
+}
+
+/**
+ * 팀장이 관리하는 초대 한 장. **링크는 없다.**
+ *
+ * 원문 토큰은 발급할 때 한 번만 나오고 서버에는 해시만 남으므로, 이 목록에는 **복사할 링크가
+ * 없다.** 비활성화만 할 수 있다. 다시 나눌 거면 새 초대를 만든다 — 어차피 되돌릴 수 있으려면
+ * 새로 만드는 편이 나고, 새 것을 만들지 않고 낡은 링크를 계속 복사하는 쪽이 위험하다.
+ */
+export type InviteRow = {
+  id: string;
+  label: string;
+  /** 이미 승인된 인원 / 허용 인원. `allowed` 가 null 이면 무제한. */
+  used: number;
+  allowed: number | null;
+  /** 만료가 없으면 null. 화면은 "기한 없음" 이라고 말한다. */
+  expiresAt: string | null;
+  expiresSoon: boolean;
+  revoked: boolean;
+  createdAt: string;
+};
+
+/**
+ * 만료가 **3일 이내**인가. 곧 닫힐 것을 알아야 하는 건 목록의 존재 이유다.
+ *
+ * 판단을 **여기서** 끝내는 편이 낫다. "곧 닫힌다" 를 규칙으로 박아 두지 않으면 화면마다
+ * 다른 기준이 생기고, 어느 쪽이 "곧"인지 아무도 모른다.
+ */
+const INVITE_SOON_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** 팀장에게만. 팀장이 아니면 빈 목록 — 초대 관리는 권한이다(접근도 막는다). */
+export async function getTeamInvites(teamId: string): Promise<InviteRow[]> {
+  const session = await getSessionMember();
+  if (!session || !session.isLeader) return [];
+
+  const now = Date.now();
+  const rows = await db.teamInvite.findMany({
+    where: { teamId },
+    orderBy: [{ revokedAt: "asc" }, { createdAt: "desc" }],
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    // 이름이 없으면 시각으로 대신한다 — 빈 칸보다 나쁘지 않은 최선.
+    label: r.label ?? formatDeadline(r.createdAt),
+    used: r.useCount,
+    allowed: r.maxUses,
+    expiresAt: r.expiresAt ? formatWhen(r.expiresAt) : null,
+    expiresSoon:
+      r.expiresAt !== null && r.expiresAt.getTime() > now && r.expiresAt.getTime() - now <= INVITE_SOON_MS,
+    revoked: r.revokedAt !== null,
+    createdAt: formatDeadline(r.createdAt),
+  }));
 }
 
 /** 내 이름으로 열려 있는 기기 목록. 내 것만 보인다. */
@@ -497,7 +569,13 @@ export async function getMeetingWeek(teamId: string): Promise<MeetingWeek> {
     db.member.count({ where: { teamId, ...ACTIVE } }),
     // "시간표를 냈다"는 표시가 따로 없어서 안 되는 시간을 하나라도 적은 사람으로 센다.
     // 한 주가 통째로 비는 사람은 낸 것으로 보이지 않는다 — 확정되지 않은 정책이다.
-    db.member.count({ where: { teamId, ...ACTIVE, busyBlocks: { some: {} } } }),
+    //
+    // **지난 주의 "이 주만" 블록은 세지 않는다**(`notExpired`). 예전에는 `{ some: {} }` 로
+    // 전부 세었는데, 그러면 같은 팀원이 09 화면에서는 "시간표를 냈다"로 세어지면서 10 화면
+    //에서는 "시간표 없음"이 되고, 그 사람은 10 의 "아직 안 낸 사람" 목록에 들어간다 — 같은
+    // 사실에 두 화면이 다른 말을 하는 셈이다. 10(`getTeamTimetables`)이 이미 이 규칙을 쓰고
+    // 있으므로 여기를 맞춘 것이지, 새 규칙을 만든 것이 아니다.
+    db.member.count({ where: { teamId, ...ACTIVE, busyBlocks: { some: notExpired() } } }),
   ]);
 
   return {
@@ -966,10 +1044,17 @@ async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
 
   const row = await db.readCushion.findUnique({
     where: { memberId_threadKey: { memberId: session.id, threadKey } },
-    select: { tone: true },
+    select: { enabled: true, mode: true, tone: true },
   });
-  // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 순화하지 않는다.
-  return { tone: row && isCushionTone(row.tone) ? row.tone : null };
+  // **행이 없으면 팀 전체 기본값**이다. 방마다 따로 고르지 않은 사람��� 그 기본을 갖는다 —
+  // 한 명만 세게 읽히면 대화의 공기가 갈린다.
+  if (!row) return READ_CUSHION_DEFAULT;
+  return {
+    enabled: row.enabled,
+    mode: levelOf({ enabled: row.enabled, mode: row.mode as CushionLevelKey, tone: row.tone }),
+    // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 순화하지 않는다.
+    tone: isCushionTone(row.tone) ? row.tone : null,
+  };
 }
 
 
@@ -1166,10 +1251,11 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
   // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
   // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const [members, stateCounts, shownPerRecord] = await Promise.all([
+  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles] = await Promise.all([
     db.member.findMany({
       where: { teamId },
-      select: { id: true, name: true, leftAt: true, wantRole: true },
+      // `wantRole`(희망)은 **읽지 않는다** — 역할은 수락된 추첨에서만 온다. 아래 주석 참고.
+      select: { id: true, name: true, leftAt: true },
       orderBy: { joinedAt: "asc" },
     }),
     // **기록을 통째로 읽지 않고 DB 에서 센다.** 예전에는 `include: { contribRecords }` 로
@@ -1191,35 +1277,48 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
         _count: { select: { participations: { where: { activeKey: { not: null } } } } },
       },
     }),
+    // **답이 없어 닫힌 의견.** 결론이 "합의 없음 · 원문 유지" 인 기록을 사람별로 센다 —
+    // 확인 절차는 돌아갔지만 반대가 표에 남아 있는 사실이라 리포트에 남긴다.
+    db.contribRecord.groupBy({
+      by: ["memberId"],
+      where: { member: { teamId }, dispute: { not: null }, resolution: RESOLUTION_WAYS.noAgreement },
+      _count: { _all: true },
+    }),
+    // 역할은 **수락이 끝난 추첨**에서만 온다(`getAcceptedRoleAssignments`).
+    getAcceptedRoleAssignments(teamId),
   ]);
 
-  const bucketOf = new Map<string, { confirmed: number; pending: number; disputed: number }>();
-  for (const row of stateCounts) {
-    const bucket = bucketOf.get(row.memberId) ?? { confirmed: 0, pending: 0, disputed: 0 };
-    if (row.state === "ok") bucket.confirmed += row._count._all;
-    else if (row.state === "pending") bucket.pending += row._count._all;
-    else if (row.state === "disputed") bucket.disputed += row._count._all;
-    bucketOf.set(row.memberId, bucket);
-  }
-  // 표시 수는 **기록 주인** 몫이다 — 찍은 팀장이 아니라 그 기록을 만든 사람에게 더한다.
-  const shownOf = new Map<string, number>();
-  for (const row of shownPerRecord) {
-    shownOf.set(row.memberId, (shownOf.get(row.memberId) ?? 0) + row._count.participations);
-  }
+  // **어느 칸에 넣는지는 `data/contrib-report-totals.ts` 한 곳이 정한다.** 모으는 규칙이
+  // 두 군데로 나뉘면 목록마다 숫자가 어긋나고, 그건 성적 근거 문서에서 가장 나쁜 종류의
+  // 오류다. 그 파일이 순수 함수라 `scripts/smoke.mts` 가 이 규칙을 직접 돌릴 수 있다.
+  const totals = contribTotals({
+    states: stateCounts.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
+    shownPerRecord: shownPerRecord.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
+    unresolved: unresolvedRows.map((r) => ({ memberId: r.memberId, n: r._count._all })),
+  });
 
   return members.map((m) => {
-    const bucket = bucketOf.get(m.id);
+    // 기록이 한 건도 없는 사람도 줄은 서야 한다(성적 근거는 빈칸이 아니라 0 이다).
+    const bucket = totals.get(m.id);
+    // **희망으로 대신 채우지 않는다.** 확정된 배정이 없으면 그대로 "미정" 이다.
+    //
+    // 예전에는 `Member.wantRole`(1순위 희망)을 "합의한 역할"로 인쇄했다. 추첨 결과가 다른
+    // 사람에게 넘어갔는데도 그 사람의 희망이 그대로 찍히는 셈이고, 이 문서는 성적 근거로
+    // 쓰인다. 여기에 희망을 넣으면 없는 역할을 있는 것처럼 보여 **지금 버그가 그대로 숨어
+    // 버린다.** 07 화면도 둘을 "희망자"와 "확정"으로 구분해 말한다.
+    const roles = acceptedRoles.get(m.id) ?? [];
     return {
       memberId: m.id,
       who: m.name,
       left: m.leftAt !== null,
-      role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
+      role: roles.length > 0 ? roles.map((r) => ROLES.find((x) => x.key === r)?.name).join(" · ") : "미정",
       confirmed: bucket?.confirmed ?? 0,
       pending: bucket?.pending ?? 0,
       disputed: bucket?.disputed ?? 0,
       // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
       // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
-      participations: shownOf.get(m.id) ?? 0,
+      participations: bucket?.participations ?? 0,
+      unresolved: bucket?.unresolved ?? 0,
     };
   });
 }

@@ -354,9 +354,19 @@ export function ContribTeamScreen({
                     </div>
                   ) : null}
 
+                  {/* **버튼을 감추면서 이유도 같이 말한다.** 기록 주인이거나(자기 기록은
+                      자기가 확인할 수 없다) 반대를 적은 사람이면 그 자리에서 확인이 막힌다 —
+                      `canConfirm` 이 화면과 서버가 같이 쓰는 한 함수다. 이유를 말하지 않으면
+                      "누락"으로 읽힌다. */}
+                  {record.confirmBlockedBy && !record.iConfirmed ? (
+                    <p className="t-cap keep-all m-0 mt-[9px] text-txt-muted">
+                      {record.confirmBlockedBy}
+                    </p>
+                  ) : null}
+
                   {/* 자기 기록은 확인할 수도, 정정을 적을 수도 없다 — 본인 말만으로
                       확정되면 기록이 근거가 되지 못한다는 것이 이 절차의 전부다. */}
-                  {!record.isMine && record.state !== "disputed" ? (
+                  {!record.isMine && !record.confirmBlockedBy && record.state !== "disputed" ? (
                     <div className="mt-[9px] flex flex-wrap gap-1.5">
                       {record.iConfirmed ? (
                         <Chip tone="ok" icon="check">

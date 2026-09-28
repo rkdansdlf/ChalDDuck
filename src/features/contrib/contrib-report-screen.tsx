@@ -92,6 +92,12 @@ export function ContribReportScreen({
                 {row.participations > 0 ? (
                   <Chip icon="users-round">참여 표시 {row.participations}건</Chip>
                 ) : null}
+                {/* 답이 없는 의견이 닫힌 경우. 0 이면 말하지 않는다 — 다른 칩과 같은 규칙. */}
+                {row.unresolved > 0 ? (
+                  <Chip tone="err" icon="circle-help">
+                    정리되지 않은 의견 {row.unresolved}건
+                  </Chip>
+                ) : null}
               </div>
             </div>
           ))}

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { canConfirm, isResolutionWay, RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import type { ContribKindKey, TeamCheckRecord } from "@/lib/types";
 import {
   canResolveContrib,
@@ -129,13 +130,20 @@ export async function getEvidenceUrl(recordId: string): Promise<string | null> {
  */
 export async function confirmContribRecord(
   recordId: string,
-): Promise<"ok" | "mine" | "disputed" | "already"> {
+): Promise<"ok" | "mine" | "disputed" | "notDisputer" | "already"> {
   const me = await requireSessionMember();
 
   const record = await teamRecord(recordId, me.teamId);
   if (!record) throw new Error("기록을 찾을 수 없습니다.");
-  if (record.memberId === me.id) return "mine";
   if (record.state === "disputed") return "disputed";
+  // **자기 기록도, 자기 반대한 기록도** 확인하지 못한다 — 화면이 숨기는 것과 같은 함수다.
+  if (!canConfirm({
+    memberId: record.memberId,
+    disputedById: record.disputedById,
+    meId: me.id,
+  })) {
+    return record.memberId === me.id ? "mine" : "notDisputer";
+  }
 
   const existing = await db.contribConfirm.findUnique({
     where: { recordId_memberId: { recordId: record.id, memberId: me.id } },
@@ -177,33 +185,64 @@ export async function disputeContribRecord(
   const text = reason.trim().slice(0, MAX_DISPUTE);
   if (!text) throw new Error("무엇이 다른지 적어 주세요.");
 
-  const record = await teamRecord(recordId, me.teamId);
-  if (!record) throw new Error("기록을 찾을 수 없습니다.");
-  if (record.memberId === me.id) return "mine";
-  // 아직 정리되지 않은 의견이 있으면 기다린다 — 동시로 두 개의 "다르다"가 붙으면
-  // 무엇에 대한 판단인지 흐려진다.
-  if (record.dispute && !record.resolution) return "taken";
+  /**
+   * **판정과 기록을 한 트랜잭션에서 한다 — 기록 행을 잠근 안에서.**
+   *
+   * 예전에는 "아직 정리되지 않은 의견이 있으면 기다린다" 는 판단을 읽기만 하고, 6줄 뒤
+   * 트랜잭션에서 적었다. 그 사이가 구멍이었다 — **두 사람이 동시에 달라고 하면 둘 다
+   * "비어 있다"를 보고 둘 다 적고**, `ContribDispute` 에 유니크 제약이 없어서意见 두 개가
+   * 붙는다. 코드가 막으려는 상황이 그대로 열린다. `dispute` 칸에는 뒤 것만 남고,
+   * 무엇에 대한 판단인지 흐려진다 — 주석이 경계한 바로 그 일이었다.
+   *
+   * 락은 기록 하나에만 걸린다(같은 논문의 `server/actions/ice.ts` · `drive.ts` 와 같은 방식).
+   * **팀 확인은 락 안에서 다시 한다** — 잠근 뒤에 판정해야 하므로. 남의 팀 기록을 잠그는
+   * 것은 잠깐 동안일 뿐이고(커밋과 동시에 풀린다), 아무것도 읽지 않은 채로 되돌아가므로
+   * 정보가 새어 나가지 않는다.
+   */
+  const outcome = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "ContribRecord" WHERE "id" = ${recordId} FOR UPDATE`;
 
-  // **덮어쓰지 않는다.** 예전에는 이 `update` 하나가 앞선 의견과 이미 합의된 정정 내용까지
-  // 함께 지웠다 — 기록의 주인이 그 사이 적어 둔 말이 화면에서 사라졌다. 17 화면이
-  // "한쪽 말로 덮지 않고 둘 다 남깁니다"라고 말하고, 스키마 주석도 "`dispute` 는 여기 값이
-  // 생겨도 지우지 않는다"고 적어 놓았다. 둘 다 코드와 어긋나 있었다.
-  await db.$transaction([
-    db.contribDispute.create({ data: { recordId: record.id, byId: me.id, text } }),
-    db.contribRecord.update({
+    const record = await tx.contribRecord.findFirst({
+      where: { id: recordId, member: { teamId: me.teamId } },
+      select: { id: true, memberId: true, title: true, dispute: true, resolution: true },
+    });
+    if (!record) return { status: "gone" as const };
+    if (record.memberId === me.id) return { status: "mine" as const };
+    // 아직 정리되지 않은 의견이 있으면 기다린다 — 동시로 두 개의 "다르다"가 붙으면
+    // 무엇에 대한 판단인지 흐려진다.
+    if (record.dispute && !record.resolution) return { status: "taken" as const };
+
+    // **덮어쓰지 않는다.** 예전에는 이 `update` 하나가 앞선 의견과 이미 합의된 정정 내용까지
+    // 함께 지웠다 — 기록의 주인이 그 사이 적어 둔 말이 화면에서 사라졌다. 17 화면이
+    // "한쪽 말로 덮지 않고 둘 다 남깁니다"라고 말하고, 스키마 주석도 "`dispute` 는 여기 값이
+    // 생겨도 지우지 않는다"고 적어 놓았다. 둘 다 코드와 어긋나 있었다.
+    await tx.contribDispute.create({ data: { recordId: record.id, byId: me.id, text } });
+    await tx.contribRecord.update({
       where: { id: record.id },
       // 본문에 이름을 섞지 않는다 — 나중에 이름을 떼어내려면 본문을 파싱해야 하고, 그러면
       // 콜론이 든 의견에서 엉뚱한 곳이 잘린다.
       data: { dispute: text, disputedById: me.id, resolution: null },
-    }),
-  ]);
-  await refreshContribState(record.id);
+    });
+    // **상태도 같은 안에서 맞춘다.** 밖에서 다시 읽으면 그 사이에 정리되어 opinion 이 사라진
+    // 기록을 보고 "의견 차이"로 되돌아갈 수 있다.
+    await refreshContribState(record.id, tx);
+
+    return { status: "ok" as const, title: record.title, memberId: record.memberId };
+  });
+
+  // 기록이 사라진 것은 **예상하지 못 한 일**이다(화면이 열려 있는 사이에 지워졌다) — 예측 가능한
+  // 거절("taken", "mine")과 달리 화면이 준비할 말이 없다. 예전에도 던졌고, 던진 쪽이 문구를
+  // 지운다는 규칙(`server/actions/*.ts` 머리말)대로 화면은 일반 실패 문구를 보인다.
+  // 반환 값에 넣지 않는다 — 실제로 나올 수 없는 경우를 계약에 적으면 호출부가 대비하게 된다.
+  if (outcome.status === "gone") throw new Error("기록을 찾을 수 없습니다.");
+  if (outcome.status === "mine") return "mine";
+  if (outcome.status === "taken") return "taken";
 
   await notify({
-    to: [record.memberId],
+    to: [outcome.memberId],
     kind: "contrib-dispute",
     title: `${me.name}님이 기록에 의견을 남겼습니다`,
-    body: record.title,
+    body: outcome.title,
     href: "/team/contrib/members",
     actorId: me.id,
   });
@@ -228,8 +267,13 @@ export async function disputeContribRecord(
 export async function resolveContribDispute(
   recordId: string,
   way: string,
-): Promise<"ok" | "gone" | "notYours"> {
+): Promise<"ok" | "gone" | "notYours" | "badWay"> {
   const me = await requireSessionMember();
+
+  // **화면이 보낸 결론을 그대로 쓰지 않는다.** 예전에는 문자열이 무엇이든 저장됐다 — 주소로
+  // 부르면 임의의 문장이 결론으로 들어가고, 리포트의 "정리되지 않은 의견" 집계는 한국어 문장을
+  // 읽어야 했다. 키만 받고 문구는 여기서 만든다.
+  if (!isResolutionWay(way)) throw new Error("정결할 수 없는 말입니다.");
 
   // 우리 팀 기록인지 서버에서 확인한다.
   const record = await teamRecord(recordId, me.teamId);
@@ -241,7 +285,7 @@ export async function resolveContribDispute(
 
   await db.contribRecord.update({
     where: { id: record.id },
-    data: { resolution: way },
+    data: { resolution: RESOLUTION_WAYS[way] },
   });
   await refreshContribState(record.id);
 

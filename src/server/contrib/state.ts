@@ -2,6 +2,9 @@ import "server-only";
 
 import { db } from "@/server/db";
 
+/** 트랜잭션 안에서 돌릴 때 받는 Prisma 클라이언트. 같은 표를 잠근 상태로 읽게 한다. */
+type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+
 /**
  * 기여 기록의 상태 규칙 — **한 곳에서만 정한다.**
  *
@@ -69,8 +72,8 @@ export function contribState(input: {
 }
 
 /** 표에 저장된 `state` 를 다시 계산해 맞춘다. 기록을 건드린 액션이 마지막에 부른다. */
-export async function refreshContribState(recordId: string): Promise<ContribState> {
-  const record = await db.contribRecord.findUnique({
+export async function refreshContribState(recordId: string, client: Tx = db): Promise<ContribState> {
+  const record = await client.contribRecord.findUnique({
     where: { id: recordId },
     select: {
       dispute: true,
@@ -89,21 +92,34 @@ export async function refreshContribState(recordId: string): Promise<ContribStat
     needed: record.member.team.confirmsNeeded,
   });
 
-  await db.contribRecord.update({ where: { id: recordId }, data: { state } });
+  await client.contribRecord.update({ where: { id: recordId }, data: { state } });
   return state;
 }
 
-/** 화면에 보일 확인 상태 문구. 저장하지 않고 그때그때 만든다. */
+/**
+ * 화면에 보일 확인 상태 문구. 저장하지 않고 그때그때 만든다.
+ *
+ * **정리되지 않은 의견**이 있으면 확인 진행과 함께 말합니다. 결론("합의 없음 · 원문 유지")
+ * 이 이미 적혀 있어 확인은 돌아가지만, 그 반대가 표에 남아 있다는 사실이 화면에서 사라지면
+ * "아무도 이의가 없었다"고 읽힙니다.
+ */
 export function contribByLabel(input: {
   state: ContribState;
   confirms: number;
   /** 필요한 수. 2명 이상일 때만 분모를 보여 준다 — 1/1은 숫자만 늘어난다. */
   needed: number;
   disputedBy: string | null;
+  /** 답이 없는 의견이 닫힌 상태인가(`resolution.ts` 의 `unresolvedAfter`). */
+  unresolved: boolean;
 }): string {
   if (input.state === "disputed") {
     return input.disputedBy ? `${input.disputedBy} · 의견 차이 1건` : "의견 차이 1건";
   }
-  if (input.confirms === 0) return "팀원 확인 대기";
-  return input.needed > 1 ? `${input.confirms}/${input.needed}명 확인` : `${input.confirms}명 확인`;
+  const progress =
+    input.confirms === 0
+      ? "팀원 확인 대기"
+      : input.needed > 1
+        ? `${input.confirms}/${input.needed}명 확인`
+        : `${input.confirms}명 확인`;
+  return input.unresolved ? `정리되지 않은 의견 1건 · ${progress}` : progress;
 }

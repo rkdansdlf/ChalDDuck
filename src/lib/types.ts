@@ -24,6 +24,14 @@ export type Team = {
   course: string;
   /** 초대 코드 — 로그인 없이 이 코드 + 이름으로 기록을 잇는다. */
   code: string;
+  /**
+   * 초대 링크 토큰의 **원문.** 팀을 만들 때만 나온다.
+   *
+   * 서버에는 해시만 남으므로 **다시 볼 수 없다** — 화면이 `/join?t=` 링크를 한 번 보여 주고
+   * 잃어버리면, 팀장이 계정과 기기에서 새로 만들어야 한다. 그래서 팀을 만든 화면이 이 값을
+   * 받아 링크를 조립한다.
+   */
+  inviteToken?: string;
   memberCount: number;
   /** "중간발표 D-12" 같은 표시 문자열. 서버가 날짜를 주면 화면에서 계산하도록 바꿀 것. */
   dday: string | null;
@@ -258,6 +266,21 @@ export type AiAnswerSource =
 
 /** 쿠션 번역기의 말투. 요구 내용은 그대로 두고 말투만 바꾼다. */
 export type CushionTone = { key: string; name: string };
+
+/**
+ * 읽기 순화의 강도.
+ *
+ * `OFF` 는 강도가 아니라 **끄는 상태** 다 — 그래서 여기 없고 `ReadCushionSetting.enabled`
+ * 로 따로 둔다(끄기 전에 고른 단계를 잃지 않으려고).
+ */
+export type CushionLevelKey = "LIGHT" | "NORMAL" | "STRONG";
+
+export type CushionLevel = {
+  key: CushionLevelKey;
+  name: string;
+  /** 화면에서 무엇을 약속하는지. 한 줄. */
+  desc: string;
+};
 
 /** 27 상황별 문장 변환의 모드. 쿠션 번역기(말투)와는 다른 기능이다. */
 export type SentenceMode = {
@@ -646,6 +669,20 @@ export type TeamCheckRecord = {
    */
   participation: Participation | null;
   /**
+   * 내가 이 기록을 **확인할 수 없는 이유** — `null` 이면 됩니다.
+   *
+   * 화면이 버튼을 감추면서 **왜인지도 같이 말한다.** 주소로 서버 액션을 부르면 화면과 무관하게
+   * 들어올 수 있으므로, 조건은 `features/contrib/resolution.ts` 의 `canConfirm` 한 곳이 정한다.
+   */
+  confirmBlockedBy: string | null;
+  /**
+   * 답이 없어 닫힌 의견인지(`resolution.ts` 의 `unresolvedAfter`).
+   *
+   * 결론은 적혀 있어 확인 절차는 돌아가지만 반대가 표에 남아 있다 — 리포트는 이 값을
+   * "정리되지 않은 의견"으로 센다.
+   */
+  unresolved: boolean;
+  /**
    * 의견 차이를 1:1 로 이야기할 상대의 id(= DM 스레드 id).
    *
    * 내 기록이면 의견을 적은 사람, 아니면 기록 주인이다. 그 사람이 팀을 나갔거나
@@ -677,6 +714,13 @@ export type ContribReportRow = {
    * 원칙이라, 이 수를 보고 사람끼리 비교하는 일은 화면이 유도하지 않는다.
    */
   participations: number;
+  /**
+   * **답이 없어 닫힌 의견** 수 — 결론이 "합의 없음 · 원문 유지" 인 기록.
+   *
+   * 확인 절차는 돌아갔지만 반대가 표에 남아 있다. 이걸 숨기면 "아무도 이의가 없었다"고
+   * 읽히는 문서가 되므로 센다.
+   */
+  unresolved: number;
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
