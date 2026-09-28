@@ -16,9 +16,27 @@ import { createClient } from "@supabase/supabase-js";
  *
  * 로컬 DB 만 쓰듯이 **운영 버킷을 만지지 않는다** — 확인은 읽기와 발급뿐이고, 발급한
  * 주소로 아무것도 올리지 않는다.
+ *
+ * ## 두 가지 모드
+ *
+ * | 부르는 법 | 설정이 없을 때 |
+ * |---|---|
+ * | `npm run storage:check` | **실패** — "저장소를 쓰기로 했는데 설정이 없다"는 사실 |
+ * | `node scripts/check-storage.mjs --if-configured` | **통과** — 저장소를 쓰지 않는 배포를 막지 않는다 |
+ *
+ * 두 번째가 `vercel.json` 의 빌드 게이트다. 저장소를 **쓰기로 했는데 안 되는 경우**만
+ * 막는다 — 2026-09-28 이 그 경우였다(환경변수는 다 채워져 있고 버킷이 없었는데 아무
+ * 검사도 몰라서 드라이브가 조용히 실패했다).
+ *
+ * 반대로 **설정 자체가 없는 것**은 실패로 보지 않는다. 저장소 없이 앱을 도는 것도 가능한
+ * 선택이고(`.env.example` 가 "파일 업로드만 막히고 앱은 돕다"고 적어 있다), 화면도 이미
+ * "서버의 파일 저장소가 준비되지 않았습니다"라고 정직하게 말한다
+ * (`server/storage/client.ts` 의 `bucketState` ). 게이트가 같은 말을 또 하지 않아도 된다.
  */
 
 const BUCKET = "submissions";
+/** 설정이 없을 때 통과시킬지. `vercel.json` 이 이 모드로 부른다. */
+const IF_CONFIGURED = process.argv.includes("--if-configured");
 
 let failures = 0;
 const check = (name, ok, detail = "") => {
@@ -34,6 +52,12 @@ console.log(`저장소 확인 — 프로젝트 ${ref || "(SUPABASE_URL 없음)"}
 
 // 이 앱은 Supabase Auth 를 쓰지 않아 승인 요청이 없다 — 예외는 기대한 일이다.
 if (!url || !key) {
+  if (IF_CONFIGURED) {
+    console.log(
+      "\n저장소 확인: 건너뜀 — 설정이 없어 파일 저장소를 쓰지 않는 배포입니다. 통과시킵니다.",
+    );
+    process.exit(0);
+  }
   check("SUPABASE_URL / SUPABASE_SECRET_KEY 가 있다", false, "`.env.example` 참고");
   console.log("\n저장소 확인: 실패 — 설정이 없습니다.");
   process.exit(1);
