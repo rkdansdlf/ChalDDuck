@@ -6,6 +6,8 @@ import { isMbtiType } from "@/lib/mbti";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
+import { countUnresolved } from "@/server/rate-limit/join-throttle";
+import { isJoinCapped } from "@/server/rate-limit/policy";
 import type {
   AiPolicy,
   AiTool,
@@ -63,6 +65,8 @@ import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
 import { pushConfigured } from "@/server/notify/push";
+import { READ_CUSHION_DEFAULT, isCushionTone, type ReadCushionSetting } from "@/lib/read-cushion";
+import { confirmsPolicy, teamCheckRecords } from "@/server/contrib/team-check";
 import {
   AI_POLICY,
   AI_TOOLS,
@@ -344,22 +348,34 @@ export type JoinRequestRow = {
   when: string;
 };
 
-export async function getJoinRequests(teamId: string): Promise<JoinRequestRow[]> {
+/**
+ * 팀장에게 보여 줄 가입 요청 목록.
+ *
+ * `capped` 는 **새 요청이 막히고 있는지**다. 목록이 비어 있어도 이 값은 따로 돌려준다 —
+ * 안 그러면 팀장은 자기 목록이 안 차는 이유를 알 수 없고, 제한을 건 팀원들만 이유를 안다.
+ * 제한을 풀 수 있는 사람은 요청을 거절할 수 있는 팀장뿐이라, 알릴 곳도 팀장뿐이다.
+ */
+export async function getJoinRequests(
+  teamId: string,
+): Promise<{ rows: JoinRequestRow[]; capped: boolean }> {
   const session = await getSessionMember();
-  if (!session || !session.isLeader) return [];
+  if (!session || !session.isLeader) return { rows: [], capped: false };
 
   const rows = await db.joinRequest.findMany({
     where: { teamId, status: "pending" },
     orderBy: { createdAt: "desc" },
   });
 
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    want: ROLES.find((role) => role.key === r.wantRole)?.name ?? "미정",
-    device: r.label ?? "알 수 없는 기기",
-    when: formatDeadline(r.createdAt),
-  }));
+  return {
+    capped: isJoinCapped(await countUnresolved(teamId)),
+    rows: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      want: ROLES.find((role) => role.key === r.wantRole)?.name ?? "미정",
+      device: r.label ?? "알 수 없는 기기",
+      when: formatDeadline(r.createdAt),
+    })),
+  };
 }
 
 /** 내 이름으로 열려 있는 기기 목록. 내 것만 보인다. */
@@ -867,6 +883,134 @@ export async function getNewerMessages(
  * 고정한다: 마지막 메시지는 `distinct`로 스레드당 한 줄만, 안 읽은 수는 스레드마다
  * 다른 기준 시각을 하나의 `groupBy` 안에 OR 조건으로 넣어 한 번에 센다.
  */
+/**
+ * 이 방의 말을 어떤 말투로 읽는지(19 · 31).
+ *
+ * **없으면 아직 고르지 않은 것이다.** 화면과 서버가 같은 규칙(`DEFAULT_TONE`)으로 첫
+ * 말투를 쓰고, 어느 쪽도 빈 값을 만들어 내지 않는다.
+ *
+ * 대화방마다 읽는다 — "단톡방은 부드럽게, DM 은 담담하게"가 되어야 하므로.
+ */
+async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
+  const session = await getSessionMember();
+  if (!session) return READ_CUSHION_DEFAULT;
+
+  const row = await db.readCushion.findUnique({
+    where: { memberId_threadKey: { memberId: session.id, threadKey } },
+    select: { tone: true },
+  });
+  // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 순화하지 않는다.
+  return { tone: row && isCushionTone(row.tone) ? row.tone : null };
+}
+
+
+export async function getTeamReadCushion(): Promise<ReadCushionSetting> {
+  return readCushionOf("team");
+}
+
+
+export async function getDmReadCushion(teamId: string, threadId: string): Promise<ReadCushionSetting> {
+  const session = await getSessionMember();
+  if (!session) return READ_CUSHION_DEFAULT;
+  return readCushionOf(dmThreadKey(session.id, threadId));
+}
+
+
+export async function getConfirmsPolicy(teamId: string) {
+  const session = await getSessionMember();
+  return confirmsPolicy(teamId, session?.isLeader === true);
+}
+
+
+export type FileViewContext = { box: SubmissionBox; file: SubmittedFile };
+
+export async function getFileViewContext(
+  teamId: string,
+  boxId: string,
+  fileId: string,
+): Promise<FileViewContext | null> {
+  const row = await db.submittedFile.findFirst({
+    // 어느 팀의 것인지, **그리고 어느 제출함의 것인지** 를 한 번에 확인한다. 예전에는 팀만
+    // 확인한 뒤 제출함을 따로 찾아, 팀의 다른 제출함에 있는 파일을 받아올 수도 있었다.
+    where: { id: fileId, boxId, box: { teamId } },
+    include: {
+      box: {
+        include: {
+          owner: { select: { name: true } },
+          _count: { select: { files: true } },
+        },
+      },
+      versions: {
+        include: { author: { select: { name: true } } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      },
+    },
+  });
+  if (!row) return null;
+
+  const late = row.versions.some((v) => isLateVersion(v, row.box.dueAt));
+  const box: SubmissionBox = {
+    id: row.box.id,
+    role: row.box.role as RoleKey,
+    name: row.box.name,
+    owner: row.box.owner?.name ?? null,
+    // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세어서, 같은 파일을 네 번 고치면 "4개"로 보였다.
+    fileCount: row.box._count.files,
+    due: row.box.dueAt ? formatDue(row.box.dueAt) : row.box.due,
+    dueAt: row.box.dueAt ? toKstInputValue(row.box.dueAt) : null,
+    hasLate: late,
+  };
+
+  const latest = row.versions[0];
+  const file: SubmittedFile = {
+    id: row.id,
+    name: row.name,
+    kind: row.kind as FileKind,
+    versionCount: row.versions.length,
+    latestVersionId: latest?.id ?? null,
+    latestLabel: latest?.label ?? null,
+    latestBy: latest?.author.name ?? null,
+    latestWhen: latest ? formatWhen(latest.createdAt) : null,
+    size: latest?.size ?? null,
+    hasLate: late,
+  };
+
+  return { box, file };
+}
+
+
+/**
+ * 스레드마다 **가장 최근 말 하나만** 가져온다.
+ *
+ * 이 폴링은 4초마다 돈다. `getDmThreads` 가 하는 일이 크면 그만큼 자주 크다.
+ *
+ * ## 왜 Prisma 의 `distinct` 를 쓰지 않나
+ *
+ * `db.message.findMany({ distinct: ["threadKey"], orderBy: [...] })` 로도 **결과는** 스레드마다
+ * 한 줄씩 나온다. 그래서 겉보기에는 맞는 코드이고, 실제로 나오는 SQL 을 확인하기 전까지는
+ * 속도 문제를 찾을 수 없었다. 그 SQL 에는 `DISTINCT ON` 이 없고 `ORDER BY` 도 `LIMIT` 도 없다.
+ * 즉 **Postgres 는 그 방의 메시지를 전부 보내고, Prisma 가 브라우저 쪽에서 중복을 걷어낸다.**
+ * 10,000개 대화이면 4초마다 10,000줄을 DB → 서버 → 브라우저로 옮긴 뒤 한 줄만 쓴다.
+ *
+ * 그래서 `DISTINCT ON` 을 직접 쓴다 — 인덱스(`@@index([teamId, threadKey, createdAt])`)가 있어
+ * Postgres 가 각 스레드의 첫 행만 읽고 멈춘다. **요구한 것보다 더 읽지 않는지가 곧 비용**이다.
+ */
+export async function lastMessagePerThread(
+  client: Pick<typeof db, "$queryRaw">,
+  teamId: string,
+  threadKeys: string[],
+): Promise<{ threadKey: string; text: string; whenLabel: string | null; createdAt: Date }[]> {
+  if (threadKeys.length === 0) return [];
+  return client.$queryRaw<
+    { threadKey: string; text: string; whenLabel: string | null; createdAt: Date }[]
+  >`
+    SELECT DISTINCT ON ("threadKey") "threadKey", "text", "whenLabel", "createdAt"
+    FROM "Message"
+    WHERE "teamId" = ${teamId} AND "threadKey" = ANY(${threadKeys})
+    ORDER BY "threadKey", "createdAt" DESC, "id" DESC
+  `;
+}
+
 export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   const session = await getSessionMember();
   if (!session) return [];
@@ -884,11 +1028,7 @@ export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   // 먼저 받아 온 뒤에 물어야 한다.
   const [readMarks, lastMessages] = await Promise.all([
     db.readMark.findMany({ where: { memberId: session.id, threadKey: { in: threadKeys } } }),
-    db.message.findMany({
-      where: { teamId, threadKey: { in: threadKeys } },
-      orderBy: [{ threadKey: "asc" }, { createdAt: "desc" }],
-      distinct: ["threadKey"],
-    }),
+    lastMessagePerThread(db, teamId, threadKeys),
   ]);
 
   const unreadCounts = await db.message.groupBy({
@@ -966,51 +1106,21 @@ function toEvidence(r: { evidencePath: string | null; evidenceName: string | nul
     : null;
 }
 
-/** 팀 전체의 기록. 내 화면(16)과 **같은 표**를 본다. */
+/**
+ * 팀 전체의 기록. 내 화면(16)과 **같은 표**를 본다.
+ *
+ * 계산은 `server/contrib/team-check.ts` 의 `teamCheckRecords` **한 곳**에서 한다 — 첫 로드와
+ * 폴링이 같은 값을 보여야 하는데, 예전에는 같은 질의와 매핑이 두 번 적혀 있었다. 팀의 기준
+ * (`confirmsNeeded`)이 들어오면서 벌써 한쪽만 고칠 수 있게 됐다(한쪽은 "1/2명 확인", 다른 쪽은
+ * "확인됨"처럼 목록마다 다른 말이 붙었다).
+ *
+ * 여기엔 사본이 하나 더 남아 있었다. 그 사본이 `confirmsNeeded` 를 못 읽고 있어 표시 문구가
+ * 다른 목록과 어긋났고, `iCanResolve` 도 돌려주지 않아 화면의 "정정에 응답하기" 가 조건 없이
+ * 사라졌다.
+ */
 export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   const session = await getSessionMember();
-
-  const rows = await db.contribRecord.findMany({
-    where: { member: { teamId } },
-    include: {
-      member: { select: { id: true, name: true, leftAt: true } },
-      disputedBy: { select: { id: true, name: true, leftAt: true } },
-      confirms: { select: { memberId: true } },
-      // 의견의 **전체 이력.** 지금 떠 있는 의견 하나만 보여 주면 앞선 말이 사라진 것처럼
-      // 보인다 — 실제로opinions가 덮여 있었다. 시간순으로 모두 준다.
-      disputes: {
-        select: { id: true, text: true, createdAt: true, by: { select: { name: true } } },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      },
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-
-  return rows.map((r) => {
-    const state = r.state as TeamCheckRecord["state"];
-    // 내 기록이면 의견을 적은 사람과, 아니면 기록 주인과 이야기한다.
-    const other = r.member.id === session?.id ? r.disputedBy : r.member;
-    return {
-      id: r.id,
-      who: r.member.name,
-      title: r.title,
-      state,
-      isMine: r.member.id === session?.id,
-      confirms: r.confirms.length,
-      iConfirmed: r.confirms.some((c) => c.memberId === session?.id),
-      // 표시 문구는 저장하지 않고 그때그때 만든다 — 저장해 두면 확인 수와 어긋난다.
-      by: contribByLabel({
-        state,
-        confirms: r.confirms.length,
-        disputedBy: r.disputedBy?.name ?? null,
-      }),
-      evidence: toEvidence(r),
-      dispute: r.dispute,
-      history: r.disputes.map((d) => ({ who: d.by.name, text: d.text })),
-      resolution: r.resolution,
-      dmWith: other && other.leftAt === null && other.id !== session?.id ? other.id : null,
-    };
-  });
+  return teamCheckRecords(teamId, session?.id ?? null);
 }
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
@@ -1090,9 +1200,19 @@ export async function getMyPokedTaskIds(teamId: string): Promise<string[]> {
 /* ── 알림 ───────────────────────────────────────────────────── */
 
 /** 내게 온 알림. 최근 것이 위. */
-export async function getNotifications(): Promise<AppNotification[]> {
+/**
+ * 내게 온 알림. 최근 것이 위.
+ *
+ * 안 읽은 수는 목록 창(최근 50건)과 **별개로 전체 기준**이다 — 둘을 따로 세지 않는다
+ * (`server/notify/inbox.ts` 가 한 곳에서 함께 돌려준다. 그 주석 참고).
+ */
+export async function getNotifications(): Promise<{
+  items: AppNotification[];
+  unread: number;
+}> {
   const session = await getSessionMember();
-  return session ? notificationsFor(session.id) : [];
+  if (!session) return { items: [], unread: 0 };
+  return notificationsFor(session.id);
 }
 
 /** 안 읽은 알림 수. 홈의 종 배지에 쓴다. */

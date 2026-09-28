@@ -189,7 +189,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "drive";
+  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "drive";
   title: string;
   body: string;
   href: string | null;
@@ -234,7 +234,27 @@ export type AiPolicy = {
  * `digest` 만 클라이언트로 보낸다 — 즉 `throw new Error("오늘 한도를 다 썼습니다")` 는
  * 사용자에게 절대 닿지 않는다. 돌려주는 값은 그냥 데이터라서 그대로 도착한다.
  */
-export type AiResult<T> = { ok: true; value: T } | { ok: false; message: string };
+export type AiResult<T> =
+  | { ok: true; value: T; source: AiAnswerSource }
+  | { ok: false; message: string };
+
+/**
+ * `ok: true` 로 돌아온 값이 **모델이 만든 것인지, 미리 적어 둔 예시인지**.
+ *
+ * 이 값이 없는 이유는 예전에는 성공을 "일했다"로만 봤기 때문이다. 그런데 키가 없을 때는
+ * 다섯 도구 전부가 **샘플을 결과 자리에 그대로 돌려주었다** — 버튼을 누르고 "다듬는 중…"이
+ * 지나갔는데 화면에는 사용자의 원문과 상관없는 예시가 "다듬은 대본"으로 놓였다. 그래서
+ * 화면마다 `isAiConfigured()` 를 다시 보고 자기 방식으로 알아내려 했고, forgets한 곳에서
+ * 다시 사람이 만든 것처럼 보이게 되었다.
+ *
+ * **누가 만들었는지를 사용자에게 알릴 책임은 서버에 있다.** 화면이 추측할 필요가 없도록
+ * 결과와 함께 돌려준다.
+ */
+export type AiAnswerSource =
+  /** 모델이 실제로 만들어 준 결과. */
+  | "ai"
+  /** 키가 없어 미리 적어 둔 예시. 이건 모델이 한 일이 아니다. */
+  | "sample";
 
 /** 쿠션 번역기의 말투. 요구 내용은 그대로 두고 말투만 바꾼다. */
 export type CushionTone = { key: string; name: string };
