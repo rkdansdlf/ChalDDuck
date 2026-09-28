@@ -65,6 +65,7 @@ import {
   toKstInputValue,
 } from "../src/lib/when.js";
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
+import { undelivery } from "../src/server/auth/undelivered.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
 import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
@@ -103,6 +104,7 @@ import {
   maskRiskyParts,
   needsMask,
   packPurifyItems,
+  PURIFY_CONTEXT_MESSAGES,
   parsePurifyResponse,
   purificationAiShare,
   remainingPurify,
@@ -110,9 +112,11 @@ import {
   rejectsPurified,
   toneChanged,
   toneOf,
+  VALIDATOR_VERSION,
   type CushionReason,
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
+import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
 import type { ChatMessage, MeetingProposal, RoleDrawResult } from "../src/lib/types.js";
 import {
   clientGate,
@@ -1220,9 +1224,17 @@ console.log("\n읽기 순화: id 기반 계약");
     { id: "m2", text: "자료는 언제쯤 나와요?" },
   ];
   // **본문은 데이터로 준다.** 글로 붙이면 "이전 지시를 무시해" 가 지시로 읽힐 수 있다.
-  const request = JSON.parse(buildPurifyRequest(items));
+  const request = JSON.parse(buildPurifyRequest(items)) as {
+    task: string;
+    items: Array<{ id: string; text: string; before: Array<{ text: string }> }>;
+  };
   check("요청에 task 가 있다", request.task, "rewrite_for_reader_comfort");
-  check("본문은 데이터로 실린다", request.items, items);
+  // 항목마다 `before` 가 붙으므로, 본문·id 와 **문맥이 섞이지 않았는지**로 본다.
+  check(
+    "본문은 데이터로 실린다",
+    request.items.map((i) => [i.id, i.text]),
+    items.map((i) => [i.id, i.text]),
+  );
 
   // 순서가 바뀌어도, 하나가 빠져도, 앞에 설명이 붙어도 **요청한 id 만** 받아온다.
   const shuffled = parsePurifyResponse(
@@ -1496,7 +1508,9 @@ console.log("\n읽기 순화 (DB)");
     });
     const cushion = (over: Record<string, unknown> = {}) => ({
       messageId: message.id,
-      viewerId: viewer.id,
+      policyHash: "policy-a",
+      level: "NORMAL",
+      tone: "soft",
       status: "PURIFIED",
       text: "읽기 순화 확인용",
       source: "ai",
@@ -1507,24 +1521,96 @@ console.log("\n읽기 순화 (DB)");
       ...over,
     });
 
-    const first = await db.messageCushion.create({ data: cushion() });
+    const first = await db.messagePurification.create({ data: cushion() });
     truthy("순화 상태가 남는다", Boolean(first.id));
 
-    // **한 말·한 사람에게 두 줄이 생기면 안 된다.** 어느 것이 맞는 결과인지 고르는 기준이
+    // **같은 말 + 같은 설정에 두 줄이 생기면 안 된다.** 어느 것이 맞는 결과인지 고르는 기준이
     // 사라지고, 사용자가 본 말과 다른 말이 쌓인다.
-    const dup = await db.messageCushion
+    const dup = await db.messagePurification
       .create({ data: cushion({ text: "다른 말", status: "FALLBACK" }) })
       .catch((e: { code?: string }) => e.code);
-    check("같은 말은 사람당 한 줄뿐이다", dup, "P2002");
+    check("같은 말·같은 설정은 한 줄뿐이다", dup, "P2002");
 
-    // 선점: 두 탭이 **아직 없는** 같은 말에 동시에 PENDING 을 만들면 한 줄만 남고,
+    // **설정이 다르면 다른 줄이다.** 이것이 이 구조의 전부다 — 열쇠에 사람이 아니라
+    // 읽기 조건이 들어가므로, 같은 말을 다른 강도로 읽으면 각자 맞는 결과가 남는다.
+    /**
+     * **팀원 몇 명이든 같은 결과의 같은 줄을 본다** — 계측으로 확인한다.
+     *
+     * 모델을 부르면 돈과 시간이 들고 회차마다 편차가 커서 AI 호출 횟수로는 증명할 수 없다.
+     * 그래서 **DB 계약**(열쇠가 사람인지 설정인지)을 직접 지킨다 — 모델을 부르기 전 마지막 관문.
+     */
+    const peerA = await db.member.create({ data: { teamId: team.id, name: "가", wantRole: "research" } });
+    const peerB = await db.member.create({ data: { teamId: team.id, name: "나", wantRole: "present" } });
+    const peerC = await db.member.create({ data: { teamId: team.id, name: "다", wantRole: "manage" } });
+    const seen = await Promise.all(
+      [peerA.id, peerB.id, peerC.id].map(() =>
+        db.messagePurification.findFirst({ where: { messageId: message.id, policyHash: "policy-a" }, select: { id: true } }),
+      ),
+    );
+    check("세 사람이 같은 결과의 같은 줄을 본다", new Set(seen.map((row) => row?.id)).size, 1);
+    // 그 세 사람은 **같은 결과를 폈다가 끝**이다 — 읽는 사람이 늘어도 순화본은 늘지 않는다.
+    check(
+      "사람이 늘어도 순화본은 늘지 않는다",
+      await db.messagePurification.count({ where: { messageId: message.id, policyHash: "policy-a" } }),
+      1,
+    );
+    await db.member.deleteMany({ where: { id: { in: [peerA.id, peerB.id, peerC.id] } } });
+
+    const other = await db.messagePurification.create({ data: cushion({ policyHash: "policy-b", level: "STRONG" }) });
+    check("설정이 다르면 다른 결과가 남는다", other.level, "STRONG");
+    check("같은 말에 두 설정이 함께 있다", await db.messagePurification.count({ where: { messageId: message.id } }), 2);
+
+    /**
+     * **읽는 사람이 몇 명이어도 결과는 한 줄이다** — 이 표의 전부다.
+     *
+     * 예전에는 (말, 읽는 사람) 이 열쇠여서 팀원 5명이 방에서 같이 읽으면 **같은 말을 5번**
+     * 모델에 불렀다(AI 한도 1회씩). 팀플이 4~5명인 이 앱에서 가장 큰 낭비였다.
+     *
+     * 여기서 확인하는 것: 두 사람이 **같은 지문**을 조회해도 같은 행을 본다. 열쇠에 사람이
+     * 없으므로 두 번째 사람은 AI 를 부르지 않는다(액션의 선점이 붙잡는다).
+     */
+    const secondViewer = await db.member.create({
+      data: { teamId: team.id, name: "둘째", wantRole: "present" },
+    }).catch(() => null);
+    if (secondViewer) {
+      const peerSeesSame = await db.messagePurification.findMany({
+        where: { messageId: message.id, policyHash: "policy-a" },
+        select: { id: true, text: true },
+      });
+      check("같은 설정을 읽는 사람은 같은 결과를 본다", peerSeesSame.length, 1);
+      check("그 결과는 같은 글이다", peerSeesSame[0].text, first.text);
+      check("사람을 열쇠에 넣지 않는다", await db.messagePurification.count({ where: { messageId: message.id } }), 2);
+      await db.member.delete({ where: { id: secondViewer.id } });
+    }
+
+    // **지문은 읽기 조건만 담는다.** 사람이 바뀌어도 지문이 같아야 공유된다.
+    const policyA = purifyPolicyHash({ level: "NORMAL", tone: "soft", model: "openrouter/free", promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+    const policySameA = purifyPolicyHash({ level: "NORMAL", tone: "soft", model: "openrouter/free", promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+    const policyStrong = purifyPolicyHash({ level: "STRONG", tone: "soft", model: "openrouter/free", promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+    const policyTone = purifyPolicyHash({ level: "NORMAL", tone: "asis", model: "openrouter/free", promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+    check("같은 조건은 같은 지문", policyA, policySameA);
+    check("강도가 다르면 지문이 다르다", policyA === policyStrong, false);
+    check("말투가 다르면 지문이 다르다", policyA === policyTone, false);
+    // 지문 하나가 **한 줄의 전부**여야 한다 — 더할 수 있는 식별자가 남아 있으면 공유가 깨진다.
+    const shareRow = await db.messagePurification.create({
+      data: cushion({ policyHash: policyA, text: "지문 공유 확인" }),
+    });
+    const sharePeer = await db.messagePurification.findUnique({
+      where: { messageId_policyHash: { messageId: message.id, policyHash: policyA } },
+    });
+    check("지문만으로 같은 결과를 찾는다", sharePeer?.id, shareRow.id);
+    await db.messagePurification.delete({ where: { id: shareRow.id } });
+
+    // 선점: 두 탭이 **아직 없는** 같은 말·같은 설정에 동시에 PENDING 을 만들면 한 줄만 남고,
     // claimToken 은 한쪽에만 있다. 그 값이 자기 것인 요청만 모델을 부른다.
     const claimMessage = await db.message.create({
       data: { teamId: team.id, threadKey: "team", authorId: viewer.id, text: "선점 확인용", whenLabel: "14:03" },
     });
     const claimRow = (claimToken: string) => ({
       messageId: claimMessage.id,
-      viewerId: viewer.id,
+      policyHash: "policy-a",
+      level: "NORMAL",
+      tone: "soft",
       status: "PENDING",
       sourceHash: "h1",
       model: "openrouter/free",
@@ -1533,20 +1619,50 @@ console.log("\n읽기 순화 (DB)");
       claimToken,
       retryAfter: new Date(Date.now() + CLAIM_TTL_MS),
     });
-    await db.messageCushion.createMany({ data: [claimRow("token-a"), claimRow("token-b")], skipDuplicates: true });
-    const claimed = await db.messageCushion.findMany({ where: { messageId: claimMessage.id } });
+    await db.messagePurification.createMany({ data: [claimRow("token-a"), claimRow("token-b")], skipDuplicates: true });
+    const claimed = await db.messagePurification.findMany({ where: { messageId: claimMessage.id } });
     check("선점도 한 줄뿐이다", claimed.length, 1);
     check("선점 토큰은 하나만 남는다", [claimed[0].claimToken === "token-a", claimed[0].claimToken === "token-b"].filter(Boolean).length, 1);
-    await db.messageCushion.deleteMany({ where: { messageId: claimMessage.id } });
+    await db.messagePurification.deleteMany({ where: { messageId: claimMessage.id } });
     await db.message.delete({ where: { id: claimMessage.id } });
 
+    /**
+     * **문맥이 있어도 캐시가 깨지지 않는다 (P2).**
+     *
+     * "이 방의 최근 N 말" 을 문맥으로 주면 같은 말을 읽는 사람마다 뒤에 있는 말의 수가
+     * 달라져 결과가 사람마다 달라진다. 순화본 공유(한 결과를 여럿이 씀)가 그걸로 무너진다.
+     *
+     * 그래서 문맥은 **각 말의 앞 2개로 고정**한다 — 같은 말은 어디서 읽든 같은 입력을 갖는다.
+     * 여기서는 그 입력 형태만 고정한다(모델 호출 없음).
+     */
+    const withContext = buildPurifyRequest([
+      { id: "m1", text: "내일 3시까지 자료 보내줘", before: [{ text: "내가 정리할게" }, { text: "urgent야" }] },
+    ]);
+    const parsedRequest = JSON.parse(withContext) as {
+      task: string;
+      items: Array<{ id: string; text: string; before: Array<{ text: string }> }>;
+    };
+    check("요청이 순화 요청이다", parsedRequest.task, "rewrite_for_reader_comfort");
+    check("읽을 대상은 text 하나", parsedRequest.items[0].text, "내일 3시까지 자료 보내줘");
+    check("문맥은 항목마다 붙는다", parsedRequest.items[0].before.length, 2);
+    // **문맥에 id 가 없다** — id 가 있으면 모델이 그걸 항목으로 취급해 함께 고친다.
+    check("문맥에 id 를 주지 않는다", JSON.stringify(Object.keys(parsedRequest.items[0].before[0])), '["text"]');
+
+    // 문맥 없는 항목에도 `before` 는 **빈 배열로** 존재한다 — 모양이 하나로 유지돼야
+    // 모델이 "있을 때만" 을 예측할 수 없다.
+    const noContext = JSON.parse(buildPurifyRequest([{ id: "m2", text: "안녕" }])) as {
+      items: Array<{ before: unknown }>;
+    };
+    check("문맥이 없으면 빈 배열", noContext.items[0].before, []);
+    check("문맥 상수는 정확히 2", PURIFY_CONTEXT_MESSAGES, 2);
+
     // 실패가 저장된다 — 안 하면 다시 부르고, 셀 수도 없다.
-    await db.messageCushion.update({
-      where: { messageId_viewerId: { messageId: message.id, viewerId: viewer.id } },
+    await db.messagePurification.update({
+      where: { messageId_policyHash: { messageId: message.id, policyHash: "policy-a" } },
       data: { status: "REJECTED", text: null, source: null, reason: CUSHION_REASON.TOXICITY_REMAINED, attemptCount: 1, claimToken: null, retryAfter: new Date(Date.now() + FAILURE_BACKOFF_MS) },
     });
-    const rejected = await db.messageCushion.findUniqueOrThrow({
-      where: { messageId_viewerId: { messageId: message.id, viewerId: viewer.id } },
+    const rejected = await db.messagePurification.findUniqueOrThrow({
+      where: { messageId_policyHash: { messageId: message.id, policyHash: "policy-a" } },
     });
     check("실패 이유가 남는다", rejected.reason, CUSHION_REASON.TOXICITY_REMAINED);
     check("실패에는 글자가 없다", rejected.text, null);
@@ -1592,9 +1708,9 @@ console.log("\n읽기 순화 (DB)");
     check("새 방의 설정은 따로 남는다", dm.tone, "firm");
 
     await db.readCushion.deleteMany({ where: { memberId: viewer.id, threadKey: { in: ["team", "dm:zz:zz"] } } });
-    await db.messageCushion.deleteMany({ where: { messageId: message.id } });
+    await db.messagePurification.deleteMany({ where: { messageId: message.id } });
     await db.message.delete({ where: { id: message.id } });
-    check("말을 지우면 순화 상태도 함께 간다", await db.messageCushion.count({ where: { messageId: message.id } }), 0);
+    check("말을 지우면 순화 상태도 함께 간다", await db.messagePurification.count({ where: { messageId: message.id } }), 0);
   }
 }
 
@@ -1742,6 +1858,41 @@ console.log("\n푸시 구독 (DB)");
 
     await db.pushSubscription.deleteMany({ where: { endpoint } });
   }
+}
+
+/* ── 발송 실패: 원인은 남기고 인증번호는 남기지 않는다 ──────── */
+
+console.log("\n이메일 발송 실패 (운영 로그에 인증번호가 남지 않는다)");
+{
+  // 발송이 막혔을 때 유일하게 남는 값들. `magicLink` 를 누르면 그 사람의 계정이다.
+  const secrets = {
+    email: "someone@example.com",
+    code: "483920",
+    magicLink: "https://app.example/join/verify?token=11111111-2222-3333-4444-555555555555",
+  };
+
+  const leaks = (line: string) => [secrets.email, secrets.code, secrets.magicLink].filter((v) => line.includes(v));
+
+  // Resend 가 거절한 경로.
+  const resendFail = undelivery(true, "Resend 가 거절했습니다", secrets);
+  check("운영 + Resend 실패 → 발송 실패로 말한다", resendFail.result, { success: false });
+  check("운영 + Resend 실패 → 인증번호를 화면으로 돌려주지 않는다", resendFail.result.previewCode, undefined);
+  check("운영 + Resend 실패 → 로그에 인증값이 없다", leaks(resendFail.line), []);
+  check("운영 + Resend 실패 → 원인은 남는다", resendFail.line.includes("Resend 가 거절했습니다"), true);
+
+  // 보낼 수단이 아예 없는 경로. 새 경로를 붙일 때 빠지기 쉬운 자리다.
+  const noProvider = undelivery(true, "보낼 수단이 설정되어 있지 않습니다", secrets);
+  check("운영 + 보낼 수단 없음 → 인증값이 없다", leaks(noProvider.line), []);
+  check("운영 + 보낼 수단 없음 → 발송 실패로 말한다", noProvider.result, { success: false });
+
+  // 발송이 됐으면 이 함수는 부르지 않는다 — 성공 경로는 로그도 결과도 이래야 한다.
+  check("운영에서도 previewCode 가 나오면 안 된다", undelivery(true, "x", secrets).result.previewCode, undefined);
+
+  // 개발에서는 편의가 남는다. 메일을 못 받아도 로그인할 수 있어야 개발이 된다.
+  const dev = undelivery(false, "Resend 가 거절했습니다", secrets);
+  check("개발 → 인증번호를 화면으로 돌려준다", dev.result, { success: true, previewCode: secrets.code });
+  check("개발 → 로그에 인증번호가 보여야 한다", dev.line.includes(secrets.code), true);
+  check("개발 → 매직 링크가 보여야 한다", dev.line.includes(secrets.magicLink), true);
 }
 
 /* ── AI 한도: 세는 것과 쓰는 것이 다르다 ──────────────────── */

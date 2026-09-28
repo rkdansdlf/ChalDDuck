@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { db } from "@/server/db";
+import { sendMail } from "@/server/auth/mailer";
+import { undelivery } from "@/server/auth/undelivered";
 
 /**
  * 이메일 인증 토큰 (OTP & 매직 링크).
@@ -76,15 +78,50 @@ export async function issueEmailToken(email: string): Promise<{
 }
 
 /**
+ * 이메일에 찍을 우리 주소(매직 링크의 기준점).
+ *
+ * ⚠️ **예전에는 `NEXT_PUBLIC_APP_URL` 만 봤다 — 그게 이 문제의 절반이었다.**
+ * `NEXT_PUBLIC_` 접두사는 **빌드 시점에 값이 인라인되어 동결**된다
+ * (next/dist/docs/01-app/02-guides/environment-variables.md). 그래서 Vercel 대시보드에서
+ * 나중에 채워도 **재빌드 전까지는 코드에 박힌 옛값(또는 폴백)이 그대로 쓰인다.** 서버
+ * 전용이라 빌드 시점에 굳힐 이유가 없던 값이므로 `APP_URL` 을 우선하고, `NEXT_PUBLIC_` 는
+ * 옛 이름이라 두 번째로만 본다.
+ *
+ * 그래도 비어 있으면 Vercel 이 스스로 박아 둔 값으로 메운다 — `VERCEL_PROJECT_PRODUCTION_URL`
+ * 은 그 프로젝트의 운영 주소(커스텀 도메인 포함)이고, 프리뷰 배포에서는 그 배포 주소
+ * (`VERCEL_URL`)가 맞다. 즉 **환경변수를 따로 심지 않아도 배포 주소는 자동으로 잡힌다.**
+ * 마지막 `localhost` 폴백은 로컬 개발을 위한 것이고, 운영에서 여기까지 내려왔다면 아래
+ * `undelivered` 가 조용히 실패하지 않도록 경고로 드러낸다.
+ */
+function appBaseUrl(): string {
+  const configured = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return configured.replace(/\/+$/, "");
+
+  // 운영 배포면 배포 주소를, 프리뷰면 그 배포 고유 주소를 쓴다.
+  if (process.env.VERCEL_ENV === "production" && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+
+  // 여기까지 내려왔다는 건 배포 주소를 어디에서도 못 찾아냈다는 뜻이다. 로컬 개발에서는
+  // 당연한 일이지만, 운영에서 이 값이 그대로 메일에 박히면 도착한 메일의 로그인 버튼이
+  // 전부 `localhost` 를 가리킨다 — 메일은 "도착했는데 안 된다"가 되어 원인을 더 헤매게 만든다.
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      "[Email Auth] 앱 주소(APP_URL)를 결정하지 못해 매직 링크가 http://localhost:3000 이 됩니다. " +
+        "Vercel 환경변수에 APP_URL 을 넣으세요.",
+    );
+  }
+
+  return "http://localhost:3000";
+}
+
+/**
  * 이메일이 나가지 않았을 때의 결과.
  *
- * `previewCode` 는 인증번호를 **화면으로 되돌려** 메일을 못 받아도 로그인을 붙여 주는 개발용
- * 편의다. 이 값이 운영에 새면 발송 경로가 우회된다 — 메일은 실패했는데 인증번호는 그대로
- * 도착하니까, Resend 가 죽어도 아무도 로그인 못 한다는 보장이 사라진다. 그래서 프로덕션에서는
- * 만들지 않는다.
- *
- * 실패를 `success: false` 로 돌려주는 것도 같은 이유다. "성공인데 안 온 것"은 사용자가 이유를
- * 알 수 없는 가장 말 없는 실패다(`server/actions/team.ts` 도 같은 이유로 조용함을 피한다).
+ * **정책은 `server/auth/undelivered.ts` 에 있고 여기서는 그것을 불러 로그를 찍기만 한다.**
+ * 판단을 두 군데에 두면 어느 한쪽이 나중에 뒤처진다 — 그래서 발송 경로가 Gmail·Resend 둘로
+ * 늘었어도(지금 두 개다) 이 한 곳만 고치면 된다.
  */
 function undelivered(
   email: string,
@@ -92,68 +129,59 @@ function undelivered(
   code: string,
   reason: string,
 ): { success: boolean; previewCode?: string } {
-  console.log(
-    `\n========================================\n[찰떡 이메일 인증 · ${reason}] ${email}\n인증번호: ${code}\n매직링크: ${magicLink}\n========================================\n`,
-  );
-  return process.env.NODE_ENV === "production" ? { success: false } : { success: true, previewCode: code };
+  const { result, line } = undelivery(process.env.NODE_ENV === "production", reason, {
+    email,
+    magicLink,
+    code,
+  });
+
+  if (process.env.NODE_ENV === "production") console.error(line);
+  else console.log(line);
+
+  return result;
 }
 
-/** 이메일 전송 (Resend 또는 개발 콘솔 로깅) */
+/**
+ * 인증번호 메일 발송.
+ *
+ * **내용(인증번호·매직 링크)은 여기서 만들고, 실제로 내보내는 일은 `mailer` 가 한다.**
+ * 어느 경로(Gmail / Resend)로 나가는지는 메일러가 환경변수로 정한다 — 도메인이 없어서
+ * 경로가 두 개가 되었지만, 이 함수는 그 차이를 모른다.
+ *
+ * @see `server/auth/mailer.ts` — 경로가 왜 둘인지, 각각 무엇을 요구하는지
+ */
 export async function sendEmailOtp(
   email: string,
   code: string,
   token: string,
 ): Promise<{ success: boolean; previewCode?: string }> {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const magicLink = `${baseUrl}/join/verify?token=${token}`;
+  const magicLink = `${appBaseUrl()}/join/verify?token=${token}`;
 
-  // Resend API 키가 있으면 실제 발송
-  if (resendApiKey) {
-    try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: "찰떡 <auth@chaldduck.com>",
-          to: email,
-          subject: `[찰떡] 인증번호 [${code}]를 입력해 주세요`,
-          html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px;">
-              <h2 style="color: #1a1a1a; margin-top: 0;">찰떡 로그인 인증번호</h2>
-              <p style="color: #666; font-size: 15px; line-height: 1.6;">
-                아래 인증번호 6자리를 입력하여 로그인을 완료해 주세요.<br/>인증번호는 10분간 유효합니다.
-              </p>
-              <div style="background: #FFF9E6; border: 1px solid #FFE082; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
-                <span style="font-size: 28px; font-weight: 800; letter-spacing: 6px; color: #D97706; font-family: monospace;">${code}</span>
-              </div>
-              <div style="text-align: center; margin-top: 24px;">
-                <a href="${magicLink}" style="display: inline-block; background: #2563EB; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-                  인증번호 없이 바로 로그인하기
-                </a>
-              </div>
-              <p style="color: #999; font-size: 12px; margin-top: 32px; text-align: center;">
-                본인이 요청하지 않았다면 이 메일을 무시해 주세요.
-              </p>
-            </div>
-          `,
-        }),
-      });
+  const sent = await sendMail({
+    to: email,
+    subject: `[찰떡] 인증번호 [${code}]를 입력해 주세요`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px;">
+        <h2 style="color: #1a1a1a; margin-top: 0;">찰떡 로그인 인증번호</h2>
+        <p style="color: #666; font-size: 15px; line-height: 1.6;">
+          아래 인증번호 6자리를 입력하여 로그인을 완료해 주세요.<br/>인증번호는 10분간 유효합니다.
+        </p>
+        <div style="background: #FFF9E6; border: 1px solid #FFE082; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
+          <span style="font-size: 28px; font-weight: 800; letter-spacing: 6px; color: #D97706; font-family: monospace;">${code}</span>
+        </div>
+        <div style="text-align: center; margin-top: 24px;">
+          <a href="${magicLink}" style="display: inline-block; background: #2563EB; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+            인증번호 없이 바로 로그인하기
+          </a>
+        </div>
+        <p style="color: #999; font-size: 12px; margin-top: 32px; text-align: center;">
+          본인이 요청하지 않았다면 이 메일을 무시해 주세요.
+        </p>
+      </div>
+    `,
+  });
 
-      if (!res.ok) {
-        console.error("[Email Auth] Resend API Error:", await res.text());
-        return undelivered(email, magicLink, code, "Resend 가 거절했습니다");
-      }
+  if (sent.ok) return { success: true };
 
-      return { success: true };
-    } catch (err) {
-      console.error("[Email Auth] Failed to send email via Resend:", err);
-      return undelivered(email, magicLink, code, "발송 중 오류");
-    }
-  }
-
-  return undelivered(email, magicLink, code, "RESEND_API_KEY 가 없습니다");
+  return undelivered(email, magicLink, code, sent.reason);
 }
