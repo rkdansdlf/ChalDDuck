@@ -3,8 +3,10 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma";
 import { humanSize } from "@/features/drive/file-rules";
 import type { ConfirmsPolicy, ContribEvidence, TeamCheckRecord } from "@/lib/types";
+import { isMarked, type Participation } from "@/features/contrib/participation";
 import { db } from "@/server/db";
 import { canResolveContrib, contribByLabel, maxConfirmsNeeded } from "@/server/contrib/state";
+import { getSessionMember } from "@/server/session";
 
 /**
  * 17 화면이 보는 목록 — **처음 로드할 때와 폴링할 때가 같은 계산을 쓴다.**
@@ -35,6 +37,19 @@ const CHECK_SELECT = {
   disputes: {
     select: { id: true, text: true, createdAt: true, by: { select: { name: true } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  },
+  // 참여 표시의 **이력까지** 가져온다 — 취소한 표시까지 보여 주려면 지금 표시 중인 것만으로는
+  // 부족하다("왜 없지"에 답해야 한다).
+  participations: {
+    select: {
+      id: true,
+      activeKey: true,
+      shownAt: true,
+      clearedAt: true,
+      shownBy: { select: { name: true } },
+      clearedBy: { select: { name: true } },
+    },
+    orderBy: [{ shownAt: "desc" }, { id: "desc" }],
   },
 } satisfies Prisma.ContribRecordSelect;
 
@@ -78,6 +93,7 @@ export async function teamCheckRecords(teamId: string, meId: string | null): Pro
         disputedBy: r.disputedBy?.name ?? null,
       }),
       evidence,
+      participation: latestParticipation(r.participations),
       dispute: r.dispute,
       history: r.disputes.map((d) => ({ who: d.by.name, text: d.text })),
       resolution: r.resolution,
@@ -110,4 +126,43 @@ export async function confirmsPolicy(
     max: maxConfirmsNeeded(members),
     canChange: isLeader,
   };
+}
+
+/**
+ * 이 기록의 참여 표시 — **표시 중인 것을 먼저, 없으면 가장 최근에 취소된 것**을 준다.
+ *
+ * 지금 표시 중인 줄과 취소된 줄을 둘 다 화면에 내보내면 어느 쪽이 유효한지 화면이 알아야
+ * 하고, 그 판단이 두 군데로 흩어진다. 여기서 "무엇을 보여 줄지"를 정한다.
+ */
+function latestParticipation(
+  rows: {
+    id: string;
+    activeKey: string | null;
+    shownAt: Date;
+    clearedAt: Date | null;
+    shownBy: { name: string };
+    clearedBy: { name: string } | null;
+  }[],
+): Participation | null {
+  const row = rows.find((r) => isMarked(r)) ?? rows[0] ?? null;
+  if (!row) return null;
+  return {
+    recordId: "",
+    activeKey: row.activeKey,
+    shownBy: row.shownBy.name,
+    shownAt: row.shownAt,
+    clearedBy: row.clearedBy?.name ?? null,
+    clearedAt: row.clearedAt,
+  };
+}
+
+/**
+ * 지금 이 사람이 팀장인가 — **세션에서 읽는다.**
+ *
+ * 화면이 넘긴 값을 믿으면 안 되는 값이다(누구나 `true` 라고 보낼 수 있다). 16·17 화면이
+ * 팀장 전용 버튼을 감추기 위한 값이고, 권한은 각 액션이 `requireLeader` 로 다시 확인한다.
+ */
+export async function isTeamLeader(teamId: string): Promise<boolean> {
+  const me = await getSessionMember();
+  return me?.teamId === teamId && me.isLeader;
 }

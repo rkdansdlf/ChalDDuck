@@ -1,7 +1,9 @@
-import "server-only";
-
 /**
- * 회의 참여 표시의 규칙 — **한 곳에서만 정한다.**
+ * 회의 참여 표시의 규칙과 화면 문구 — **한 곳에서만 만든다.**
+ *
+ * 서버(`server/contrib/team-check.ts`)와 화면이 함께 쓰는 순수 함수다 — 문구를 두 곳에
+ * 적으면 "누가 찍었는지"와 "지금 표시 중인지"가 어긋난다. `server-only` 를 걸지 않는다:
+ * DB 를 만지지 않으므로 17 화면이 직접 쓸 수 있다.
  *
  * 표시의 주체는 팀장이고(자동 판정하지 않는다), 붙는 곳은 기록 하나다. 이 모듈은 그 두
  * 가지가 **확인과 섞이지 않게** 지키는 자리다 — 참여한다고 기록이 확정되지 않는다. 기록이
@@ -35,7 +37,7 @@ export function participationText(p: Participation | null | undefined): string |
   if (!p) return null;
   const at = whenOf(p.shownAt);
   return isMarked(p)
-    ? `참여 표시 · ${p.shownBy}님이 직접 표시함${at}`
+    ? `참여 표시 · ${p.shownBy}님이 직접 표시함${at ? ` · ${at}` : ""}`
     : `참여 표시 취소됨 · ${p.clearedBy ?? "누군가"}님이 취소함`;
 }
 

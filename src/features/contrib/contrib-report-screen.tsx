@@ -88,6 +88,10 @@ export function ContribReportScreen({
                     의견 차이 {row.disputed}건
                   </Chip>
                 ) : null}
+                {/* 팀장이 직접 찍은 참여. 0 이면 말하지 않는다 — 다른 두 칩과 같은 규칙이다. */}
+                {row.participations > 0 ? (
+                  <Chip icon="users-round">참여 표시 {row.participations}건</Chip>
+                ) : null}
               </div>
             </div>
           ))}

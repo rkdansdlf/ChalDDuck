@@ -27,7 +27,9 @@ import {
   disputeContribRecord,
   pollContribCheck,
   setConfirmsNeeded,
+  setParticipation,
 } from "@/server/actions/contrib";
+import { isMarked, participationText } from "./participation";
 import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
 import { StepRail } from "./step-rail";
@@ -45,11 +47,14 @@ export function ContribTeamScreen({
   records,
   roster,
   policy,
+  isLeader,
 }: {
   records: TeamCheckRecord[];
   roster: Member[];
   /** 몇 명이 확인해야 확정인지. 팀장만 바꿀 수 있다. */
   policy: ConfirmsPolicy;
+  /** 팀장만 참여를 표시하고 지울 수 있다(화면이 숨기는 것 — 서버도 다시 확인한다). */
+  isLeader: boolean;
 }) {
   const router = useRouter();
   const [disputing, setDisputing] = useState<TeamCheckRecord | null>(null);
@@ -185,6 +190,34 @@ export function ContribTeamScreen({
     );
   };
 
+  /**
+   * 참여 표시를 찍거나 지운다 — **팀장만**(액션이 `requireLeader` 로 다시 확인한다).
+   *
+   * 확인(맞습니다)과 달리 **자기 기록에도** 찍을 수 있다: 확인은 "기록이 사실인가"를
+   * 남이 판단하는 것이고, 참여 표시는 팀장이 정하는 자리이기 때문이다. 기록의 상태는
+   * 어느 쪽에서도 건드리지 않는다.
+   */
+  const toggleParticipation = (record: TeamCheckRecord) =>
+    run(
+      "participation",
+      async () => {
+        setTouched(true);
+        const marked = isMarked(record.participation);
+        const result = await setParticipation(record.id, !marked);
+        router.refresh();
+        return result === "marked"
+          ? `${record.who}님의 기록을 참여로 표시했습니다`
+          : result === "cleared"
+            ? "참여 표시를 취소했습니다"
+            : result === "gone"
+              ? "기록을 찾을 수 없습니다"
+              : marked
+                ? "이미 표시되어 있습니다"
+                : "표시되어 있지 않습니다";
+      },
+      "참여 표시하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
+
   const confirmed = list.filter((r) => r.state === "ok").length;
   const disputed = list.filter((r) => r.state === "disputed");
   const mbtiOf = (name: string) => roster.find((m) => m.name === name)?.mbti ?? null;
@@ -286,6 +319,34 @@ export function ContribTeamScreen({
                       </Chip>
                     )}
                   </div>
+
+                  {/* 참여 표시 — 17 화면에만 둔다. 16(내 기록)은 내 기록만 고치는 곳이라
+                      남의 판단이 거기까지 오면 "왜 이게 나야"만 남습니다. 누가 찍었는지는
+                      말하고, 순위도 점수도 만들지 않습니다(README 3절). */}
+                  {record.participation || isLeader ? (
+                    <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
+                      {record.participation ? (
+                        <Chip tone={isMarked(record.participation) ? "ok" : "n"} icon="users-round">
+                          {participationText(record.participation)}
+                        </Chip>
+                      ) : null}
+                      {isLeader ? (
+                        <Btn
+                          size="sm"
+                          v="ghost"
+                          icon={isMarked(record.participation) ? "x" : "check"}
+                          disabled={working}
+                          onClick={() => toggleParticipation(record)}
+                        >
+                          {isMarked(record.participation)
+                            ? "표시 취소"
+                            : record.participation
+                              ? "다시 표시"
+                              : "참여로 표시"}
+                        </Btn>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {record.evidence ? (
                     <div className="mt-[9px]">

@@ -1,5 +1,6 @@
 import { getConfirmsPolicy, getCurrentTeam, getRoster, getTeamCheck } from "@/data/api";
 import { ContribTeamScreen } from "@/features/contrib/contrib-team-screen";
+import { isTeamLeader } from "@/server/contrib/team-check";
 
 /**
  * 17 기여도 · 팀원 확인.
@@ -9,10 +10,13 @@ import { ContribTeamScreen } from "@/features/contrib/contrib-team-screen";
  */
 export default async function ContribTeamPage() {
   const team = await getCurrentTeam();
-  const [records, roster, policy] = await Promise.all([
+  const [records, roster, policy, leader] = await Promise.all([
     getTeamCheck(team.id),
     getRoster(team.id),
     getConfirmsPolicy(team.id),
+    isTeamLeader(team.id),
   ]);
-  return <ContribTeamScreen records={records} roster={roster} policy={policy} />;
+  return (
+    <ContribTeamScreen records={records} roster={roster} policy={policy} isLeader={leader} />
+  );
 }

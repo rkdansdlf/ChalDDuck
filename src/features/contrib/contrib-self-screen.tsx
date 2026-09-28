@@ -12,7 +12,6 @@ import {
   Rows,
   SecTitle,
   Sheet,
-  Undecided,
   type IconName,
 } from "@/components/ui";
 import type { ContribKind, ContribRecord } from "@/lib/types";
@@ -71,10 +70,11 @@ export function ContribSelfScreen({
           </Note>
         ) : null}
 
-        <Undecided>
-          회의 참여는 <b>팀장이 직접 표시하기로 했습니다</b>(자동 판정으로 하지 않기로). 그
-          표시할 입구는 아직 없어 지금은 회수만 적고 기준을 적지 않았습니다.
-        </Undecided>
+        <Note tone="info" icon="users-round" className="mb-3.5">
+          회의 참여는 <b>17 화면에서 팀장이 직접 표시합니다</b>(자동 판정하지 않습니다). 여기는 내
+          기록만 고치는 곳이라 참여 표시는 두지 않습니다 — 누가 표시했는지는 팀원 확인 화면에
+          있습니다.
+        </Note>
       </Body>
 
       <Dock>

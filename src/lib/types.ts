@@ -1,3 +1,4 @@
+import type { Participation } from "@/features/contrib/participation";
 import type { MbtiType } from "./mbti";
 
 /**
@@ -578,6 +579,7 @@ export type TeamCheckRecord = {
    * 내 기록이면 의견을 적은 사람, 아니면 기록 주인이다. 그 사람이 팀을 나갔거나
    * 나 자신이면 `null` — 열리지 않을 대화방으로 보내지 않는다.
    */
+  participation: Participation | null;
   dmWith: string | null;
 };
 
@@ -597,6 +599,7 @@ export type ContribReportRow = {
   confirmed: number;
   pending: number;
   disputed: number;
+  participations: number;
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */

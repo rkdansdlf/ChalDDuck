@@ -64,7 +64,7 @@ import {
   currentParticipations,
   isMarked,
   participationText,
-} from "../src/server/contrib/participation.js";
+} from "../src/features/contrib/participation.js";
 
 /**
  * 업무 규칙을 확인하는 불변식 모음.

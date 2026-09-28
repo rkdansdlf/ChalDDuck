@@ -1131,7 +1131,15 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
   const members = await db.member.findMany({
     where: { teamId },
-    include: { contribRecords: { select: { state: true } } },
+    include: {
+      contribRecords: {
+        select: {
+          state: true,
+          // **표시 중인 것만** 센다 — 취소한 표시까지 세면 지운 사실이 참여로 남는다.
+          participations: { where: { activeKey: { not: null } }, select: { id: true } },
+        },
+      },
+    },
     orderBy: { joinedAt: "asc" },
   });
 
@@ -1143,6 +1151,9 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
     confirmed: m.contribRecords.filter((r) => r.state === "ok").length,
     pending: m.contribRecords.filter((r) => r.state === "pending").length,
     disputed: m.contribRecords.filter((r) => r.state === "disputed").length,
+    // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
+    // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
+    participations: m.contribRecords.reduce((n, r) => n + r.participations.length, 0),
   }));
 }
 
