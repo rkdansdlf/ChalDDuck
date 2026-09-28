@@ -66,6 +66,7 @@ import {
 } from "../src/lib/when.js";
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
+import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
 import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
@@ -2274,6 +2275,43 @@ console.log("\n가입 요청 제한 (화면·서버가 같은 순수 함수를 �
   check("미해결 50건부터 막는다", teamGate(0, 0, JOIN_LIMIT.unresolvedPerTeam), "pending-cap");
   check("배너는 상한 직전에는 안 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam - 1), false);
   check("배너는 상한부터 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam), true);
+}
+
+/* ── 횟수표: 동시에 찍어도 새지 않는다 ────────────────────────── */
+
+console.log("\n횟수표 (동시에 찍어도 합이 정확하다)");
+{
+  const key = `smoke:window:${Date.now()}`;
+  const WINDOW_MS = 10 * 60 * 1000;
+
+  // **아무도 안 찍은 상태에서 50 개를 한꺼번에 넣는다.** 예전 구현(`findUnique` → 판단 →
+  // 쓰기) 은 여기서 대부분 을 잃었다 — 모두 0 을 읽고 모두 1 을 적으면 50 이 아니라 1 이 남는다.
+  // 우연히 스레드풀을 타면 통과하는 검사가 되므로, DB 한 문장으로 직렬화되는지(`ON CONFLICT`)
+  // 를 이 스모크가 실제로 눌러 본다.
+  const RACERS = 50;
+  const counts = await Promise.all(
+    Array.from({ length: RACERS }, () => hitWindow(key, WINDOW_MS)),
+  );
+
+  check("50 개를 동시에 찍어도 마지막 값이 50 이다", await readWindow(key), RACERS);
+  check("돌려준 값이 중복되지 않는다", new Set(counts).size, RACERS);
+  check("돌려준 값이 1..50 을 다 덮는다", counts.slice().sort((a, b) => a - b), Array.from({ length: RACERS }, (_, i) => i + 1));
+
+  // 창은 **첫 시도 때 정해지고 늘어나지 않는다.** 시도할 때마다 뒤로 밀면, 막힌 사람이 계속
+  // 눌러 보는 동안 영영 안 풀린다 — 그래서 뒤로 밀면 안 된다.
+  const row = await db.rejoinAttempt.findUnique({ where: { key } });
+  const firstUntil = row!.until.getTime();
+  await hitWindow(key, WINDOW_MS);
+  const again = await db.rejoinAttempt.findUnique({ where: { key } });
+  check("더 찍어도 창이 뒤로 밀리지 않는다", again!.until.getTime(), firstUntil);
+  check("더 찍으면 횟수만 오른다", again!.count, RACERS + 1);
+
+  // 맞히면 지워진다 — 다음에 한 번만 해도 곧바로 잠기지 않게.
+  await clearWindow(key);
+  check("지우면 0 으로 읽는다", await readWindow(key), 0);
+  check("지운 자리는 다음 한 번이 1 이다", await hitWindow(key, WINDOW_MS), 1);
+
+  await clearWindow(key);
 }
 
 /* ── 가입 요청: 토큰은 만들어진 뒤로 바뀌지 않는다 ────────────── */
