@@ -34,6 +34,18 @@ import {
 const NEW_MESSAGE_POLL_MS = 3000;
 
 /**
+ * 한 번 화면에 머물 때 순화를 **몇 묶음**까지 연속으로 부르는가.
+ *
+ * 묶음 하나가 AI 한도 1회다. 대화가 40개 쌓여 있으면 4회분이 필요하고, 그걸 한 번에 다 쓰면
+ * 대화방을 연 한 사람이 팀 한도의 큰 몫을 사용한다. 그래서 몇 묶음만 싣고 나머지는 다음
+ * 폴링이 이어받는다.
+ */
+const DRAIN_ROUNDS = 3;
+
+/** 묶음 사이 한 박자. 결과를 화면에 붙이고 연속 호출로 한도를 훑지 않게. */
+const DRAIN_PAUSE_MS = 250;
+
+/**
  * 낙관적 말풍선의 `clientId`.
  *
  * 임시 id(`pending-3`)에서 값을 얻는다 — 실패했다 다시 눌러도 **같은 값**이 나오므로 서버가
@@ -106,10 +118,16 @@ export function useChatThread(
   const [purifyWorking, setPurifyWorking] = useState(false);
   /** 순화가 왜 멈췄는지 사람이 읽을 문장. 실패하면 원문(또는 규칙 가림)으로 읽는다. */
   const [purifyNotice, setPurifyNotice] = useState<string | null>(null);
-  /** 한 번에 한 묶음만 — 두 묶음이 겹치면 순서가 뒤집힌다. */
-  const purifyInFlight = useRef(false);
-  /** "다시 시도" 를 눌렀을 때 효과를 다시 돌리게 하는 신호. */
-  const [purifyRetry, setPurifyRetry] = useState(0);
+  /** 진행 중인가 — 두 번 겹쳐 부르면 같은 말을 두 번 만든다. */
+  const drainingRef = useRef(false);
+  /**
+   * 순화를 다시 돌리게 하는 신호. **"다시 시도" 와 "묶음 수가 잘렸다" 가 같은 값을 쓴다.**
+   *
+   * 예전에는 용도가 달라 신호가 둘이었다(`purifyRetry` · 폴링). 그런데 화면이 순화를 언제
+   * 다시 부를지는 결국 "아직 순화본이 없는 말이 있는가" 하나뿐이라, 둘로 나누면 **한쪽을
+   * 잊을 수 있다** — 방금 실제로 그랬다. 시그널 하나에 출발점 둘을 묶는다.
+   */
+  const [drain, setDrain] = useState(0);
 
   // 다른 방으로 옮기면 이전 방의 기록을 들고 있을 이유가 없다.
   // 렌더 중에 비교해 바로 반영한다 — effect 로 하면 옛 방의 내용이 한 프레임 비친다.
@@ -159,56 +177,79 @@ export function useChatThread(
   );
 
   /**
-   * 순화가 필요한 말을 묶어서 시킨다.
+   * 순화를 진행시킨다. **무엇을 순화할지는 서버가 정한다** — 화면은 이 방을 보라고만 한다.
    *
-   * **재요청 판단은 서버가 한다.** 예전에는 브라우저 메모리의 "시도함" 목록으로 판단했는데,
-   * 새로고침하면 그 목록이 리셋되어 **같은 실패를 끝없이 다시 부른다** — 하루 60회가 몇
-   * 분 만에 다 Gone 이었다. 이제 화면은 "아직 상태가 없는 말"만 id 로 보내고, 서버가 저장된
-   * `status`·`retryAfter`·버전을 보고 이번에 부를지 말지 정한다.
+   * ## 왜 화면이 시계를 두지 않나
    *
-   * **한 번에 한 묶음.** 두 묶음이 겹치면 어느 것이 먼저 끝날지 몰라 순서가 뒤집힌다.
+   * 예전에는 3초 폴링이 AI 를 부르는 트리거였다. 그래서 순화가 붙는 속도가 **3초 주기에 묶였고**,
+   * AI 가 20초나 걸리는 동안 대화는 이미 지나가 버렸다. 이제 서버가 "아직 남은 게 있다"고
+   * 알려 주면 화면은 **곧바로** 다음 묶음을 부른다 — 기다리는 기준이 AI 속도다.
+   *
+   * ## 한 번에 몇 묶음인가
+   *
+   * 연속으로 `DRAIN_ROUNDS` 묶음까지만 싣는다. 40개가 쌓여 있으면 4회(4회분 한도)를 한 번에
+   * 쓰고, 나머지는 다음 폴링이 이어받는다. 한 번에 끝까지 싣으면 한 사람이 대화방을 여는 것만으로
+   * 팀 한도의 상당 부분을 쓸 수 있다 — 그건 이 기능의 일이 아니다.
    */
   useEffect(() => {
-    if (purifyInFlight.current) return;
+    if (drainingRef.current) return;
+    // 아직 손볼 것이 없는지 **화면이 아는 것만** 보고 부른다. 모르는 새 말은 서버가 찾는다.
+    const maybe = messages.some((message) => canPurify(message) && message.purified === null);
+    if (!maybe) return;
 
-    const wanted = messages
-      .filter((message) => canPurify(message) && message.purified === null)
-      .map((message) => message.id);
-    if (wanted.length === 0) return;
-
-    purifyInFlight.current = true;
-
+    drainingRef.current = true;
     let alive = true;
-    // `working` 은 **호출 뒤**에 켠다. effect 본문에서 바로 setState 하면 연속 렌더가
-    // 생기고(화면 전체가 두 번 그려진다) 그 사이에 또 요청이 나갈 수 있다.
-    Promise.resolve().then(() => {
-      if (alive) setPurifyWorking(true);
-    });
-    softenThreadMessages(threadId, wanted)
-      .then((result) => {
+    /**
+     * **묶음 수에 잘려서** 더 싣을 것이 남았나.
+     *
+     * 신호를 한 번 더 줄지 이 값이 정한다. 실패한 경우에는 **어떤 경우에도 다시 부르지
+     * 않는다** — 효과는 `drain` 이 오를 때마다 다시 돌고, "아직 순화본이 없는 말"이 남아
+     * 있는 한 조건은 계속 참이다. 실패한 채로 신호만 올리면 서버를 빈틈없이 다시 부르는
+     * 순환이 된다. 한도가 찬 채로 남는 게 그쪽이 낫다 — "다시 시도" 를 누를 때까지 멈춘다.
+     */
+    let truncated = false;
+
+    const run = async () => {
+      for (let round = 0; round < DRAIN_ROUNDS; round++) {
+        const result = await softenThreadMessages(threadId);
         if (!alive) return;
-        if (result.ok) {
-          // 서버는 **못 부른 말의 저장된 상태까지** 돌려준다. 그래야 실패한 말이 화면에서
-          // "아직 순화 안 됨" 으로 계속 후보가 되지 않는다.
-          setCushions((prev) => ({ ...prev, ...result.cushions }));
+        if (!result.ok) {
+          setPurifyNotice(result.message);
           return;
         }
-        setPurifyNotice(result.message);
+        setCushions((prev) => ({ ...prev, ...result.cushions }));
+        // 남은 게 없으면 여기서 끝. 다음에 새 말이 오면 그때 다시 시작한다.
+        if (result.remaining === 0) return;
+        // 묶음 사이에 한 박자 둔다 — 결과를 화면에 붙이고, 연속 호출로 한도를 훑지 않게.
+        await new Promise((resolve) => window.setTimeout(resolve, DRAIN_PAUSE_MS));
+        // 마지막 묶음까지 싣고도 남았으면 —— 다음 신호가 이어받는다.
+        if (round === DRAIN_ROUNDS - 1) truncated = true;
+      }
+    };
+
+    Promise.resolve()
+      .then(() => {
+        if (alive) setPurifyWorking(true);
+        return run();
       })
       .catch(() => {
-        if (!alive) return;
-        setPurifyNotice("순화하지 못했습니다 — 원문으로 읽습니다.");
+        if (alive) setPurifyNotice("순화하지 못했습니다 — 원문으로 읽습니다.");
       })
       .finally(() => {
         if (!alive) return;
-        purifyInFlight.current = false;
+        drainingRef.current = false;
         setPurifyWorking(false);
+        // 더 싣을 것이 남았을 때만(묶음 수에 잘렸을 때만) 신호를 한 번 더 준다.
+        // 실패했다면 주지 않는다 — 효과의 조건("순화본이 없는 말이 있다")이 여전히 참이라,
+        // 부르면 실패하고 또 부르고가 된다. 다음 폴링은 멈춘 순화를 대신해주지 않지만
+        // 새 말이 도착해 `messages` 가 바뀌면 자연히 다시 시도한다.
+        if (truncated) setDrain((n) => n + 1);
       });
 
     return () => {
       alive = false;
     };
-  }, [purifyRetry, messages, threadId]);
+  }, [drain, messages, threadId]);
 
   // 서버가 알고 있는 마지막 말. 여기서부터 뒤를 물어본다 — 보내는 중인 내 말풍선은
   // 아직 서버에 없으므로 기준이 될 수 없다.
@@ -381,7 +422,7 @@ export function useChatThread(
    */
   const retryPurify = useCallback(() => {
     setPurifyNotice(null);
-    setPurifyRetry((n) => n + 1);
+    setDrain((n) => n + 1);
   }, []);
 
   return {

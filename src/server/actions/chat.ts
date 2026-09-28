@@ -467,28 +467,34 @@ function hashSource(text: string): string {
  *
  * 실패하면 그 말은 **원문이 보인다**. 가릴 수 있는 표현이면 규칙이 가린본을 보여 준다.
  */
-export async function softenThreadMessages(
-  threadId: string,
-  messageIds: string[],
-): Promise<SoftenThreadResult> {
+export async function softenThreadMessages(threadId: string): Promise<SoftenThreadResult> {
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
   const at = Date.now();
   const model = activeModelId();
 
-  // 방 안의 **남의 말**만. 내가 쓴 말과 글 없는 말(파일 첨부만)은 대상이 아니다.
-  const wanted = [...new Set(messageIds)].slice(0, PURIFY_BATCH_LIMIT * 4);
+  /**
+   * **무엇을 순화할지는 서버가 정한다.** 화면은 "이 방을 봐줘" 라고만 한다.
+   *
+   * 예전에는 화면이 id 를 골라 보내고 서버는 그 id 를 믿었다. 그래서 세 가지가 뒤틀렸다 —
+   * 화면이 아직 못 받은 말을 빠뜨리고(그 말은 원문으로 남는다), 화면이 이미 아는 말을
+   * 중복으로 보내고(선점이 막긴 하지만 왕복이 늘어난다), 화면의 판단이 서버 규칙과 어긋나면
+   * **조용히 아무 일도 안 일어난다.** 이제 화면이 모르는 새 말도 서버가 직접 찾는다.
+   *
+   * 대상: 이 방의 **남의 말** 중 글자가 있고, 아직 순화본이 없거나 다시 시도할 수 있는 것.
+   * 오래된 것부터 — 읽는 사람이 위에서부터 보며 순화가 붙는 것을 보기 때문이다.
+   */
   const rows = await db.message.findMany({
-    where: { teamId: me.teamId, threadKey, id: { in: wanted }, authorId: { not: me.id } },
+    where: { teamId: me.teamId, threadKey, authorId: { not: me.id } },
     select: { id: true, text: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  const targets = rows.filter((row) => isPurifiableText(row.text));
-  if (targets.length === 0) return { ok: true, cushions: {}, called: 0 };
+  const texts = rows.filter((row) => isPurifiableText(row.text));
+  if (texts.length === 0) return { ok: true, cushions: {}, called: 0, remaining: 0 };
 
   // 저장된 상태를 먼저 읽는다 — "이 말은 이미 어떻게 됐나" 가 이번 호출의 전부다.
   const existing = await db.messageCushion.findMany({
-    where: { viewerId: me.id, messageId: { in: targets.map((row) => row.id) } },
+    where: { viewerId: me.id, messageId: { in: texts.map((row) => row.id) } },
   });
   const stored = new Map(existing.map((row) => [row.messageId, row]));
 
@@ -499,7 +505,7 @@ export async function softenThreadMessages(
   const tone = toneOf({ tone: toneRow?.tone ?? null });
 
   // 1) 지금 부를 수 있는 것만 고른다.
-  const claimable = targets.filter((row) =>
+  const claimable = texts.filter((row) =>
     canRetry(
       stored.get(row.id)
         ? {
@@ -519,11 +525,12 @@ export async function softenThreadMessages(
   // 2) 선점한다. **내가 Token 을 심은 행만 내 것** — 남의 선점을 덮어쓰지 않는다.
   const claimToken = randomUUID();
   const claimIds = claimable.slice(0, PURIFY_BATCH_LIMIT).map((row) => row.id);
+  const sourceOf = new Map(texts.map((row) => [row.id, row.text]));
   if (claimIds.length > 0) {
     const now = new Date(at);
     await db.messageCushion.createMany({
       data: claimIds.map((id) => {
-        const source = targets.find((row) => row.id === id)!.text;
+        const source = sourceOf.get(id) ?? "";
         return {
           messageId: id,
           viewerId: me.id,
@@ -542,15 +549,20 @@ export async function softenThreadMessages(
   }
 
   const afterClaim = await db.messageCushion.findMany({
-    where: { viewerId: me.id, messageId: { in: targets.map((row) => row.id) } },
+    where: { viewerId: me.id, messageId: { in: texts.map((row) => row.id) } },
   });
   const mine = afterClaim.filter((row) => row.claimToken === claimToken).map((row) => row.messageId);
-  const textOf = new Map(targets.map((row) => [row.id, row.text.trim()]));
+  const textOf = new Map(texts.map((row) => [row.id, row.text.trim()]));
+  /**
+   * 아직 손대지 않은 것이 남았나 — 화면이 **곧바로** 다음 묶음을 부를 수 있게 알려 준다.
+   * 화면이 이 수 대신 3초를 기다리면 순화가 붙는 속도가 폴링 주기에 묶인다.
+   */
+  const remaining = claimable.length - mine.length;
 
   const cushions: Record<string, CushionView> = {};
   for (const row of afterClaim) cushions[row.messageId] = toCushionView(row);
 
-  if (mine.length === 0) return { ok: true, cushions, called: 0 };
+  if (mine.length === 0) return { ok: true, cushions, called: 0, remaining };
 
   // 3) 묶어서 한 번 부른다.
   const items = packPurifyItems(mine.map((id) => ({ id, text: textOf.get(id) ?? "" })));
@@ -559,7 +571,6 @@ export async function softenThreadMessages(
   const priorAttempts = attempt ? (stored.get(attempt.id)?.attemptCount ?? 0) : 0;
 
   const result = await runTool("read-cushion", () => softenIncoming(items, tone));
-  const now = new Date(at);
 
   /** 이 항목의 결과를 저장한다. 실패도 저장한다 — 안 하면 다시 부른다. */
   const save = async (
@@ -606,7 +617,7 @@ export async function softenThreadMessages(
       }
       await save(item.id, { status: "FAILED", text: null, kind: null, reason, retryAfter: null }, { reason });
     }
-    return { ok: true, cushions, called: 1 };
+    return { ok: true, cushions, called: 1, remaining: remaining - items.length };
   }
 
   // 4) 항목별 판정.
@@ -671,6 +682,6 @@ export async function softenThreadMessages(
     }, { reason });
   }
 
-  return { ok: true, cushions, called: 1 };
+  return { ok: true, cushions, called: 1, remaining: Math.max(0, remaining - items.length) };
 }
 
