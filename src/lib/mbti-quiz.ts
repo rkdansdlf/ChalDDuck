@@ -293,6 +293,19 @@ export function scoreAxes(picks: QuizPicks): AxisScore[] {
 }
 
 /**
+ * 답한 문항 수 — 04 화면의 진행도·완료 판정이 함께 쓴다.
+ *
+ * **답한 개수를 세지 말고 문항을 훑어 센다.** 예전에는 `Object.keys(QUIZ_QUESTIONS)` 로 셌는데,
+ * `QUIZ_QUESTIONS` 는 배열이라 `Object.keys` 가 돌려주는 것은 문항 id 가 아니라 **인덱스 문자열**
+ * (`"0"`, `"1"`, …)이다. `picks["0"]` 은 늘 `undefined` 이므로 20문항을 다 골라도 0 이었다 —
+ * 완료 배너는 뜨지 않고 하단 "캐릭터 발급받기" 가 영영 비어 있어 04 화면에서 나가는 수가
+ * 없었다(선택은 되는데 다음 페이지로 넘어가지 않는 것처럼 보였다).
+ */
+export function countAnswered(picks: QuizPicks): number {
+  return QUIZ_QUESTIONS.filter((question) => Boolean(picks[question.id])).length;
+}
+
+/**
  * 답을 16유형으로 환산한다. **한 문항이라도 비어 있으면 `null`.**
  *
  * 문항을 늘렸다고 계측이 정확해진 건 아니다 — 가중치는 전부 1.0 이고 검증 데이터가 없다.

@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { isMbtiType, type MbtiType } from "@/lib/mbti";
-import { EMPTY_PICKS, QUIZ_QUESTIONS, picksToMbti, type QuizPick, type QuizPicks } from "@/lib/mbti-quiz";
+import { EMPTY_PICKS, countAnswered, picksToMbti, type QuizPick, type QuizPicks } from "@/lib/mbti-quiz";
 import { normalizeName } from "@/features/roles/roster-model";
 import type { OnboardingDraft, RoleKey } from "@/lib/types";
 
@@ -116,12 +116,16 @@ function subscribe(onChange: () => void): () => void {
   // 하이드레이션이 어긋나지 않고, 복원 직후 React 가 스냅샷을 다시 읽어 간다.
   if (!hydrated) {
     hydrated = true;
+    // **저장된 것이 하나도 없어도 새 객체를 만든다.** 복원 여부(`hydrated`)가 렌더에
+    // 반영되려면 스냅샷이 다시 그려져야 하는데, 값이 그대로면 React 는 "바뀌지 않았다" 고
+    // 보고 그리지 않는다. 그러면 아래 게이트가 복원을 못 기다리고 화면을 가린 채 되돌린다.
+    //
     // **저장된 것이 있을 때만** 덮어쓴다. 저장이 막힌 기기(시크릿 모드·저장소 차단·용량
     // 소진)에서는 아무것도 못 읽는다. 예전에는 여기서 빈 상태를 그대로 써서, 그 위에 이미
     // 만들어 둔 팀 코드를 지웠다 — 이름 조회가 늘 실패하고 온보딩 전체가 마지막에 조용히
     // 막혔다. 돌아갈 최신 상태가 있는데 비워 버릴 이유가 없다.
     const stored = loadStored();
-    if (stored) state = { ...state, ...stored };
+    state = stored ? { ...state, ...stored } : { ...state };
   }
   listeners.add(onChange);
   return () => {
@@ -206,11 +210,19 @@ export function useOnboarding() {
 
   return {
     ...current,
+    /**
+     * `sessionStorage` 에서 초안을 **복원했는지**.
+     *
+     * 첫 하이드레이션 렌더는 `getServerSnapshot`(항상 `EMPTY`)를 읽으므로 저장소를 보기 전이다.
+     * 화면이 `teamCode` 로 "초대 코드가 없다" 는 판단을 내리면 **아직 읽지 않은 상태**에서
+     * 결론을 내리는 셈이 된다. 이 값이 있어야 그 판단을 복원 뒤로 미룰 수 있다.
+     */
+    hydrated,
     /** 직접 고른 값이 있으면 그것, 없으면 04 성향 체크 결과. */
     effectiveMbti: current.mbti ?? quizResult,
     /** 지금 유형이 04 성향 체크에서 나온 것인지 — 05 화면 문구가 달라진다. */
     fromQuiz: !current.mbti && quizResult !== null,
     /** 04 화면에서 답한 문항 수. */
-    answeredCount: Object.keys(QUIZ_QUESTIONS).filter((id) => current.picks[id]).length,
+    answeredCount: countAnswered(current.picks),
   };
 }

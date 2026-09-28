@@ -16,11 +16,16 @@ import { cn } from "@/lib/cn";
  */
 export default function MbtiPage() {
   const router = useRouter();
-  const { mbti } = useOnboarding();
+  // **`effectiveMbti` 로 본다 — `mbti` 로만 보면 안 된다.** 04 성향 체크로 얻은 유형은
+  // `mbti` 가 아니라 `picks` 에 있고, `toDraft()` 도 그 값을 `effectiveMbti` 라고 부른다.
+  // `mbti` 만 보면 05 의 "유형 다시 고르기" 로 돌아왔을 때(퀴즈에서만 고른 경우) 아무것도
+  // 선택돼 있지 않은 화면이 되고 하단 버튼은 영영 비어 있었다 — 유형을 이미 정해 놓고도
+  // 다음 화면으로 못 가는 셈이다. 05 도 `effectiveMbti` 로 문구를 갈라 쓴다.
+  const { effectiveMbti, fromQuiz } = useOnboarding();
   const ready = useOnboardingGate(true);
   if (!ready) return null;
 
-  const currentMeta = getMbtiMeta(mbti);
+  const currentMeta = getMbtiMeta(effectiveMbti);
 
   return (
     <AppFrame label="03 MBTI 선택">
@@ -35,7 +40,7 @@ export default function MbtiPage() {
 
         <div role="radiogroup" aria-label="MBTI 유형" className="mb-3.5 grid grid-cols-4 gap-[7px]">
           {MBTI_TYPES.map((type) => {
-            const on = mbti === type;
+            const on = effectiveMbti === type;
             return (
               <button
                 key={type}
@@ -57,13 +62,13 @@ export default function MbtiPage() {
         </div>
 
         {/* 선택한 유형의 캐릭터 및 팀플 스타일 미리보기 카드 */}
-        {currentMeta && mbti ? (
+        {currentMeta && effectiveMbti ? (
           <div className="animate-pop mb-4 overflow-hidden rounded-2xl border-[1.5px] border-yellow-300 bg-linear-to-b from-yellow-50 to-card p-3.5 shadow-2xs">
             <div className="flex items-center gap-3">
               <div className="relative size-[58px] flex-none overflow-hidden rounded-xl border border-yellow-200 bg-yellow-100">
                 <Image
-                  src={characterImage(mbti)}
-                  alt={`${mbti} 캐릭터`}
+                  src={characterImage(effectiveMbti)}
+                  alt={`${effectiveMbti} 캐릭터`}
                   width={58}
                   height={58}
                   className="size-full object-contain p-1 animate-jelly"
@@ -73,6 +78,12 @@ export default function MbtiPage() {
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono font-extrabold text-[15px] text-yellow-800">{currentMeta.type}</span>
                   <span className="t-sec keep-all text-txt-strong">{currentMeta.characterName}</span>
+                  {/* 04 에서 온 값임을 여기서도 밝힌다 — 05 와 같은 말이다. */}
+                  {fromQuiz ? (
+                    <span className="flex-none rounded-full bg-coral-100 px-2 py-0.5 text-[11.5px] font-medium text-coral-700">
+                      성향 체크 결과
+                    </span>
+                  ) : null}
                 </div>
                 <p className="keep-all mt-0.5 line-clamp-1 text-[13px] text-txt-muted">{currentMeta.shortDesc}</p>
                 <div className="mt-1.5 flex flex-wrap gap-1">
@@ -144,11 +155,11 @@ export default function MbtiPage() {
         <Btn
           full
           size="lg"
-          disabled={!mbti}
+          disabled={!effectiveMbti}
           onClick={() => router.push("/onboarding/character")}
           iconRight="arrow-right"
         >
-          {mbti ? `${mbti} 로 계속` : "유형을 골라 주세요"}
+          {effectiveMbti ? `${effectiveMbti} 로 계속` : "유형을 골라 주세요"}
         </Btn>
       </Dock>
     </AppFrame>

@@ -32,6 +32,7 @@ import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
 import {
   QUIZ_QUESTIONS,
+  countAnswered,
   pickSide,
   picksToMbti,
   scoreAxes,
@@ -374,6 +375,17 @@ console.log("\n성향 체크 계산");
 
   check("앞 글자만 고르면 ESTJ", picksToMbti(fill("first")), "ESTJ");
   check("뒷 글자만 고르면 INFP", picksToMbti(fill("second")), "INFP");
+
+  // 04 화면이 "몇 문항 남았나" 를 세는 수 — 20을 채워도 0 이면 완료 버튼이 영영 안 열린다.
+  check("아무것도 안 골랐으면 0", countAnswered({}), 0);
+  check("다 고르면 20", countAnswered(fill("first")), 20);
+  {
+    const one = fill("first");
+    for (const q of QUIZ_QUESTIONS.slice(1)) delete one[q.id];
+    check("한 문항만 골랐으면 1", countAnswered(one), 1);
+    // 문항 id 가 아닌 인덱스로 세면 늘 0 이 된다 — 그게 실제로 났던 버그다.
+    check("인덱스 문자열로는 세지지 않는다", countAnswered({ "0": "a", "1": "b" }), 0);
+  }
 
   // 한 문항이라도 비면 유형을 내지 않는다 — 05 화면이 그 값으로 문구를 바꾼다.
   const partial = fill("first");

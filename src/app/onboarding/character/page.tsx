@@ -17,8 +17,11 @@ import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 export default function CharacterPage() {
   const router = useRouter();
   const { effectiveMbti, fromQuiz } = useOnboarding();
-  // 초대 코드 없이 직접 들어온 경우를 여기서 되돌린다.
-  const ready = useOnboardingGate(Boolean(effectiveMbti));
+  // 게이트는 초대 코드만 본다(`true`). **`effectiveMbti` 를 넘기면 아래 되돌리기가 죽는다.**
+  // 게이트가 `ready = Boolean(effectiveMbti) && 코드있음` 을 돌려주므로 아래 이펙트의
+  // `ready && !effectiveMbti` 는 언제나 거짓이었다 — 유형 없이 직접 들어온 사람은
+  // 되돌아가지도 못하고 그냥 빈 화면만 마주했다(아래 주석이 바라는 동작과 반대).
+  const ready = useOnboardingGate(true);
 
   // 유형 없이 이 화면에 직접 들어온 경우(새로고침·링크 공유) 선택 화면으로 되돌린다.
   useEffect(() => {
