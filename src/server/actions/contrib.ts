@@ -325,3 +325,79 @@ export async function setConfirmsNeeded(needed: number, confirm: boolean): Promi
   revalidatePath("/home");
   return { ok: true, needed, affected: changed };
 }
+
+/**
+ * 회의 참여 표시를 찍거나 지운다 — **팀장만**(`requireLeader`).
+ *
+ * 앱이 판정하지 않는다(정책: 입장과 발언을 정확히 아는 쪽이 아니라 자동 판정이 정직하지 않다).
+ * 붙는 곳은 **기록 하나**고, 참여자는 그 기록의 주인이다. 공동 작업은 23 화면의 정정 응답이
+ * 그 자리를 맡고 있다.
+ *
+ * **지워도 흔적이 남는다.** 취소는 행을 지우지 않고 `activeKey` 를 비운다 — 누가 · 언제
+ * 지웠는지 남지 않으면 "왜 참여 표시가 없나"에 답할 수 없고, 공로 평가처럼 보이는 대로
+ * 조작할 수 있게 된다. 같은 자리(`activeKey`)를 다시 쓰는 방식이라 **한 기록에 표시가 두 개**
+ * 는 유일 인덱스가 DB 에서 막는다.
+ *
+ * **기록 상태는 건드리지 않는다.** 참여한다고 기록이 확정되지 않는다(확인은 팀원이 한다).
+ * 의견 차이가 떠 있어도 참여 여부는 사실일 수 있다 — 다툼은 기록의 *내용*에 대한 것이고
+ * 사람이 그 일을 했는지는 별개다.
+ */
+export type ParticipationResult = "marked" | "cleared" | "already" | "gone";
+
+export async function setParticipation(
+  recordId: string,
+  mark: boolean,
+): Promise<ParticipationResult> {
+  const leader = await requireLeader();
+
+  const record = await db.contribRecord.findFirst({
+    where: { id: recordId, member: { teamId: leader.teamId } },
+    select: { id: true, memberId: true, title: true },
+  });
+  if (!record) return "gone";
+
+  // 현재 표시 중인 행. 취소된 행(과거)이 있어도 하나만 고른다 — activeKey 가 그 구분이다.
+  const current = await db.contribParticipation.findFirst({
+    where: { recordId: record.id, activeKey: record.id },
+    select: { id: true },
+  });
+
+  if (mark) {
+    if (current) return "already";
+    // 유일 인덱스가 막지만, 동시로 두 번 눌렀을 때 한쪽이 500 으로 죽지 않게 한다.
+    await db.contribParticipation
+      .create({ data: { recordId: record.id, activeKey: record.id, shownById: leader.id } })
+      .catch((e) => {
+        if ((e as { code?: string }).code === "P2002") return null;
+        throw e;
+      });
+    if (!current) {
+      await notify({
+        to: [record.memberId],
+        kind: "contrib-participation",
+        title: `${leader.name}님이 참여로 표시했습니다`,
+        body: record.title,
+        href: "/team/contrib",
+        actorId: leader.id,
+      });
+    }
+  } else {
+    if (!current) return "already";
+    await db.contribParticipation.update({
+      where: { id: current.id },
+      data: { activeKey: null, clearedById: leader.id, clearedAt: new Date() },
+    });
+    await notify({
+      to: [record.memberId],
+      kind: "contrib-participation",
+      title: `${leader.name}님이 참여 표시를 취소했습니다`,
+      body: record.title,
+      href: "/team/contrib",
+      actorId: leader.id,
+    });
+  }
+
+  revalidatePath("/team", "layout");
+  revalidatePath("/home");
+  return mark ? "marked" : "cleared";
+}

@@ -50,10 +50,21 @@ import {
 } from "../src/lib/read-cushion.js";
 import type { ChatMessage, MeetingProposal } from "../src/lib/types.js";
 import {
+  clientGate,
+  isJoinCapped,
+  JOIN_LIMIT,
+  teamGate,
+} from "../src/server/rate-limit/policy.js";
+import {
   contribByLabel,
   contribState,
   maxConfirmsNeeded,
 } from "../src/server/contrib/state.js";
+import {
+  currentParticipations,
+  isMarked,
+  participationText,
+} from "../src/server/contrib/participation.js";
 
 /**
  * 업무 규칙을 확인하는 불변식 모음.
@@ -246,6 +257,81 @@ console.log("\n기록 확정 기준 (팀이 정한다)");
   check("분모는 2명 이상일 때만", contribByLabel({ state: "ok", confirms: 1, needed: 1, disputedBy: null }), "1명 확인");
   check("2명 기준은 진행을 보여 준다", contribByLabel({ state: "pending", confirms: 1, needed: 2, disputedBy: null }), "1/2명 확인");
   check("아직 모인 확인이 없으면", contribByLabel({ state: "pending", confirms: 0, needed: 2, disputedBy: null }), "팀원 확인 대기");
+}
+
+/* ── 회의 참여 표시 ────────────────────────────────────────── */
+
+console.log("\n회의 참여 표시 (팀장이 직접 찍는다)");
+{
+  const shown = {
+    recordId: "r1",
+    activeKey: "r1",
+    shownBy: "박지호",
+    shownAt: new Date("2026-09-28T10:00:00+09:00"),
+    clearedBy: null,
+    clearedAt: null,
+  };
+  const cleared = { ...shown, activeKey: null, clearedBy: "이서연", clearedAt: new Date("2026-09-29T10:00:00+09:00") };
+
+  check("표시 중인가", isMarked(shown), true);
+  check("취소된 표시는 표시 중이 아니다", isMarked(cleared), false);
+  check("표시가 없으면 false", isMarked(null), false);
+  check(
+    "누가 찍었는지 문구에 함께 든다",
+    participationText(shown)?.includes("박지호"),
+    true,
+  );
+  check(
+    "취소도 누구의 일로 남는다",
+    participationText(cleared),
+    participationText(cleared)?.includes("이서연") === true
+      ? participationText(cleared)
+      : "이서연",
+  );
+  // 표시 중인 것만 모아 준다 — 취소된 행이 "참여"로 세어지면 지운 사실이 사라진다.
+  check("표시 중인 것만 모은다", currentParticipations([cleared, shown]).length, 1);
+  check("아무것도 없으면 0건", currentParticipations([cleared]).length, 0);
+
+  // DB 규칙 — 한 기록에 표시가 두 개일 수 없다.
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (team) {
+    const leader = await db.member.findFirstOrThrow({ where: { teamId: team.id, isLeader: true, leftAt: null } });
+    const owner = await db.member.findFirstOrThrow({
+      where: { teamId: team.id, leftAt: null, id: { not: leader.id } },
+    });
+    const rec = await db.contribRecord.create({
+      data: { memberId: owner.id, kind: "task", title: "참여 표시 확인용", detail: " ", source: "self", state: "pending" },
+    });
+    const marked = await db.contribParticipation.create({
+      data: { recordId: rec.id, activeKey: rec.id, shownById: leader.id },
+    });
+    const again = await db.contribParticipation
+      .create({ data: { recordId: rec.id, activeKey: rec.id, shownById: leader.id } })
+      .catch((e) => e);
+    truthy("한 기록에 표시가 두 개일 수 없다", (again as { code?: string })?.code === "P2002");
+
+    // 취소는 기존 행을 남긴 채 `activeKey` 를 비운다 — 누가 지웠는지 그대로 남는다.
+    await db.contribParticipation.update({
+      where: { id: marked.id },
+      data: { activeKey: null, clearedById: leader.id, clearedAt: new Date() },
+    });
+    const reMarked = await db.contribParticipation
+      .create({ data: { recordId: rec.id, activeKey: rec.id, shownById: leader.id } })
+      .catch((e) => e);
+    truthy("지운 뒤에는 다시 표시할 수 있다", !((reMarked as { code?: string })?.code));
+
+    // **참여는 확인과 독립이다** — 표시해도 기록은 대기 그대로다.
+    const after = await db.contribRecord.findUniqueOrThrow({
+      where: { id: rec.id },
+      select: { state: true },
+    });
+    check("표시해도 기록은 확정되지 않는다", after.state, "pending");
+
+    await db.contribParticipation.deleteMany({ where: { recordId: rec.id } });
+    await db.contribRecord.delete({ where: { id: rec.id } });
+  } else {
+    console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  }
 }
 
 /* ── 회의를 격자 위에 얹기 ─────────────────────────────────── */

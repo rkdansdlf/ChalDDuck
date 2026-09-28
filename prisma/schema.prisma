@@ -99,6 +99,9 @@ model Member {
   contribConfirms ContribConfirm[]
   /// 이 사람이 남긴 의견들(`ContribDispute`).
   disputesWritten ContribDispute[]   @relation("ContribDisputesBy")
+  /// 이 사람이 찍은 참여 표시들(`ContribParticipation`).
+  participationsShown ContribParticipation[] @relation("ParticipationShownBy")
+  participationsCleared ContribParticipation[] @relation("ParticipationClearedBy")
   assignedTasks   Task[]
   pokesSent       Poke[]
   notifications   Notification[]    @relation("NotifyTo")
@@ -639,6 +642,7 @@ model ContribRecord {
   confirms   ContribConfirm[]
   /// 의견의 이력. **덮어쓰지 않는다.**
   disputes   ContribDispute[]
+  participations ContribParticipation[]
 
   @@index([memberId])
 }
@@ -677,6 +681,40 @@ model ContribConfirm {
   /// 같은 사람이 같은 기록을 두 번 확인하지 못한다.
   @@unique([recordId, memberId])
   @@index([recordId])
+}
+
+/// 회의 참여 표시 — **팀장이 직접 찍는다.** 앱이 판정하지 않는다.
+///
+/// 정책이 정해졌다(README 3절): 입장과 발언을 앱이 정확히 아는 쪽이 아니라 자동 판정이
+/// 정직하지 않으��, 팀장이 표시한다. 그 표시가 **어디에 붙는지**가 이 표의 모양이다.
+///
+/// - **기록 하나**에 붙는다. 참여자는 따로 적지 않는다 — `record.memberId` 가 곧 참여자라
+///   두 곳에 적으면 서로 어긋난다. 공동 작업은 23 화면의 정정 응답("공동 작업으로 나눔")이
+///   그 자리를 이미 맡고 있다.
+/// - **지우지 않는다.** 표시를 취소해도 행은 남고 누가 · 언제 취소했는지 적힌다. 공로 평가가
+///   아니라 사실 기록이라 조작이 드러나야 나중에 따져 볼 수 있다.
+/// - **확인과 독립이다.** 참여한다고 기록이 확정되지 않는다(확인은 팀원이 한다).
+model ContribParticipation {
+  id        String   @id @default(cuid())
+  recordId  String
+  /// 현재 표시 중이면 그 기록의 id, 취소했으면 null.
+  ///
+  /// 유일 인덱스가 "한 기록에 표시가 두 개"를 **DB 에서** 막는다 — 두 사람이 우연히 동시에
+  /// 눌러도 하나만 선다. `MeetingProposal.activeKey` · `IceRound.activeKey` 와 같은 방식이고,
+  /// 지운 자리에 다시 찍을 수 있다는 이유로 과거 행까지 막지 않는다.
+  activeKey String?  @unique
+  /// 표시한 팀장. "누가 찍었나"를 남긴다.
+  shownById String
+  shownAt   DateTime @default(now())
+  /// 취소한 팀장과 시각. 지금 표시 중이면 null.
+  clearedById String?
+  clearedAt   DateTime?
+
+  record    ContribRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  shownBy   Member        @relation("ParticipationShownBy", fields: [shownById], references: [id], onDelete: Cascade)
+  clearedBy Member?       @relation("ParticipationClearedBy", fields: [clearedById], references: [id], onDelete: SetNull)
+
+  @@index([recordId, shownAt])
 }
 
 /// 할 일. 팀 업무·개인 학습·점검이 한 목록에 있고 종류로만 구분된다.

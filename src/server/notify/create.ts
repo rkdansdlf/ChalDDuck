@@ -20,9 +20,13 @@ export type NotifyKind =
   | "schedule-ask"
   | "contrib-dispute"
   | "contrib-confirm"
+  /** 팀장이 회의 참여로 표시했거나 그 표시를 취소했다. */
+  | "contrib-participation"
   | "join-request"
   | "rejoin-request"
   | "icebreak"
+  /** 누가 하지(29)에서 팀의 정한 하나가 바뀌었다. 아이스브레이킹과 알림함이 섞이지 않게 따로 둔다. */
+  | "who-does-it"
   /** 팀원이 드라이브에 올리거나 복원했다. */
   | "drive";
 
