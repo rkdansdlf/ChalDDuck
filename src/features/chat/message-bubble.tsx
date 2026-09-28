@@ -32,6 +32,13 @@ export const MessageBubble = memo(function MessageBubble({
   onSaveToDrive,
 }: {
   message: ChatMessage;
+  /**
+   * 이 말의 순화문. **없으면 원문으로 그린다.**
+   *
+   * 말에 붙어 있지 않고 따로 온다(`ChatMessage` 에서 뺐다 — 사람이 한 말과 낙관적 말풍선이
+   * 같은 모양을 유지하도록). `undefined` 와 `null` 은 같은 뜻(순화본 없음)으로 받는다.
+   */
+  purifiedText?: string | null;
   /** 여러 사람이 있는 방에서만 상대 이름을 보여 준다. */
   showAuthor: boolean;
   onRetry: (message: ChatMessage) => void;
@@ -51,9 +58,17 @@ export const MessageBubble = memo(function MessageBubble({
   // 누르고 있으면 원문으로, 놓으면 순화문으로. 이 상태는 **말풍선마다** 따로다 —
   // 한 말만 대조해 보고 싶은데 방 전체가 원문으로 바뀌면 대조가 아니라 후퇴가 된다.
   const [showOriginal, setShowOriginal] = useState(false);
-  const { text: displayText, purified } = displayTextOf(message, showOriginal);
+  const { text: displayText, kind } = displayTextOf(message, showOriginal);
   /** 화면에 그리는 글과 **보관된 원문**이 다르다 — 표시가 남아야 할 때. */
   const changed = displayText !== message.text;
+  /**
+   * 라벨은 **누가 쓴 문장인지**로 갈린다.
+   *
+   * `ai`(모델이 쓴 순화문)와 `mask`(규칙으로 위험 표현만 가린 것)은 **다른 라벨**이어야 한다.
+   * AI 가 거절돼 규칙이 대신 가렸는데 "순화됨" 이라 쓰면 그건 거짓말이다 — 읽는 사람은
+   * "말투가 바뀐 것"으로 오해하고, 다음에는 그 라벨을 믿고 원문 보기를 누르지 않는다.
+   */
+  const label = kind === "FALLBACK" ? "공격적 표현 가림" : "순화됨";
 
   return (
     <div className={cn("animate-slide-up flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
@@ -107,8 +122,11 @@ export const MessageBubble = memo(function MessageBubble({
               aria-pressed={showOriginal}
               className="min-h-11 cursor-pointer border-none bg-transparent p-0 align-middle"
             >
-              <Chip tone="y" icon={purified ? "wand-sparkles" : "eye"}>
-                {purified ? "순화됨 · 원문 보기" : "원문 · 순화문 보기"}
+              <Chip
+                tone={kind === "FALLBACK" ? "n" : "y"}
+                icon={showOriginal ? "eye" : kind === "FALLBACK" ? "shield" : "wand-sparkles"}
+              >
+                {showOriginal ? `원문 · ${label} 보기` : `${label} · 원문 보기`}
               </Chip>
             </button>
           ) : null}

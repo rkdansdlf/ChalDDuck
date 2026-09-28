@@ -55,18 +55,21 @@ function pendingId(): string {
  * `sortAt` 은 `null` 로 둔다 — 아직 서버에 도착하지 않았으므로 순서를 정할 시각이 없다.
  * 서버가 준 시각이 오면 `resolvePendingMessage` 가 채운다.
  *
- * `purifiedText` 는 **null 로 고정한다.** 내 말은 순화 대상이 아니다(`read-cushion.ts` 의
- * `canPurify`) — 낙관적 말풍선에 순화본이 붙으면 내가 보낼 말을 다른 사람이 본 뜻으로
- * 미리 고쳐 놓은 것처럼 보인다.
+ * 순화본은 이 말에 **없다.** 순화는 상대 말에만 되고(`read-cushion.ts` 의 `canPurify`),
+ * 순화문은 `ChatMessage` 가 아니라 `use-chat-thread` 의 `purified` 표에 따로 산다 — 낙관적
+ * 말풍선에 순화본이 붙으면 내가 보낼 말을 다른 사람이 본 뜻으로 미리 고쳐 놓은 것처럼
+ * 보이고, 그렇게 막으려고 붙이던 값이 메시지 형태를 한 가지 늘렸다.
  */
 export function addPendingMessage(
   threadId: string,
-  message: Omit<ChatMessage, "id" | "time" | "status" | "sortAt" | "purifiedText">,
+  message: Omit<ChatMessage, "id" | "time" | "status" | "sortAt" | "purified">,
 ): string {
   const tempId = pendingId();
   update(threadId, (thread) => [
     ...thread,
-    { ...message, id: tempId, time: null, sortAt: null, status: "sending", purifiedText: null },
+    // **내 말은 순화 대상이 아니다**(`canPurify`) — 낙관적 말풍선에 순화 상태가 붙으면 내가
+    // 보낼 말을 다른 사람이 본 뜻으로 미리 고쳐 놓은 것처럼 보인다.
+    { ...message, id: tempId, time: null, sortAt: null, status: "sending", purified: null },
   ]);
   return tempId;
 }

@@ -10,14 +10,25 @@ import {
   type MessagePage,
 } from "@/data/api";
 import {
-  DEFAULT_TONE,
-  alignPurified,
+  CUSHION_REASON,
+  CLAIM_TTL_MS,
+  FAILURE_BACKOFF_MS,
+  MAX_ATTEMPTS,
+  PROMPT_VERSION,
+  PURIFY_BATCH_LIMIT,
+  VALIDATOR_VERSION,
+  canRetry,
   isCushionTone,
   isPurifiableText,
-  packPurifyLines,
-  PURIFY_BATCH_LIMIT,
+  isRefusal,
+  judgeOne,
+  maskRiskyParts,
+  packPurifyItems,
+  parsePurifyResponse,
   toneChanged,
   toneOf,
+  type CushionReason,
+  type CushionStatus,
   type ReadCushionSetting,
 } from "@/lib/read-cushion";
 import type { ChatMessage, DmThread } from "@/lib/types";
@@ -26,6 +37,8 @@ import { isAiConfigured } from "@/server/ai/model";
 import { runTool } from "@/server/ai/run";
 import { softenIncoming } from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
+import { activeModelId } from "@/server/ai/model";
+import { randomUUID, createHash } from "node:crypto";
 import { signTeamFileUrl, signTeamUpload, verifyTeamUpload } from "@/server/storage/team-upload";
 import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
@@ -343,7 +356,7 @@ export async function setReadCushionTone(
 
   // 모르는 말투는 그대로 넣지 않는다 — 프롬프트가 `TONE_GUIDE` 에서 못 찾으면 말투 없는
   // 순화가 되고, 사용자는 왜 다른지 알 수 없다.
-  const key = isCushionTone(tone) ? tone : DEFAULT_TONE;
+  const key = isCushionTone(tone) ? tone : toneOf({ tone: null });
 
   const before = await db.readCushion.findUnique({
     where: { memberId_threadKey: { memberId: me.id, threadKey } },
@@ -369,34 +382,90 @@ export async function setReadCushionTone(
    */
   if (toneChanged(before?.tone, key)) {
     await db.messageCushion.deleteMany({
-      where: { memberId: me.id, message: { teamId: me.teamId, threadKey } },
+      where: { viewerId: me.id, message: { teamId: me.teamId, threadKey } },
     });
   }
 
   return { ok: true, setting: { tone: key } };
 }
 
+/** 순화 상태 하나 — 화면이 그대로 그리는 값. */
+export type CushionView =
+  | { status: "PURIFIED" | "FALLBACK"; text: string; kind: "ai" | "mask"; reason: null; retryAfter: null }
+  | { status: "PENDING" | "REJECTED" | "FAILED"; text: null; kind: null; reason: string | null; retryAfter: string | null };
+
 export type SoftenThreadResult =
-  | { ok: true; purified: Record<string, string>; /** 이번 묶음에서 순화하지 못한 말의 수. */ skipped: number }
+  | {
+      ok: true;
+      /** 요청한 모든 말의 현재 상태. 못 부른 말도 **저장된 상태 그대로** 돌아온다. */
+      cushions: Record<string, CushionView>;
+      /** 이 번에 실제로 모델을 부른 묶음 수(관측용). */
+      called: number;
+      /**
+       * 이 방에 **아직 손대지 않은 대상 말**이 몇 개 남았나.
+       *
+       * 화면은 이 값이 0 이 될 때까지 **곧바로** 다음 묶음을 부른다. 3초 폴링 주기에 얽매면
+       * 순화가 붙는 속도가 그 주기에 묶이고, AI 가 20초나 걸리는 동안 대화가 이미 지나간다.
+       */
+      remaining: number;
+    }
   | { ok: false; message: string };
 
+/** 한 말의 현재 상태를 화면 값으로 옮긴다. */
+function toCushionView(row: {
+  status: string;
+  text: string | null;
+  source: string | null;
+  reason: string | null;
+  retryAfter: Date | null;
+}): CushionView {
+  if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
+    return {
+      status: row.status,
+      text: row.text,
+      kind: row.source === "mask" ? "mask" : "ai",
+      reason: null,
+      retryAfter: null,
+    };
+  }
+  // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
+  // 모르는 status(옛 데이터·손으로 넣은 값)는 실패로 본다. 모르는 상태를 "순화됨" 으로
+  // 그리는 일은 없어야 한다.
+  const status: "PENDING" | "REJECTED" | "FAILED" =
+    row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
+  return {
+    status,
+    text: null,
+    kind: null,
+    reason: row.reason,
+    retryAfter: row.retryAfter ? row.retryAfter.toISOString() : null,
+  };
+}
+
+/** 원문 지문. 캐시가 "같은 입력으로 만든 것인가" 를 판정하는 기준이다. */
+function hashSource(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
 /**
- * 이 방에 도착한 남의 말을 **묶어서** 순화해 둔다.
+ * 이 방에 도착한 남의 말을 순화해 **읽을 형태**로 만들어 둔다.
  *
- * 말 하나마다 한 번씩 부르면 대화방을 한 번 열 때 AI 를 40회 부르는 셈이라, 하루 한도
- * (1인 60회)가 첫 화면에 다 Gone 된다. 그래서 한 묶음을 한 번에 부르고, 한도에서도
- * **묶음 하나가 1회**다.
+ * ## 왜 이렇게 길다 — 실패를 저장하기 때문
  *
- * 세 가지를 지킨다.
- * - **방을 확인한다.** `resolveThread` 가 내 방인지 보고, 조회도 그 방 안에서만 한다.
- *   화면이 보낸 id 를 그대로 믿으면 남의 방에 있는 말을 순화해 저장할 수 있다.
- * - **원문은 건드리지 않는다.** 여기서 저장하는 것은 그 사람에게만 보이는 순화문
- *   (`MessageCushion`)이고, `Message.text` 는 그대로다.
- * - **같은 말은 한 번만 순화한다.** 이미 있는 순화본은 다시 만들지 않는다 — 결과가
- *   조금씩 달라질 수 있어, 사용자가 본 말이 조용히 바뀌는 것이 된다.
+ * 예전에는 성공한 결과만 저장했다. 그래서 **거절된 말도 "아직 없는 말"** 로 남아 3초마다
+ * 다시 후보가 되었고, 새로고침하면 브라우저의 "시도함" 기록까지 리셋되어 하루 60회가
+ * 몇 분 만에 Gone 이 되었다. 이제 흐름이 이렇게다.
  *
- * 실패하면 `ok:false` 다. 화면은 그때 **원문 그대로** 보여 준다 — 순화가 안 되는 것보다
- * 대화가 갑자기 다른 말로 보이면 더 나쁘다.
+ * 1. **지금 다시 부를 수 있는지** 저���된 상태에 물어본다(`canRetry`). 성공·백오프·시도 횟수·
+ *    프롬프트/모델 버전을 본다.
+ * 2. **선점한다.** `PENDING` 행을 먼저 만들고 `claimToken` 을 심는다. **토큰이 내 것인
+ *    항목만 모델을 부른다** — 두 탭이 동시에 열려도 한 번만 부른다.
+ * 3. **묶어서 한 번 부른다**(최대 10개, AI 한도 1회).
+ * 4. **항목별로 판정한다**(`judgeAll`). 개수·순서가 아니라 `id` 로 맞춘다.
+ * 5. **거절·실패한 항목은 규칙 가림으로 이어받는다**(`FALLBACK`). AI 결과인 척 하지 않는다.
+ * 6. **전부 저장한다** — 성공도 실패도. 다음 화면은 이 표를 보고 더 부를지 말지 정한다.
+ *
+ * 실패하면 그 말은 **원문이 보인다**. 가릴 수 있는 표현이면 규칙이 가린본을 보여 준다.
  */
 export async function softenThreadMessages(
   threadId: string,
@@ -404,72 +473,204 @@ export async function softenThreadMessages(
 ): Promise<SoftenThreadResult> {
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
+  const at = Date.now();
+  const model = activeModelId();
 
-  // 키가 없으면 **샘플로 대신하지 않는다.** 보낸 사람은 그 글이 그대로 전달되었는데
-  // 읽는 사람에게만 가짜 문장이 붙으면 대화가 거짓말을 하게 된다.
-  if (!isAiConfigured()) {
-    return { ok: false, message: "AI 가 연결되어 있지 않아 원문으로 읽습니다." };
-  }
-
-  const wanted = [...new Set(messageIds)].slice(0, PURIFY_BATCH_LIMIT);
-  if (wanted.length === 0) return { ok: true, purified: {}, skipped: 0 };
-
-  // 모르는 말투는 프롬프트가 `TONE_GUIDE` 에서 못 찾는 값이라, 여기서 막는다.
-  const saved = await db.readCushion.findUnique({
-    where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    select: { tone: true },
-  });
-  const tone = toneOf({ tone: saved?.tone ?? null });
-
-  // 방 안의 **남의 말**만. 내가 쓴 말과 글 없는 말(파일 첨부만)은 순화 대상이 아니다.
+  // 방 안의 **남의 말**만. 내가 쓴 말과 글 없는 말(파일 첨부만)은 대상이 아니다.
+  const wanted = [...new Set(messageIds)].slice(0, PURIFY_BATCH_LIMIT * 4);
   const rows = await db.message.findMany({
     where: { teamId: me.teamId, threadKey, id: { in: wanted }, authorId: { not: me.id } },
     select: { id: true, text: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   const targets = rows.filter((row) => isPurifiableText(row.text));
+  if (targets.length === 0) return { ok: true, cushions: {}, called: 0 };
 
-  /**
-   * **이미 순화본이 있는 말은 다시 시키지 않는다.**
-   *
-   * 두 탭이 같은 말을 동시에 시켜도 `createMany(skipDuplicates)` 는 첫 줄만 남기고
-   * 나머지는 **조용히 버린다.** 그러면 화면에는 이번에 새로 받은 글자가 붙는데 새로고침하면
-   * 저장된 옛 글자가 다시 나온다 — 읽고 있던 말이 조용히 바뀌는, 이 기능에서 가장 나쁜
-   * 일이 된다. 그래서 이미 있는 것은 **저장된 것을 그대로 돌려준다.**
-   */
-  const stored = await db.messageCushion.findMany({
-    where: { memberId: me.id, messageId: { in: targets.map((row) => row.id) } },
-    select: { messageId: true, text: true },
+  // 저장된 상태를 먼저 읽는다 — "이 말은 이미 어떻게 됐나" 가 이번 호출의 전부다.
+  const existing = await db.messageCushion.findMany({
+    where: { viewerId: me.id, messageId: { in: targets.map((row) => row.id) } },
   });
-  const purified: Record<string, string> = {};
-  for (const row of stored) purified[row.messageId] = row.text;
+  const stored = new Map(existing.map((row) => [row.messageId, row]));
 
-  const fresh = targets.filter((row) => !purified[row.id]);
-  if (fresh.length === 0) {
-    return { ok: true, purified, skipped: wanted.length - Object.keys(purified).length };
+  const toneRow = await db.readCushion.findUnique({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    select: { tone: true },
+  });
+  const tone = toneOf({ tone: toneRow?.tone ?? null });
+
+  // 1) 지금 부를 수 있는 것만 고른다.
+  const claimable = targets.filter((row) =>
+    canRetry(
+      stored.get(row.id)
+        ? {
+            status: stored.get(row.id)!.status as CushionStatus,
+            reason: stored.get(row.id)!.reason as CushionReason | null,
+            attemptCount: stored.get(row.id)!.attemptCount,
+            retryAfter: stored.get(row.id)!.retryAfter?.toISOString() ?? null,
+            model: stored.get(row.id)!.model,
+            promptVersion: stored.get(row.id)!.promptVersion,
+            createdAt: stored.get(row.id)!.createdAt.toISOString(),
+          }
+        : null,
+      { model, promptVersion: PROMPT_VERSION, at },
+    ),
+  );
+
+  // 2) 선점한다. **내가 Token 을 심은 행만 내 것** — 남의 선점을 덮어쓰지 않는다.
+  const claimToken = randomUUID();
+  const claimIds = claimable.slice(0, PURIFY_BATCH_LIMIT).map((row) => row.id);
+  if (claimIds.length > 0) {
+    const now = new Date(at);
+    await db.messageCushion.createMany({
+      data: claimIds.map((id) => {
+        const source = targets.find((row) => row.id === id)!.text;
+        return {
+          messageId: id,
+          viewerId: me.id,
+          status: "PENDING",
+          sourceHash: hashSource(source),
+          tone,
+          model,
+          promptVersion: PROMPT_VERSION,
+          validatorVersion: VALIDATOR_VERSION,
+          claimToken,
+          retryAfter: new Date(at + CLAIM_TTL_MS),
+        };
+      }),
+      skipDuplicates: true,
+    });
   }
 
-  const { kept } = packPurifyLines(fresh.map((row) => row.text.trim()));
-  const batch = fresh.slice(0, kept);
-  const originals = batch.map((row) => row.text.trim());
+  const afterClaim = await db.messageCushion.findMany({
+    where: { viewerId: me.id, messageId: { in: targets.map((row) => row.id) } },
+  });
+  const mine = afterClaim.filter((row) => row.claimToken === claimToken).map((row) => row.messageId);
+  const textOf = new Map(targets.map((row) => [row.id, row.text.trim()]));
 
-  const result = await runTool("read-cushion", () => softenIncoming(originals, tone));
-  if (!result.ok) return { ok: false, message: result.message };
+  const cushions: Record<string, CushionView> = {};
+  for (const row of afterClaim) cushions[row.messageId] = toCushionView(row);
 
-  const aligned = alignPurified(result.value, originals);
-  const data: Array<{ messageId: string; memberId: string; text: string; tone: string }> = [];
+  if (mine.length === 0) return { ok: true, cushions, called: 0 };
 
-  for (const [index, text] of aligned.entries()) {
-    if (!text) continue;
-    purified[batch[index].id] = text;
-    data.push({ messageId: batch[index].id, memberId: me.id, text, tone });
+  // 3) 묶어서 한 번 부른다.
+  const items = packPurifyItems(mine.map((id) => ({ id, text: textOf.get(id) ?? "" })));
+  const modelId = model;
+  const attempt = claimable.find((row) => mine.includes(row.id));
+  const priorAttempts = attempt ? (stored.get(attempt.id)?.attemptCount ?? 0) : 0;
+
+  const result = await runTool("read-cushion", () => softenIncoming(items, tone));
+  const now = new Date(at);
+
+  /** 이 항목의 결과를 저장한다. 실패도 저장한다 — 안 하면 다시 부른다. */
+  const save = async (
+    id: string,
+    view: CushionView,
+    extra: { reason?: CushionReason | null; text?: string; source?: "ai" | "mask" } = {},
+  ) => {
+    cushions[id] = view;
+    await db.messageCushion.update({
+      where: { messageId_viewerId: { messageId: id, viewerId: me.id } },
+      data: {
+        status: view.status,
+        reason: extra.reason ?? null,
+        text: extra.text ?? null,
+        source: extra.source ?? null,
+        model: modelId,
+        promptVersion: PROMPT_VERSION,
+        validatorVersion: VALIDATOR_VERSION,
+        attemptCount: priorAttempts + 1,
+        claimToken: null,
+        // 실패는 **같은 설정으로는 다시 부르지 않게** 닫아 둔다. `canRetry` 가 버전을 보고
+        // 열어 준다 — 프롬프트를 고쳤거나 모델을 바꿨을 때만.
+        retryAfter: view.status === "PENDING" ? null : new Date(at + FAILURE_BACKOFF_MS),
+      },
+    });
+  };
+
+  if (!result.ok) {
+    // 한도·타임아웃처럼 **묶음 전체가 실패**했다. 항목별로 되돌린다.
+    const reason: CushionReason = result.message.includes("한도") || result.message.includes("횟수")
+      ? CUSHION_REASON.RATE_LIMITED
+      : CUSHION_REASON.MODEL_REFUSAL;
+    for (const item of items) {
+      const masked = maskRiskyParts(item.text);
+      if (masked.masked > 0) {
+        await save(item.id, {
+          status: "FALLBACK",
+          text: masked.text,
+          kind: "mask",
+          reason: null,
+          retryAfter: null,
+        }, { reason, text: masked.text, source: "mask" });
+        continue;
+      }
+      await save(item.id, { status: "FAILED", text: null, kind: null, reason, retryAfter: null }, { reason });
+    }
+    return { ok: true, cushions, called: 1 };
   }
 
-  // 두 탭이 같은 말을 동시에 순화해도 한 줄만 남는다(`skipDuplicates`) — 새 행이
-  // 쌓이면 그 말의 순화본이 어느 것인지를 고르는 기준이 사라진다.
-  if (data.length > 0) {
-    await db.messageCushion.createMany({ data, skipDuplicates: true });
+  // 4) 항목별 판정.
+  const refused = isRefusal(result.value.raw);
+  const parsed = parsePurifyResponse(result.value.raw);
+
+  for (const item of items) {
+    if (refused) {
+      const masked = maskRiskyParts(item.text);
+      if (masked.masked > 0) {
+        await save(item.id, {
+          status: "FALLBACK",
+          text: masked.text,
+          kind: "mask",
+          reason: null,
+          retryAfter: null,
+        }, { reason: CUSHION_REASON.MODEL_REFUSAL, text: masked.text, source: "mask" });
+        continue;
+      }
+      await save(item.id, {
+        status: "FAILED",
+        text: null,
+        kind: null,
+        reason: CUSHION_REASON.MODEL_REFUSAL,
+        retryAfter: null,
+      }, { reason: CUSHION_REASON.MODEL_REFUSAL });
+      continue;
+    }
+
+    const verdict = judgeOne(item, parsed.items.get(item.id));
+    if (verdict.status === "PURIFIED" && verdict.text) {
+      await save(item.id, {
+        status: "PURIFIED",
+        text: verdict.text,
+        kind: "ai",
+        reason: null,
+        retryAfter: null,
+      }, { text: verdict.text, source: "ai" });
+      continue;
+    }
+
+    // AI 가 실패한 항목 — **가릴 수 있으면 가린다.** 가장 순화해야 할 말이 원문으로
+    // 남는 것을 막는 것이 이 단계의 목적이다.
+    const reason = verdict.reason ?? CUSHION_REASON.EMPTY_RESPONSE;
+    const masked = maskRiskyParts(item.text);
+    if (masked.masked > 0) {
+      await save(item.id, {
+        status: "FALLBACK",
+        text: masked.text,
+        kind: "mask",
+        reason: null,
+        retryAfter: null,
+      }, { reason, text: masked.text, source: "mask" });
+      continue;
+    }
+    await save(item.id, {
+      status: "REJECTED",
+      text: null,
+      kind: null,
+      reason,
+      retryAfter: null,
+    }, { reason });
   }
 
-  return { ok: true, purified, skipped: wanted.length - Object.keys(purified).length };
+  return { ok: true, cushions, called: 1 };
 }
+

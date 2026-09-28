@@ -28,7 +28,7 @@ export default async function TeamPage() {
       roster={roster}
       tools={tools}
       negotiation={negotiation}
-      rejoinPending={rejoinRequests.length + joinRequests.length}
+      rejoinPending={rejoinRequests.length + joinRequests.rows.length}
     />
   );
 }

@@ -33,6 +33,7 @@ import {
   logOut,
   transferLeadership,
 } from "@/server/actions/team";
+import { updateMemberEmail } from "@/server/actions/email-auth";
 import { resetOnboarding } from "./onboarding-state";
 
 /**
@@ -51,6 +52,7 @@ export function AccessScreen({
   isLeader,
   teamName,
   others,
+  myEmail,
 }: {
   requests: RejoinRequest[];
   /** 팀에 처음 들어오려는 요청. 팀장이 아니면 빈 목록. */
@@ -68,14 +70,17 @@ export function AccessScreen({
   teamName: string;
   /** 나를 뺀 지금 팀원. 팀장을 넘길 상대를 고를 때 쓴다. */
   others: Member[];
+  myEmail?: string | null;
 }) {
   const router = useRouter();
   const [fresh, setFresh] = useState<string | null>(null);
   // 이 화면의 동작은 서로 배타적이다 — 하나가 끝나기 전에 다른 것을 받지 않는다.
   const { toast, busy, flash, run } = useAction();
   const working = busy.act === true;
-  /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기 / 로그아웃. */
-  const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | "logout" | null>(null);
+  /** 열려 있는 시트 — 팀장 넘기기 / 넘기고 나가기 / 프로젝트 없애기 / 로그아웃 / 이메일 관리. */
+  const [sheet, setSheet] = useState<"hand" | "handLeave" | "disband" | "leave" | "logout" | "email" | null>(null);
+  const [emailValue, setEmailValue] = useState(myEmail ?? "");
+  const [emailInput, setEmailInput] = useState(myEmail ?? "");
   const [confirmName, setConfirmName] = useState("");
 
   const resolve = (id: string, approve: boolean, who: string) =>
@@ -126,7 +131,7 @@ export function AccessScreen({
             {joinsCapped ? (
               <Note
                 tone="warn"
-                icon="triangle-alert"
+                icon="circle-alert"
                 title="새 요청을 일시 제한하고 있습니다"
                 className="mb-3.5"
               >
@@ -308,6 +313,30 @@ export function AccessScreen({
             </div>
           ))}
         </Rows>
+
+        <SecTitle note="등록해 두면 12자리 재입장 코드 없이 인증번호로 로그인할 수 있습니다">
+          로그인 및 재접속 이메일
+        </SecTitle>
+        <Panel s="cream" pad={16} className="mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="t-cap-strong text-txt-muted">연결된 이메일</div>
+              <div className="t-body font-medium text-txt-strong mt-0.5">
+                {emailValue ? emailValue : "등록된 이메일이 없습니다"}
+              </div>
+            </div>
+            <Btn
+              v="outline"
+              size="sm"
+              onClick={() => {
+                setEmailInput(emailValue);
+                setSheet("email");
+              }}
+            >
+              {emailValue ? "변경" : "등록"}
+            </Btn>
+          </div>
+        </Panel>
 
         <SecTitle note="잃어버렸다면 새로 받으세요">재입장 코드</SecTitle>
         {fresh ? (
@@ -546,6 +575,50 @@ export function AccessScreen({
             }
           >
             없애기
+          </Btn>
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={sheet === "email"}
+        title={emailValue ? "이메일 변경" : "이메일 등록"}
+        onClose={() => setSheet(null)}
+      >
+        <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">
+          등록된 이메일로 6자리 인증번호를 받아 복잡한 코드 없이 바로 로그인할 수 있습니다.
+        </p>
+        <div className="mb-4">
+          <Input
+            type="email"
+            value={emailInput}
+            onChange={setEmailInput}
+            placeholder="예: student@university.ac.kr"
+            autoFocus
+          />
+        </div>
+        <div className="flex gap-2">
+          <Btn full v="outline" disabled={working} onClick={() => setSheet(null)}>
+            취소
+          </Btn>
+          <Btn
+            full
+            disabled={working || !emailInput.trim()}
+            onClick={() =>
+              void run(
+                "act",
+                async () => {
+                  const res = await updateMemberEmail(emailInput);
+                  if (!res.ok) throw new Error("올바른 이메일 주소를 입력해 주세요.");
+                  setEmailValue(emailInput.trim().toLowerCase());
+                  setSheet(null);
+                  router.refresh();
+                  return "이메일을 저장했습니다";
+                },
+                "이메일을 저장하지 못했습니다. 형식을 확인해 주세요.",
+              )
+            }
+          >
+            저장
           </Btn>
         </div>
       </Sheet>

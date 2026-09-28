@@ -260,6 +260,9 @@ export async function joinTeam(
   if (taken) return { status: "name-taken" };
 
   const values = {
+    // **이메일을 요구하지 않는다** — 비어 있으면 그냥 없다. 강제하지 않는다: 강제하면
+    // 팀 들어가기가 "양식을 채우는 일"이 되어 이 앱의 약속(초대 코드 + 이름)에 어긋난다.
+    // 02 이름 화면에서 **선택**으로 받으며, 나중에 `계정과 기기` 에서도 바꿀 수 있다.
     email: draft.email ? draft.email.trim().toLowerCase() : null,
     mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
     mbtiFromQuiz: draft.mbtiFromQuiz,
@@ -457,7 +460,9 @@ export async function checkJoinApproval(): Promise<
         data: {
           teamId: request.teamId,
           name: request.name,
-          email: request.email,
+          // 요청자가 적은 값만 옮긴다. 빈 문자열을 "없다"로 보아 빈 값이 명단을 오염시키게
+          // 두지 않는다.
+          email: request.email || null,
           mbti: request.mbti,
           mbtiFromQuiz: request.mbtiFromQuiz,
           wantRole: request.wantRole,

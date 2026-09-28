@@ -10,12 +10,8 @@ import {
   sendChatMessage,
   softenThreadMessages,
 } from "@/server/actions/chat";
-import {
-  canPurify,
-  nextPurifyBatch,
-  type ReadCushionSetting,
-} from "@/lib/read-cushion";
-import type { ChatMessage } from "@/lib/types";
+import { canPurify, type ReadCushionSetting } from "@/lib/read-cushion";
+import type { ChatMessage, ChatPurified } from "@/lib/types";
 import type { MbtiType } from "@/lib/mbti";
 import { usePoll } from "@/lib/use-poll";
 import {
@@ -95,25 +91,22 @@ export function useChatThread(
   const [fresh, setFresh] = useState<ChatMessage[]>([]);
 
   /**
-   * 이 화면이 **지금까지** 받은 순화문(`메시지 id → 순화문`).
+   * 이 대화 중에 **아직 서버 결과를 받지 못한** 말들의 순화 상태(`id → 상태`).
    *
-   * 서버가 처음 준 목록에는 이미 저장된 순화문이 실려 오지만, 이 대화 중에 도착한 말은
-   * 폴링으로 온 뒤에 순화를 시켜야 하니 따로 들고 있다. 다음 폴링이 같은 말을 또
-   * 가져와도 이 값이 남는다 — 화면에만 있던 순화문은 다음 갱신에서 사라져, 읽던 사람이
-   * "아까 그 말은 순화본이었는데 지금은 원문이네" 를 만나게 된다.
+   * 서버가 처음 준 목록에는 저장된 상태가 실려 오지만, 이 대화 중에 도착한 말은 폴링으로
+   * 온 뒤에 순화를 시켜야 하니 따로 들고 있다. 다음 폴링이 같은 말을 또 가져와도 이 값이
+   * 남는다 — 화면에만 있던 상태는 다음 갱신에서 사라져, 읽던 사람이 "아까 그 말은 가림이었는데
+   * 지금은 원문이네" 를 만나게 된다.
+   *
+   * **재요청 판단은 브라우저가 하지 않는다.** 예전의 "시도함" 목록이 여기에 있었다가
+   * 새로고침에서 리셋돼, 거절된 말을 끝없이 다시 불렀다. 실패 캐시는 DB(`MessageCushion`)에
+   * 있고, 서버가 `status` 와 `retryAfter` 로 판단한다.
    */
-  const [purified, setPurified] = useState<Record<string, string>>({});
+  const [cushions, setCushions] = useState<Record<string, ChatPurified>>({});
   const [purifyWorking, setPurifyWorking] = useState(false);
-  /** 순화가 왜 멈췄는지 사람이 읽을 문장. 실패하면 원문으로 읽는다. */
+  /** 순화가 왜 멈췄는지 사람이 읽을 문장. 실패하면 원문(또는 규칙 가림)으로 읽는다. */
   const [purifyNotice, setPurifyNotice] = useState<string | null>(null);
-  /**
-   * 이미 순화를 시켜 봤거나, **더는 시키지 않기로 한** 말의 id.
-   *
-   * 실패한 뒤에도 계속 부르면 한도가 매 3초마다 깎인다(한도 없음 메시지가 오는 액션이다).
-   * 그래서 실패하면 그 자리에서 멈추고, 사용자가 "다시 시도"를 누를 때까지 기다린다.
-   */
-  const purifyTried = useRef(new Set<string>());
-  const purifyStopped = useRef(false);
+  /** 한 번에 한 묶음만 — 두 묶음이 겹치면 순서가 뒤집힌다. */
   const purifyInFlight = useRef(false);
   /** "다시 시도" 를 눌렀을 때 효과를 다시 돌리게 하는 신호. */
   const [purifyRetry, setPurifyRetry] = useState(0);
@@ -129,15 +122,11 @@ export function useChatThread(
     setPurifyNotice(null);
   }
 
-  useEffect(() => {
-    purifyTried.current = new Set();
-    purifyStopped.current = false;
-  }, [threadId]);
-  // 순화문은 방마다 다르다. 렌더 중 비교 — effect 로 하면 옛 방의 순화문이 한 프레임 남는다.
-  const [purifiedForThread, setPurifiedForThread] = useState(threadId);
-  if (threadId !== purifiedForThread) {
-    setPurifiedForThread(threadId);
-    setPurified({});
+  // 순화 상태는 방마다 다르다. 렌더 중 비교 — effect 로 하면 옛 방의 것이 한 프레임 남는다.
+  const [cushionsForThread, setCushionsForThread] = useState(threadId);
+  if (threadId !== cushionsForThread) {
+    setCushionsForThread(threadId);
+    setCushions({});
   }
 
   // 화면이 다시 그려지며 `fromServer` 가 새로워지면, 폴링으로 받아 뒀던 것과 겹칠 수 있다.
@@ -147,10 +136,11 @@ export function useChatThread(
   const recent = useThreadMessages(threadId, onlyNew.length > 0 ? [...fromServer, ...onlyNew] : fromServer);
 
   /**
-   * 이 화면이 그릴 말들. 서버가 준 순화본과 방금 받은 순화문을 합친다.
+   * 이 화면이 그릴 말들.
    *
-   * 순화본이 없는 말은 `null` 로 둔다 — `lib/read-cushion.ts` 의 규칙이 "없으면 원문"을
-   * 정하고, 여기서 빈 문자열을 넣으면 그 말이 "순화됨" 표시 없이 빈 글로 그려진다.
+   * **순화본은 말에 붙이지 않고 `purified` 표로 따로 전달한다.** 말(`ChatMessage`)은 사람이
+   * 한 글·낙관적 말풍선·서버 응답이 전부 같은 모양이어야 하고, 순화본은 그중 "상대의 말"에만
+   * 있다는 사실이 붙지 않는 정보다. 말에 붙이려 하면 세 갈래를 다 따로 맞춰야 했다.
    *
    * 합치는 것을 `useMemo` 안에서 한다 — 밖에서 만든 배열은 매 렌더마다 새로 만들어져
    * **아래 순화 효과가 매번 다시 돈다.** 순화 효과는 "아직 없는 묶음이 있을 때만" 부르는
@@ -159,54 +149,54 @@ export function useChatThread(
   const messages = useMemo(
     () =>
       (older.length > 0 ? [...older, ...recent] : recent).map((message) =>
-        message.purifiedText !== null || !purified[message.id]
+        // 방금 서버에서 받은 순화 상태를 말에 붙인다. 저장된 값이 있으면 그걸 쓴다 —
+        // 화면이 가진 값을 우선하면 새로고침마다 다른 말이 순간적으로 원문으로 보인다.
+        message.purified !== null || !cushions[message.id]
           ? message
-          : { ...message, purifiedText: purified[message.id] },
+          : { ...message, purified: cushions[message.id] },
       ),
-    [older, recent, purified],
+    [older, recent, cushions],
   );
 
   /**
-   * 순화가 필요한 말을 **한 묶음**씩 시킨다.
+   * 순화가 필요한 말을 묶어서 시킨다.
    *
-   * 언제 부르는가: 아직 순화본이 없고, 내가 쓴 말이 아니고, 아직 시도하지 않은 말.
-   * 화면이 이 조건을 여기서 다시 확인하지 않아도 되는 이유는 규칙이
-   * `lib/read-cushion.ts` 한 곳에 있기 때문이다.
+   * **재요청 판단은 서버가 한다.** 예전에는 브라우저 메모리의 "시도함" 목록으로 판단했는데,
+   * 새로고침하면 그 목록이 리셋되어 **같은 실패를 끝없이 다시 부른다** — 하루 60회가 몇
+   * 분 만에 다 Gone 이었다. 이제 화면은 "아직 상태가 없는 말"만 id 로 보내고, 서버가 저장된
+   * `status`·`retryAfter`·버전을 보고 이번에 부를지 말지 정한다.
    *
-   * 한 번에 `PURIFY_BATCH_LIMIT` 개만 — 대화방을 처음 열면 지난 말이 수십 개이고, 그
-   * 전부를 한 번에 부르면 한도가 다 Gone 된다(묶음 하나가 한도 1회다).
+   * **한 번에 한 묶음.** 두 묶음이 겹치면 어느 것이 먼저 끝날지 몰라 순서가 뒤집힌다.
    */
   useEffect(() => {
-    if (purifyStopped.current || purifyInFlight.current) return;
+    if (purifyInFlight.current) return;
 
     const wanted = messages
-      .filter((message) => canPurify(message) && message.purifiedText === null)
-      .filter((message) => !purifyTried.current.has(message.id))
+      .filter((message) => canPurify(message) && message.purified === null)
       .map((message) => message.id);
-    const batch = nextPurifyBatch(messages, wanted);
-    if (batch.ids.length === 0) return;
+    if (wanted.length === 0) return;
 
-    for (const id of batch.ids) purifyTried.current.add(id);
     purifyInFlight.current = true;
-    setPurifyWorking(true);
-    setPurifyNotice(null);
 
     let alive = true;
-    softenThreadMessages(threadId, batch.ids)
+    // `working` 은 **호출 뒤**에 켠다. effect 본문에서 바로 setState 하면 연속 렌더가
+    // 생기고(화면 전체가 두 번 그려진다) 그 사이에 또 요청이 나갈 수 있다.
+    Promise.resolve().then(() => {
+      if (alive) setPurifyWorking(true);
+    });
+    softenThreadMessages(threadId, wanted)
       .then((result) => {
         if (!alive) return;
         if (result.ok) {
-          setPurified((prev) => ({ ...prev, ...result.purified }));
+          // 서버는 **못 부른 말의 저장된 상태까지** 돌려준다. 그래야 실패한 말이 화면에서
+          // "아직 순화 안 됨" 으로 계속 후보가 되지 않는다.
+          setCushions((prev) => ({ ...prev, ...result.cushions }));
           return;
         }
-        // 한도·연결 문제다. **여기서 멈춘다** — 같은 실패를 3초마다 반복하면 사람이
-        // 한도를 다 쓰고 원인도 모른다. 원문은 이미 화면에 있다.
-        purifyStopped.current = true;
         setPurifyNotice(result.message);
       })
       .catch(() => {
         if (!alive) return;
-        purifyStopped.current = true;
         setPurifyNotice("순화하지 못했습니다 — 원문으로 읽습니다.");
       })
       .finally(() => {
@@ -390,8 +380,6 @@ export function useChatThread(
    * 일어나지 않는다(아까 실패한 말은 이미 목록에서 빠졌으므로).
    */
   const retryPurify = useCallback(() => {
-    purifyTried.current = new Set();
-    purifyStopped.current = false;
     setPurifyNotice(null);
     setPurifyRetry((n) => n + 1);
   }, []);

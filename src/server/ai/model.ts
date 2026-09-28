@@ -29,6 +29,16 @@ import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
  */
 const MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
 
+/**
+ * 지금 쓰는 모델의 id.
+ *
+ * 순화 결과와 실패 상태에 **함께 남긴다** — "이건 어느 모델이 만든 것인가" 를 나중에
+ * 알 수 없으면, 모델을 바꿨을 때 무엇을 다시 만들어야 하는지 판단할 수 없다.
+ */
+export function activeModelId(): string {
+  return MODEL;
+}
+
 /** 키가 없으면 도구는 샘플로 돌아간다 — 화면이 그 사실을 감추지 않는다. */
 export function isAiConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_KEY);

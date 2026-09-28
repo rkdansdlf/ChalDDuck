@@ -8,7 +8,6 @@ import type {
   IceGame,
   PresentDraft,
   RandomTool,
-  QuizQuestion,
   ResearchResult,
   Role,
   SentenceMode,
@@ -18,7 +17,7 @@ import type {
 /**
  * 제품 설정값.
  *
- * 팀마다 달라지지 않는 것들 — 역할 후보, 30초 컷 문항, 기여·할 일의 종류, AI 도구 목록.
+ * 팀마다 달라지지 않는 것들 — 역할 후보, 기여·할 일의 종류, AI 도구 목록.
  * 데이터베이스에 넣지 않는 이유는 **팀이 고칠 수 있는 값이 아니기 때문**이다.
  * 바뀌면 화면 문구와 계산도 함께 바뀌어야 하므로 코드와 같이 배포되는 편이 안전하다.
  *
@@ -66,38 +65,6 @@ export const RANDOM_TOOLS: RandomTool[] = [
   { key: "dice", name: "주사위", icon: "dices" },
   { key: "draw", name: "제비뽑기", icon: "ticket" },
   { key: "ladder", name: "사다리타기", icon: "git-fork" },
-];
-
-/**
- * 30초 컷 4문항 — 기획안에 적힌 문항 그대로.
- * 정확도·검증 결과는 기획안에 없으므로 화면에서 "진단"이라고 부르지 않는다.
- */
-
-export const QUIZ: QuizQuestion[] = [
-  {
-    axis: "E / I",
-    label: "첫 만남과 소통",
-    a: "먼저 말을 걸고 대면·음성으로 친해지기",
-    b: "분위기를 살피며 필요한 내용을 텍스트로 소통하기",
-  },
-  {
-    axis: "S / N",
-    label: "과제 주제와 기획",
-    a: "검증된 사례·통계·기존 자료 활용하기",
-    b: "새롭고 독창적인 아이디어 시도하기",
-  },
-  {
-    axis: "T / F",
-    label: "피드백과 의견 조율",
-    a: "완성도와 논리 중심으로 직접 지적하기",
-    b: "팀 분위기를 고려해 부드럽게 전달하기",
-  },
-  {
-    axis: "J / P",
-    label: "일정과 마감",
-    a: "먼저 일정을 정하고 미리 완성하기",
-    b: "유연하게 진행하며 마감에 집중하기",
-  },
 ];
 
 export const AI_TOOLS: AiTool[] = [
@@ -326,7 +293,7 @@ export const ICE_GAMES: IceGame[] = [
       "낮에는 이야기를 나누고 탈락시킬 사람에게 투표합니다.",
       "마피아가 모두 탈락하면 시민 승리, 마피아 수가 나머지와 같아지면 마피아 승리입니다.",
     ],
-    minPlayers: 4,
+    minPlayers: 3,
     playable: true,
   },
 ];

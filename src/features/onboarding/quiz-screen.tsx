@@ -3,16 +3,15 @@
 import { useRouter } from "next/navigation";
 import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, Undecided } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { picksToMbti } from "@/lib/mbti";
-import type { QuizQuestion } from "@/lib/types";
+import { pickSide, picksToMbti, sideLetter, type QuizQuestion } from "@/lib/mbti-quiz";
 import { setPick, useOnboarding } from "./onboarding-state";
 import { useOnboardingGate } from "./use-onboarding-gate";
 
 /**
- * 04 30초 MBTI 판별.
+ * 04 성향 체크 — 20문항.
  *
- * ⚠️ **정식 검사가 아니다.** 4문항의 정확도·검증 결과는 기획안에 없으므로
- * 화면 어디에서도 "진단"이나 "정확한 결과"라고 부르지 않는다.
+ * ⚠️ **정식 검사가 아니다.** 문항이 늘었을 뿐 계측·검증 결과는 없다. 화면 어디에서도
+ * "진단"이나 "정확한 결과"라고 부르지 않는다.
  */
 export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
   const router = useRouter();
@@ -25,9 +24,9 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
   const done = answeredCount >= total;
 
   return (
-    <AppFrame label="04 30초 MBTI 판별">
+    <AppFrame label="04 성향 체크">
       <AppBar
-        title="30초 컷"
+        title="성향 체크"
         sub={`${answeredCount} / ${total}문항`}
         onBack={() => router.push("/onboarding/mbti")}
       />
@@ -35,7 +34,7 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
         <Progress
           step={answeredCount}
           total={total}
-          label="30초 컷 답변 진행"
+          label="성향 체크 답변 진행"
           className="mt-1 mb-4"
         />
 
@@ -44,34 +43,35 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
         </p>
 
         <div className="flex flex-col gap-3.5">
-          {questions.map((q, qi) => {
-            const currentPick = picks[qi];
-            const axisLetters = q.axis.split(" / ");
+          {questions.map((q) => {
+            const currentPick = picks[q.id] ?? null;
+            const chosen = pickSide(q, currentPick);
             return (
-              <fieldset key={q.axis} className="m-0 border-none p-0">
+              <fieldset key={q.id} className="m-0 border-none p-0">
                 <legend className="mb-[7px] flex items-baseline justify-between p-0 w-full">
                   <div className="flex items-baseline gap-[7px]">
+                    {/* 축 이름은 언제나 정순이다. 뒤집히는 건 선택지 순서뿐이다. */}
                     <span className="font-mono font-bold text-[13px] leading-none tracking-[.06em] text-yellow-700">
-                      {q.axis}
+                      {sideLetter(q.axis, "first")} / {sideLetter(q.axis, "second")}
                     </span>
                     <span className="keep-all font-bold text-[15px] leading-[1.35] text-txt-strong">{q.label}</span>
                   </div>
-                  {currentPick ? (
+                  {chosen ? (
                     <span className="font-mono font-bold text-[12px] text-yellow-800 bg-yellow-200/80 px-2 py-0.5 rounded-md animate-pop">
-                      {currentPick === "a" ? axisLetters[0] : axisLetters[1]} 선택됨
+                      {sideLetter(q.axis, chosen)} 선택됨
                     </span>
                   ) : null}
                 </legend>
                 <div className="flex flex-col gap-[7px]">
                   {(["a", "b"] as const).map((key) => {
-                    const on = picks[qi] === key;
+                    const on = currentPick === key;
                     return (
                       <button
                         key={key}
                         type="button"
                         role="radio"
                         aria-checked={on}
-                        onClick={() => setPick(qi, key)}
+                        onClick={() => setPick(q.id, key)}
                         className={cn(
                           "flex min-h-[52px] cursor-pointer items-center gap-[11px] rounded-control px-3.5 py-[11px] text-left select-none transition-all duration-150 active:scale-[0.985]",
                           on ? "bg-yellow-100 border-[1.5px] border-yellow-500 shadow-2xs" : "bg-card border border-line hover:bg-cr-50",
@@ -108,7 +108,7 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
 
         {done && result ? (
           <div className="animate-pop mt-4 rounded-2xl border-[1.5px] border-yellow-400 bg-linear-to-r from-yellow-100 to-amber-50 p-4 text-center shadow-xs">
-            <span className="t-cap-strong text-yellow-800">🎉 팀플 성향 분석 완료</span>
+            <span className="t-cap-strong text-yellow-800">🎉 팀플 성향 프로필 완성</span>
             <div className="font-mono font-extrabold text-[22px] text-ink-900 mt-1">
               나의 찰떡 유형: <span className="text-yellow-700 underline decoration-yellow-400">{result}</span>
             </div>
@@ -119,7 +119,7 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
         ) : null}
 
         <Undecided>
-          이 4문항의 정확도나 검증 결과는 기획안에 없습니다. 결과 화면에서 <b>&ldquo;정확한 진단&rdquo;으로
+          이 {total}문항의 정확도나 검증 결과는 기획안에 없습니다. 결과 화면에서 <b>&ldquo;정확한 진단&rdquo;으로
           표현하지 않았습니다.</b>
         </Undecided>
       </Body>

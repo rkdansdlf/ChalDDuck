@@ -297,17 +297,11 @@ export function RosterScreen({
                   </div>
                 ) : null}
 
+                {/* "수락 대기" 칩은 위 상태 칩이 이미 그린다. 여기서는 **누가 무엇을
+                    돌려받았는지**(추첨 도구 · 제외자)와 당사자가 할 수 있는 답만 더한다.
+                    조건은 `clash` 가 아니라 `view` 다 — 희망자 1명인 역할에 남은
+                    추첨도 여기서 보여야 답을 받을 사람이 생긴다. */}
                 {view.kind === "awaiting" && result ? (
-                  <div className="mt-2.5">
-                    <div className="mb-2 flex flex-wrap gap-[5px]">
-                      <Chip tone="warn" icon="circle-dashed">
-                        {ROLE_VIEW_CHIP[view.kind].label}
-                      </Chip>
-                    </div>
-                  </div>
-                ) : null}
-
-                {clash && result && !result.accepted ? (
                   <div className="mt-2.5">
                     <div className="mb-2 flex flex-wrap gap-[5px]">
                       <Chip tone="warn" icon="circle-dashed">
@@ -473,7 +467,7 @@ export function RosterScreen({
             아이스브레이킹
           </Btn>
           <Btn v="outline" size="sm" icon="disc-3" onClick={() => router.push("/team/roulette")}>
-            메뉴 룰렛
+            누가 하지
           </Btn>
         </div>
       </Body>

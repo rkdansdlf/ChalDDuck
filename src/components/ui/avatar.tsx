@@ -28,7 +28,7 @@ export function Avatar({
           alt={`${mbti} 캐릭터`}
           width={size}
           height={size}
-          className="size-full object-cover pointer-events-none"
+          className="size-full object-contain p-[2px] pointer-events-none"
         />
       </span>
     );

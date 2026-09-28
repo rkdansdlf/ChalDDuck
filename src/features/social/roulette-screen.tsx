@@ -10,7 +10,7 @@ import { spinMenu } from "@/server/actions/social";
 const SPIN_MS = 700;
 
 /**
- * 29 친목 · 메뉴 룰렛.
+ * 29 친목 · 누가 하지.
  *
  * **결정은 팀에 하나다.** 예전에는 폰마다 `Math.random()` 으로 따로 돌렸고 서버를 부르지도
  * 않았다 — 팀원 네 명이 각자 다른 메뉴를 보고 무엇을 먹을지 합의가 되지 않았고, 새로고침하면
@@ -102,12 +102,12 @@ export function RouletteScreen({
 
   return (
     <>
-      <AppBar title="메뉴 룰렛" sub="밥약 메뉴 정하기" onBack={() => router.push("/team")} />
+      <AppBar title="누가 하지" sub="오늘 밥 정하기" onBack={() => router.push("/team")} />
 
       <Body dense className="flex flex-col">
         <p className="text-pretty-keep mt-1 mb-[18px] text-[14.5px] leading-[1.62] text-txt">
-          여기서 정한 밥은 <b>팀에 하나</b>입니다. 정하기 전에는 누구도 볼 수 없고, 정한 뒤에는
-          모두 같은 값을 봅니다. 순위는 매기지 않습니다.
+          여기서 정한 건 <b>팀에 하나</b>입니다. 정하기 전에는 누구도 볼 수 없고, 정한 뒤에는 모두
+          같은 값을 봅니다. 순위는 매기지 않습니다.
         </p>
 
         <div
@@ -121,7 +121,7 @@ export function RouletteScreen({
                 <Icon name="loader-circle" size={26} />
               </span>
               <span className="font-extrabold text-[22px] leading-[1.3] text-ink-800 animate-pulse">
-                {rollingLabel || "메뉴 고르는 중…"}
+                {rollingLabel || "고르는 중…"}
               </span>
             </div>
           ) : shown ? (
@@ -140,8 +140,8 @@ export function RouletteScreen({
 
         {shown && !spinning ? (
           <Note tone="info" icon="users-round" className="mb-[18px]">
-            지금 정해진 밥은 <b>{shown}</b> 입니다. 다음에 밥을 정할 때 다시 돌리면 전체가 함께
-            바뀝니다 — 지금 정한 밥으로 갈 수도 있습니다.
+            지금 정해진 건 <b>{shown}</b> 입니다. 다시 돌리면 전체가 함께 바뀝니다 — 지금 정한
+            대로 갈 수도 있습니다.
           </Note>
         ) : null}
 

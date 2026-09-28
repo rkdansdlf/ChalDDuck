@@ -8,7 +8,7 @@ import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
 /**
- * 29 메뉴 룰렛.
+ * 29 누가 하지.
  *
  * **결과는 팀에 하나다.** 예전에는 폰마다 `Math.random()` 으로 따로 돌렸고 서버를 부르지도
  * 않았다. 팀원 네 명이 각자 다른 메뉴를 보고 무엇을 먹을지 합의가 되지 않았고, 새로고침하면
@@ -36,8 +36,8 @@ export async function spinMenu(): Promise<string> {
 
   await notify({
     to: await teamMemberIds(me.teamId),
-    kind: "icebreak",
-    title: `${me.name}님이 밥을 정했습니다`,
+    kind: "who-does-it",
+    title: `${me.name}님이 정했습니다`,
     body: replaced?.menuPick ? `${replaced.menuPick} 대신 → ${picked}` : picked,
     href: "/team/roulette",
     actorId: me.id,

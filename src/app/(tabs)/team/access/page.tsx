@@ -6,6 +6,7 @@ import {
   getRoster,
 } from "@/data/api";
 import { AccessScreen } from "@/features/onboarding/access-screen";
+import { getMyEmail } from "@/server/actions/email-auth";
 import { requireSessionMember } from "@/server/session";
 
 /**
@@ -18,11 +19,12 @@ export const dynamic = "force-dynamic";
 export default async function AccessPage() {
   const me = await requireSessionMember();
   const team = await getCurrentTeam();
-  const [requests, joins, devices, roster] = await Promise.all([
+  const [requests, joins, devices, roster, myEmail] = await Promise.all([
     getRejoinRequests(team.id),
     getJoinRequests(team.id),
     getMyDevices(),
     getRoster(team.id),
+    getMyEmail(),
   ]);
 
   return (
@@ -34,6 +36,7 @@ export default async function AccessPage() {
       isLeader={me.isLeader}
       teamName={team.name}
       others={roster.filter((m) => !m.isMe)}
+      myEmail={myEmail}
     />
   );
 }

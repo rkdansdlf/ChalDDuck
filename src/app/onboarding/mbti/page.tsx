@@ -66,7 +66,7 @@ export default function MbtiPage() {
                   alt={`${mbti} 캐릭터`}
                   width={58}
                   height={58}
-                  className="size-full object-cover animate-jelly"
+                  className="size-full object-contain p-1 animate-jelly"
                 />
               </div>
               <div className="min-w-0 flex-1">
@@ -118,10 +118,10 @@ export default function MbtiPage() {
           </span>
           <span className="min-w-0 flex-1">
             <span className="keep-all block font-bold text-[15px] leading-[1.35] text-[#8A3B29]">
-              내 MBTI를 몰라요 — 30초 컷
+              내 MBTI를 몰라요 — 성향 체크
             </span>
             <span className="mt-0.5 block font-medium text-[13px] leading-[1.4] text-coral-700">
-              팀플 상황 4문항으로 골라 보기
+              팀플 상황 20문항으로 골라 보기
             </span>
           </span>
           <span className="flex-none text-coral-700">

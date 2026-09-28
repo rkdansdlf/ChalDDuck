@@ -1,7 +1,8 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { EMPTY_PICKS, isMbtiType, picksToMbti, type MbtiType, type QuizPicks } from "@/lib/mbti";
+import { isMbtiType, type MbtiType } from "@/lib/mbti";
+import { EMPTY_PICKS, QUIZ_QUESTIONS, picksToMbti, type QuizPick, type QuizPicks } from "@/lib/mbti-quiz";
 import { normalizeName } from "@/features/roles/roster-model";
 import type { OnboardingDraft, RoleKey } from "@/lib/types";
 
@@ -26,8 +27,9 @@ export type OnboardingState = {
   teamCode: string | null;
   name: string;
   email: string;
-  /** 직접 고른 유형. 30초 컷 결과는 `picks` 에서 따로 환산한다. */
+  /** 직접 고른 유형. 04 성향 체크 결과는 `picks` 에서 따로 환산한다. */
   mbti: MbtiType | null;
+  /** 04 화면의 답 — 문항 id 기준. 순서가 바뀌어도 답이 섞이지 않는다. */
   picks: QuizPicks;
   want: RoleKey | null;
   veto: RoleKey | null;
@@ -46,6 +48,16 @@ const EMPTY: OnboardingState = {
 let state: OnboardingState = EMPTY;
 let hydrated = false;
 const listeners = new Set<() => void>();
+
+/** 깨진 값을 골라 낸다 — 답은 `"a" | "b"` 만 인정한다. */
+function sanitizePicks(value: unknown): QuizPicks {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return EMPTY_PICKS;
+  const out: QuizPicks = {};
+  for (const [id, pick] of Object.entries(value as Record<string, unknown>)) {
+    if (pick === "a" || pick === "b") out[id] = pick;
+  }
+  return out;
+}
 
 /**
  * 저장소에 들어 있는 초안을 읽는다. **아무것도 없으면 `null`.**
@@ -79,10 +91,7 @@ function loadStored(): OnboardingState | null {
     name: typeof saved.name === "string" ? saved.name : "",
     email: typeof saved.email === "string" ? saved.email : "",
     mbti: isMbtiType(saved.mbti) ? saved.mbti : null,
-    picks:
-      Array.isArray(saved.picks) && saved.picks.length === 4
-        ? (saved.picks as QuizPicks)
-        : EMPTY_PICKS,
+    picks: sanitizePicks(saved.picks),
     want: (saved.want ?? null) as OnboardingState["want"],
     veto: (saved.veto ?? null) as OnboardingState["veto"],
   };
@@ -145,17 +154,15 @@ export function setVeto(veto: RoleKey | null) {
   update({ veto });
 }
 
-export function setPick(index: number, pick: "a" | "b") {
-  const picks = [...state.picks] as QuizPicks;
-  picks[index] = pick;
-  update({ picks });
+export function setPick(id: string, pick: Exclude<QuizPick, null>) {
+  update({ picks: { ...state.picks, [id]: pick } });
 }
 
 /**
- * 30초 컷으로 들어갈 때 직접 고른 값을 비운다(프로토타입의 `go("quiz")` 동작).
+ * 04 성향 체크로 들어갈 때 직접 고른 값을 비운다(프로토타입의 `go("quiz")` 동작).
  *
  * **답도 함께 비운다.** 예전에는 `mbti` 만 지워서, 전에 답해 둔 4문항이 남아 있었다.
- * 다시 03 화면에서 "30초 컷"을 눌러도 4/4 가 체크된 채 "INFP 로 계속" 이 떠 있었고,
+ * 다시 03 화면에서 "성향 체크"를 눌러도 전부 체크된 채 "INFP 로 계속" 이 떠 있었고,
  * 거기서 "MBTI 없이 계속하기" 를 눌러도 그 답이 그대로 저장됐다 — 사용자가 하지 않기로
  * 고른 MBTI 를 고른 쪽에서 사다.
  */
@@ -199,11 +206,11 @@ export function useOnboarding() {
 
   return {
     ...current,
-    /** 직접 고른 값이 있으면 그것, 없으면 30초 컷 결과. */
+    /** 직접 고른 값이 있으면 그것, 없으면 04 성향 체크 결과. */
     effectiveMbti: current.mbti ?? quizResult,
-    /** 지금 유형이 30초 컷에서 나온 것인지 — 05 화면 문구가 달라진다. */
+    /** 지금 유형이 04 성향 체크에서 나온 것인지 — 05 화면 문구가 달라진다. */
     fromQuiz: !current.mbti && quizResult !== null,
-    /** 30초 컷에서 답한 문항 수. */
-    answeredCount: current.picks.filter(Boolean).length,
+    /** 04 화면에서 답한 문항 수. */
+    answeredCount: Object.keys(QUIZ_QUESTIONS).filter((id) => current.picks[id]).length,
   };
 }

@@ -62,7 +62,7 @@ export default function CharacterPage() {
               {effectiveMbti}
             </span>
             {fromQuiz ? (
-              <span className="font-medium text-[12.5px] leading-none text-coral-700">· 30초 컷 간편 결과</span>
+              <span className="font-medium text-[12.5px] leading-none text-coral-700">· 성향 체크 결과</span>
             ) : null}
           </div>
 
@@ -107,7 +107,7 @@ export default function CharacterPage() {
 
         {fromQuiz ? (
           <Note tone="y" icon="info" className="mt-3">
-            30초 컷은 <b>간편 선택</b>입니다. 정식 검사 결과가 아니며 언제든 팀 페이지나 이전 화면에서 바꿀 수 있습니다.
+            20문항짜리 성향 체크는 <b>자기 서술용 프로필</b>입니다. 계측·검증된 검사 결과가 아니며 언제든 팀 페이지나 이전 화면에서 바꿀 수 있습니다.
           </Note>
         ) : null}
       </Body>

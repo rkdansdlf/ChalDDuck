@@ -167,19 +167,18 @@ export type RandomTool = {
   icon: string;
 };
 
-/** 30초 컷 한 문항. `a` 를 고르면 축의 앞 글자, `b` 면 뒷 글자가 된다. */
-export type QuizQuestion = {
-  axis: string;
-  label: string;
-  a: string;
-  b: string;
-};
-
 /** 온보딩에서 사용자가 입력한 값 — 마지막 단계에서 한 번에 서버로 보낸다. */
 export type OnboardingDraft = {
   name: string;
+  /**
+   * 로그인용 이메일. **선택** — 없어도 팀 들어가기는 그대로 된다.
+   *
+   * 적어 두면 나중에 새 기기에서 재접속할 때 12자리 재입장 코드를 찾지 않고 인증번호로
+   * 들어간다(02 이름 화면). 팀에 들어온 뒤 `계정과 기기` 에서도 등록·변경할 수 있다.
+   */
+  email?: string | null;
   mbti: MbtiType | null;
-  /** MBTI 를 직접 고르지 않고 30초 컷으로 얻었는지. 결과 화면 문구가 달라진다. */
+  /** MBTI 를 직접 고르지 않고 04 성향 체크로 얻었는지. 결과 화면 문구가 달라진다. */
   mbtiFromQuiz: boolean;
   want: RoleKey | null;
   veto: RoleKey | null;
@@ -407,6 +406,32 @@ export type FileVersion = {
 /** 스레드 식별자. 팀 단톡방은 하나뿐이라 고정값을 쓴다. */
 export const TEAM_THREAD_ID = "team";
 
+/**
+ * 이 메시지를 이 사람에게 보여 주는 순화 상태(19·31 읽기 순화).
+ *
+ * 실패도 **보인다** — 실패를 저장하지 않으면 실패를 셀 수도, 다시 부르지 않을 수도,
+ * 왜 안 됐는지 나중에 알 수도 없다. `retryAfter` 는 "이 시각 전에는 다시 부르지 않는다" 다.
+ */
+export type ChatPurified =
+  | {
+      status: "PURIFIED" | "FALLBACK";
+      /** 화면에 그릴 문장. */
+      text: string;
+      /** 누가 썼나: `ai`(모델) / `mask`(규칙 가림). 라벨이 다르다. */
+      kind: "ai" | "mask";
+      reason: null;
+      retryAfter: null;
+    }
+  | {
+      status: "PENDING" | "REJECTED" | "FAILED";
+      text: null;
+      kind: null;
+      /** 실패 이유(운영 지표용 — 화면에는 안 보여 준다). */
+      reason: string | null;
+      /** 이 시각 전에는 다시 부르지 않는다. 재생성 가능하면 서버가 지금으로 옮긴다. */
+      retryAfter: string | null;
+    };
+
 /** 메시지에 붙은 반응. 지금은 표시만 하고 누를 수는 없다. */
 export type MessageReaction = {
   /** `IconName` 과 같은 kebab-case 어휘. */
@@ -439,6 +464,16 @@ export type ChatMessage = {
    * **표시가 남는다** — 다듬었다는 사실을 숨기지 않는다.
    */
   viaCushion?: boolean;
+  /**
+   * **나에게** 이 말을 어떻게 보여 줄 것인가(읽기 순화, 19·31). 아직 아무것도 없으면 null.
+   *
+   * `text` 가 있는 상태(`PURIFIED`/`FALLBACK`)만 화면에 그릴 문장을 갖는다. 실패 상태는
+   * `text: null` 이고 화면은 **원문**을 그린다.
+   *
+   * `kind` 로 **누가 쓴 문장인지** 구분한다 — AI 가 쓴 순화문과 규칙으로 가린 문장은 라벨이
+   * 다르다. AI 가 아닌데 "순화됨" 이라 쓰면 그건 거짓말이다.
+   */
+  purified: ChatPurified | null;
   reactions?: MessageReaction[];
   /** 첨부 파일(단톡방만). 여는 주소는 볼 때마다 서버가 새로 만든다(`getChatAttachmentUrl`). */
   attachment?: ChatAttachment;
@@ -535,6 +570,24 @@ export type ContribEvidence = { name: string; size: string };
 export type ContribOpinion = { who: string; text: string };
 
 /**
+ * 팀이 정한 확정 기준(17 화면).
+ *
+ * `max` 는 팀원 수에서 1을 뺀 만큼이다 — **자기 기록은 자기 자신이 확인하지 못하므로** 그보다
+ * 큰 기준은 아무도 채울 수 없다. 서버는 그 값을 넘겨 받은 것을 버린다.
+ *
+ * `canChange` 는 화면이 버튼을 감추기 위한 값이고, **바꾸는 쪽은 서버가 `requireLeader` 로
+ * 다시 확인한다.**
+ */
+export type ConfirmsPolicy = {
+  /** 지금 기준 몇 명인지. */
+  needed: number;
+  /** 올릴 수 있는 최댓값. */
+  max: number;
+  /** 팀장만 바꿀 수 있다. */
+  canChange: boolean;
+};
+
+/**
  * 팀원이 확인해야 하는 기록.
  *
  * `disputed` 는 누군가 사실과 다르다고 적은 항목이다.
@@ -551,6 +604,17 @@ export type TeamCheckRecord = {
   confirms: number;
   /** 내가 이미 확인했는지. */
   iConfirmed: boolean;
+  /**
+   * 정정에 응답할 수 있는 사람인가.
+   *
+   * **기록 주인과 지금 의견을 적은 사람뿐이다**(`server/contrib/state.ts` 의
+   * `canResolveContrib` 가 정한다). 전원이 응답하면 아무나 남긴 의견에 답할 수 있어서 결정이
+   * 되지 않는다.
+   *
+   * 화면이 이 값으로 버튼을 감추지만 **권한은 서버가 다시 확인한다** — 서버 액션은 화면을
+   * 거치지 않고 POST 로 바로 불릴 수 있다.
+   */
+  iCanResolve: boolean;
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
   /** 확인할 때 열어 볼 근거 파일. 없으면 null. */
@@ -574,12 +638,19 @@ export type TeamCheckRecord = {
    */
   resolution: string | null;
   /**
+   * 이 기록의 회의 참여 표시. **표시 중인 것을 먼저, 없으면 가장 최근에 취소된 것.**
+   *
+   * 둘을 함께 주지 않는다 — 지금 표시 중인지와 예전에 있었는지를 화면이 따로 판단하게 두면
+   * 어느 쪽을 사실로 말할지 두 군데로 갈라진다(`features/contrib/participation.ts`).
+   * 한 번도 표시된 적 없으면 `null`.
+   */
+  participation: Participation | null;
+  /**
    * 의견 차이를 1:1 로 이야기할 상대의 id(= DM 스레드 id).
    *
    * 내 기록이면 의견을 적은 사람, 아니면 기록 주인이다. 그 사람이 팀을 나갔거나
    * 나 자신이면 `null` — 열리지 않을 대화방으로 보내지 않는다.
    */
-  participation: Participation | null;
   dmWith: string | null;
 };
 
@@ -599,6 +670,12 @@ export type ContribReportRow = {
   confirmed: number;
   pending: number;
   disputed: number;
+  /**
+   * **현재 표시 중인** 참여 표시 수 — 팀장이 직접 찍은 것만 센다(취소한 것은 빼고).
+   *
+   * 숫자로는 보여 주되 정렬·강조하지 않는다. "점수·순위를 만들지 않는다"는 이 리포트의 첫
+   * 원칙이라, 이 수를 보고 사람끼리 비교하는 일은 화면이 유도하지 않는다.
+   */
   participations: number;
 };
 

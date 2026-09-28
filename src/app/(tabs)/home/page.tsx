@@ -42,7 +42,7 @@ export default async function HomePage() {
       tasks={tasks}
       negotiation={negotiation}
       meeting={meeting}
-      rejoinRequests={rejoinRequests.length + joinRequests.length}
+      rejoinRequests={rejoinRequests.length + joinRequests.rows.length}
       unreadNotifications={unread}
       awaitingMyConfirm={
         teamCheck.filter((r) => !r.isMine && r.state === "pending" && !r.iConfirmed).length

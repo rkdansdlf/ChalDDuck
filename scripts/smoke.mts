@@ -18,6 +18,14 @@ import {
   voidedText,
 } from "../src/features/roles/roster-model.js";
 import { AI_POLICY, MENU_OPTIONS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "../src/data/catalog.js";
+import {
+  QUIZ_QUESTIONS,
+  pickSide,
+  picksToMbti,
+  scoreAxes,
+  sideLetter,
+} from "../src/lib/mbti-quiz.js";
+import { MBTI_AXES, type MbtiAxis } from "../src/lib/mbti.js";
 import { lastMessagePerThread } from "../src/data/last-message.js";
 import {
   candidateDates,
@@ -42,16 +50,25 @@ import {
   pushSubscriptionFrom,
 } from "../src/features/home/push-model.js";
 import {
+  CUSHION_REASON,
+  CLAIM_TTL_MS,
+  FAILURE_BACKOFF_MS,
+  MAX_ATTEMPTS,
+  PROMPT_VERSION,
   PURIFY_BATCH_LIMIT,
-  alignPurified,
+  buildPurifyRequest,
   canPurify,
+  canRetry,
   displayTextOf,
-  nextPurifyBatch,
-  parseSoftened,
-  purificationRejects,
+  isCushionDone,
+  isRefusal,
+  judgeAll,
+  maskRiskyParts,
+  packPurifyItems,
+  parsePurifyResponse,
+  rejectsPurified,
   toneChanged,
   toneOf,
-  packPurifyLines,
 } from "../src/lib/read-cushion.js";
 import type { ChatMessage, MeetingProposal, RoleDrawResult } from "../src/lib/types.js";
 import {
@@ -250,6 +267,104 @@ console.log("\n값 검증");
   check("모르는 역할 값은 미정으로", toRoleKey("__proto__"), null);
   check("비었으면 미정으로", toRoleKey(null), null);
   check("진짜 역할은 읽는다", toRoleKey("present"), "present");
+}
+
+/* ── 04 성향 체크: 문항 저장소와 계산 ──────────────────────── */
+
+console.log("\n성향 체크 문항");
+{
+  const ids = QUIZ_QUESTIONS.map((q) => q.id);
+  check("문항 id 가 겹치지 않는다", new Set(ids).size, ids.length);
+  check("20문항이다", QUIZ_QUESTIONS.length, 20);
+  for (const axis of ["EI", "SN", "TF", "JP"] as const) {
+    const rows = QUIZ_QUESTIONS.filter((q) => q.axis === axis);
+    // 짝수면 4:4 동률이 나는데, 동률 축은 답이 아니라 세는 순서로 정해진다.
+    check(`${axis} 문항 수는 홀수`, rows.length % 2, 1);
+    check(`${axis} 문항이 하나라도 있다`, rows.length > 0, true);
+    // 같은 축을 같은 상황 문장으로 두 번 재면 사실상 한 질문을 두 번 한 셈이다.
+    check(`${axis} 상황이 겹치지 않는다`, new Set(rows.map((q) => q.label)).size, rows.length);
+    // a 가 항상 앞 글자면 순서 앞 선택지를 고르는 사람만 조금 더 많아진다.
+    check(`${axis} 안에서 a 위치가 뒤집힌다`, new Set(rows.map((q) => q.aSide)).size, 2);
+  }
+}
+
+console.log("\n성향 체크 계산");
+{
+  /** 그 문항에서 `side` 쪽을 고르는 키. `aSide` 가 뒤집혀 있으므로 직접 구해야 한다. */
+  const key = (q: (typeof QUIZ_QUESTIONS)[number], side: "first" | "second") =>
+    q.aSide === side ? "a" : "b";
+
+  /** 전 문항을 한쪽으로 채운다. */
+  const fill = (side: "first" | "second") =>
+    Object.fromEntries(QUIZ_QUESTIONS.map((q) => [q.id, key(q, side)])) as Record<string, "a" | "b">;
+
+  check("앞 글자만 고르면 ESTJ", picksToMbti(fill("first")), "ESTJ");
+  check("뒷 글자만 고르면 INFP", picksToMbti(fill("second")), "INFP");
+
+  // 한 문항이라도 비면 유형을 내지 않는다 — 05 화면이 그 값으로 문구를 바꾼다.
+  const partial = fill("first");
+  delete partial["jp-decision"];
+  check("답이 하나라도 비면 유형이 없다", picksToMbti(partial), null);
+  check("아무것도 안 골라도 없다", picksToMbti({}), null);
+
+  // 축 안에서 다수결이다 — 한 표가 4표를 못 이긴다.
+  const minority = fill("first");
+  for (const q of QUIZ_QUESTIONS.filter((x) => x.axis === "EI").slice(1)) {
+    minority[q.id] = key(q, "second");
+  }
+  check("EI 1 대 4 는 4 쪽이 이긴다", picksToMbti(minority), "ISTJ");
+
+  // 가중치를 실제로 먹는다는 확인 — JP 축을 4:P / 1:J 로 두고 그 1표의 무게만 바꾼다.
+  const heavy = QUIZ_QUESTIONS.find((q) => q.axis === "JP" && q.aSide === "second")!;
+  check("JP 축의 뒤집힌 문항", heavy.id, "jp-decision");
+  const tipped = fill("first");
+  for (const q of QUIZ_QUESTIONS.filter((x) => x.axis === "JP")) {
+    tipped[q.id] = key(q, "second");
+  }
+  tipped[heavy.id] = key(heavy, "first");
+  check("가중치가 같으면 4 대 1 이 P 를 고른다", picksToMbti(tipped), "ESTP");
+  heavy.weight = 5;
+  try {
+    check("그 한 표가 무거우면 J 로 뒤집힌다", picksToMbti(tipped), "ESTJ");
+  } finally {
+    heavy.weight = 1;
+  }
+  check("가중치를 되돌리면 다시 P 다", picksToMbti(tipped), "ESTP");
+
+  const rows = scoreAxes(fill("first"));
+  check("축 점수는 네 줄", rows.length, 4);
+  check("EI 5문항 전부 앞 글자", rows[0], { axis: "EI", first: 5, second: 0, answered: 5, total: 5 });
+  check("답하지 않은 문항은 채점되지 않는다", scoreAxes({})[0], {
+    axis: "EI",
+    first: 0,
+    second: 0,
+    answered: 0,
+    total: 5,
+  });
+
+  check("축의 앞 글자를 읽는다", sideLetter("SN", "first"), "S");
+  check("축의 뒤 글자를 읽는다", sideLetter("SN", "second"), "N");
+
+  // aSide 가 뒤집힌 문항에서 05 화면 배지가 틀린 글자를 보여주면 안 된다.
+  const flipped = QUIZ_QUESTIONS.find((q) => q.aSide === "second")!;
+  const upright = QUIZ_QUESTIONS.find((q) => q.aSide === "first")!;
+  check("뒤집힌 문항의 a 는 second 쪽", pickSide(flipped, "a"), "second");
+  check("뒤집힌 문항의 b 는 first 쪽", pickSide(flipped, "b"), "first");
+  check("정방향 문항의 a 는 first 쪽", pickSide(upright, "a"), "first");
+  check("정방향 문항의 b 는 second 쪽", pickSide(upright, "b"), "second");
+
+  // 축 하나를 통째로 반대로 묶어도 16유형이 16개 다 나온다 — 축이 잘못 묶였으면
+  // 두 유형이 같은 글자로 접혀서 16개보다 적게 나온다.
+  const combos = new Set<string>();
+  for (let mask = 0; mask < 16; mask++) {
+    const combo: Record<string, "a" | "b"> = {};
+    for (const q of QUIZ_QUESTIONS) {
+      const wantFirst = ((mask >> MBTI_AXES.indexOf(q.axis as MbtiAxis)) & 1) === 0;
+      combo[q.id] = key(q, wantFirst ? "first" : "second");
+    }
+    combos.add(picksToMbti(combo)!);
+  }
+  check("축 조합 16개가 16유형과 겹치지 않는다", combos.size, 16);
 }
 
 /* ── 이름 정규화 ──────────────────────────────────────────── */
@@ -608,237 +723,311 @@ console.log("\n대화 순서");
 
 /* ── 읽기 순화: 받는 사람이 순화된 표현을 받는다 ──────────── */
 
-/**
- * 읽기 순화 검사에 쓰는 말 하나. 서버가 돌려주는 `ChatMessage` 와 같은 모양이어야 한다 —
- * 일부만 넣은 객체를 넣으면 "이 규칙이 어느 값을 보는지"를 아무도 확인 못 한다.
- */
-const sent = (id: string, over: Partial<ChatMessage> = {}): ChatMessage => ({
-  id,
-  author: "최유나",
-  mbti: null,
-  isMine: false,
-  text: "이거 왜 아직 안 올렸어요?",
-  time: "14:02",
-  sortAt: "2026-09-26T05:02:00.000Z",
-  status: "sent",
-  ...over,
-});
-
 console.log("\n읽기 순화: 무엇을 순화하는가");
 {
-  // `lib/read-cushion.ts` 를 직접 부른다 — 화면과 서버가 **같은 함수**를 쓰는 것이
-  // 이 기능의 첫 번째 약속이다. 두 곳이 따로 고르면 "화면은 다 순화됐다고 믿는데
-  // 서버는 일부만 시킨다" 는 상태가 조용히 생긴다(타입 검사로는 절대 못 잡는다).
+  const sent = (id: string, over: Partial<ChatMessage> = {}): ChatMessage => ({
+    id,
+    author: "최유나",
+    mbti: null,
+    isMine: false,
+    text: "이거 왜 아직 안 올렸어요?",
+    time: "14:02",
+    sortAt: "2026-09-26T05:02:00.000Z",
+    status: "sent",
+    purified: null,
+    ...over,
+  });
+
   check("남이 보낸 글은 순화한다", canPurify(sent("a")), true);
-  // 내 말은 순화 대상이 아니다. 내가 쓴 말을 다듬어 보여 주면 내가 한 말이 아닌 것처럼 읽힌다.
   check("내 말은 순화하지 않는다", canPurify(sent("b", { isMine: true })), false);
-  // 파일만 보낸 말에는 문장이 없다.
   check("글 없는 말은 순화하지 않는다", canPurify(sent("c", { text: "  " })), false);
-  // 낙관적 말풍선(아직 서버에 없음)에 순화를 걸면 **보낼 말**을 바꿔 버리게 된다.
   check("보내는 중인 말은 순화하지 않는다", canPurify(sent("d", { status: "sending" })), false);
 }
 
-console.log("\n읽기 순화: 한 묶음에 무엇을 넣는가");
+console.log("\n읽기 순화: 언제 다시 부르는가 (무한 재호출 차단)");
 {
-  const lines = [
-    sent("a"),
-    sent("c", { isMine: true }),
-    sent("d", { text: "" }),
-    sent("e"),
-    sent("f"),
-  ];
-  // **순화본은 말에 붙어 있지 않다** — `use-chat-thread` 의 `purified` 표가 따로 들고 있다.
-  // "이미 순화했는지"를 이 함수가 보려면 그 표를 받아야 한다.
-  const purified = { b: "이거 아직 안 올라온 이유가 있을까요?" };
-  const withB = [...lines, sent("b")];
+  // **이 표가 이 파이프라인의 핵심이다.** 예전에는 "행이 없다 = 아직 안 함" 이라
+  // 거절된 말이 3초마다 다시 후보가 됐고, 새로고침하면 그 기억까지 리셋됐다.
+  const now = { model: "openrouter/free", promptVersion: PROMPT_VERSION, at: 1_000_000_000 };
+  const ago = (ms: number) => new Date(now.at - ms).toISOString();
+  const soon = (ms: number) => new Date(now.at + ms).toISOString();
 
-  check("모두 부르면 순화할 수 있는 것만 고른다", nextPurifyBatch(withB, ["a", "b", "c", "d", "e", "f"], purified).ids, [
-    "a",
-    "e",
-    "f",
-  ]);
-  check("이미 순화본이 있는 말은 다시 부르지 않는다", nextPurifyBatch(withB, ["b"], purified).ids, []);
-  // 순화표가 비어 있으면 그 말은 아직 순화본이 없는 말이다 — 같은 말을 다시 부른다.
-  check("순화표가 비면 없는 것으로 본다", nextPurifyBatch(withB, ["b"], {}).ids, ["b"]);
-  // 화면이 방 안의 말만 id 로 보내지만, 섞여 와도 여기서 걸러 낸다.
-  check("요청하지 않은 말은 섞어 넣지 않는다", nextPurifyBatch(withB, ["다른 방의 말"], purified).ids, []);
-  check(
-    "묶음은 한 번에 열 개까지다",
-    nextPurifyBatch(Array.from({ length: 20 }, (_, i) => sent(`m${i}`)), Array.from({ length: 20 }, (_, i) => `m${i}`)).ids
-      .length,
-    PURIFY_BATCH_LIMIT,
+  check("아직 없으면 불러도 된다", canRetry(null, now), true);
+
+  const failed = {
+    status: "FAILED" as const,
+    reason: CUSHION_REASON.MODEL_REFUSAL,
+    attemptCount: 1,
+    retryAfter: soon(FAILURE_BACKOFF_MS),
+    model: now.model,
+    promptVersion: now.promptVersion,
+    createdAt: ago(1000),
+  };
+  // **같은 설정이면 다시 부르지 않는다.** 한도를 깎으면서 결과는 같기 때문이다.
+  check("같은 설정의 실패는 다시 부르지 않는다", canRetry(failed, now), false);
+  // 프롬프트를 고쳤다면 예전 실패는 낡았다 — 재생성된다.
+  check("프롬프트가 바뀌면 다시 열린다", canRetry({ ...failed, promptVersion: "p2" }, now), true);
+  check("모델이 바뀌면 다시 열린다", canRetry({ ...failed, model: "anthropic/claude-sonnet-5" }, now), true);
+  // 시간이 지나도 시도 횟수가 남아 있으면 한 번만 더 시도한다.
+  check("백오프가 지나면 한 번 더 시도한다", canRetry({ ...failed, retryAfter: ago(1) }, now), true);
+  check("시도 횟수를 다 쓰면 포기한다", canRetry({ ...failed, retryAfter: ago(1), attemptCount: MAX_ATTEMPTS }, now), false);
+
+  // 성공·가림은 끝이다. **다시 부르면 읽고 있던 말이 조용히 바뀐다.**
+  check("순화 완성은 다시 부르지 않는다", canRetry({ ...failed, status: "PURIFIED" }, now), false);
+  check("가림 완성도 다시 부르지 않는다", canRetry({ ...failed, status: "FALLBACK" }, now), false);
+
+  // 두 탭 경합: 누군가 부르는 중이면 건드리지 않는다.
+  const pending = { ...failed, status: "PENDING" as const, retryAfter: soon(CLAIM_TTL_MS), createdAt: ago(1000) };
+  check("선점 유효 시간 안이면 건드리지 않는다", canRetry(pending, now), false);
+  // 부르던 사람이 사라졌다(탭을 닫음)면 선점을 가져갈 수 있다 — 아니면 영영 "처리 중"이다.
+  check("선점이 사라지면 다시 가져간다", canRetry({ ...pending, createdAt: ago(CLAIM_TTL_MS + 1000) }, now), true);
+
+  check("성공과 가림만 끝난 상태다", [isCushionDone("PURIFIED"), isCushionDone("FALLBACK"), isCushionDone("FAILED")], [true, true, false]);
+}
+
+console.log("\n읽기 순화: id 기반 계약");
+{
+  const items = [
+    { id: "m1", text: "내일 회의 몇 시로 할까요?" },
+    { id: "m2", text: "자료는 언제쯤 나와요?" },
+  ];
+  // **본문은 데이터로 준다.** 글로 붙이면 "이전 지시를 무시해" 가 지시로 읽힐 수 있다.
+  const request = JSON.parse(buildPurifyRequest(items));
+  check("요청에 task 가 있다", request.task, "rewrite_for_reader_comfort");
+  check("본문은 데이터로 실린다", request.items, items);
+
+  // 순서가 바뀌어도, 하나가 빠져도, 앞에 설명이 붙어도 **요청한 id 만** 받아온다.
+  const shuffled = parsePurifyResponse(
+    '{"items":[{"id":"m2","text":"자료는 언제쯤 준비되나요?"},{"id":"m1","text":"내일 회의는 몇 시로 할까요?"}]}',
   );
+  check("순서가 바뀌어도 id 로 맞춘다", [...shuffled.items.keys()].sort(), ["m1", "m2"]);
+  check("값도 id 에 붙는다", shuffled.items.get("m1"), "내일 회의는 몇 시로 할까요?");
+
+  const partial = parsePurifyResponse('{"items":[{"id":"m1","text":"다듬은 말"}]}');
+  check("빠진 항목은 그 항목만 없는 것이다", partial.items.size, 1);
+  check("없는 항목은 조회해도 없다", partial.items.get("m2"), undefined);
+
+  const dup = parsePurifyResponse('{"items":[{"id":"m1","text":"하나"},{"id":"m1","text":"둘"}]}');
+  check("중복 id 는 어느 것도 믿지 않는다", dup.items.size, 0);
+  check("중복 id 는 알려 준다", dup.unknown, ["m1"]);
+
+  check("코드펜스를 벗겨 낸다", parsePurifyResponse('```json\n{"items":[{"id":"m1","text":"하나"}]}\n```').items.get("m1"), "하나");
+  check("배열 형태도 받아 준다", parsePurifyResponse('[{"id":"m1","text":"하나"}]').items.get("m1"), "하나");
+  check("글이 아니면 안전하다", parsePurifyResponse("죄송합니다").items.size, 0);
+  check("쓰레기여도 안전하다", parsePurifyResponse(42).items.size, 0);
+
+  check("거절 문구를 알아본다", [isRefusal("User Safety: unsafe"), isRefusal("Sorry, I can't help"), isRefusal(" 抱歉，我无法协助")], [true, true, true]);
+  check("순화문은 거절이 아니다", isRefusal('{"items":[{"id":"m1","text":"다듬은 말"}]}'), false);
+}
+
+console.log("\n읽기 순화: 항목별 판정 (묶음 전체를 버리지 않는다)");
+{
+  const items = [
+    { id: "m1", text: "이거 왜 아직 안 올렸어요?" },
+    { id: "m2", text: "씨발 진짜 왜 이래 좀비처럼" },
+    { id: "m3", text: "민수가 API 배포 오늘까지 한다고 했잖아" },
+  ];
+  const response = parsePurifyResponse(
+    JSON.stringify({
+      items: [
+        // 정상
+        { id: "m1", text: "이거 아직 안 올리신 이유가 있을까요?" },
+        // 욕이 남았다 → 이 항목만 버려야 한다
+        { id: "m2", text: "진짜 왜 이렇게요 좀비처럼 하지 마세요" },
+        // 공격성은 없지만 **정보가 죽었다**
+        { id: "m3", text: "조금 더 신경 써주시면 좋겠습니다" },
+      ],
+    }),
+  );
+  const judged = judgeAll(items, response);
+  const by = (id: string) => judged.find((j) => j.id === id)!;
+
+  check("정상 항목은 순화된다", [by("m1").status, by("m1").text], ["PURIFIED", "이거 아직 안 올리신 이유가 있을까요?"]);
+  check("욕이 남은 항목만 버려진다", [by("m2").status, by("m2").reason], ["REJECTED", CUSHION_REASON.TOXICITY_REMAINED]);
+  // "공격성 0, 정보 0" 이 순화의 목표다. 정보를 지우면 순화가 아니라 삭제다.
+  check("정보가 사라진 것도 버려진다", [by("m3").status, by("m3").reason], ["REJECTED", CUSHION_REASON.INFO_LOST]);
+  check("묶음 전체를 버리지 않는다", judged.filter((j) => j.status === "PURIFIED").length, 1);
+
+  check("빈 결과는 빈 응답으로 기록된다", judgeAll([{ id: "x", text: "안 올렸어요" }], { items: new Map(), unknown: [] })[0].reason, CUSHION_REASON.EMPTY_RESPONSE);
+  check("길이 폭주는 버려진다", rejectsPurified("안 올려", "가".repeat(200)), CUSHION_REASON.TOO_LONG);
+  check("빈 글은 버려진다", rejectsPurified("안 올렸어요", "   "), CUSHION_REASON.EMPTY_OUTPUT);
+  // 감정 표현은 순화 대상이 아니다 — 지우면 사람이 한 말을 사람이 안 한 것처럼 읽힌다.
+  check("감정 표현은 남아도 통과한다", rejectsPurified("짜증나 죽겠어", "정말 힘들 것 같아요"), null);
+}
+
+console.log("\n읽기 순화: AI 실패 시 결정론적 가림");
+{
+  // 실측: 무료 모델은 욕설에 `User Safety: unsafe (Profanity, Harassment)` 를 돌려준다.
+  // **가장 순화해야 할 자리에서 원문이 그대로 보이는 것**이 이 구조의 가장 큰 실패였다.
+  const profanity = maskRiskyParts("야 씨발 니가 제대로 했어야지");
+  check("욕설 자리를 가린다", profanity.masked, 1);
+  check("문장 구조는 지켜진다", profanity.text, "야 •• 니가 제대로 했어야지");
+
+  check("사람에게 붙인 비꼼도 가린다", maskRiskyParts("너는 진짜 좀비같아").masked > 0, true);
+  check("원인을 돌리는 말도 가린다", maskRiskyParts("다 니 탓인데").masked > 0, true);
+  check("비웃음 기호도 가린다", maskRiskyParts("역시 대충이네 ㅋㅋ").masked > 0, true);
+  // 위험한 말이 없으면 **가린다고 말하지 않는다.**
+  check("깨끗한 말은 그대로 둔다", maskRiskyParts("내일 회의 몇 시로 할까요?"), { text: "내일 회의 몇 시로 할까요?", masked: 0 });
+  // **요구는 남는다** — 일은 굴러가야 한다.
+  const keep = maskRiskyParts("씨발 내일까지 자료 안 오면 그냥 니가 혼자 해");
+  check("가려도 마감과 요구는 남는다", [keep.text.includes("내일까지"), keep.text.includes("자료")], [true, true]);
+}
+
+console.log("\n읽기 순화: 무엇을 그릴 것인가");
+{
+  const ai = { status: "PURIFIED" as const, text: "이거 아직 안 올리신 이유가 있을까요?", kind: "ai" as const, reason: null, retryAfter: null };
+  const mask = { status: "FALLBACK" as const, text: "야 •• 니가 제대로 했어야지", kind: "mask" as const, reason: null, retryAfter: null };
+  const failed = { status: "FAILED" as const, text: null, kind: null, reason: "MODEL_REFUSAL", retryAfter: "2999-01-01T00:00:00.000Z" };
+  const original = "야 씨발 니가 제대로 했어야지";
+
+  // AI 가 쓴 것과 규칙이 가린 것은 **다른 라벨**이어야 한다. 같으면 거짓말이 된다.
+  check("AI 순화문은 그린다", displayTextOf({ text: "이거 왜 아직 안 올렸어요?", purified: ai }, false).kind, "PURIFIED");
+  check("가림본도 그린다", displayTextOf({ text: original, purified: mask }, false).kind, "FALLBACK");
+  // 실패·거절은 **원문**으로 넘어가는 길이 이것 하나뿐이다.
+  check("실패하면 원문이다", displayTextOf({ text: original, purified: failed }, false).text, original);
+  check("아직 처리 전이면 원문이다", displayTextOf({ text: original, purified: null }, false).text, original);
+  check("누르면 원문으로 돌아간다", displayTextOf({ text: original, purified: mask }, true).text, original);
+  check("누르면 순화 문구가 아니다", displayTextOf({ text: original, purified: mask }, true).kind, null);
+}
+
+console.log("\n읽기 순화: 입력 상한을 넘으면 자르지 않는다");
+{
+  const long = "가".repeat(2000);
+  const packed = packPurifyItems([
+    { id: "a", text: long },
+    { id: "b", text: long },
+    { id: "c", text: long },
+    { id: "d", text: long },
+  ]);
+  // 조용히 자르면, 잘린 말은 순화되지 않은 채 남아 "다 순화됐다" 고 보인다.
+  check("상한을 넘으면 묶음을 줄인다", packed.length < 4, true);
+  check("한 건도 안 들어가면 빈 묶음이다", packPurifyItems([{ id: "a", text: "가".repeat(9000) }]).length, 0);
+  check("빈 묶음도 문제가 아니다", packPurifyItems([]).length, 0);
 }
 
 console.log("\n읽기 순화: 말투가 바뀌면");
 {
   // 한 말에는 사람당 한 줄이다. 새 말투로 다시 만들어도 예전 글 위에 덮어쓸 수 없으니
-  // **바뀐 순간 예전 순화본을 지워야 한다** — 그렇지 않으면 사용자는 고른 말투가 아닌
-  // 글을 읽는데 화면은 "다듬는 중" 이다.
+  // **바뀐 순간 예전 순화본을 지워야 한다** — 그렇지 않으면 고른 말투가 아닌 글을 읽는다.
   check("처음 고르는 것은 지울 것이 없다", toneChanged(null, "plain"), false);
   check("말투가 바뀌었으면 지운다", toneChanged("soft", "plain"), true);
   check("같은 말투를 다시 고르면 남긴다", toneChanged("plain", "plain"), false);
   check("고른 것이 없으면 첫 말투로 읽는다", toneOf({ tone: null }), "soft");
   check("고른 말투는 그대로 읽는다", toneOf({ tone: "firm" }), "firm");
-  // 모르는 값이 저장돼 있어도 조용히 다른 말투로 돌지 않는다.
   check("모르는 말투는 없는 것으로 본다", toneOf({ tone: "존나" }), "soft");
-}
-
-console.log("\n읽기 순화: 무엇을 그릴 것인가");
-{
-  const raw = "이거 왜 아직 안 올렸어요?";
-  const soft = "이거 아직 안 올라온 이유가 있을까요?";
-
-  // 원문과 순화문을 **따로** 받는다 — 순화본은 이제 `ChatMessage` 에 붙어 있지 않다.
-  // 켜짐/꺼짐 비트도 없고, **원문을 보고 있는지**로 정한다(설정은 말투 하나뿐이다 —
-  // `ReadCushionSetting` = `{ tone }`).
-  check("원문을 보고 있으면 순화본이 있어도 원문이다", displayTextOf(raw, soft, true).text, raw);
-  check("원문을 보지 않으면 순화문을 그린다", displayTextOf(raw, soft, false).text, soft);
-  check("순화본이 없으면 원문이다", displayTextOf("안 올렸어요", null, false).text, "안 올렸어요");
-  // 아직 만들지 못한 말은 빈 글로 그리지 않는다 — "순화됨" 표시 없이도 원문이 보인다.
-  check("순화본이 아직 없으면 빈 글이 아니다", displayTextOf("안 올렸어요", undefined, false).text, "안 올렸어요");
-  check("원문을 보고 있으면 순화했다고 말하지 않는다", displayTextOf(raw, soft, true).purified, false);
-  check("원문을 보지 않으면 순화했다고 말한다", displayTextOf(raw, soft, false).purified, true);
-}
-
-console.log("\n읽기 순화: 무료 모델의 응답을 꺼내기");
-{
-  // 무료 라우터는 요청마다 모델을 무작위로 고르고, 그중 **도구 호출을 하지 않는 것**이
-  // 있다. 그래서 순화문은 JSON 배열을 글 안에 담아 받는다(`askText`).
-  check("JSON 배열을 꺼낸다", parseSoftened('["다듬은 말", "또 다른 말"]', 2), ["다듬은 말", "또 다른 말"]);
-  check("설명문이 앞뒤에 있어도 꺼낸다", parseSoftened('확인했습니다. ["하나", "둘"] 끝.', 2), ["하나", "둘"]);
-  // 코드펜스를 붙이는 무료 모델이 실제로 있다.
-  check("코드펜스를 벗겨 낸다", parseSoftened('```json\n["하나", "둘"]\n```', 2), ["하나", "둘"]);
-  check("번호 줄도 받아 준다", parseSoftened("1. 하나\n2. 둘", 2), ["하나", "둘"]);
-
-  // **줄 개수가 어긋나면 포기한다.** 줄이 쪼개져 있으면 뒤로 밀려서 다른 사람의 말이
-  // 엉뚱한 말로 보일 수 있다 — 이 기능에서 가장 나쁜 실패라 원문으로 돌려보낸다.
-  check("줄이 모자라면 원문으로 돌려보낸다", parseSoftened("1. 하나", 2), []);
-  check("글이 아니면 원문으로 돌려보낸다", parseSoftened("죄송합니다", 2), []);
-  check("빈 응답도 안전하다", parseSoftened("   ", 2), []);
-  check("배열이 아니면 안전하다", parseSoftened({ lines: [] }, 2), []);
-  // JSON 안의 빈 자리는 alignPurified 가 원문으로 채운다.
-  check("빈 칸은 그대로 두고 나머지는 받는다", parseSoftened('["하나", "", "셋"]', 3), ["하나", "", "셋"]);
-}
-
-console.log("\n읽기 순화: 이건 순화가 아니다");
-{
-  // 실측: openrouter/free 는 다툰 말을 **거절하거나 욕을 남긴다.**
-  // "좀비처럼 달려가지 말고" → "좀비처럼 너무 빠르게 달려가지 말고" (3/3).
-  // 이걸 걸러 내지 않으면 말풍선에 "순화됨" 이 달린 글이 욕설을 품은 채 보인다.
-  check("욕이 남은 결과는 버린다", purificationRejects("씨발 진짜 왜 이래 좀 그만 좀비처럼 달려가지 말고", "진짜 왜 이래 좀 그만 좀비처럼 달리지 마세요"), true);
-  check("비꼼이 남은 결과도 버린다", purificationRejects("역시 대충이네", "이번 결과는 대충이네요"), true);
-  check("탓하는 표현이 남으면 버린다", purificationRejects("다 니 탓인데", "조용히 해 주세요 다 니 탓"), true);
-  check("비웃음 기호가 남으면 버린다", purificationRejects("대충이네 ㅋㅋ", "그렇게 하시네요 ㅋㅋ"), true);
-  check("욕을 실제로 걷어냈다면 통과한다", purificationRejects("씨발 진짜 왜 이래 좀비처럼", "속도를 조금 늦춰서 진행하면 될 것 같아요"), false);
-  // **감정 표현은 순화 대상이 아니다** — 지우면 순화가 아니라 감정 삭제다.
-  check("짜증 같은 감정 표현은 남아도 통과한다", purificationRejects("짜증나 죽겠어", "정말 힘들 것 같아요"), false);
-  // 빈 글은 순화가 아니라 삭제다.
-  check("빈 결과는 버린다", purificationRejects("안 올렸어요", "   "), true);
-  // 길이 폭주 (원문 두 글자에 두 문장)도 순화가 아니라 지어내기다.
-  check("터무니지게 긴 결과는 버린다", purificationRejects("안 올려", "가".repeat(200)), true);
-}
-
-console.log("\n읽기 순화: 모델 응답을 맞추는 법");
-{
-  const originals = ["이거 왜 아직 안 올렸어요?", "자료는 언제쯤 나와요?"];
-
-  check("같은 줄 수면 그대로 맞춘다", alignPurified(["이거 아직 안 올라온 이유가 있을까요?", "자료는 언제쯤 준비되나요?"], originals), [
-    "이거 아직 안 올라온 이유가 있을까요?",
-    "자료는 언제쯤 준비되나요?",
-  ]);
-  // 모델이 줄 번호를 되살려 붙여도 벗겨 낸다 — 그래야 "1. 다듬은 말" 이 그대로 보인다.
-  check("줄 번호는 벗겨 낸다", alignPurified(["1. 다듬은 말", "2. 다른 말"], originals)[0], "다듬은 말");
-  // 개수가 어긋나면 **어긋난 자리만 원문으로 남긴다.** 틀린 순화는 이 기능에서 가장 나쁘다.
-  check("한 줄을 빼먹으면 그 자리는 순화하지 않는다", alignPurified(["다듬은 말"], originals), ["다듬은 말", null]);
-  check("응답이 글 배열이 아니면 전부 원문", alignPurified("알겠습니다", originals), [null, null]);
-  // 원문 두 글자에 대해 두 문장이 나오면 순화가 아니라 지어내기다.
-  check("터무니지게 긴 결과는 버린다", alignPurified(["가".repeat(400)], [originals[0]]), [null]);
-  check("원문과 같으면 그대로 둔다", alignPurified([originals[0]], [originals[0]]), [originals[0]]);
-}
-
-console.log("\n읽기 순화: 입력 상한을 넘으면 자르지 않는다");
-{
-  // 대화 한 편의 최대 길이(`MAX_MESSAGE` 2000자)를 네 개면 상한(8000자)을 넘긴다 —
-  // 줄 번호와 줄바꿈까지 더한 길이로 재어서 세 개에서 멈춘다.
-  const long = "가".repeat(2000);
-  const { block, kept } = packPurifyLines([long, long, long, long]);
-  check("상한을 넘으면 묶음을 줄인다", kept, 3);
-  check("자르지 않는다", block.length <= AI_INPUT_LIMIT, true);
-  check("넣은 글은 통째로 들어 있다", block.includes(long), true);
-
-  // 한 줄조차 안 들어가는 묶음은 **비어 있다**(자르지 않는다). 대화는 2000자까지라
-  // 실제로는 없지만, 여기서 자르면 말의 뒷부분이 없는 순화문이 저장된다.
-  check("한 줄이 안 들어가면 묶음이 비어 있다", packPurifyLines(["가".repeat(AI_INPUT_LIMIT)]).kept, 0);
-  check("빈 묶음도 문제가 아니다", packPurifyLines([]), { block: "", kept: 0 });
 }
 
 console.log("\n읽기 순화 (DB)");
 {
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
-  const reader = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
-  if (!team || !reader) {
+  const viewer = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !viewer) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
     const message = await db.message.create({
-      data: {
-        teamId: team.id,
-        threadKey: "team",
-        authorId: reader.id,
-        text: "읽기 순화 확인용",
-        whenLabel: "14:02",
-      },
+      data: { teamId: team.id, threadKey: "team", authorId: viewer.id, text: "읽기 순화 확인용", whenLabel: "14:02" },
+    });
+    const cushion = (over: Record<string, unknown> = {}) => ({
+      messageId: message.id,
+      viewerId: viewer.id,
+      status: "PURIFIED",
+      text: "읽기 순화 확인용",
+      source: "ai",
+      sourceHash: "h1",
+      model: "openrouter/free",
+      promptVersion: PROMPT_VERSION,
+      validatorVersion: "v1",
+      ...over,
     });
 
-    const first = await db.messageCushion.create({
-      data: { messageId: message.id, memberId: reader.id, text: "읽기 순화 확인용", tone: "soft" },
-    });
-    truthy("순화본이 남는다", Boolean(first.id));
+    const first = await db.messageCushion.create({ data: cushion() });
+    truthy("순화 상태가 남는다", Boolean(first.id));
 
-    // **같은 말·같은 사람에게 두 줄이 생기면 안 된다.** 어느 것이 맞는 순화본인지
-    // 고르는 기준이 사라지고, 사용자가 본 말과 다른 말이 쌓인다.
+    // **한 말·한 사람에게 두 줄이 생기면 안 된다.** 어느 것이 맞는 결과인지 고르는 기준이
+    // 사라지고, 사용자가 본 말과 다른 말이 쌓인다.
     const dup = await db.messageCushion
-      .create({ data: { messageId: message.id, memberId: reader.id, text: "다른 말", tone: "plain" } })
+      .create({ data: cushion({ text: "다른 말", status: "FALLBACK" }) })
       .catch((e: { code?: string }) => e.code);
     check("같은 말은 사람당 한 줄뿐이다", dup, "P2002");
 
-    const many = await db.messageCushion.createMany({
-      data: [{ messageId: message.id, memberId: reader.id, text: "무시된다", tone: "firm" }],
-      skipDuplicates: true,
+    // 선점: 두 탭이 **아직 없는** 같은 말에 동시에 PENDING 을 만들면 한 줄만 남고,
+    // claimToken 은 한쪽에만 있다. 그 값이 자기 것인 요청만 모델을 부른다.
+    const claimMessage = await db.message.create({
+      data: { teamId: team.id, threadKey: "team", authorId: viewer.id, text: "선점 확인용", whenLabel: "14:03" },
     });
-    check("두 번 시켜도 행이 늘지 않는다", many.count, 0);
-    check("남아 있는 것은 처음의 한 줄", await db.messageCushion.count({ where: { messageId: message.id } }), 1);
+    const claimRow = (claimToken: string) => ({
+      messageId: claimMessage.id,
+      viewerId: viewer.id,
+      status: "PENDING",
+      sourceHash: "h1",
+      model: "openrouter/free",
+      promptVersion: PROMPT_VERSION,
+      validatorVersion: "v1",
+      claimToken,
+      retryAfter: new Date(Date.now() + CLAIM_TTL_MS),
+    });
+    await db.messageCushion.createMany({ data: [claimRow("token-a"), claimRow("token-b")], skipDuplicates: true });
+    const claimed = await db.messageCushion.findMany({ where: { messageId: claimMessage.id } });
+    check("선점도 한 줄뿐이다", claimed.length, 1);
+    check("선점 토큰은 하나만 남는다", [claimed[0].claimToken === "token-a", claimed[0].claimToken === "token-b"].filter(Boolean).length, 1);
+    await db.messageCushion.deleteMany({ where: { messageId: claimMessage.id } });
+    await db.message.delete({ where: { id: claimMessage.id } });
 
-    // 읽기 설정은 사람 × 방 에 한 줄이다. 다시 골라도 행이 쌓이지 않고 값만 바뀐다.
-    // **켜짐/꺼짐 비트는 없다** — 순화는 언제나 켜져 있고, 고르는 것은 말투뿐이다.
+    // 실패가 저장된다 — 안 하면 다시 부르고, 셀 수도 없다.
+    await db.messageCushion.update({
+      where: { messageId_viewerId: { messageId: message.id, viewerId: viewer.id } },
+      data: { status: "REJECTED", text: null, source: null, reason: CUSHION_REASON.TOXICITY_REMAINED, attemptCount: 1, claimToken: null, retryAfter: new Date(Date.now() + FAILURE_BACKOFF_MS) },
+    });
+    const rejected = await db.messageCushion.findUniqueOrThrow({
+      where: { messageId_viewerId: { messageId: message.id, viewerId: viewer.id } },
+    });
+    check("실패 이유가 남는다", rejected.reason, CUSHION_REASON.TOXICITY_REMAINED);
+    check("실패에는 글자가 없다", rejected.text, null);
+    check("다시 부르지 않는 시각이 남는다", rejected.retryAfter !== null, true);
+    check("몇 번 시도했는지 남는다", rejected.attemptCount, 1);
+    // 이 상태면 브라우저를 새로고침해도 다시 부르지 않는다 — 기억이 아니라 DB 다.
+    check(
+      "저장된 실패는 다시 열리지 않는다",
+      canRetry(
+        {
+          status: rejected.status as "REJECTED",
+          reason: CUSHION_REASON.TOXICITY_REMAINED,
+          attemptCount: rejected.attemptCount,
+          retryAfter: rejected.retryAfter?.toISOString() ?? null,
+          model: rejected.model,
+          promptVersion: rejected.promptVersion,
+          createdAt: rejected.createdAt.toISOString(),
+        },
+        { model: "openrouter/free", promptVersion: PROMPT_VERSION, at: Date.now() },
+      ),
+      false,
+    );
+
+    // 방마다·사람마다 따로다.
     await db.readCushion.upsert({
-      where: { memberId_threadKey: { memberId: reader.id, threadKey: "team" } },
+      where: { memberId_threadKey: { memberId: viewer.id, threadKey: "team" } },
       update: { tone: "soft" },
-      create: { memberId: reader.id, threadKey: "team", tone: "soft" },
+      create: { memberId: viewer.id, threadKey: "team", tone: "soft" },
     });
     const saved = await db.readCushion.upsert({
-      where: { memberId_threadKey: { memberId: reader.id, threadKey: "team" } },
+      where: { memberId_threadKey: { memberId: viewer.id, threadKey: "team" } },
       update: { tone: "plain" },
-      create: { memberId: reader.id, threadKey: "team", tone: "plain" },
+      create: { memberId: viewer.id, threadKey: "team", tone: "plain" },
     });
-    check("다시 골라도 행이 쌓이지 않는다", await db.readCushion.count({ where: { memberId: reader.id } }), 1);
+    check("다시 골라도 행이 쌓이지 않는다", await db.readCushion.count({ where: { memberId: viewer.id } }), 1);
     check("말투가 바뀐다", saved.tone, "plain");
 
-    // **방마다 따로**다 — "단톡방은 부드럽게, DM 은 담담하게" 가 되어야 한다.
-    const dm = await db.readCushion.create({
-      data: { memberId: reader.id, threadKey: "dm:zz:zz", tone: "firm" },
-    });
+    const dm = await db.readCushion.create({ data: { memberId: viewer.id, threadKey: "dm:zz:zz", tone: "firm" } });
     const teamRow = await db.readCushion.findUniqueOrThrow({
-      where: { memberId_threadKey: { memberId: reader.id, threadKey: "team" } },
+      where: { memberId_threadKey: { memberId: viewer.id, threadKey: "team" } },
     });
     check("방을 바꿔도 다른 방의 설정은 그대로다", teamRow.tone, "plain");
     check("새 방의 설정은 따로 남는다", dm.tone, "firm");
 
-    await db.readCushion.deleteMany({ where: { memberId: reader.id, threadKey: { in: ["team", "dm:zz:zz"] } } });
+    await db.readCushion.deleteMany({ where: { memberId: viewer.id, threadKey: { in: ["team", "dm:zz:zz"] } } });
     await db.messageCushion.deleteMany({ where: { messageId: message.id } });
     await db.message.delete({ where: { id: message.id } });
-    // 순화본은 원문과 함께 간다 — 말이 지워졌는데 순화문만 남으면 읽을 대상이 없다.
-    check("말을 지우면 순화문도 함께 간다", await db.messageCushion.count({ where: { messageId: message.id } }), 0);
+    check("말을 지우면 순화 상태도 함께 간다", await db.messageCushion.count({ where: { messageId: message.id } }), 0);
   }
 }
 

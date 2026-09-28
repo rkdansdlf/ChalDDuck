@@ -18,6 +18,7 @@ import type {
   BusyBlock,
   BusyKind,
   ChatMessage,
+  ChatPurified,
   ContribKind,
   ContribRecord,
   ContribReportRow,
@@ -722,6 +723,8 @@ type MessageRow = {
   /** 정렬용 실제 시각. `whenLabel` 은 "21:12" 라 사람이 읽는 문자열이라 비교할 수 없다. */
   createdAt: Date;
   viaCushion: boolean;
+  /** **나에게** 이 말을 어떻게 보여 줄지(읽기 순화). 성공·실패 상태가 모두 담긴다. */
+  cushions: CushionRow[];
   attachPath: string | null;
   attachName: string | null;
   attachBytes: number | null;
@@ -740,20 +743,65 @@ type MessageRow = {
   savedVersion: { id: string; file: { id: string; boxId: string } } | null;
 };
 
-const MESSAGE_INCLUDE = {
+/** `MessageCushion` 한 줄 — 화면이 그릴 상태. */
+type CushionRow = {
+  status: string;
+  text: string | null;
+  source: string | null;
+  reason: string | null;
+  retryAfter: Date | null;
+};
+
+/**
+ * 순화 상태는 **읽는 사람 것만** 가져온다.
+ *
+ * 한 말마다 팀원 전원의 순화 상태를 실으면 그만큼 무겁다 — 순화는 그 사람이 보는 데 필요한
+ * 것일 뿐이다. `where` 에 그 사람이 들어가는 것이 곧 권한이다.
+ */
+const messageInclude = (meId: string | null) => ({
   author: { select: { id: true, name: true, mbti: true } },
   reactions: { select: { icon: true } },
+  cushions: {
+    where: { viewerId: meId ?? "" },
+    select: { status: true, text: true, source: true, reason: true, retryAfter: true },
+  },
   // 드라이브 연결은 **말풍선을 그릴 때 필요한 만큼만** 가져온다 — 주소는 화면이 만든다.
   // 여기에 서명 주소를 넣지 않는다: 비공개 버킷이라 주소를 저장하면 만료 뒤에도 남아 있고,
   // 미리보기로 그리는 일은 드라이브 화면이 이미 한다.
   driveVersion: { select: { id: true, label: true, size: true, kind: true, file: { select: { id: true, name: true, boxId: true } } } },
   savedVersion: { select: { id: true, file: { select: { id: true, boxId: true } } } },
-} as const;
+}) as const;
 
 /** 드라이브의 그 파일·버전으로 가는 길. 여기에서 두 번 쓰므로 한 곳에 둔다(화면은 값을 받아 쓴다). */
 function driveHref(boxId: string, fileId: string, versionId: string): string {
   return `/drive/${boxId}/${fileId}/${versionId}`;
 }
+
+/** 저장된 순화 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
+function toChatPurified(row: CushionRow): ChatPurified {
+  if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
+    return {
+      status: row.status,
+      text: row.text,
+      kind: row.source === "mask" ? "mask" : "ai",
+      reason: null,
+      retryAfter: null,
+    };
+  }
+  // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
+  // 저장되지 않은 status 값(옛 데이터·손으로 넣은 값)은 실패로 본다. 모르는 상태를
+  // "순화됨" 으로 그리는 일은 없어야 한다.
+  const status: "PENDING" | "REJECTED" | "FAILED" =
+    row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
+  return {
+    status,
+    text: null,
+    kind: null,
+    reason: row.reason,
+    retryAfter: row.retryAfter ? row.retryAfter.toISOString() : null,
+  };
+}
+
 
 function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
   const counts = new Map<string, number>();
@@ -769,6 +817,9 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     sortAt: m.createdAt.toISOString(),
     status: "sent",
     viaCushion: m.viaCushion,
+    // 순화 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
+    // 실패한 말은 `text: null` 이라 화면에서 원문으로 넘어간다.
+    purified: m.cushions[0] ? toChatPurified(m.cushions[0]) : null,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
     attachment:
       m.attachPath && m.attachName
@@ -811,7 +862,7 @@ async function loadMessages(
 ): Promise<MessagePage> {
   const rows = await db.message.findMany({
     where: { teamId, threadKey },
-    include: MESSAGE_INCLUDE,
+    include: messageInclude(meId),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -839,12 +890,13 @@ export async function getTeamMessages(teamId: string): Promise<MessagePage> {
  */
 export async function getTeamLastMessage(teamId: string): Promise<ChatMessage | null> {
   const session = await getSessionMember();
+  const meId = session?.id ?? null;
   const row = await db.message.findFirst({
     where: { teamId, threadKey: "team" },
-    include: MESSAGE_INCLUDE,
+    include: messageInclude(meId),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
-  return row ? toChatMessage(row, session?.id ?? null) : null;
+  return row ? toChatMessage(row, meId) : null;
 }
 
 export async function getDmMessages(teamId: string, threadId: string): Promise<MessagePage> {
@@ -883,7 +935,7 @@ export async function getNewerMessages(
 ): Promise<ChatMessage[]> {
   const rows = await db.message.findMany({
     where: { teamId, threadKey },
-    include: MESSAGE_INCLUDE,
+    include: messageInclude(meId),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: MESSAGE_PAGE_SIZE,
     ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),

@@ -28,10 +28,14 @@ function pickIndexes(n: number, k: number): number[] {
  * 마피아 역할 구성.
  *
  * 인원별 구성은 기획안에 없어 흔히 쓰는 비율로 임시로 정했다(화면의 <Undecided>):
- * 4~5명은 마피아 1·경찰 1, 6명부터 마피아 2·경찰 1·의사 1. 나머지는 시민.
+ * 3명은 마피아 1·의사 1, 4~5명은 마피아 1·경찰 1, 6명부터 마피아 2·경찰 1·의사 1. 나머지는 시민.
+ *
+ * 3명은 경찰을 빼고 의사를 둔다 — 이 인원에서는 밤에 한 명이라도 죽으면 마피아가 1대1이 되어
+ * 곧장 승리한다. 그래서 밤에 의사만 살릴 수 있고, 살린 사람이 저녁 투표를 여는 수가 된다.
  */
 export function mafiaLineup(players: number): IceRole[] {
-  const special: IceRole[] = players >= 6 ? ["mafia", "mafia", "police", "doctor"] : ["mafia", "police"];
+  const special: IceRole[] =
+    players >= 6 ? ["mafia", "mafia", "police", "doctor"] : players >= 4 ? ["mafia", "police"] : ["mafia", "doctor"];
   return [...special, ...Array<IceRole>(players - special.length).fill("citizen")];
 }
 
