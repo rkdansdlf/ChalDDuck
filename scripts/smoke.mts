@@ -838,21 +838,27 @@ console.log("\n회의 확정 예약 작업 (같은 일을 두 번 불러도 알�
 
     const beforeRace = await countNotices();
     // **두 호출을 겹쳐서** 부른다 — 한 호출이 끝나기 전에 다른 호출이 같은 줄을 읽게 만든다.
-    let sum = 0; let dup = 0;
-    for (let i = 0; i < 10; i++) {
-      const s = await db.meetingSlot.create({ data: { teamId: team.id, day: "목", time: "19:00", available: 1, total: 1, weekKey: "none" } });
-      await db.meetingProposal.create({ data: { teamId: team.id, proposedById: member.id, respondBy: new Date(Date.now() - 60_000), stage: "proposed", activeKey: null, date: "2026-10-01", slotId: s.id } });
-      const b = await countNotices();
-      const r = await Promise.all([confirmDueMeetings(), confirmDueMeetings()]);
-      const n = (await countNotices()) - b;
-      sum += r[0] + r[1]; if (n !== others.length) dup++;
-      await db.meetingProposal.deleteMany({ where: { slotId: s.id } });
-      await db.meetingSlot.delete({ where: { id: s.id } });
-    }
-    const raced = [sum, 0];
-    console.log("  [probe] 10회 sum=", sum, "위반=", dup);
+    const raced = await Promise.all([confirmDueMeetings(), confirmDueMeetings()]);
     check("**겹쳐 불러도 한 번만 넘어간다**", raced.reduce((sum, n) => sum + n, 0), 1);
     check("겹친 실행의 알림도 팀원 수만큼이다", (await countNotices()) - beforeRace, others.length);
+
+    /**
+     * 겹친 두 호출이 **실제로** 같은 줄을 두 번 읽는 것은 타이밍에 달렸다 — 두 번째 호출의
+     * `findMany` 가 첫 번째의 갱신 뒤에 도착하면(그게 대부분이다) 위 검사는 통과해 버리고
+     * `stage: "proposed"` 를 지워도 아무도 모른다. 그래서 **위 검사는 증명이 아니라 확인이고,
+     * 여기 있는 것이 근거다.**
+     *
+     * 알림의 근거는 "찾아낸 것"이 아니라 "**이 호출이 실제로 뒤집은 것**"이어야 한다. 그래서
+     * 갱신 조건이 반드시 지금 상태를 다시 확인해야 하고, 뒤집힌 줄만 `updateManyAndReturn`
+     * 로 받아야 한다. 둘 중 하나가 빠지면 겹친 실행이 알림을 두 번 만든다.
+     */
+    const confirmSource = readCode("../src/server/meetings/confirm-due.ts");
+    // 조건 부분만 뽑는다 — 중괄호가 안에서 또 열리므로 `}` 로 자르면 조건이 잘려 나간다.
+    // `updateManyAndReturn({ … data:` 사이가 곧 `where` 다.
+    const claim = confirmSource.match(/updateManyAndReturn\(\{([\s\S]*?)data:/)?.[1] ?? "";
+    truthy("갱신은 뒤집힌 줄만 받아 온다", confirmSource.includes("updateManyAndReturn"));
+    truthy("갱신 조건이 아직 proposed 인 것을 다시 확인한다", /stage:\s*"proposed"/.test(claim));
+    check("알림은 뒤집힌 줄에서만 나온다", /for \(const p of claimed\)/.test(confirmSource), true);
 
     // 확정은 남는다 — 표를 지우는 것이 아니라 상태를 맞추는 것이므로.
     const after2 = await db.meetingProposal.findUnique({ where: { id: proposal.id } });
