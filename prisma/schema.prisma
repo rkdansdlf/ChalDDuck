@@ -525,10 +525,14 @@ model Message {
   cushions MessageCushion[]
 
   @@unique([authorId, clientId])
-  @@index([teamId, threadKey])
   /// DM 목록은 "이 대화의 마지막 말 한 개" 를 4초마다 다시 읽는다. 그 정렬이
   /// `(teamId, threadKey, createdAt DESC)` 이지 않으면 Postgres 가 **해당 대화의 전체
   /// 메시지**를 읽고 자른다 — DM 이 쌓일수록 폴링 한 번의 비용이 그대로 오른다.
+  ///
+  /// 여기도 예전에 `@@index([teamId, threadKey])` 가 따로 있었다. b-tree 는 왼쪽부터 쌓이므로
+  /// 아래 인덱스가 곧 접두사라 짧은 쪽은 **읽히지 않았다.** 50,040행으로 직접 비교했을 때
+  /// 대표 여섯 질문의 계획과 읽은 행이 제거 전후에 완전히 같았다. 메시지가 늘어날 때마다
+  /// 쓰기만 늘던 인덱스였다.
   @@index([teamId, threadKey, createdAt])
 }
 

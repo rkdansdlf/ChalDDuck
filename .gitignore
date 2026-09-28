@@ -44,3 +44,18 @@ next-env.d.ts
 
 # prisma
 /src/generated/prisma
+
+# Working scratch
+#
+# Throwaway scripts for manual investigation. These get written often during debugging and
+# easily get forgotten, and a leftover `scripts/tmp-*.mts` has real costs beyond just being
+# ugly — `tsconfig.json` includes `**/*.mts`, so a scratch file half-finished gets pulled
+# into `tsc --noEmit` and type errors, and worse, it lands in the commit history.
+#
+# Real check scripts are named after what they check (e.g. `check-schema-in-sync.mjs`,
+# `smoke.mts`) and are not matched here.
+scripts/tmp-*
+scripts/*.tmp.*
+.tmp-*
+*_backup/
+
