@@ -9,12 +9,16 @@ import {
 } from "../src/lib/ai-limit.js";
 import {
   NO_DRAW_POOL_TEXT,
+  canDrawIn,
   drawPoolOf,
   isRoleKey,
   normalizeName,
+  roleViewOf,
   toRoleKey,
+  voidedText,
 } from "../src/features/roles/roster-model.js";
 import { AI_POLICY, MENU_OPTIONS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "../src/data/catalog.js";
+import { lastMessagePerThread } from "../src/data/last-message.js";
 import {
   candidateDates,
   scheduleWeeks,
@@ -44,11 +48,12 @@ import {
   displayTextOf,
   nextPurifyBatch,
   parseSoftened,
+  purificationRejects,
   toneChanged,
   toneOf,
   packPurifyLines,
 } from "../src/lib/read-cushion.js";
-import type { ChatMessage, MeetingProposal } from "../src/lib/types.js";
+import type { ChatMessage, MeetingProposal, RoleDrawResult } from "../src/lib/types.js";
 import {
   clientGate,
   isJoinCapped,
@@ -168,6 +173,72 @@ console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴
     new Set(["1", "2"]),
   );
   check("되돌려도 Veto 는 빠지지 않는다", allRejectedVetoed.pool, []);
+}
+
+/* ── 역할 상태: 아무도 풀 수 없는 상태가 없어야 한다 ──────── */
+
+console.log("\n역할 상태 (아무도 풀 수 없는 상태가 없는지)");
+{
+  // 이 검사가 있는 이유: 고친 버그가 전부 타입 검사가 못 잡는 종류였기 때문이다.
+  // 수락·거절 블록이 `clash`(희망자 2명 이상) 조건 아래에 있어서 **추적이 남은 상태인데
+  // 아무도 볼 수 없는 화면**이 조용히 생겼다. 조건식은 맞고 컴파일도 된다.
+  // 판을 `roleViewOf` 한 함수에 모았으니, 여기서는 그 함수가 **기대 담는 사람에게 닿지
+  // 않는 상태를 만들지 않는지**를 전부 박는다.
+  const draw = (over: Partial<RoleDrawResult> = {}): RoleDrawResult => ({
+    tool: "룰렛",
+    winner: "최유나",
+    winnerId: "m4",
+    accepted: false,
+    stale: false,
+    ...over,
+  });
+
+  check("희망자 0명 + 추첨 없음", roleViewOf(0, null), { kind: "empty" });
+  // **희망자가 0명이어도 남은 추첨은 보여야 한다.** 당첨자가 자기 1순위를 바꾼 뒤가
+  // 정확히 이 상태다 — "미정" 으로 덮으면 그 추첨은 아무도 볼 수 없다.
+  check("희망자 0명 + 추첨 중", roleViewOf(0, draw()).kind, "awaiting");
+  check("희망자 0명 + 확정", roleViewOf(0, draw({ accepted: true })).kind, "confirmed");
+
+  check("희망자 1명 + 추첨 없음", roleViewOf(1, null), { kind: "auto" });
+  check("희망자 2명 + 추첨 없음", roleViewOf(2, null), { kind: "negotiating" });
+
+  check("추첨 직후", roleViewOf(2, draw()), { kind: "awaiting", winner: "최유나" });
+  check("수락하면 확정", roleViewOf(2, draw({ accepted: true })), {
+    kind: "confirmed",
+    winner: "최유나",
+  });
+
+  // 희망자가 1명으로 줄었는데 추첨이 남은 상태(오늘 고친 구멍).
+  // 예전에는 `clash` 조건이 false 라 당첨자도 아무것도 볼 수 없었다.
+  const shrunk = roleViewOf(1, draw());
+  check("남은 추첨이 보인다", shrunk, { kind: "awaiting", winner: "최유나" });
+  check("답할 수단(추첨 버튼)은 닫혀 있다", canDrawIn(shrunk), false);
+
+  // 당첨자가 팀을 나간 추첨(오늘 고친 구멍).
+  const stale = roleViewOf(2, draw({ stale: true }));
+  check("무효로 보인다", stale, { kind: "voided", winner: "최유나" });
+  // **자리를 차지하고 있으므로 다시 뽑는 길이 반드시 있어야 한다.** 없으면 영구 정지.
+  check("다시 뽑을 수 있다", canDrawIn(stale), true);
+  truthy("무효 사유를 화면에 말할 수 있다", voidedText("최유나").includes("최유나"));
+
+  // 확정된 뒤 나간 경우 — 이미 정해진 담당자는 남는다. 지우면 이력이 사라진다.
+  check("확정된 뒤 나가도 확정은 남는다", roleViewOf(2, draw({ accepted: true, stale: true })).kind, "confirmed");
+
+  // 사람이 0~4명, 추첨은 4가지(없음/대기/확정/무효)를 전부 돌려본다.
+  const noStrand: string[] = [];
+  for (let wanters = 0; wanters <= 4; wanters += 1) {
+    for (const d of [null, draw(), draw({ accepted: true }), draw({ stale: true })]) {
+      const view = roleViewOf(wanters, d);
+      // 추첨이 남아 있는데 아무도 수락할 수단이 없는 상태 = "수락 대기" 라 답이 있어야 한다.
+      const hasAnswer =
+        view.kind === "empty" ||
+        view.kind === "auto" ||
+        canDrawIn(view) ||
+        (d !== null && view.kind !== "voided");
+      if (!hasAnswer) noStrand.push(`희망자 ${wanters} · ${JSON.stringify(d?.accepted ?? null)}`);
+    }
+  }
+  check("답이 닿는 상태로만 끝난다", noStrand, []);
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
@@ -443,7 +514,7 @@ console.log("\n회의 제안 (DB)");
   }
 }
 
-console.log("\n메뉴 룰렛");
+console.log("\n누가 하지");
 {
   truthy("메뉴가 하나 이상 있다", MENU_OPTIONS.length > 0);
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
@@ -550,7 +621,6 @@ const sent = (id: string, over: Partial<ChatMessage> = {}): ChatMessage => ({
   time: "14:02",
   sortAt: "2026-09-26T05:02:00.000Z",
   status: "sent",
-  purifiedText: null,
   ...over,
 });
 
@@ -572,22 +642,26 @@ console.log("\n읽기 순화: 한 묶음에 무엇을 넣는가");
 {
   const lines = [
     sent("a"),
-    // 이미 순화본이 있는 말 — 다시 부르면 비용만 늘고, 사용자가 본 말은 조용히 바뀐다.
-    sent("b", { purifiedText: "이거 아직 안 올라온 이유가 있을까요?" }),
     sent("c", { isMine: true }),
     sent("d", { text: "" }),
     sent("e"),
     sent("f"),
   ];
+  // **순화본은 말에 붙어 있지 않다** — `use-chat-thread` 의 `purified` 표가 따로 들고 있다.
+  // "이미 순화했는지"를 이 함수가 보려면 그 표를 받아야 한다.
+  const purified = { b: "이거 아직 안 올라온 이유가 있을까요?" };
+  const withB = [...lines, sent("b")];
 
-  check("모두 부르면 순화할 수 있는 것만 고른다", nextPurifyBatch(lines, ["a", "b", "c", "d", "e", "f"]).ids, [
+  check("모두 부르면 순화할 수 있는 것만 고른다", nextPurifyBatch(withB, ["a", "b", "c", "d", "e", "f"], purified).ids, [
     "a",
     "e",
     "f",
   ]);
-  check("이미 순화본이 있는 말은 다시 부르지 않는다", nextPurifyBatch(lines, ["b"]).ids, []);
+  check("이미 순화본이 있는 말은 다시 부르지 않는다", nextPurifyBatch(withB, ["b"], purified).ids, []);
+  // 순화표가 비어 있으면 그 말은 아직 순화본이 없는 말이다 — 같은 말을 다시 부른다.
+  check("순화표가 비면 없는 것으로 본다", nextPurifyBatch(withB, ["b"], {}).ids, ["b"]);
   // 화면이 방 안의 말만 id 로 보내지만, 섞여 와도 여기서 걸러 낸다.
-  check("요청하지 않은 말은 섞어 넣지 않는다", nextPurifyBatch(lines, ["다른 방의 말"]).ids, []);
+  check("요청하지 않은 말은 섞어 넣지 않는다", nextPurifyBatch(withB, ["다른 방의 말"], purified).ids, []);
   check(
     "묶음은 한 번에 열 개까지다",
     nextPurifyBatch(Array.from({ length: 20 }, (_, i) => sent(`m${i}`)), Array.from({ length: 20 }, (_, i) => `m${i}`)).ids
@@ -612,14 +686,19 @@ console.log("\n읽기 순화: 말투가 바뀌면");
 
 console.log("\n읽기 순화: 무엇을 그릴 것인가");
 {
-  const withPurified = { text: "이거 왜 아직 안 올렸어요?", purifiedText: "이거 아직 안 올라온 이유가 있을까요?" };
+  const raw = "이거 왜 아직 안 올렸어요?";
+  const soft = "이거 아직 안 올라온 이유가 있을까요?";
 
-  // 켜짐/꺼짐 비트 대신 **원문을 보고 있는지**로 정한다 — 설정은 말투 하나뿐이다
-  // (`ReadCushionSetting` = `{ tone }`, `displayTextOf(말, 원문을 보는가)`).
-  check("원문을 보고 있으면 순화본이 있어도 원문이다", displayTextOf(withPurified, true).text, withPurified.text);
-  check("원문을 보지 않으면 순화문을 그린다", displayTextOf(withPurified, false).text, withPurified.purifiedText);
-  check("순화본이 없으면 원문이다", displayTextOf({ text: "안 올렸어요", purifiedText: null }, false).text, "안 올렸어요");
-  check("원문을 보고 있으면 순화했다고 말하지 않는다", displayTextOf(withPurified, true).purified, false);
+  // 원문과 순화문을 **따로** 받는다 — 순화본은 이제 `ChatMessage` 에 붙어 있지 않다.
+  // 켜짐/꺼짐 비트도 없고, **원문을 보고 있는지**로 정한다(설정은 말투 하나뿐이다 —
+  // `ReadCushionSetting` = `{ tone }`).
+  check("원문을 보고 있으면 순화본이 있어도 원문이다", displayTextOf(raw, soft, true).text, raw);
+  check("원문을 보지 않으면 순화문을 그린다", displayTextOf(raw, soft, false).text, soft);
+  check("순화본이 없으면 원문이다", displayTextOf("안 올렸어요", null, false).text, "안 올렸어요");
+  // 아직 만들지 못한 말은 빈 글로 그리지 않는다 — "순화됨" 표시 없이도 원문이 보인다.
+  check("순화본이 아직 없으면 빈 글이 아니다", displayTextOf("안 올렸어요", undefined, false).text, "안 올렸어요");
+  check("원문을 보고 있으면 순화했다고 말하지 않는다", displayTextOf(raw, soft, true).purified, false);
+  check("원문을 보지 않으면 순화했다고 말한다", displayTextOf(raw, soft, false).purified, true);
 }
 
 console.log("\n읽기 순화: 무료 모델의 응답을 꺼내기");
@@ -640,6 +719,24 @@ console.log("\n읽기 순화: 무료 모델의 응답을 꺼내기");
   check("배열이 아니면 안전하다", parseSoftened({ lines: [] }, 2), []);
   // JSON 안의 빈 자리는 alignPurified 가 원문으로 채운다.
   check("빈 칸은 그대로 두고 나머지는 받는다", parseSoftened('["하나", "", "셋"]', 3), ["하나", "", "셋"]);
+}
+
+console.log("\n읽기 순화: 이건 순화가 아니다");
+{
+  // 실측: openrouter/free 는 다툰 말을 **거절하거나 욕을 남긴다.**
+  // "좀비처럼 달려가지 말고" → "좀비처럼 너무 빠르게 달려가지 말고" (3/3).
+  // 이걸 걸러 내지 않으면 말풍선에 "순화됨" 이 달린 글이 욕설을 품은 채 보인다.
+  check("욕이 남은 결과는 버린다", purificationRejects("씨발 진짜 왜 이래 좀 그만 좀비처럼 달려가지 말고", "진짜 왜 이래 좀 그만 좀비처럼 달리지 마세요"), true);
+  check("비꼼이 남은 결과도 버린다", purificationRejects("역시 대충이네", "이번 결과는 대충이네요"), true);
+  check("탓하는 표현이 남으면 버린다", purificationRejects("다 니 탓인데", "조용히 해 주세요 다 니 탓"), true);
+  check("비웃음 기호가 남으면 버린다", purificationRejects("대충이네 ㅋㅋ", "그렇게 하시네요 ㅋㅋ"), true);
+  check("욕을 실제로 걷어냈다면 통과한다", purificationRejects("씨발 진짜 왜 이래 좀비처럼", "속도를 조금 늦춰서 진행하면 될 것 같아요"), false);
+  // **감정 표현은 순화 대상이 아니다** — 지우면 순화가 아니라 감정 삭제다.
+  check("짜증 같은 감정 표현은 남아도 통과한다", purificationRejects("짜증나 죽겠어", "정말 힘들 것 같아요"), false);
+  // 빈 글은 순화가 아니라 삭제다.
+  check("빈 결과는 버린다", purificationRejects("안 올렸어요", "   "), true);
+  // 길이 폭주 (원문 두 글자에 두 문장)도 순화가 아니라 지어내기다.
+  check("터무니지게 긴 결과는 버린다", purificationRejects("안 올려", "가".repeat(200)), true);
 }
 
 console.log("\n읽기 순화: 모델 응답을 맞추는 법");
@@ -1005,14 +1102,17 @@ console.log("\nDM 목록 조회 비용");
     });
     const key = `dm:${[member.id, other.id].sort().join(":")}`;
 
-    // DM 목록 폴링이 요구하는 형태: 스레드마다 **마지막 말 한 개**.
-    const lastPerThread = (keys: string[]) =>
-      db.$queryRaw<Array<{ threadKey: string; text: string }>>`
-        SELECT DISTINCT ON ("threadKey") "threadKey", "text", "whenLabel"
-        FROM "Message"
-        WHERE "teamId" = ${team.id} AND "threadKey" = ANY(${keys})
-        ORDER BY "threadKey", "createdAt" DESC, "id" DESC
-      `;
+    // **앱이 실제로 부르는 함수를 그대로 부른다.**
+    //
+    // 예전에는 이 검사가 자기만의 `lastPerThread` SQL 을 테스트 안에 적어 두고 그것만 불렀다.
+    // 그래서 `src/data/api.ts` 의 `getDmThreads` 가 Prisma 의 `distinct` 로 **되돌아가서**
+    // 방의 메시지를 전부 메모리로 끌어와도 이 검사는 통과했다 — 214건이 전부 초록이었다.
+    // 검사가 사본을 검사하고 있었고, 원본은 아무도 보지 않았다.
+    //
+    // `lastMessagePerThread` 는 서버 액션이 아니라 `client` 를 인자로 받는 순수한 데이터
+    // 함수다. 세션 쿠키가 필요 없으므로 여기서 부를 수 있고, 부르는 것이 옳다(위 주석의
+    // "액션을 우회한다"는 금지는 **쿠키를 만들어 부는** 경우를 말한 것).
+    const lastPerThread = (keys: string[]) => lastMessagePerThread(db, team.id, keys);
 
     const existing = await db.message.count({ where: { threadKey: key } });
     const before = await lastPerThread([key]);
@@ -1029,10 +1129,140 @@ console.log("\nDM 목록 조회 비용");
     check("메시지가 늘어 폴링이 읽는 행은 늘지 않는다", after.length, before.length);
     check("한 스레드에서 1행만 읽는다", after.length, 1);
     check("읽은 것은 그중 가장 최근 말이다", after[0]?.text, "비용 확인 29");
+
+    // **돌아온 행만으로는 부족하다.** 중복을 걸러내는 방식이 무엇이든 **결과는** 스레드마다
+    // 한 줄씩 같고, 비용만 다르다. 그래서 실제로 나가는 SQL 을 보고, **실제로 몇 행을 읽는지**
+    // 를 본다. Prisma 의 쿼리 이벤트는 **플레이스홀더가 있는 SQL 과
+    // 파라미터 값**을 준다. 둘을 합쳐야 비로소 실제로 나간 문장이 된다.
+    const probe = new PrismaClient({
+      adapter: new PrismaPg({ connectionString }),
+      log: [{ emit: "event", level: "query" }],
+    });
+    const sent: string[] = [];
+    let capturedSql = "";
+    let capturedParams: unknown[] = [];
+    probe.$on("query", (e: { query: string; params: unknown }) => {
+      if (!e.query.includes("Message")) return;
+      sent.push(e.query.replace(/\s+/g, " "));
+      // 형태를 가리지 않는다. `unnest` 나 `LATERAL` 같은 특정 모양에 의존하면, 고쳐지는 순간
+      // 예외로 전체 검사가 멈춰 "왜 멈췄는지" 대신 스택만 남는다. **보내는 쿼리가 하나뿐이니**
+      // 마지막 Message 쿼리가 곧 그것이다.
+      capturedSql = e.query;
+      capturedParams = e.params as unknown[];
+    });
+    // 이벤트 값은 **문자열로 직렬화**되어 온다(`[["dm:…"],"teamId"]` 모양). 그대로 문자열
+    // 리터럴로 끼우면 Postgres 가 `malformed array literal` 로 거절한다. JSON 으로 되돌린 뒤
+    // 각 값을 Postgres 리터럴로 적는다.
+    const paramsOf = (raw: unknown): unknown[] => {
+      if (Array.isArray(raw)) return raw as unknown[];
+      if (typeof raw === "string") {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as unknown[]) : [parsed];
+        } catch {
+          return [raw];
+        }
+      }
+      return [raw];
+    };
+    const quote = (value: unknown) =>
+      Array.isArray(value)
+        ? `ARRAY[${(value as unknown[]).map((v) => `'${String(v).replaceAll("'", "''")}'`).join(",")}]`
+        : `'${String(value).replaceAll("'", "''")}'`;
+
+    await lastMessagePerThread(probe as unknown as typeof db, team.id, [key]);
+
+    const sql = sent.join(" ");
+    check("DB 로 내려가는 SQL 을 한 번만 보낸다", sent.length, 1);
+    check("스레드마다 LIMIT 1 로 멈춘다", /LIMIT 1/i.test(sql), true);
+    check("스레드 밖의 값을 고르지 않는다", /LATERAL/i.test(sql), true);
+
+    // 함수가 올바르다고 호출부가把它를 버리면 또 그대로다. 실제로 있었던 일이 이것이다 —
+    // `getDmThreads` 가 이 경로를 두고 Prisma `distinct` 로 직접 읽었다. 함수를 고쳐 놓아도
+    // **누가 부르는지**를 함께 고정해야 한다.
+    const api = readFileSync(new URL("../src/data/api.ts", import.meta.url), "utf8");
+    const body = api.slice(api.indexOf("export async function getDmThreads("), api.indexOf("export async function getDmThreads(") + 2600);
+    check("getDmThreads 가 이 함수를 부른다", /lastMessagePerThread\(db, teamId, threadKeys\)/.test(body), true);
+    check("getDmThreads 가 Prisma distinct 로 직접 읽지 않는다", /distinct: \["threadKey"\]/.test(body), false);
     console.log(`      (전체 메시지 ${existing} → ${grown}건, 조회 행은 ${after.length}행)`);
 
     await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "비용 확인" } } });
     check("검사한 메시지를 치우면 원래대로", await db.message.count({ where: { threadKey: key } }), existing);
+
+    // ── **진짜 비용을 재는 자리.** ───────────────────────────
+    //
+    // 위에서 세는 "조회 행"은 **돌아온 행**이다. 중복을 걸러내는 방식이 무엇이든 결과는
+    // 스레드마다 한 줄로 같다. 실제로 몇 행을 읽었는지는 DB 만 안다.
+    //
+    // 이 자리가 없다가 `DISTINCT ON` + `= ANY(배열)` 이 그대로 통과했다 — 5,006개 대화에서
+    // 실제로 10,013행을 읽고 있었는데 검사에는 "1행" 이라고 적혀 있었다.
+    //
+    // **SQL 을 여기서 다시 적지 않는다.** 적으면 코드가 바뀌어도 검사는 옛 질문을 재고,
+    // 오늘 바로 그랬다. 실제로 해 봤다 — Prisma 어댑터는 배열 파라미터에 이미 `::text[]` 를
+    // 붙이는데 여기에 또 붙여서 `::text[]::text[]` 인 **다른 질문을** EXPLAIN 하고 있었다.
+    // 앱이 보내는 SQL 을 그대로 받는다(위에서 잡아 둔 `capturedSql`·`capturedParams`).
+    const askSql = async (extra: number) => {
+      const base = new Date("2026-01-01T00:00:00Z");
+      for (let i = 0; i < extra; i += 500) {
+        await db.message.createMany({
+          data: Array.from({ length: Math.min(500, extra - i) }, (_, k) => ({
+            teamId: team.id,
+            threadKey: key,
+            authorId: member.id,
+            text: `규모 확인 ${i + k}`,
+            whenLabel: "00:00",
+            // `createMany` 한 번으로 전부 넣으면 `createdAt` 이 한 문장 안의 `now()` 로
+            // 같아진다. 실제 대화에서는 그렇지 않고, 같으면 인덱스가 첫 행에서 멈출 수 없다.
+            createdAt: new Date(base.getTime() + (i + k) * 1000),
+          })),
+        });
+      }
+      await db.$executeRawUnsafe(`ANALYZE "Message"`);
+
+      await lastMessagePerThread(probe as unknown as typeof db, team.id, [key]);
+      // 이벤트 안에 들어 있는 값으로 **실제로 나간 문장**을 다시 세운다.
+      const values = paramsOf(capturedParams);
+      const captured = capturedSql.replace(/\$(\d+)/g, (_, n: string) => quote(values[Number(n) - 1]));
+      check("스레드별 마지막 말 SQL 을 잡았다", captured.includes('"Message"'), true);
+
+      const explained = (await db.$queryRawUnsafe(`EXPLAIN (ANALYZE, FORMAT JSON) ${captured}`)) as Array<Record<string, unknown>>;
+      let total = 0;
+      (function walk(node: Record<string, unknown>) {
+        total += Number(node["Actual Rows"] ?? 0) * Number(node["Actual Loops"] ?? 1);
+        for (const child of (node["Plans"] as Array<Record<string, unknown>>) ?? []) walk(child);
+      })((explained[0]["QUERY PLAN"] as Array<Record<string, unknown>>)[0].Plan as Record<string, unknown>);
+
+      const size = await db.message.count({ where: { threadKey: key } });
+      console.log(`      (메시지 ${size}건일 때 DB 가 실제로 읽은 행 ${total})`);
+      return total;
+    };
+    await probe.$disconnect();
+
+    // **검사가 실패해도 측정용 메시지는 치운다.** `check` 는 예외를 던지지 않지만, 그 뒤의
+    // 어떤 것이 던지면(앞으로의 새 검사라든가) 치우는 대참이 건너뛰어진다. 그때 개발 DB 에
+    // 메시지 5,000줄이 남고, 다음 실행은 "원래대로" 에서 실패한다 — **첫 실패의 잔재가
+    // 두 번째 실패를 만든다.** 그래서 `finally` 다.
+    // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 measurement 행을 먼저 치운다. 이 검사가
+    // 스스로를 고치지 못하면 **비교 기준이 조용히 오염되고**, 어느 쪽이 옳은지 알 수 없게 된다.
+    await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
+    // 앞선 실행이 남긴 것이 있으면 **비교 기준이 조용히 오염된다**(5,000개 방에서 6행을 읽는
+    // 쿼리가 5,000개 방에서 5,166행을 읽는 것처럼 보인다). 눈에 보이게 한다.
+    check("측정을 시작할 때 방이 비어 있다", await db.message.count({ where: { threadKey: key } }), existing);
+    let small = 0;
+    let big = 0;
+    try {
+      small = await askSql(0);
+      big = await askSql(5000);
+      // **비율로 재면 안 된다.** 고장난 쪽도 "1.9배"였다 — 5,000배 데이터를 2배로 읽은 것인데
+      // 3배 이하여서 통과했다. 5,000개 방에서 매번 10,000행을 읽는 것이 문제이지, 그게 몇 배
+      // 더 늘었는지가 아니다. **절대값**으로 본다. 스레드 하나에 대한 고정 비용이면 몇 행이든
+      // 작아야 하고, 방 크기에 비례하면 5,000개로는 수만 행이 된다.
+      check("5,000개 방에서도 읽는 행이 100행 미만이다 (방 크기와 무관)", big < 100, true);
+      console.log(`      (작을 때 ${small}행 → 5,000개 방에서 ${big}행 · 방이 800배 커졌는데 ${(big / Math.max(small, 1)).toFixed(1)}배)`);
+    } finally {
+      await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
+    }
+    check("측정용 메시지를 치우면 원래대로", await db.message.count({ where: { threadKey: key } }), existing);
   }
 }
 
@@ -1057,6 +1287,122 @@ console.log("\n파일 보기 화면의 조회 범위");
   );
   check("13 화면은 컨텍스트를 한 번 읽는다", (page.match(/getFileViewContext/g) ?? []).length, 2); // import 1 + 호출 1
   check("13 화면이 따로 부르는 함수가 없다", /getSubmissionBox\(|getSubmittedFile\(/.test(page), false);
+}
+
+/* ── 가입 요청 제한: 순수 판정 ─────────────────────────────────── */
+
+console.log("\n가입 요청 제한 (화면·서버가 같은 순수 함수를 부른다)");
+{
+  // `clientGate` 의 비교는 `>` 다 — 막은 시도까지 이미 창에 찍혀 있으므로 `max` 번까지는
+  // 통과한다. `>=` 로 바뀌면 한 번 일찍 막히고, 이 테스트가 바로 그걸 잡는다.
+  check("10분 창은 5회까지 통과한다", clientGate(5, 0), "open");
+  check("10분 창은 6번째에 막는다", clientGate(6, 0), "client");
+  check("1시간 창은 15회까지 통과한다", clientGate(1, 15), "open");
+  check("1시간 창이 넘으면 짧은 창이 멀쩡해도 막는다", clientGate(1, 16), "client");
+
+  // 팀 예산은 쿠키를 지워도 남는 방어선이라 넉넉하다. 좁으면 정상 팀원이 못 들어온다.
+  check("팀 10분 창은 20회까지 통과한다", teamGate(20, 0, 0), "open");
+  check("팀 10분 창은 21번째에 막는다", teamGate(21, 0, 0), "team-budget");
+  check("팀 1시간 창은 50회까지 통과한다", teamGate(0, 50, 0), "open");
+  check("팀 1시간 창은 51번째에 막는다", teamGate(0, 51, 0), "team-budget");
+
+  // 시간 창을 한 번도 넘지 않고도 개수로 막힌다 — 느린 공격의 유일한 방어선.
+  check("시간은 넉넉해도 미해결 49건까지는 된다", teamGate(0, 0, 49), "open");
+  check("미해결 50건부터 막는다", teamGate(0, 0, JOIN_LIMIT.unresolvedPerTeam), "pending-cap");
+  check("배너는 상한 직전에는 안 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam - 1), false);
+  check("배너는 상한부터 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam), true);
+}
+
+/* ── 가입 요청: 토큰은 만들어진 뒤로 바뀌지 않는다 ────────────── */
+
+console.log("\n가입 요청 토큰 불변식 (다른 브라우저가 가로챌 수 없다)");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
+  const suffix = String(Date.now() % 1e7);
+  const name = `불변${suffix}`;
+
+  const first = await db.joinRequest.create({
+    data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" },
+  });
+  check("첫 신청이 그 토큰을 가진다", first.token, `A-${suffix}`);
+
+  // 같은 이름으로 두 번째 신청 = 다른 브라우저가 재신청한 것.
+  let code: string | undefined;
+  try {
+    await db.joinRequest.create({
+      data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" },
+    });
+  } catch (error) {
+    code = (error as { code?: string }).code;
+  }
+  check("같은 이름의 두 번째 신청은 DB 가 막는다", code, "P2002");
+
+  const kept = await db.joinRequest.findUniqueOrThrow({
+    where: { teamId_name: { teamId: team.id, name } },
+  });
+  check("토큰은 여전히 첫 번째 것", kept.token, `A-${suffix}`);
+  check("이름당 요청은 하나뿐이다", await db.joinRequest.count({ where: { teamId: team.id, name } }), 1);
+
+  await db.joinRequest.delete({ where: { id: first.id } });
+}
+
+console.log("\n가입 요청 토큰 불변식 (동시에 같은 이름으로 신청하면 한 명만 이긴다)");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
+  const suffix = String(Date.now() % 1e7);
+  const name = `경쟁${suffix}`;
+
+  const results = await Promise.allSettled([
+    db.joinRequest.create({ data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" } }),
+    db.joinRequest.create({ data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" } }),
+  ]);
+
+  const won = results.filter((r) => r.status === "fulfilled");
+  const lost = results.filter((r) => r.status === "rejected");
+  check("한쪽만 이긴다", won.length, 1);
+  check("진 쪽은 둘 다 P2002 다", lost.every((r) => (r as PromiseRejectedResult).reason?.code === "P2002"), true);
+
+  const row = await db.joinRequest.findUniqueOrThrow({
+    where: { teamId_name: { teamId: team.id, name } },
+  });
+  check("남은 행의 토큰은 승자의 그것이다", row.token, (won[0] as PromiseFulfilledResult<{ token: string }>).value.token);
+
+  await db.joinRequest.delete({ where: { id: row.id } });
+}
+
+console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 남아 있다");
+{
+  // 순수 함수를 부를 수 없는 지점(쿠키가 필요한 액션)은 **소스**로 고정한다. 이 저장소는
+  // 이미 화면·서버가 같은 계산을 쓰는 관례로 그랬다.
+  const src = readFileSync(new URL("../src/server/actions/onboarding.ts", import.meta.url), "utf8");
+  const from = src.indexOf("export async function joinTeam");
+  const fn = src.slice(from, src.indexOf("export async function checkJoinApproval", from));
+
+  // **`upsert` 는 토큰 회전의 유일한 경로였다.** update 에 `token` 이 들어가면 다른
+  // 브라우저가 그 토큰을 자기 쿠키로 옮겨 심는다. create 로만 만들어야 이게 불가능하다.
+  check("토큰을 갱신하는 upsert 가 없다", /joinRequest\.upsert/.test(fn), false);
+  check("새 요청은 create 로만 만든다", /joinRequest\.create/.test(fn), true);
+  check("경합에서 진 쪽은 덮어쓰지 않고 돌려보낸다", /P2002[\s\S]{0,160}status: "taken"/.test(fn), true);
+  // 제한은 **행도 알림도 만들어지기 전에** —— 알림 폭탄의 비용이 이미 발생한 뒤에 막으면 늦다.
+  check("이 브라우저 제한이 요청 생성보다 먼저 온다", fn.indexOf("takeClientAttempt") < fn.indexOf("joinRequest.create"), true);
+  // 소유자만 자기 요청을 고친다. 남의 희망 역할을 덮어쓰면 역할 추첨의 입력이 바뀐다.
+  check("소유자 확인이 새 요청보다 먼저 온다", fn.indexOf("store.get(JOIN_COOKIE)?.value;\n    const found") >= 0, true);
+  // **팀 예산은 새 행을 만들려는 시점에만 깎인다.** 위쪽에 두면 자기 요청을 다시 여는
+  // 정상 사용자가 팀 예산을 먹고, 그 숫자를 공격자가 고쳐 팀 전체의 신규 가입을 막는다.
+  // 팀 코드 하나만 알면 이 숫자를 조작할 수 있으므로 순서가 곧 방어다.
+  check(
+    "팀 예산은 소유자 확인 뒤에 온다",
+    fn.indexOf("takeTeamCreation") > fn.indexOf("const found = await db.joinRequest.findUnique"),
+    true,
+  );
+  check("팀 예산은 요청 생성보다 먼저 온다", fn.indexOf("takeTeamCreation") < fn.indexOf("joinRequest.create"), true);
+
+  // 푸시는 예산 안에서만, 앱 안 알림은 항상.
+  const notifySrc = readFileSync(new URL("../src/server/notify/create.ts", import.meta.url), "utf8");
+  check("notify 가 푸시만 끌 수 있다", /input\.push === false/.test(notifySrc), true);
+  check("앱 안 알림은 푸시 예산과 무관하게 남는다", notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("input.push === false"), true);
 }
 
 await db.$disconnect();

@@ -3,6 +3,9 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
+import type { QuizQuestion } from "@/lib/mbti-quiz";
+import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
+import { lastMessagePerThread } from "./last-message";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -29,7 +32,6 @@ import type {
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
-  QuizQuestion,
   RandomTool,
   RecentItem,
   ResearchResult,
@@ -58,7 +60,6 @@ import {
 } from "@/features/schedule/week";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
-import { contribByLabel } from "@/server/contrib/state";
 import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
 import { normalizeName } from "@/features/roles/roster-model";
@@ -81,7 +82,6 @@ import {
   MENU_OPTIONS,
   PRESENT_SAMPLE_DRAFT,
   PRESENT_SAMPLE_INPUT,
-  QUIZ,
   RANDOM_TOOLS,
   RESEARCH_SAMPLE_QUERY,
   RESEARCH_SAMPLE_RESULTS,
@@ -205,7 +205,7 @@ export async function getRoles(): Promise<Role[]> {
   return ROLES;
 }
 export async function getQuiz(): Promise<QuizQuestion[]> {
-  return QUIZ;
+  return QUIZ_QUESTIONS;
 }
 export async function getRandomTools(): Promise<RandomTool[]> {
   return RANDOM_TOOLS;
@@ -582,6 +582,32 @@ export async function getDriveLimits(teamId: string): Promise<DriveLimits> {
   };
 }
 
+/** `SubmissionBox` 한 줄을 만드는 것 — 목록과 하나짜리가 **같은 판정**을 쓴다. */
+function toSubmissionBox(
+  b: {
+    id: string;
+    role: string;
+    name: string;
+    due: string;
+    dueAt: Date | null;
+    owner: { name: string } | null;
+    files: Array<{ versions: Array<{ createdAt: Date; restoredFromId: string | null }> }>;
+  },
+): SubmissionBox {
+  return {
+    id: b.id,
+    role: b.role as RoleKey,
+    name: b.name,
+    owner: b.owner?.name ?? null,
+    // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세어서, 같은 파일을 네 번 고치면 "4개"로 보였다.
+    fileCount: b.files.length,
+    // 마감 시각이 있으면 그걸로 만든다. 예전 팀은 "미정" 같은 문자열만 있다.
+    due: b.dueAt ? formatDue(b.dueAt) : b.due,
+    dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
+    hasLate: b.files.some((f) => f.versions.some((v) => isLateVersion(v, b.dueAt))),
+  };
+}
+
 export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[]> {
   const boxes = await db.submissionBox.findMany({
     where: { teamId },
@@ -592,19 +618,7 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     orderBy: { id: "asc" },
   });
 
-  return boxes.map((b) => ({
-    id: b.id,
-    role: b.role as RoleKey,
-    name: b.name,
-    owner: b.owner?.name ?? null,
-    // 파일이 몇 개인지를 센다 — 예전에는 버전 수를 세서, 같은 파일을 네 번 고치면
-    // "4개"로 보였다.
-    fileCount: b.files.length,
-    // 마감 시각이 있으면 그걸로 만든다. 예전 팀은 "미정" 같은 문자열만 있다.
-    due: b.dueAt ? formatDue(b.dueAt) : b.due,
-    dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
-    hasLate: b.files.some((f) => f.versions.some((v) => isLateVersion(v, b.dueAt))),
-  }));
+  return boxes.map(toSubmissionBox);
 }
 
 /** 제출함 안의 파일 목록. 각 파일의 최신 버전을 함께 준다. */
@@ -641,26 +655,29 @@ export async function getSubmittedFiles(
   });
 }
 
-export async function getSubmittedFile(
-  teamId: string,
-  fileId: string,
-): Promise<SubmittedFile | null> {
-  const file = await db.submittedFile.findFirst({
-    where: { id: fileId, box: { teamId } },
-    select: { boxId: true },
-  });
-  if (!file) return null;
-
-  const files = await getSubmittedFiles(teamId, file.boxId);
-  return files.find((f) => f.id === fileId) ?? null;
-}
-
+/**
+ * 제출함 하나(12 화면).
+ *
+ * **그 제출함만 읽는다.** 예전에는 `getSubmissionBoxes`(팀의 **모든** 제출함 — 각각의 모든 파일과
+ * 모든 버전까지) 를 불러와 `.find()` 로 하나를 골랐다. 화면 하나에 세 칸이 있으면 그 세 칸을
+ * 다 읽고 하나를 쓰는 셈이었고, 버전은 지워지지 않으므로 시간이 갈수록 그대로 늘었다.
+ *
+ * 저울추는 `toSubmissionBox` **한 곳**에서 매긴다 — 목록과 여기서 판정이 달라지면 12 화면의
+ * "마감을 넘긴 파일" 표시가 목록의 것과 어긋난다(같은 제출함을 두 화면이 다르게 말하는 셈).
+ */
 export async function getSubmissionBox(
   teamId: string,
   boxId: string,
 ): Promise<SubmissionBox | null> {
-  const boxes = await getSubmissionBoxes(teamId);
-  return boxes.find((b) => b.id === boxId) ?? null;
+  const box = await db.submissionBox.findFirst({
+    where: { id: boxId, teamId },
+    include: {
+      owner: { select: { name: true } },
+      files: { include: { versions: { select: { createdAt: true, restoredFromId: true } } } },
+    },
+  });
+
+  return box ? toSubmissionBox(box) : null;
 }
 
 /** 버전 기록. **맨 앞이 최신**이다. */
@@ -979,38 +996,6 @@ export async function getFileViewContext(
 }
 
 
-/**
- * 스레드마다 **가장 최근 말 하나만** 가져온다.
- *
- * 이 폴링은 4초마다 돈다. `getDmThreads` 가 하는 일이 크면 그만큼 자주 크다.
- *
- * ## 왜 Prisma 의 `distinct` 를 쓰지 않나
- *
- * `db.message.findMany({ distinct: ["threadKey"], orderBy: [...] })` 로도 **결과는** 스레드마다
- * 한 줄씩 나온다. 그래서 겉보기에는 맞는 코드이고, 실제로 나오는 SQL 을 확인하기 전까지는
- * 속도 문제를 찾을 수 없었다. 그 SQL 에는 `DISTINCT ON` 이 없고 `ORDER BY` 도 `LIMIT` 도 없다.
- * 즉 **Postgres 는 그 방의 메시지를 전부 보내고, Prisma 가 브라우저 쪽에서 중복을 걷어낸다.**
- * 10,000개 대화이면 4초마다 10,000줄을 DB → 서버 → 브라우저로 옮긴 뒤 한 줄만 쓴다.
- *
- * 그래서 `DISTINCT ON` 을 직접 쓴다 — 인덱스(`@@index([teamId, threadKey, createdAt])`)가 있어
- * Postgres 가 각 스레드의 첫 행만 읽고 멈춘다. **요구한 것보다 더 읽지 않는지가 곧 비용**이다.
- */
-export async function lastMessagePerThread(
-  client: Pick<typeof db, "$queryRaw">,
-  teamId: string,
-  threadKeys: string[],
-): Promise<{ threadKey: string; text: string; whenLabel: string | null; createdAt: Date }[]> {
-  if (threadKeys.length === 0) return [];
-  return client.$queryRaw<
-    { threadKey: string; text: string; whenLabel: string | null; createdAt: Date }[]
-  >`
-    SELECT DISTINCT ON ("threadKey") "threadKey", "text", "whenLabel", "createdAt"
-    FROM "Message"
-    WHERE "teamId" = ${teamId} AND "threadKey" = ANY(${threadKeys})
-    ORDER BY "threadKey", "createdAt" DESC, "id" DESC
-  `;
-}
-
 export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   const session = await getSessionMember();
   if (!session) return [];
@@ -1129,32 +1114,62 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
   // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
   // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const members = await db.member.findMany({
-    where: { teamId },
-    include: {
-      contribRecords: {
-        select: {
-          state: true,
-          // **표시 중인 것만** 센다 — 취소한 표시까지 세면 지운 사실이 참여로 남는다.
-          participations: { where: { activeKey: { not: null } }, select: { id: true } },
-        },
+  const [members, stateCounts, shownPerRecord] = await Promise.all([
+    db.member.findMany({
+      where: { teamId },
+      select: { id: true, name: true, leftAt: true, wantRole: true },
+      orderBy: { joinedAt: "asc" },
+    }),
+    // **기록을 통째로 읽지 않고 DB 에서 센다.** 예전에는 `include: { contribRecords }` 로
+    // 전원을 다 받아와 JS 에서 숫자 셋을 만들었다. 그런데 기록은 지우지 않고(나간 사람도 남고),
+    // 의견(`ContribDispute`)과 참여 표시는 **이력으로 남는** 설계라 팀이 사는 동안 줄기만
+    // 한다 — 그 양이 그대로 페이로드가 된다.
+    db.contribRecord.groupBy({
+      by: ["memberId", "state"],
+      where: { member: { teamId } },
+      _count: { _all: true },
+    }),
+    // 참여 표시는 **현재 표시 중인 것만** 센다 — 취소한 표시까지 세면 지운 사실이 참여로
+    // 남는다. 관계에 필터를 준 `_count` 는 **SQL 에서 계산되므로** 표시 행을 받아오지
+    // 않는다(예전에는 표시를 배열로 받아와 `length` 를 세었다).
+    db.contribRecord.findMany({
+      where: { member: { teamId } },
+      select: {
+        memberId: true,
+        _count: { select: { participations: { where: { activeKey: { not: null } } } } },
       },
-    },
-    orderBy: { joinedAt: "asc" },
-  });
+    }),
+  ]);
 
-  return members.map((m) => ({
-    memberId: m.id,
-    who: m.name,
-    left: m.leftAt !== null,
-    role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
-    confirmed: m.contribRecords.filter((r) => r.state === "ok").length,
-    pending: m.contribRecords.filter((r) => r.state === "pending").length,
-    disputed: m.contribRecords.filter((r) => r.state === "disputed").length,
-    // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
-    // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
-    participations: m.contribRecords.reduce((n, r) => n + r.participations.length, 0),
-  }));
+  const bucketOf = new Map<string, { confirmed: number; pending: number; disputed: number }>();
+  for (const row of stateCounts) {
+    const bucket = bucketOf.get(row.memberId) ?? { confirmed: 0, pending: 0, disputed: 0 };
+    if (row.state === "ok") bucket.confirmed += row._count._all;
+    else if (row.state === "pending") bucket.pending += row._count._all;
+    else if (row.state === "disputed") bucket.disputed += row._count._all;
+    bucketOf.set(row.memberId, bucket);
+  }
+  // 표시 수는 **기록 주인** 몫이다 — 찍은 팀장이 아니라 그 기록을 만든 사람에게 더한다.
+  const shownOf = new Map<string, number>();
+  for (const row of shownPerRecord) {
+    shownOf.set(row.memberId, (shownOf.get(row.memberId) ?? 0) + row._count.participations);
+  }
+
+  return members.map((m) => {
+    const bucket = bucketOf.get(m.id);
+    return {
+      memberId: m.id,
+      who: m.name,
+      left: m.leftAt !== null,
+      role: ROLES.find((r) => r.key === m.wantRole)?.name ?? "미정",
+      confirmed: bucket?.confirmed ?? 0,
+      pending: bucket?.pending ?? 0,
+      disputed: bucket?.disputed ?? 0,
+      // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
+      // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
+      participations: shownOf.get(m.id) ?? 0,
+    };
+  });
 }
 
 /* ── 21 할 일 ──────────────────────────────────────────────── */
