@@ -16,7 +16,7 @@ import { requireSessionMember } from "@/server/session";
  * 대신 서버 로그에 남기고, 개발 중일 때만 원문을 함께 보낸다 — 고칠 사람은 그 문구가 필요하다.
  *
  * 여기서 하지 **않는** 것: 저장. 무엇을 넣고 무엇을 돌려받았는지는 남지 않는다
- * (`ai-limit.ts` 가 그 약속을 설명한다). 순화 읽기(`MessageCushion`)는 예외가 아니라
+ * (`ai-limit.ts` 가 그 약속을 설명한다). 순화 읽기(`MessagePurification`)는 예외가 아니라
  * **사용자에게 보이는 읽기 결과**다 — 원문은 그대로 두고 그 화면에 보이는 문장만 남긴다.
  */
 export async function runTool<T>(tool: AiToolKey, call: () => Promise<T>): Promise<AiResult<T>> {

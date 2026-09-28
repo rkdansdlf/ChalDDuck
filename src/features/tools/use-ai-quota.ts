@@ -33,3 +33,34 @@ export function useAiQuota(enabled = true): { left: number; perDay: number } {
 
   return quota ?? { left: 0, perDay: 0 };
 }
+
+/**
+ * **읽기 순화 몫** — 도구 몫과 따로다(`server/ai/limit.ts` 의 `quotaPicks`).
+ *
+ * 순화는 **누가 누를 때만 일어나지 않는다** — 대화방을 열면 알아서 돈다. 그래서 도구
+ * 화면처럼 버튼 옆에 늘 붙여 놓으면, AI 를 **요청하지 않은** 사람이 숫자를 재워 본다.
+ * 그래서 이 값은 **남았을 때가 아니라, 얼마 안 남았을 때만** 보여 주는 쪽으로 쓴다.
+ *
+ * `perDay` 가 0 이면 못 읽은 것이다(키가 없거나 화면을 읽지 못한 경우) — 0 을 "다 썼다"로
+ * 말하지 않으려고 `perDay` 로 구분한다.
+ */
+export function useCushionQuota(enabled = true): { left: number; perDay: number } {
+  const [quota, setQuota] = useState<{ left: number; perDay: number } | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    getAiQuota()
+      .then((q) => {
+        if (!cancelled) setQuota({ left: q.cushion.mineLeft, perDay: q.cushion.perDay });
+      })
+      .catch(() => {
+        // 못 읽어도 읽기는 된다 — 순화가 안 되는 것이지 대화를 못 보는 것이 아니다.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  return quota ?? { left: 0, perDay: 0 };
+}

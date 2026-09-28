@@ -17,6 +17,7 @@ import { pollNavBadges } from "@/server/actions/nav";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
 import { ReadCushionBar } from "./read-cushion-bar";
+import { useCushionQuota } from "@/features/tools/use-ai-quota";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
 /**
@@ -95,6 +96,14 @@ export function TeamChatScreen({
    */
   const lostFileRef = useRef<(message: ChatMessage) => void>(() => {});
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
+  /**
+   * 오늘 남은 **순화** 몫 — 도구 몫과 별개다(`server/ai/limit.ts` 의 `quotaPicks`).
+   *
+   * 순화가 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
+   * 그럼에도 부르면 필요 없는 왕복이 늘어난다.
+   */
+  const cushionQuota = useCushionQuota(cushion.enabled);
+
   const { messages, cushions, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
     useChatThread(
     TEAM_THREAD_ID,
@@ -222,6 +231,7 @@ export function TeamChatScreen({
         levels={levels}
         working={purifyWorking}
         notice={purifyNotice}
+        quota={cushionQuota}
         onEnabled={(next) => void changeCushion({ enabled: next })}
         onLevel={(key) => void changeCushion({ mode: key })}
         onTone={(key) => void changeCushion({ tone: key })}

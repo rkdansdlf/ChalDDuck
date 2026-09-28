@@ -28,12 +28,24 @@ import { TonePicker } from "@/features/tools/tone-picker";
  * 정하지 않고 남긴 것은 두 개뿐이고, 화면 아래 상자가 그것을 밝힌다 — 강도마다 가림 범위를
  * 다르게 두는 게 맞는지, 몇 시간 뒤에 같은 단계로 다시 만들지.
  */
+
+/**
+ * 이만큼 남았을 때부터 숫자를 보인다.
+ *
+ * 순화는 **자동으로** 돈다 — 사용자가 AI 를 요청한 것이 아니다. 그래서 남은 횟수를 늘 보여
+ * 주면, 읽기만 한 사람에게 요금이 붙은 것처럼 보인다. 15 도구 화면처럼 "막혀서야 알게 하지
+ * 않는다" 를 따르되, **숫자가 필요한 때에만** 말하는 쪽을 골랐다 — 다 쓰였을 때는 순화가
+ * 조용히 멈추므로 사용자가 원문만 보고 그 사실을 모를 수 있다.
+ */
+const SHOW_WHEN_AT_MOST = 5;
+
 export function ReadCushionBar({
   setting,
   tones,
   levels,
   working,
   notice,
+  quota,
   onEnabled,
   onLevel,
   onTone,
@@ -46,6 +58,11 @@ export function ReadCushionBar({
   working: boolean;
   /** 실패 이유. 사람이 읽을 문장이고, 원문(또는 규칙 가림)으로 읽고 있다는 사실을 함께 말한다. */
   notice: string | null;
+  /**
+   * 오늘 남은 순화 횟수. `perDay` 가 0 이면 **읽지 못한 것**(AI 키 없음·요청 실패)이라
+   * "다 썼다" 고 말하지 않는다. 순화 몫은 도구 몫과 따로다(`server/ai/limit.ts`).
+   */
+  quota: { left: number; perDay: number };
   onEnabled: (next: boolean) => void;
   onLevel: (key: string) => void;
   onTone: (key: string) => void;
@@ -95,6 +112,16 @@ export function ReadCushionBar({
                 다듬는 중…
               </Chip>
             </div>
+          ) : null}
+
+          {/* 순화 몫 — **얼마 안 남았을 때만.** 다 쓴 상태는 위 `notice` 가 말하고,
+              숫자는 무엇이 멈춘 것인지 를 분명히 한다. */}
+          {quota.perDay > 0 && quota.left <= SHOW_WHEN_AT_MOST ? (
+            <p className="t-cap mt-2.5 mb-0 text-txt-muted">
+              {quota.left === 0
+                ? "오늘 순화 몫을 다 썼습니다 — 이 방은 원문으로 읽힙니다"
+                : `오늘 순화 몫 ${quota.left}회 남음`}
+            </p>
           ) : null}
 
           {notice ? (

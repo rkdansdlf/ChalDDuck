@@ -120,7 +120,7 @@ export function useChatThread(
    * 지금은 원문이네" 를 만나게 된다.
    *
    * **재요청 판단은 브라우저가 하지 않는다.** 예전의 "시도함" 목록이 여기에 있었다가
-   * 새로고침에서 리셋돼, 거절된 말을 끝없이 다시 불렀다. 실패 캐시는 DB(`MessageCushion`)에
+   * 새로고침에서 리셋돼, 거절된 말을 끝없이 다시 불렀다. 실패 캐시는 DB(`MessagePurification`)에
    * 있고, 서버가 `status` 와 `retryAfter` 로 판단한다.
    */
   const [cushions, setCushions] = useState<Record<string, ChatPurified>>({});
