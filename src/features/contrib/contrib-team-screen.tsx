@@ -17,6 +17,7 @@ import {
   Sheet,
   Textarea,
   Toast,
+  Undecided,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ConfirmsPolicy, Member, TeamCheckRecord } from "@/lib/types";
@@ -491,6 +492,15 @@ export function ContribTeamScreen({
             `canResolveContrib`)이 각각 설명을 가지고 있으므로, **같은 말을 세 번 하지 않는다.**
             상자가 열려 있으면 검토 모드가 실제 미결 대신 이미 끝난 일을
             세게 된다. */}
+
+        {/* 위와 별개로, 아직 정해지지 않은 것이 하나 더 있다. 의견이 닫히고 나면 이 화면이
+            남는 자리라서 여기에 적었다(문서에 적으면 이 목록과 어긋난다). */}
+        <Undecided>
+          <b>반대를 철회하는 길이 없습니다.</b> 직접 쓴 의견은 기록에 그대로 남습니다 — 한쪽 말로
+          덮지 않기 위해 지우지 않습니다. 사후에 "내가 그랬던 것 같다"로 바꾸려면 기록 주인과 다시
+          적어야 합니다. 참여 표시처럼 되돌리되 흔적을 남길 수도 있고, 의견은 한 번의 말이라 두지
+          않기로 할 수도 있습니다.
+        </Undecided>
       </Body>
 
       <Dock>

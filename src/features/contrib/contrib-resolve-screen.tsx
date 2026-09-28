@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, Body, Btn, Note, Panel, SecTitle, Toast } from "@/components/ui";
+import { AppBar, Body, Btn, Note, Panel, SecTitle, Toast, Undecided } from "@/components/ui";
 import { useAction } from "@/lib/use-action";
 import type { TeamCheckRecord } from "@/lib/types";
 import { resolveContribDispute } from "@/server/actions/contrib";
@@ -112,6 +112,14 @@ export function ContribResolveScreen({ record }: { record: TeamCheckRecord }) {
           </Note>
         )}
 
+        {/* 결론을 고르는 자리인 만큼, 아직 정해지지 않은 기재 방식은 **여기** 적는 편이 맞다.
+            문서에 적으면 화면을 고치며 말과 어긋나고(핸드오프 정책표가 그랬다), `npm run
+            decisions` 가 이 상자를 읽는다. */}
+        <Undecided>
+          의견 차이가 끝까지 안 좁혀졌을 때의 최종 기재 방식은 기획안에 없습니다. 지금은 양쪽
+          의견을 함께 남깁니다 — <b>답이 없으면 &quot;합의 없음 · 원문 유지&quot;</b> 로 닫고, 리포트에
+          &quot;정리되지 않은 의견&quot;으로 셉니다.
+        </Undecided>
       </Body>
 
       <Toast msg={toast} />
