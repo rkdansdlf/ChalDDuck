@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Btn, Chip, Icon, Panel, SecTitle, Sheet } from "@/components/ui";
+import { Btn, Icon, Panel, SecTitle, Sheet } from "@/components/ui";
 import {
   MBTI_TYPES,
   calculateTeamMbtiStats,

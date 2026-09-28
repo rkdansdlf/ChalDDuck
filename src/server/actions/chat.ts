@@ -33,7 +33,6 @@ import {
 } from "@/lib/read-cushion";
 import type { ChatMessage, DmThread } from "@/lib/types";
 import { db } from "@/server/db";
-import { isAiConfigured } from "@/server/ai/model";
 import { runTool } from "@/server/ai/run";
 import { softenIncoming } from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";

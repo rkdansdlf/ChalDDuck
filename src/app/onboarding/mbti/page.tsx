@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, Progress } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Icon, Note, Progress } from "@/components/ui";
 import { setMbti, startQuiz, useOnboarding } from "@/features/onboarding/onboarding-state";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 import { MBTI_TYPES, characterImage, getMbtiMeta } from "@/lib/mbti";

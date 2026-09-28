@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { AppFrame, Body, Btn, Chip, Dock, Icon, Note, Panel, TopInset } from "@/components/ui";
+import { AppFrame, Body, Btn, Dock, Icon, Note, Panel, TopInset } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { characterImage, getMbtiMeta } from "@/lib/mbti";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";

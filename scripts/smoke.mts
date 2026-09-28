@@ -1375,8 +1375,15 @@ console.log("\nDM 목록 조회 비용");
     check("getDmThreads 가 Prisma distinct 로 직접 읽지 않는다", /distinct: \["threadKey"\]/.test(body), false);
     console.log(`      (전체 메시지 ${existing} → ${grown}건, 조회 행은 ${after.length}행)`);
 
+    // **방 전체 개수로 되돌았는지 재지 않는다.** 이 방은 다른 검사도 함께 쓴다 — 남이 쓰는
+    // 사이에 개수가 바뀌면 **내가 제대로 치웠는데 실패**한다(그리고 실제로 그랬다). 내가 만든
+    // 행이 남았는지만 본다. "치웠다" 의 뜻은 그거다.
     await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "비용 확인" } } });
-    check("검사한 메시지를 치우면 원래대로", await db.message.count({ where: { threadKey: key } }), existing);
+    check(
+      "이 검사가 만든 메시지는 남지 않는다",
+      await db.message.count({ where: { threadKey: key, text: { startsWith: "비용 확인" } } }),
+      0,
+    );
 
     // ── **진짜 비용을 재는 자리.** ───────────────────────────
     //
@@ -1434,9 +1441,14 @@ console.log("\nDM 목록 조회 비용");
     // 앞선 실행이 (어떤 이유로든) 치우지 못하고 남긴 measurement 행을 먼저 치운다. 이 검사가
     // 스스로를 고치지 못하면 **비교 기준이 조용히 오염되고**, 어느 쪽이 옳은지 알 수 없게 된다.
     await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
-    // 앞선 실행이 남긴 것이 있으면 **비교 기준이 조용히 오염된다**(5,000개 방에서 6행을 읽는
-    // 쿼리가 5,000개 방에서 5,166행을 읽는 것처럼 보인다). 눈에 보이게 한다.
-    check("측정을 시작할 때 방이 비어 있다", await db.message.count({ where: { threadKey: key } }), existing);
+    // 앞선 실행이 남긴 것이 있으면 **비교 기준이 조용히 오염된다**(작을 때의 수치가
+    // 5,000개 방에서 5,166행처럼 보인다). 눈에 보이게 한다. 남은 건 이 검사가 만든 것뿐이어야
+    // 하고, 남의 메시지는 이 방에 얼마든지 있어도 상관없다.
+    check(
+      "측정을 시작할 때 이 검사가 만든 잔재가 없다",
+      await db.message.count({ where: { threadKey: key, text: { startsWith: "규모 확인" } } }),
+      0,
+    );
     let small = 0;
     let big = 0;
     try {
@@ -1451,7 +1463,11 @@ console.log("\nDM 목록 조회 비용");
     } finally {
       await db.message.deleteMany({ where: { threadKey: key, text: { startsWith: "규모 확인" } } });
     }
-    check("측정용 메시지를 치우면 원래대로", await db.message.count({ where: { threadKey: key } }), existing);
+    check(
+      "측정용 메시지는 남지 않는다",
+      await db.message.count({ where: { threadKey: key, text: { startsWith: "규모 확인" } } }),
+      0,
+    );
   }
 }
 
