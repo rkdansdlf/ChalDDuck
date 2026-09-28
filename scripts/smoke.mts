@@ -25,7 +25,7 @@ import {
   scoreAxes,
   sideLetter,
 } from "../src/lib/mbti-quiz.js";
-import { MBTI_AXES, calculateTeamMbtiStats, type MbtiAxis, type MbtiType } from "../src/lib/mbti.js";
+import { MBTI_AXES, calculateTeamMbtiStats, type MbtiAxis } from "../src/lib/mbti.js";
 import { lastMessagePerThread } from "../src/data/last-message.js";
 import {
   candidateDates,
