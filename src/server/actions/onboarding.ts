@@ -8,7 +8,7 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
-import { takeJoinAttempt, takePushSlot } from "@/server/rate-limit/join-throttle";
+import { takeClientAttempt, takePushSlot, takeTeamCreation } from "@/server/rate-limit/join-throttle";
 import {
   describeDevice,
   getSessionMember,
@@ -317,15 +317,16 @@ export async function joinTeam(
 
   // ── 여기부터는 승인 요청 길이다 ────────────────────────────────────────────
   //
-  // 1) abuse 제한  2) 기존 요청의 소유권  3) 새 요청 생성  4) 알림.
-  // **이 순서가 규칙이다.** 2번을 1번보다 먼저 두면 정상 사용자가 자기 요청을 고칠 때마다
-  // 팀 예산을 깎아 되고(`teamGate` 는 새 요청을 만들 때만 불려야 한다 — 그게 그 함수의
-  // 전제다), 3번을 2번보다 먼저 두면 남의 이름으로 새 요청이 만들어진다.
+  // 1) 이 브라우저의 빠른 반복  2) 기존 요청의 소유권  3) 팀 예산과 새 요청 생성
+  // 4) 알림. **이 순서가 규칙이고, 순서가 곧 방어다.**
+  //
+  // - 2번을 1번보다 먼저 두면 정상 사용자가 자기 요청을 고칠 때마다 제한에 걸린다.
+  // - 3번을 2번보다 먼저 두면 팀 예산을 **자기 요청을 여는 데** 깎는다. 공개된 팀
+  //   코드를 아는 사람이 그 숫자만 먹이면 팀 전체의 신규 가입이 막히는 DoS 가 된다.
   {
-    // **1) abuse 제한.** 이름만 바꿔 가며 찍어도 매번 알림이 나가므로 여기가 진짜 문이다
-    // (`rate-limit/join-throttle.ts`). 행도 알림도 **만들기 전에** 막는다.
-    const gate = await takeJoinAttempt(team.id);
-    if (gate !== "open") return { status: "limited" };
+    // **1) 이 브라우저의 빠른 반복.** 이름만 바꿔 가며 찍어도 매번 알림이 나가므로 여기가
+    // 진짜 문이다(`rate-limit/join-throttle.ts`). 행도 알림도 **만들기 전에** 막는다.
+    if ((await takeClientAttempt()) !== "open") return { status: "limited" };
 
     // 예전에는 `upsert` 의 create/update 두 갈래에서 각각 `await describeDevice()` 를 불러
     // 기기 설명을 두 번 읽었다. 한 번만 읽는다 — 값이 같으므로 결과도 같다.
@@ -389,6 +390,11 @@ export async function joinTeam(
     // 두 브라우저가 같은 이름을 동시에 신청하면 둘 중 하나만 `create` 에 성공하고, 진 사람은
     // `P2002` 를 받는다. **그때 절대 덮어쓰지 않는다** — 자기가 만든 것처럼 보이는 요청을
     // 지워야 진짜 신청자가 풀릴 수 있다. 누가 이겼는지는 중요하지 않다(테스트가 박는다).
+    // **3) 팀 예산.** 여기까지 왔다는 것은 "이 이름으로는 아직 처리 중인 요청이 없다" 는 뜻이다
+    // — 즉 **실제로 새 행을 만들려는 시점**이다. 그래서 팀 예산을 여기서, 그리고 여기서만
+    // 깎는다. 앞의 소유자 확인을 통과한 재요청이 예산을 먹는 일이 없어야 한다.
+    if ((await takeTeamCreation(team.id)) !== "open") return { status: "limited" };
+
     const token = randomUUID();
     try {
       await db.joinRequest.create({
