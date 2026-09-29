@@ -48,7 +48,8 @@ export function ContribSelfScreen({
         <StepRail at={1} />
 
         <Note tone="info" icon="scale" title="점수나 순위를 만들지 않습니다" className="mb-3.5">
-          합의한 역할과 <b>실제 수행 내역</b>만 모읍니다. MBTI, 채팅량, 친목은 기여도에 넣지 않습니다.
+          확정된 역할과 <b>실제 수행 내역</b>만 모읍니다. MBTI, 채팅량, 친목은 기여 기록에 넣지
+          않습니다.
         </Note>
 
         <SecTitle note="빠진 항목이 있으면 직접 추가할 수 있습니다">
@@ -65,7 +66,7 @@ export function ContribSelfScreen({
         </Btn>
 
         {pending > 0 ? (
-          <Note tone="warn" icon="circle-dashed" title={`확인 대기 ${pending}건`}>
+          <Note tone="warn" icon="circle-dashed" title={`팀원 확인 대기 ${pending}건`}>
             내가 추가한 항목은 팀원이 확인하기 전까지 <b>대기</b>로 남습니다. 임의로 확정하지 않습니다.
           </Note>
         ) : null}

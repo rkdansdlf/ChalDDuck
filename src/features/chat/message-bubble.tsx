@@ -65,10 +65,10 @@ export const MessageBubble = memo(function MessageBubble({
    * 라벨은 **누가 쓴 문장인지**로 갈린다.
    *
    * `ai`(모델이 쓴 순화문)와 `mask`(규칙으로 위험 표현만 가린 것)은 **다른 라벨**이어야 한다.
-   * AI 가 거절돼 규칙이 대신 가렸는데 "순화됨" 이라 쓰면 그건 거짓말이다 — 읽는 사람은
+   * AI 가 거절돼 규칙이 대신 가렸는데 "다듬어 읽음" 이라 쓰면 그건 거짓말이다 — 읽는 사람은
    * "말투가 바뀐 것"으로 오해하고, 다음에는 그 라벨을 믿고 원문 보기를 누르지 않는다.
    */
-  const label = kind === "FALLBACK" ? "공격적 표현 가림" : "순화됨";
+  const label = kind === "FALLBACK" ? "공격적 표현 가림" : "다듬어 읽음";
 
   return (
     <div className={cn("animate-slide-up flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>

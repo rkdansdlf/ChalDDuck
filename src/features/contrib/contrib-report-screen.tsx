@@ -71,7 +71,7 @@ export function ContribReportScreen({
                   </span>
                 ) : null}
                 <span className="font-medium text-[13px] leading-[1.4] text-txt-muted">
-                  합의한 역할 · {row.role}
+                  확정된 역할 · {row.role}
                 </span>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-[5px]">

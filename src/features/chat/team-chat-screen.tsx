@@ -105,15 +105,8 @@ export function TeamChatScreen({
    */
   const cushionQuota = useCushionQuota(cushion.enabled);
 
-  const { messages, cushions, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
-    useChatThread(
-    TEAM_THREAD_ID,
-    fromServer,
-    initialCursor,
-      me,
-      cushion,
-      lostFileRef,
-    );
+  const { messages, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
+    useChatThread(TEAM_THREAD_ID, fromServer, initialCursor, me, cushion, lostFileRef);
   const { toast, flash, run } = useAction();
 
   const [picking, setPicking] = useState<ChatMessage | null>(null);
@@ -227,8 +220,8 @@ export function TeamChatScreen({
             <button
               type="button"
               onClick={() => setCushionSheetOpen(true)}
-              aria-label="읽기 순화 설정"
-              title={cushion.enabled ? "읽기 순화 켜짐" : "읽기 순화 설정"}
+              aria-label="읽기 도움 설정"
+              title={cushion.enabled ? "읽기 도움 켜짐" : "읽기 도움 설정"}
               className={cn(
                 "relative grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none select-none transition-all duration-150 active:scale-95",
                 cushion.enabled

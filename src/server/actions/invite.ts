@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createTeamInvite, revokeTeamInvite } from "@/server/invite/service";
 import { requireLeader } from "@/server/session";
+import { INVITE_LABEL_MAX, isExpiryChoice, isUseChoice } from "@/server/invite/choices";
 
 /**
  * 팀장이 **공유 한 번**을 하는 자리.
@@ -15,10 +16,6 @@ import { requireLeader } from "@/server/session";
  *
  * 팀장만 한다. `requireLeader()` 를 액션 맨 앞에서 부르고, 그 뒤에야 DB 를 본다.
  */
-
-const { USE_CHOICES, EXPIRY_CHOICES, INVITE_LABEL_MAX, isUseChoice, isExpiryChoice } = await import(
-  "@/server/invite/choices"
-);
 
 /** 왜 못 했는지를 돌려준다 — 서버 액션이 던진 오류 문구는 운영 빌드에서 지워진다. */
 export type InviteBlock = "no-leader" | "bad-uses" | "bad-expiry" | "long-label" | "gone";

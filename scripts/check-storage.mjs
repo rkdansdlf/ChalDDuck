@@ -34,7 +34,10 @@ import { createClient } from "@supabase/supabase-js";
  * (`server/storage/client.ts` 의 `bucketState` ). 게이트가 같은 말을 또 하지 않아도 된다.
  */
 
-const BUCKET = "submissions";
+// 버킷 이름은 환경변수로 overridable — 로컬 개발이 운영 버킷에 쓰지 않게 하기 위해서다.
+// 기본값은 배포본과 같다. `server/storage/client.ts` 의 `BUCKET` 과 같은 규칙이다 —
+// 여기만 다르면 "확인은 통과하는데 저장은 다른 버킷에" 같은 상태가 된다.
+const BUCKET = process.env.SUBMISSIONS_BUCKET || "submissions";
 /** 설정이 없을 때 통과시킬지. `vercel.json` 이 이 모드로 부른다. */
 const IF_CONFIGURED = process.argv.includes("--if-configured");
 
@@ -78,7 +81,7 @@ check("50MB 제한이 있다", Number(bucket.file_size_limit) === 50 * 1024 * 10
 
 // 서명 주소를 실제로 받아 본다 — 버킷이 보여도 이것이 안 되면 올릴 수 없다.
 const probePath = `${BUCKET}-check/probe`;
-const { data: signed, error: signError } = await supabase.storage.from(BUCKET).createSignedUploadUrl(probePath);
+const { error: signError } = await supabase.storage.from(BUCKET).createSignedUploadUrl(probePath);
 if (signError) {
   check("올리기 주소를 발급받을 수 있다", false, signError.message);
   console.log("\n저장소 확인: 실패 — 키가 저장소 권한을 갖지 못했습니다.");

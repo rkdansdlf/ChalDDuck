@@ -30,7 +30,6 @@ import {
   packPurifyItems,
   parsePurifyResponse,
   remainingPurify,
-  toneChanged,
   toneOf,
   type CushionReason,
   type CushionStatus,
@@ -372,25 +371,6 @@ export async function setReadCushion(
   const tone = isCushionTone(setting.tone) ? setting.tone : (before?.tone ?? toneOf({ tone: null }));
 
   /**
-   * **이전 기준은 "행이 없을 때의 기본값"과 비교한다.**
-   *
-   * 예전에는 `before` 가 있을 때만 지웠다. 그랬더니 **한 번도 설정을 건드리지 않은 방**에서
-   * 처음으로 강도를 고르면(순화본은 이미 기본값으로 만들어진 상태) 지워지지 않았다 —
-   * 사용자는 "강하게" 를 골랐는데 화면에는 "보통" 으로 만든 말이 그대로 있었다(실측).
-   */
-  const previous = {
-    enabled: before?.enabled ?? true,
-    mode: before?.mode ?? CUSHION_DEFAULT_MODE,
-    tone: before?.tone ?? toneOf({ tone: null }),
-  };
-
-  const saved = await db.readCushion.upsert({
-    where: { memberId_threadKey: { memberId: me.id, threadKey } },
-    update: { enabled, mode, tone },
-    create: { memberId: me.id, threadKey, enabled, mode, tone },
-  });
-
-  /**
    * **기준이 바뀌면 예전 순화본을 지우지 않는다 — 지우는 것이 오히려 버그가 된다.**
    *
    * 예전에는 한 말에 사람당 한 줄이라 새 조건으로 덮어쓸 수 없어서 지웠다. 그래서 사용자가
@@ -407,8 +387,11 @@ export async function setReadCushion(
    * 남는 것은 AI 한 번어치의 저장 공간뿐이고, 대신 되돌리기·부르기·다시 켜기가 **0회**다.
    * 오래된 설정의 행을 없애는 일은 읽기 경로가 아니라 정리 작업이다(cron).
    */
-  void previous;
-
+  const saved = await db.readCushion.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    update: { enabled, mode, tone },
+    create: { memberId: me.id, threadKey, enabled, mode, tone },
+  });
 
   return {
     ok: true,

@@ -354,7 +354,7 @@ export function ContribTeamScreen({
                     {record.title}
                   </h3>
                   <div className="mt-0.5 text-[13px] text-txt-muted">
-                    {record.evidence ? "드라이브 버전 기록" : "합의한 역할: 일정 관리"}
+                    {record.evidence ? "드라이브 버전 기록" : "확정된 역할: 일정 관리"}
                   </div>
 
                   {/* 증빙 첨부 파일 */}

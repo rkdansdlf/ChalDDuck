@@ -762,6 +762,14 @@ export type Task = {
   status: "todo" | "doing" | "done";
   /** AI 서기가 만든 항목인지 사람이 직접 넣은 것인지. 화면에 배지로 남는다. */
   source: "clerk" | "manual";
+  /**
+   * 담당자·제목을 **고칠 수 있는지**. 화면이 서버와 같은 규칙으로 판단하려고 계산해 보낸다
+   * (`server/actions/tasks.ts` 의 `canEditTask`). 화면에서 막지 않아도 서버가 막지만,
+   * 버튼을 감춘 뒤 **왜**인지 말하지 않으면 조용히 눌러도 되는 것처럼 보인다.
+   */
+  canEdit: boolean;
+  /** 막혔을 때 **왜**인지. 넣기 전부터 있던 할 일은 팀장만 고칠 수 있다(`createdById` 가 없다). */
+  editBlockedBecause: "not-creator" | "leader-only" | null;
 };
 
 /* ── 28 / 29 팀 친목 ────────────────────────────────────────── */

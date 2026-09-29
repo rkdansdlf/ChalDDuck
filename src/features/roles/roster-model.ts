@@ -134,7 +134,7 @@ export type RoleView =
   | { kind: "auto" }
   /** 희망자 2명 이상, 아직 추첨 전 — 이야기하거나 뽑아야 한다. */
   | { kind: "negotiating" }
-  /** 추첨 결과가 났고 아직 수락 전. */
+  /** 추첨 결과가 났고 아직 받기 전. */
   | { kind: "awaiting"; winner: string }
   /** 확정. */
   | { kind: "confirmed"; winner: string }
@@ -171,7 +171,7 @@ export function canDrawIn(view: RoleView): boolean {
 
 /** 무효가 된 이유를 화면에 말해 준다. */
 export function voidedText(winner: string): string {
-  return `${winner}님이 팀을 떠났다 — 이 추첨은 아무도 수락할 수 없어 무효입니다`;
+  return `${winner}님이 팀을 떠났다 — 이 추첨은 아무도 받을 수 없어 무효입니다`;
 }
 
 /**

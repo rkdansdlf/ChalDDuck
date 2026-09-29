@@ -13,7 +13,10 @@ import pg from "pg";
  * 사용자가 없으므로, 접근 권한은 앱이 서버에서 직접 확인하고 내려받기는 서명된
  * 주소로만 내준다.
  */
-const BUCKET = "submissions";
+// 버킷 이름은 환경변수로 overridable — 로컬 개발이 운영 버킷에 쓰지 않게 하기 위해서다.
+// 기본값은 배포본과 같다. `server/storage/client.ts` 의 `BUCKET` 과 같은 규칙이다 —
+// 여기만 다르면 "확인은 통과하는데 저장은 다른 버킷에" 같은 상태가 된다.
+const BUCKET = process.env.SUBMISSIONS_BUCKET || "submissions";
 const MAX_BYTES = 50 * 1024 * 1024;
 
 const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;

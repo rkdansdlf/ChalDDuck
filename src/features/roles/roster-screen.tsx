@@ -178,7 +178,7 @@ export function RosterScreen({
           flash(
             result.status === "empty"
               ? NO_DRAW_POOL_TEXT[result.noPool]
-              : "이미 추첨 결과가 나와 있습니다 — 당첨자가 거절해야 다시 뽑을 수 있습니다",
+              : "이미 추첨 결과가 나와 있습니다 — 당첨자가 안 받으면 다시 뽑을 수 있습니다",
           );
           return;
         }
@@ -189,13 +189,13 @@ export function RosterScreen({
     setRollingTool(null);
   };
 
-  /** 연출이 끝난 뒤 시트를 닫고 수락 대기 상태로 넘긴다. */
+  /** 연출이 끝난 뒤 시트를 닫고 받기 대기 상태로 넘긴다. */
   const finishDraw = () => {
     const finished = drawResult;
     setDrawResult(null);
     setDrawingFor(null);
     router.refresh();
-    if (finished) flash(`${finished.tool.name} 결과를 ${finished.winner}님에게 보냈습니다 — 수락 대기`);
+    if (finished) flash(`${finished.tool.name} 결과를 ${finished.winner}님에게 보냈습니다 — 받기 대기`);
   };
 
   const confirmedCount = roles.filter(
@@ -272,7 +272,7 @@ export function RosterScreen({
                 { label: "원함", done: true, current: false },
                 { label: "이야기", done: false, current: true },
                 { label: "추첨", done: false, current: false },
-                { label: "수락", done: false, current: false },
+                { label: "받기", done: false, current: false },
                 { label: "확정", done: false, current: false },
               ].map((step, idx, arr) => (
                 <div key={step.label} className="flex flex-1 items-center last:flex-none">
@@ -429,7 +429,7 @@ export function RosterScreen({
                   <div className="mt-2 text-[13px] text-txt-muted">피하는 사람은 없어요</div>
                 ) : null}
 
-                {/* 수락 대기 상태인 경우 */}
+                {/* 받기 대기 상태인 경우 */}
                 {view.kind === "awaiting" && result ? (
                   <div className="mt-2.5 rounded-xl bg-fill p-2.5">
                     <div className="mb-2 text-[12px] font-semibold text-txt">
@@ -450,11 +450,11 @@ export function RosterScreen({
                                 router.refresh();
                                 return answer === "ok" ? "확정되었습니다" : "이미 정리된 추첨입니다";
                               },
-                              "수락하지 못했습니다.",
+                              "받지 못했습니다.",
                             )
                           }
                         >
-                          수락하기
+                          받기
                         </Btn>
                         <Btn
                           size="sm"
@@ -471,11 +471,11 @@ export function RosterScreen({
                                   ? "다음 추첨에서 제외됩니다"
                                   : "이미 정리된 추첨입니다";
                               },
-                              "거절하지 못했습니다.",
+                              "안 받기로 하지 못했습니다.",
                             )
                           }
                         >
-                          거절하기
+                          안 받기
                         </Btn>
                       </div>
                     ) : null}
@@ -582,7 +582,7 @@ export function RosterScreen({
         ) : (
           <>
             <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
-              결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 수락해야 최종 확정됩니다. 피할 일로
+              결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 받아들여야 최종 확정됩니다. 피할 일로
               고른 사람은 추첨 대상에서 뺍니다.
             </p>
             <div className="grid grid-cols-2 gap-[9px]">

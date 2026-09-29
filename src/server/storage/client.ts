@@ -13,8 +13,16 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * 그래서 이 모듈은 서버 전용이다. 이 키가 브라우저로 나가면 저장소 전체가 열린다.
  */
 
-/** 제출 파일이 들어가는 버킷. 비공개이고, 내려받기는 서명된 주소로만 한다. */
-export const BUCKET = "submissions";
+/**
+ * 제출 파일이 들어가는 버킷. 비공개이고, 내려받기는 서명된 주소로만 한다.
+ *
+ * **이름을 환경변수로 둘 수 있다** — 로컬 개발이 운영 버킷에 쓰지 않게 하기 위해서다
+ * (`SUBMISSIONS_BUCKET`). 경로는 팀 id 로 시작하므로(`server/actions/drive.ts`) 서로 다른
+ * 팀의 파일이 섞이지 않지만, 운영 버킷에 개발 중 올린 파일이 계속 쌓이고 그건 되돌릴 수
+ * 없다(지우려면 운영 데이터를 건드려야 한다). 그래서 기본값은 그대로 두고, 개발 환경만
+ * 다른 버킷을 가리키게 한다.
+ */
+export const BUCKET = process.env.SUBMISSIONS_BUCKET || "submissions";
 
 /**
  * 저장소에 쓸 비밀 키.

@@ -12,6 +12,7 @@ import { contribTotals } from "./contrib-report-totals";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
+import { canEditTask, taskEditBlock } from "@/lib/task-permission";
 import { countUnresolved } from "@/server/rate-limit/join-throttle";
 import { isJoinCapped } from "@/server/rate-limit/policy";
 import type {
@@ -1364,6 +1365,10 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     due: t.due,
     status: toTaskStatus(t.status),
     source: t.source as Task["source"],
+    // **판정은 `canEditTask` 한 곳에서만 한다.** 화면이 같은 규칙을 다시 짜면 어느 쪽이
+    // 어긋났는지 알 수 없다 — 서버 액션이랑 화면 함수 두 벌을 두면 그렇게 된다.
+    canEdit: canEditTask(t, session),
+    editBlockedBecause: taskEditBlock(t, session),
   }));
 }
 

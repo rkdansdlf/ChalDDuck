@@ -46,14 +46,14 @@ export function ContribRow({ record, kinds }: { record: ContribRecord; kinds: Co
             </Chip>
           ) : (
             <Chip tone="warn" icon="circle-dashed">
-              확인 대기
+              팀원 확인 대기
             </Chip>
           )}
         </div>
 
         {record.state === "disputed" ? (
           <div className="keep-all mt-1.5 text-[13px] leading-[1.5] text-err">
-            팀원 확인에서 의견이 달리었습니다. 팀 탭의 기여도 확인에서 그 내용을 볼 수 있습니다.
+            팀원 확인에서 의견이 달리었습니다. 팀 탭의 기여 기록 확인에서 그 내용을 볼 수 있습니다.
           </div>
         ) : null}
 

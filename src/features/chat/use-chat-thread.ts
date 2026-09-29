@@ -272,7 +272,7 @@ export function useChatThread(
         return run();
       })
       .catch(() => {
-        if (alive) setPurifyNotice("순화하지 못했습니다 — 원문으로 읽습니다.");
+        if (alive) setPurifyNotice("다듬지 못했습니다 — 원문으로 읽습니다.");
       })
       .finally(() => {
         if (!alive) return;
@@ -471,12 +471,16 @@ export function useChatThread(
   }, []);
 
   return {
+    /**
+     * 그릴 말들. **순화본이 이미 말에 붙어 있다** — 위 `useMemo` 가 `cushions` 를 합친 결과를
+     * 그대로 내보내므로, 화면이 순화 상태 표를 따로 받을 필요가 없다(`MessageBubble` 도
+     * `message` 에서만 읽는다).
+     */
     messages,
     /**
-     * 이 화면이 아는 순화 상태. **끄는 즉시 비워야 한다** — 설정이 꺼졌는데 화면에만 남은
-     * 순화문이 있으면 사용자는 "꺼졌는데 왜 여전히 순화된 말이지" 라고 본다.
+     * 순화 상태를 **비운다.** 끄는 즉시 불러야 한다 — 설정이 꺼졌는데 화면에만 남은 순화문이
+     * 있으면 사용자는 "꺼졌는데 왜 여전히 순화된 말이지" 라고 본다.
      */
-    cushions,
     setCushions,
     send,
     sendFile,

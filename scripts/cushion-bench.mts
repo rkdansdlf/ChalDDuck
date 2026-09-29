@@ -109,7 +109,7 @@ async function runProvider(id: string, cases: CorpusCase[], useContext: boolean)
       parsed,
       level,
     );
-    for (const [index, item] of group.entries()) {
+    for (const item of group) {
       const verdict = judged.find((j) => j.id === item.id);
       const text = verdict?.status === "PURIFIED" ? (verdict.text ?? "") : "";
       rows.push({

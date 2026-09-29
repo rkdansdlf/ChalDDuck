@@ -205,7 +205,7 @@ export function UploadButton({
 
       <Sheet open={pending !== null} title="무엇을 바꿨나요" onClose={() => setPending(null)}>
         <p className="t-note keep-all m-0 mb-3 text-txt-muted">
-          {pending?.map((f) => f.name).join(", ")} · 버전 기록과 기여도 리포트에 이 메모가 남습니다.
+          {pending?.map((f) => f.name).join(", ")} · 버전 기록과 기여 기록 리포트에 이 메모가 남습니다.
         </p>
         <Field label="바꾼 내용" hint="비워 두면 “새 버전”으로만 남습니다.">
           {(props) => (

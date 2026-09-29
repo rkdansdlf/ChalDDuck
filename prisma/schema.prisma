@@ -170,6 +170,8 @@ model Member {
   participationsShown ContribParticipation[] @relation("ParticipationShownBy")
   participationsCleared ContribParticipation[] @relation("ParticipationClearedBy")
   assignedTasks   Task[]
+  /// 누가 넣었나 — 담당자 지정 권한의 근거(`server/actions/tasks.ts` 의 `canEditTask`).
+  tasksCreated    Task[]      @relation("TaskCreator")
   pokesSent       Poke[]
   notifications   Notification[]    @relation("NotifyTo")
   notificationsBy Notification[]    @relation("NotifyBy")
@@ -855,13 +857,18 @@ model Task {
   status     String   @default("todo")
   /// clerk = AI 서기가 만듦 / manual = 사람이 직접 넣음
   source     String   @default("manual")
+  /// 누가 넣었나. **담당자 지정 권한의 근거** — `server/actions/tasks.ts` 의 `canEditTask`.
+  /// 기존 행은 `null` 이고, 그 할 일은 팀장만 고칠 수 있다(주인이 누구인지 되돌릴 수 없으므로).
+  createdById String?
   createdAt  DateTime @default(now())
 
-  team     Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  assignee Member? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  pokes    Poke[]
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  assignee  Member?  @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy Member?  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  pokes     Poke[]
 
   @@index([teamId])
+  @@index([createdById])
 }
 
 /// 콕 찌르기 — 담당자에게 **제출이나 진행상황을 요청**한다.

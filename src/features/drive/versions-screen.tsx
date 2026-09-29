@@ -139,7 +139,7 @@ export function VersionsScreen({
         </div>
 
         <Note tone="info" icon="clipboard-list" className="mt-3.5">
-          이 기록은 <b>기여도 리포트의 근거</b>로도 쓰입니다. 본인 확인을 거친 항목만 리포트에 올라갑니다.
+          이 기록은 <b>기여 기록 리포트의 근거</b>로도 쓰입니다. 본인 확인을 거친 항목만 리포트에 올라갑니다.
         </Note>
 
 

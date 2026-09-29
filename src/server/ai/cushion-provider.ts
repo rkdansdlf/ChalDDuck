@@ -1,7 +1,6 @@
 import "server-only";
 
 import { buildPurifyRequest, isRefusal, type PurifyItem } from "@/lib/read-cushion";
-import type { CushionLevelKey } from "@/lib/types";
 import { askText, isAiConfigured } from "./model";
 
 /**
@@ -22,17 +21,20 @@ import { askText, isAiConfigured } from "./model";
 export type CushionProvider = {
   /** 지표와 벤치에 남는 이름. */
   id: string;
+  /**
+   * `system` 이 **읽는 강도까지 담아서** 온다(`tools.ts` 가 `levelGuide` 를prompt에 넣는다)라
+   * provider 는 `level` 을 따로 받지 않는다 — 강도를 따로 받는 순간 두 값이 갈라질 수 있다.
+   */
   purify(input: {
     items: PurifyItem[];
     system: string;
-    level: CushionLevelKey;
   }): Promise<{ raw: string; refused: boolean }>;
 };
 
 function openRouterProvider(id: string): CushionProvider {
   return {
     id,
-    async purify({ items, system, level }) {
+    async purify({ items, system }) {
       if (!isAiConfigured()) throw new Error("AI 가 연결되어 있지 않습니다.");
       const raw = await askText({
         system,

@@ -74,7 +74,7 @@ export function ReadCushionBar({
         checked={setting.enabled}
         onChange={onEnabled}
         icon={<Icon name="shield" size={16} />}
-        label="순화해서 읽기"
+        label="읽기 도움"
         stateText={
           setting.enabled
             ? "도착한 남의 말을 다듬어 보여 줍니다 · 원문은 말풍선에서 다시 볼 수 있어요"
@@ -114,13 +114,13 @@ export function ReadCushionBar({
             </div>
           ) : null}
 
-          {/* 순화 몫 — **얼마 안 남았을 때만.** 다 쓴 상태는 위 `notice` 가 말하고,
+          {/* 읽기 도움 몫 — **얼마 안 남았을 때만.** 다 쓴 상태는 위 `notice` 가 말하고,
               숫자는 무엇이 멈춘 것인지 를 분명히 한다. */}
           {quota.perDay > 0 && quota.left <= SHOW_WHEN_AT_MOST ? (
             <p className="t-cap mt-2.5 mb-0 text-txt-muted">
               {quota.left === 0
-                ? "오늘 순화 몫을 다 썼습니다 — 이 방은 원문으로 읽힙니다"
-                : `오늘 순화 몫 ${quota.left}회 남음`}
+                ? "오늘 읽기 도움을 다 썼습니다 — 이 방은 원문으로 읽힙니다"
+                : `오늘 읽기 도움 ${quota.left}회 남음`}
             </p>
           ) : null}
 
@@ -177,7 +177,7 @@ export function ReadCushionSheet({
   onRetry: () => void;
 }) {
   return (
-    <Sheet open={open} title="읽기 순화 설정" onClose={onClose}>
+    <Sheet open={open} title="읽기 도움 설정" onClose={onClose}>
       <div className="p-4 space-y-4">
         {/* 스위치 박스 */}
         <div className="rounded-[16px] bg-fill px-4 py-2.5">
@@ -185,7 +185,7 @@ export function ReadCushionSheet({
             checked={setting.enabled}
             onChange={onEnabled}
             icon={<Icon name="wand-sparkles" size={18} className="text-yellow-600" />}
-            label="순화해서 읽기"
+            label="읽기 도움"
             stateText={
               setting.enabled
                 ? "상대방의 메시지를 AI로 다듬어 보여줍니다"
@@ -223,7 +223,7 @@ export function ReadCushionSheet({
               />
             </div>
 
-            {/* 순화 몫 & 공지 안내 */}
+            {/* 읽기 도움 몫 & 공지 안내 */}
             <div className="rounded-[14px] border border-line bg-card p-3 text-[12.5px] leading-relaxed text-txt-muted">
               <div className="flex items-center gap-1.5 font-semibold text-txt-strong mb-1">
                 <Icon name="info" size={14} />
@@ -231,11 +231,11 @@ export function ReadCushionSheet({
               </div>
               <p className="m-0">
                 • 원문은 말풍선 아래 버튼을 눌러 언제든지 다시 볼 수 있습니다.<br />
-                • 순화문은 나에게만 보이며, 상대방에게는 영향을 주지 않습니다.
+                • 다듬어 읽은 말은 나에게만 보이며, 상대방에게는 영향을 주지 않습니다.
               </p>
               {quota.perDay > 0 ? (
                 <p className="mt-1.5 mb-0 font-medium text-yellow-800">
-                  오늘 순화 잔여: {quota.left} / {quota.perDay}회
+                  오늘 읽기 도움 {quota.left}회 남음 · 하루 {quota.perDay}회
                 </p>
               ) : null}
             </div>

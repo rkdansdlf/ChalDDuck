@@ -60,7 +60,7 @@ export function DmScreen({
   const cushionQuota = useCushionQuota(cushion.enabled);
 
 
-  const { messages, cushions, setCushions, send, retry, discard, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
+  const { messages, setCushions, send, retry, discard, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
     useChatThread(thread.id, fromServer, initialCursor, me, cushion);
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -137,8 +137,8 @@ export function DmScreen({
             <button
               type="button"
               onClick={() => setCushionSheetOpen(true)}
-              aria-label="읽기 순화 설정"
-              title={cushion.enabled ? "읽기 순화 켜짐" : "읽기 순화 설정"}
+              aria-label="읽기 도움 설정"
+              title={cushion.enabled ? "읽기 도움 켜짐" : "읽기 도움 설정"}
               className={cn(
                 "relative grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none select-none transition-all duration-150 active:scale-95",
                 cushion.enabled

@@ -142,7 +142,6 @@ export async function softenIncoming(
 
   return provider.purify({
     items,
-    level,
     system: `${BASE}
 
 # 네가 하는 일

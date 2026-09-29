@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { TASK_KINDS } from "@/data/catalog";
 import type { Task, TaskKindKey } from "@/lib/types";
+import { canEditTask } from "@/lib/task-permission";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -75,6 +76,9 @@ export async function addTask(
       due: dueOf(fields.due),
       status: "todo",
       source: "manual",
+      // **주인을 남긴다** — 이것이 없으면 `canEditTask` 가 "누구나"로 되돌아간다
+      // (아래 주석).
+      createdById: me.id,
     },
   });
 
@@ -89,6 +93,18 @@ export async function addTask(
  *
  * 담당자는 **우리 팀에 있는 지금 사람**만 담는다. 모르는 이름을 보내면 비워 둔다
  * (`addTasksFromClerk` 와 같은 이유 — 없는 사람에게 일을 배정하지 않는다).
+ *
+ * ## 누가 고칠 수 있나 (2026-09-28)
+ *
+ * **만든 사람, 그리고 팀장.** 예전에는 팀원 누구나 남에게 일을 떠맡길 수 있었고 그 사실은
+ * 화면 주석에만 적혀 있었다 — 막으려 해도 **`Task` 에 만든 사람이 없어서** 서버가 알 수
+ * 없었다. 그래서 `createdById` 를 넣었다(`prisma` 마이그레이션).
+ *
+ * ## 주인이 `null` 인 할 일
+ *
+ * 넣기 전부터 있던 할 일이다. 주인이 **누구인지 되돌릴 수 없다** — 지어내면 근거 없는
+ * 기록이 남고, 아무 말 없이 비우면 그 할 일은 아무도 못 고치게 된다. 그래서 **팀장만** 고칠
+ * 수 있게 했다. 규칙에 예외가 하나 생긴 것이지만, 예외가 없으면 값이 의미를 잃는다.
  */
 export async function updateTask(
   taskId: string,
@@ -96,8 +112,12 @@ export async function updateTask(
 ): Promise<void> {
   const me = await requireSessionMember();
 
-  const task = await db.task.findFirst({ where: { id: taskId, teamId: me.teamId }, select: { id: true } });
+  const task = await db.task.findFirst({
+    where: { id: taskId, teamId: me.teamId },
+    select: { id: true, createdById: true },
+  });
   if (!task) throw new Error("할 일을 찾을 수 없습니다.");
+  if (!canEditTask(task, me)) throw new Error("만든 사람이 아니어서 고칠 수 없습니다.");
 
   const title = fields.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("할 일 제목을 적어 주세요.");
@@ -108,6 +128,13 @@ export async function updateTask(
       title,
       assigneeId: await assigneeIdOf(me.teamId, fields.assignee),
       due: dueOf(fields.due),
+      // **주인이 없던 업무는 지금 고치는 사람이 주인이 된다**(2026-09-28).
+      //
+      // 넣기 전에 있던 할 일이라 주인이 `null` 이고, 팀장만 고칠 수 있었다. 그런데 그 상태로
+      // 두면 팀장이 한 번 고친 뒤에도 계속 팀장만 고칠 수 있게 남아, "왜 이 사람만 되나" 가
+      // 영영 풀리지 않는다. 팀장이 **내가 맡은 것**으로 확인한 것이니 그 사람이 주인이 되는
+      // 것이 사실과 맞다.
+      createdById: task.createdById ?? me.id,
     },
   });
 
@@ -164,6 +191,10 @@ export async function addTasksFromClerk(
         due: dueOf(c.due),
         status: "todo",
         source: "clerk",
+        // AI 가 만든 것도 **확인한 사람**의 소유다. 사람이 누르고 확인한 목록이니까
+        // (`server/ai/tools.ts` 계약) — 그래야 담당자를 고칠 수 있는 사람이 생긴다.
+        // 여기까지 비우면 팀장만 고칠 수 있게 되어(아래 `canEditTask`) 짜증만 남는다.
+        createdById: me.id,
       }))
       .filter((c) => c.title.length > 0),
   });

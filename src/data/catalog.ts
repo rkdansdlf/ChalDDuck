@@ -123,7 +123,7 @@ export const AI_TOOLS: AiTool[] = [
  */
 export const AI_TOOL_NAMES: Record<string, string> = {
   ...Object.fromEntries(AI_TOOLS.map((tool) => [tool.key, tool.name])),
-  "read-cushion": "순화해서 읽기",
+  "read-cushion": "읽기 도움",
 };
 
 /**

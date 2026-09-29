@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/cn";
 import type { Member, Task, TaskKind, TaskKindKey } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
+import { taskEditBlock } from "@/lib/task-permission";
 import { addTask, cycleTaskStatus, updateTask } from "@/server/actions/tasks";
 
 /**
@@ -49,7 +50,7 @@ export function TasksScreen({
   const [adding, setAdding] = useState(false);
   /** 편집 중인 할 일. 눌린 행 하나. */
   const [editingId, setEditingId] = useState<string | null>(null);
-  const { toast, busy, run } = useAction();
+  const { toast, busy, flash, run } = useAction();
 
   // 명단에는 나간 사람이 이미 없다(`getRoster` 가 걸러 준다). 서버도 같은 조건으로 막는다.
   const assignable = roster;
@@ -59,7 +60,21 @@ export function TasksScreen({
   const editing = tasks.find((t) => t.id === editingId) ?? null;
 
   // 열 때만 폼을 채운다 — 매 렌저 다시 쓰면 typing 하는 동안 글자가 흔들린다.
+  //
+  // **고칠 수 없는 사람은 여기서 멈춘다** — 서버도 같은 판정을 다시 한다(여기서 막지 않아도
+  // 막힌다). 다만 조용히 아무 일도 일어나지 않게 하지 않고 **왜**를 말한다: 남이 넣은 업무를
+  // 조용히 고칠 수 있게 두면 그 사람도 자기 업무가 조용히 바뀌는 것을 모른다.
   const openEditor = (task: Task) => {
+    // `canEdit` 과 `editBlockedBecause` 는 **서버가 계산해 보낸 값**이다
+    // (`lib/task-permission.ts` 의 `canEditTask`). 여기서 판정을 다시 짜지 않는다.
+    if (!task.canEdit) {
+      flash(
+        task.editBlockedBecause === "leader-only"
+          ? "넣기 전에 있던 업무라 팀장만 고칠 수 있습니다"
+          : "남이 넣은 업무라 담당자를 바꿀 수 없습니다",
+      );
+      return;
+    }
     setEditingId(task.id);
     setEditingDraft({
       title: task.title,
@@ -205,8 +220,12 @@ export function TasksScreen({
         </Note>
 
         <Undecided>
-          담당자 지정을 당사자가 수락해야 확정되는지, 마감을 놓치면 어떻게 되는지는 기획안에 없어 다루지
-          않았습니다.
+          담당자 지정을 <b>당사자가 수락해야</b> 확정되는지는 여전히 기획안에 없습니다 — 지금은
+          넣은 사람이 정하면 그대로 배정된다.
+          <br />
+          <b>넣기 전에 있던 업무</b>(주인이 기록되지 않은 것)는 팀장만 고칠 수 있습니다. 주인이
+          누구인지 되돌릴 수 없어서입니다 — 지어내면 근거 없는 기록이 남고, 비우면 아무도 못
+          고칩니다. 팀장이 처음 고칠 때 사람이 기록됩니다.
         </Undecided>
       </Body>
 

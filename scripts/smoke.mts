@@ -28,6 +28,7 @@ import {
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
 } from "../src/data/catalog.js";
+import { canEditTask, taskEditBlock } from "../src/lib/task-permission.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
 import {
@@ -51,14 +52,12 @@ import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
 import { effectiveStage, isPastDeadline } from "../src/features/schedule/meeting-model.js";
 import { softenProfanity } from "../src/lib/profanity.js";
 import {
-  MAX_BYTES,
   canOpenInApp,
   humanSize,
   isLateVersion,
   resolveFileType,
 } from "../src/features/drive/file-rules.js";
 import {
-  formatDeadline,
   formatDue,
   formatWhen,
   fromKstInputValue,
@@ -91,19 +90,16 @@ import {
   FAILURE_BACKOFF_MS,
   MAX_ATTEMPTS,
   PROMPT_VERSION,
-  PURIFY_BATCH_LIMIT,
   READ_CUSHION_DEFAULT,
   buildPurifyRequest,
   canPurify,
   canRetry,
   cushionBucketOf,
-  cushionOff,
   displayTextOf,
   isCushionDone,
   isRefusal,
   judgeAll,
   levelGuide,
-  levelOf,
   maskRiskyParts,
   needsMask,
   packPurifyItems,
@@ -2843,6 +2839,43 @@ console.log("\n문서가 숫자를 담지 않는다");
   check("검토 표시는 사용자에게 항상 보이지 않는다", /if \(!review\) return null/.test(note), true);
   const review = readCode("../src/lib/review-mode.tsx");
   check("검토 모드를 켜는 방법이 남아 있다", review.includes("__CD_REVIEW__"), true);
+}
+
+/* ── 할 일: 담당자를 고칠 수 있는 사람 ────────────────────────── */
+
+console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
+{
+  const leader = { id: "leader", isLeader: true };
+  const plain = { id: "plain", isLeader: false };
+  const other = { id: "other", isLeader: false };
+
+  // **만든 사람** — 넣은 사람이 고친다.
+  check("만든 사람은 고칠 수 있다", canEditTask({ createdById: plain.id }, plain), true);
+  // **남의 업무는 남이 못 고친다** — 이게 규칙의 존재 이유다(2026-09-28 추가).
+  check("팀원은 남이 넣은 업무를 못 고친다", canEditTask({ createdById: other.id }, plain), false);
+  check("그 이유는 '만든 사람이 아니다'", taskEditBlock({ createdById: other.id }, plain), "not-creator");
+  // **팀장은 예외** — 막혔을 때 되돌릴 수 있는 사람이 있어야 한다.
+  check("팀장은 남의 업무도 고칠 수 있다", canEditTask({ createdById: other.id }, leader), true);
+  check("그래서 팀장에게는 이유가 없다", taskEditBlock({ createdById: other.id }, leader), null);
+
+  // **주인이 없는 업무(넣기 전부터 있던 것)** — 주인이 누구인지 되돌릴 수 없다.
+  // 아무도 못 고치게 하지도, 아무 말 없이 지어내지도 않는다. 팀장에게만 연다.
+  check("주인 없는 업무는 팀원이 못 고친다", canEditTask({ createdById: null }, plain), false);
+  check("그 이유는 '팀장만'", taskEditBlock({ createdById: null }, plain), "leader-only");
+  check("주인 없는 업무는 팀장이 고친다", canEditTask({ createdById: null }, leader), true);
+
+  // **세션이 없으면 아무도 못 고친다** — 서버 액션은 화면을 거치지 않고 POST 로 부른다.
+  check("세션이 없으면 못 고친다", canEditTask({ createdById: plain.id }, null), false);
+
+  // 판정이 **실제로 쓰이는 자리**를 고정한다 — 값이 무의미해지는 사고를 막는다.
+  const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+  const taskModel = schema.slice(schema.indexOf("model Task {"), schema.indexOf("model Task {") + 1600);
+  check("할 일에 만든 사람이 기록된다", /createdById\s+String\?/.test(taskModel), true);
+  // 넣는 두 길(사람이 직접, AI 서기)이 **모두** 주인을 남겨야 한다 — 하나라도 빠지면
+  // 그 길로 넣은 업무는 팀장만 고칠 수 있게 되어 조용히 막힌다.
+  const actions = readCode("../src/server/actions/tasks.ts");
+  check("담당자가 들어가는 두 길 모두 주인을 남긴다", (actions.match(/createdById:\s*me\.id/g) ?? []).length >= 2, true);
+  check("서버도 같은 순수 판정을 부른다", actions.includes("canEditTask("), true);
 }
 
 await db.$disconnect();
