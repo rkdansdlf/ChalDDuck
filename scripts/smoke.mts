@@ -2502,6 +2502,28 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
   check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
 }
 
+/* ── 채팅 푸시: 하지 않기로 한 것을 고정한다 ──────────────────── */
+
+console.log("\n채팅 푸시 (v1 에서는 앱 밖으로 보내지 않는다)");
+{
+  // **결정을 적어만 두면 조용히 어겨진다.** 누군가 채팅에 알림을 붙이려고 할 때
+  // "이미 정했다" 는 사실을 가장 싼 곳에서 알려 주는 편이 나쁘지 않다.
+  //
+  // 채팅은 `NotifyKind` 에 **없다.** 그래서 이 자리의 종류를 나열하는 검사로 지킨다 —
+  // `chat` 이라는 종류가 생기면 이 검사가 바로 잡는다(그리고 그 순간에는 위 표에 근거를
+  // 적어야 한다).
+  const kinds: NotifyKind[] = [
+    "poke", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
+    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "drive",
+  ];
+  check("알림 종류에 채팅이 새로 들어가지 않는다", kinds.includes("chat" as NotifyKind), false);
+
+  // 종류가 없는 것과 **아예 알림을 부르지 않는 것**은 다르다. 실제로 후자인지 본다 —
+  // 누군가 `notify()` 를 붙여도 종류 검사는 통과하므로, 부르는 행위 자체를 지킨다.
+  const chatActions = readCode("../src/server/actions/chat.ts");
+  check("채팅 액션은 알림을 부르지 않는다", /\bnotify\s*\(/.test(chatActions), false);
+}
+
 /* ── 푸시 본문 ──────────────────────────────────────────────── */
 
 console.log("\n푸시 알림 (구독과 본문)");

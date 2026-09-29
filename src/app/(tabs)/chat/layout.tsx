@@ -10,8 +10,11 @@ import { ChatThreadList } from "@/features/chat/chat-thread-list";
  *
  * - ~1023px: 기둥이 모두 숨고 화면이 한 번에 하나씩 넘어간다(32 → 19 / 31).
  * - 1024px~: 목록 + 대화.
- * - 1280px~: 목록 + 대화 + 자료·정보. 1024px 에서 세 기둥을 다 펴면 대화 칸이
+ * - 1280px~: 목록 + 대화 + 최근 팀 자료·업무. 1024px 에서 세 기둥을 다 펴면 대화 칸이
  *   말풍선 한 줄도 못 담을 만큼 좁아진다(왼쪽 앱 내비게이션이 232px 을 이미 쓴다).
+ *
+ * 오른쪽 기둥은 **이 대화의 자료가 아니다** — 팀 전체의 최근 항목이라(자세한 것은
+ * `features/chat/chat-info-pane.tsx` 참고), 문구도 그 사실대로 적혀 있다.
  */
 export default async function ChatLayout({ children }: LayoutProps<"/chat">) {
   const team = await getCurrentTeam();
