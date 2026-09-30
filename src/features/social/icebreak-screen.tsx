@@ -21,19 +21,26 @@ import {
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { MAFIA_PHASES } from "@/lib/mafia-rules";
 import type { IceGame, IceGameKey, IcePhase, IceRole, IceView } from "@/lib/types";
+import { MafiaNightPanel, PoliceCheckResult } from "@/features/social/mafia-night-panel";
 import {
   castIceVote,
+  closeIceNight,
   closeIceVote,
   endIceRound,
   markIceNightOut,
   pollIce,
   restartIceRound,
+  resolveIceNight,
   startIceRound,
   startIceVote,
   submitLiarGuess,
   type IceResult,
 } from "@/server/actions/ice";
+
+/** 마피아 판이 지나는 순서 — 진행 표시와 단계 안내가 같은 배열을 본다. */
+const MAFIA_PHASE_ORDER: IcePhase[] = [...MAFIA_PHASES];
 
 /**
  * 28 아이스브레이킹 — 라이어 게임·마피아.
@@ -168,7 +175,16 @@ function Picker({
   const [ids, setIds] = useState<string[]>(() => roster.map((m) => m.id));
   const game = games.find((g) => g.key === picked) ?? null;
 
-  const toggle = (id: string) => setIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  /**
+   * 상한을 넘겨 고르지 못하게 한다.
+   *
+   * 서버도 같은 값으로 막지만, **화면에서 먼저 막아야** "왜 안 되지?" 하지 않는다. 라이어는 상한이
+   * 없다(표가 하나라 인원이 늘어도 괜찮다) — 그래서 게임마다 있는 값만 쓴다.
+   */
+  const max = game?.maxPlayers;
+  const full = max !== undefined && ids.length >= max;
+  const toggle = (id: string) =>
+    setIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : max !== undefined && cur.length >= max ? cur : [...cur, id]));
   const tooFew = game !== null && ids.length < game.minPlayers;
 
   return (
@@ -226,14 +242,21 @@ function Picker({
               <div role="group" aria-label="이번 판에 참여하는 사람" className="flex flex-col">
                 {roster.map((m) => {
                   const on = ids.includes(m.id);
+                  // 상한에 닿았고 아직 고르지 않은 사람 — 눌러도 바뀌지 않는다.
+                  const locked = !on && full;
                   return (
                     <button
                       key={m.id}
                       type="button"
                       role="checkbox"
                       aria-checked={on}
+                      aria-disabled={locked}
+                      disabled={locked}
                       onClick={() => toggle(m.id)}
-                      className="flex min-h-[48px] cursor-pointer items-center gap-3 border-none bg-transparent px-1 py-2 text-left"
+                      className={cn(
+                        "flex min-h-[48px] items-center gap-3 border-none bg-transparent px-1 py-2 text-left",
+                        locked ? "cursor-default opacity-45" : "cursor-pointer",
+                      )}
                     >
                       <span
                         className={cn(
@@ -260,6 +283,13 @@ function Picker({
               <Note tone="warn" icon="user-minus" className="mb-3">
                 {game.name}은 <b>{game.minPlayers}명</b>부터 진행할 수 있습니다. 지금 {ids.length}명입니다.
               </Note>
+            ) : full ? (
+              // 상한에 닿으면 **왜 더 못 고르는지**를 말한다. 인원이 많다는 사실만 말하면
+              // "왜 안 되지" 하고 문의를 넣게 된다.
+              <Note tone="warn" icon="user-minus" className="mb-3">
+                {game.name}은 <b>{max}명</b>까지입니다. 더 많은 사람이 함께 하려면 두 판으로 나눠
+                하면 됩니다.
+              </Note>
             ) : (
               <Note tone="info" icon="eye-off" className="mb-3">
                 고른 {ids.length}명에게 알림이 가고, 각자 폰에서 <b>자기 카드만</b> 볼 수 있습니다. 여는
@@ -269,11 +299,7 @@ function Picker({
           </>
         ) : null}
 
-        <Undecided>
-          게임 목록(라이어 게임·마피아), 최소 인원(둘 다 3명), 마피아 역할 구성(3명은 마피아 1·의사 1,
-          4~5명은 마피아 1·경찰 1, 6명부터 마피아 2·경찰 1·의사 1), 라이어 제시어 목록은 기획안에
-          없어 임시로 정했습니다.
-        </Undecided>
+        <Undecided>라이어 제시어 목록은 기획안에 없어 임시로 정했습니다.</Undecided>
       </Body>
 
       {game?.playable ? (
@@ -295,20 +321,30 @@ function Picker({
 
 /* ── 판이 열린 뒤 ─────────────────────────────────────────────── */
 
-/** 이번 판이 어디까지 왔는지. 라이어는 네 단계, 마피아는 두 단계. */
+/** 이번 판이 어디까지 왔는지. 라이어는 네 단계, 마피아는 밤 → 낮 → 투표 세 단계. */
 function phaseOf(view: IceView): { step: number; total: number; label: string } {
   if (view.game === "mafia") {
-    return view.phase === "revealed"
-      ? { step: 2, total: 2, label: "결과" }
-      : { step: 1, total: 2, label: "진행 중" };
+    if (view.phase === "revealed") return { step: 3, total: 3, label: "결과" };
+    const names: Record<Exclude<IcePhase, "revealed">, string> = {
+      clue: "카드 확인",
+      vote: "투표",
+      liar_guess: "최종 추측",
+      night: `${view.day}일차 밤`,
+      discussion: `${view.day}일차 낮`,
+      voting: "투표",
+    };
+    const step = MAFIA_PHASE_ORDER.indexOf(view.phase);
+    return { step: step < 0 ? 0 : step, total: 3, label: names[view.phase] };
   }
   const order: IcePhase[] = ["clue", "vote", "liar_guess", "revealed"];
   const names: Record<IcePhase, string> = {
     clue: "카드 확인",
     vote: "투표",
     liar_guess: "최종 추측",
+    night: "밤",
+    discussion: "낮",
+    voting: "투표",
     revealed: "결과",
-    play: "진행 중",
   };
   const step = order.indexOf(view.phase);
   return { step: step < 0 ? 0 : step, total: order.length, label: names[view.phase] };
@@ -329,7 +365,9 @@ function RoundView({
   const [closeOpen, setCloseOpen] = useState(false);
   const mafia = view.game === "mafia";
   const playing = view.phase !== "revealed";
-  const voting = (mafia ? view.phase === "play" : view.phase === "vote") && view.me !== null && view.me.alive;
+  const voting = (mafia ? view.phase === "voting" : view.phase === "vote") && view.me !== null && view.me.alive;
+  const night = mafia && view.phase === "night";
+  const dayTalk = mafia && view.phase === "discussion";
   const { step, total, label } = phaseOf(view);
   const name = gameName(games, view.game);
 
@@ -404,19 +442,43 @@ function RoundView({
         ) : null}
 
         {/*
+          밤과 낮. 예전에는 마피아 판이 한 단계였고 투표 버튼이 처음부터 켜져 있었다 — 지금
+          무엇을 해야 하는지 아무도 몰랐다. 단계가 생기니 각 단계에서 할 일이 보인다.
+        */}
+        {night || dayTalk ? <MafiaPhaseNote view={view} /> : null}
+
+        {/* 밤에 할 내 행동 하나. 시민과 관전자는 아무것도 그리지 않는다. */}
+        {night ? <MafiaNightPanel view={view} busy={busy} run={run} /> : null}
+
+        {/*
           라이어의 `clue` 단계에는 투표 목록을 아예 그리지 않는다. 눌러야 하는데 아무 일도
           일어나지 않는 것보다, 아직 하지 않은 단계임을 아는 편이 낫다.
         */}
         {voting || (playing && !mafia && view.phase === "clue") ? (
           <>
-            <SecTitle note={view.phase === "clue" ? "아직 닫혀 있습니다" : `${view.votes.cast} / ${view.votes.total}명 투표함`}>
-              {mafia ? "탈락시킬 사람" : "라이어라고 생각하는 사람"}
+            <SecTitle
+              note={
+                view.phase === "clue"
+                  ? "아직 닫혀 있습니다"
+                  : view.votes.runoff
+                    ? // 결선은 투표가 열려 있다는 뜻이 아니라 **후보가 좁혔다는 뜻**이다.
+                      // 안 적으면 "동점인데 왜 아무도 탈락하지 않지" 로 읽힌다.
+                      `결선 · ${view.votes.cast} / ${view.votes.total}명 투표함`
+                    : `${view.votes.cast} / ${view.votes.total}명 투표함`
+              }
+            >
+              {mafia ? (view.votes.runoff ? "결선 — 이 두 사람 중" : "탈락시킬 사람") : "라이어라고 생각하는 사람"}
             </SecTitle>
             <Rows className="mb-3">
               {view.players.map((p) => {
                 const isMe = p.id === view.meId;
                 const chosen = view.me?.voteForId === p.id;
-                const disabled = !voting || isMe || !p.alive || busy;
+                // 결선에서는 **서버가 정한 목록**에 있는 사람만 고를 수 있다. 화면이 조건을 다시
+                // 쓰지 않는다 — 목록 밖 사람에게 누른 표는 집계에서 버려진다.
+                const pickable = view.votes.canVoteFor.includes(p.id);
+                const disabled = !voting || !pickable || busy;
+                // 결선에서 제외된 사람은 "탈락" 이 아니라 "후보 밖" 이다 — 죽지 않았으므로.
+                const outOfRunoff = mafia && view.votes.runoff && p.alive && !pickable && !isMe;
                 return (
                   <button
                     key={p.id}
@@ -430,7 +492,12 @@ function RoundView({
                       disabled ? "cursor-default" : "cursor-pointer active:scale-[0.985]",
                     )}
                   >
-                    <span className={cn("t-label flex-1", p.alive ? "text-txt-strong" : "text-txt-faint line-through")}>
+                    <span
+                      className={cn(
+                        "t-label flex-1",
+                        !p.alive ? "text-txt-faint line-through" : outOfRunoff ? "text-txt-muted" : "text-txt-strong",
+                      )}
+                    >
                       {p.name}
                       {isMe ? <span className="t-cap ml-1.5 text-txt-muted">나</span> : null}
                     </span>
@@ -440,6 +507,8 @@ function RoundView({
                       </Chip>
                     ) : !p.alive ? (
                       <Chip icon="user-minus">탈락</Chip>
+                    ) : outOfRunoff ? (
+                      <Chip icon="ban">결선 밖</Chip>
                     ) : null}
                   </button>
                 );
@@ -448,15 +517,11 @@ function RoundView({
             <p className="t-cap m-0 mb-4 text-txt-muted">
               {view.phase === "clue"
                 ? "설명이 끝나면 사회자가 투표를 엽니다. 설명하는 동안 카드를 다시 보지 마세요."
-                : `누가 누구를 골랐는지는 ${mafia ? "투표를 마감할 때까지" : "결과를 공개할 때까지"} 보이지 않습니다. 같은 사람을 다시 누르면 취소됩니다.`}
+                : view.votes.runoff
+                  ? "결선 투표입니다. 동점자끼리만 고를 수 있고, 다시 동점이면 아무도 탈락하지 않습니다."
+                  : `누가 누구를 골랐는지는 ${mafia ? "투표를 마감할 때까지" : "결과를 공개할 때까지"} 보이지 않습니다. 같은 사람을 다시 누르면 취소됩니다.`}
             </p>
           </>
-        ) : null}
-
-        {view.canHost && mafia && playing ? (
-          <Btn full v="outline" icon="moon" disabled={busy} onClick={() => setNightOpen(true)} className="mb-3">
-            밤 결과 적기
-          </Btn>
         ) : null}
 
         {!view.canHost ? (
@@ -465,15 +530,44 @@ function RoundView({
               ? `${view.hostName}님이 기다리고 있습니다. 라이어가 최종 답을 냅니다.`
               : view.phase === "revealed"
                 ? `다음 판은 ${view.hostName}님이 이 판을 끝내면 열 수 있습니다.`
-                : `${mafia ? "투표 마감은" : "결과 공개는"} 사회자 ${view.hostName}님이 합니다.`}
+                : night
+                  ? `밤은 사회자 ${view.hostName}님이 진행하고 있습니다. 아무도 폰을 보지 않았으면 합니다.`
+                  : dayTalk
+                    ? `이야기를 나눈 뒤 사회자 ${view.hostName}님이 투표를 엽니다.`
+                    : !mafia && view.phase === "clue"
+                      ? `설명이 끝나면 사회자 ${view.hostName}님이 투표를 엽니다.`
+                      : `${mafia ? "투표 마감은" : "결과 공개는"} 사회자 ${view.hostName}님이 합니다.`}
           </p>
         ) : null}
       </Body>
 
       {view.canHost ? (
         <Dock>
-          {/* 라이어: 카드 확인 → 투표 열기 → 마감 → (결과). */}
+          {/* 라이어: 카드 확인 → 투표 열기 → 마감 → (결과). 마피아: 밤 → 투표 열기 → 마감 → 다음 밤. */}
           {!mafia && view.phase === "clue" ? (
+            <Btn full size="lg" icon="thumbs-up" disabled={busy} onClick={() => run(startIceVote)}>
+              투표 시작하기
+            </Btn>
+          ) : night ? (
+            /*
+              밤은 **앱이 푼다.** 마피아·의사·경찰이 자기 폰에서 고른 것이 모이면 누를 수 있다.
+              남은 행동이 있으면 숫자를 그대로 보여 준다 — 누를 수 없는 버튼보다 "몇 개 남았는지"
+              가 이 밤의 진짜 정보다.
+            */
+            <Btn
+              full
+              size="lg"
+              icon="moon"
+              disabled={busy || (view.night?.waiting ?? 0) > 0}
+              onClick={() => run(resolveIceNight)}
+            >
+              {busy
+                ? "밤을 푸는 중…"
+                : (view.night?.waiting ?? 0) > 0
+                  ? `밤 행동 ${view.night?.waiting}개 남음`
+                  : "밤 결과 알기"}
+            </Btn>
+          ) : dayTalk ? (
             <Btn full size="lg" icon="thumbs-up" disabled={busy} onClick={() => run(startIceVote)}>
               투표 시작하기
             </Btn>
@@ -491,7 +585,16 @@ function RoundView({
             </Btn>
           ) : null}
 
-          {view.phase === "revealed" ? (
+          {/*
+            밤을 앱이 못 푸는 밤을 위한 예외 길 — 의사를 못 물어본 밤, 마피아가 말로 정한 밤.
+            "아무도 안 죽은 밤" 과 "직접 적기" 를 한 곳에 모았다 — 밤의 결과가 두 갈래로 퍼지면
+            어느 쪽이 이 판의 밤인지 아무도 모른다.
+          */}
+          {night ? (
+            <Btn full v="ghost" size="sm" icon="user-minus" disabled={busy} onClick={() => setNightOpen(true)}>
+              밤 결과를 직접 적기
+            </Btn>
+          ) : view.phase === "revealed" ? (
             <Btn full v="ghost" size="sm" disabled={busy} onClick={() => run(endIceRound)}>
               이 판 끝내기
             </Btn>
@@ -538,10 +641,11 @@ function RoundView({
         </div>
       </Sheet>
 
-      <Sheet open={nightOpen} title="밤에 탈락한 사람" onClose={() => setNightOpen(false)}>
+      <Sheet open={nightOpen} title="밤 결과를 직접 적기" onClose={() => setNightOpen(false)}>
         <p className="t-note m-0 mb-3 text-txt">
-          밤 진행은 사회자가 말로 합니다. 마피아에게 지목되고 의사가 살리지 못한 사람을 고르세요. 아무도
-          탈락하지 않았으면 그냥 닫으면 됩니다.
+          밤 행동이 다 모이면 앱이 판정합니다. 여기서는 <b>앱이 모르는 밤</b>을 직접 적는 길입니다 —
+          의사를 못 물어본 밤, 마피아가 말로 정한 밤. 한 번 적으면 그 밤은 끝나고 아침(토론)으로
+          넘어갑니다.
         </p>
         <Rows>
           {view.players
@@ -562,6 +666,18 @@ function RoundView({
               </button>
             ))}
         </Rows>
+        <Btn
+          full
+          v="outline"
+          className="mt-3"
+          disabled={busy}
+          onClick={async () => {
+            setNightOpen(false);
+            await run(closeIceNight);
+          }}
+        >
+          아무도 빠지지 않았습니다
+        </Btn>
       </Sheet>
     </>
   );
@@ -631,6 +747,28 @@ function LiarGuessPanel({
 }
 
 /**
+ * 밤과 낮 — **지금 무엇을 해야 하는지 말하는 화면.**
+ *
+ * 예전에는 마피아 판이 한 단계였고 투표 버튼이 처음부터 켜져 있었다. 밤에 폰을 들고 있는
+ * 사람도, 아무 일도 하지 않아도 되는 사람도 같은 화면을 보고 있었다. 단계가 생기니 각 단계에서
+ * 할 일이 보인다 — 하고 **하지 않아도 되는** 것도 보인다.
+ */
+function MafiaPhaseNote({ view }: { view: IceView }) {
+  const night = view.phase === "night";
+  return (
+    <Panel s="fill" pad={18} r={18} className="mb-4 text-center">
+      <div className="t-cap-strong mb-1.5 text-txt-muted">{night ? `${view.day}일차 밤` : `${view.day}일차 낮`}</div>
+      <p className="t-body-strong m-0 text-ink-900">{night ? "아무도 폰을 보지 않았으면 합니다" : "이야기를 나눠 보세요"}</p>
+      <p className="t-cap m-0 mt-1.5 text-txt-muted">
+        {night
+          ? "밤 행동은 사회자가 말로 합니다. 누가 빠졌는지는 아침에 모두에게 알려 줍니다."
+          : "이야기가 정리되면 사회자가 투표를 엽니다. 아직 투표는 닫혀 있습니다."}
+      </p>
+    </Panel>
+  );
+}
+
+/**
  * 내 카드. **처음에는 가려 둔다** — 한자리에 모여 폰을 들고 있으면 옆 사람 화면이 보인다.
  * 판이 바뀌면(`key`) 다시 가린다.
  */
@@ -668,6 +806,9 @@ function SecretCard({
               같은 편 마피아: <b>{me.allies.join(", ")}</b>
             </p>
           ) : null}
+          {/* 🕵️ 경찰의 조사 결과는 낮에도 알아야 하니 카드에 둔다. 카드가 가려져 있는 동안엔
+              옆 사람 화면에 함께 뜨지 않는다. */}
+          {game === "mafia" ? <PoliceCheckResult check={me.check} /> : null}
           {!me.alive ? (
             <div className="mt-2">
               <Chip icon="user-minus">탈락했습니다 — 말하지 않고 지켜봐 주세요</Chip>
@@ -682,6 +823,20 @@ function SecretCard({
       </Btn>
     </Panel>
   );
+}
+
+/** 타임라인 한 자리의 문장. 기록에는 사람이 없고, 여기서 문장을 만든다. */
+function timelineLine(e: NonNullable<IceView["result"]>["timeline"][number]): string {
+  if (e.how === "night") {
+    // 지목이 없으면 밤 행동이 기록되지 않은 밤이다(사회자가 직접 적은 예외 길).
+    if (!e.kill && !e.saved) return e.out ? `${e.out}님이 빠졌습니다.` : "아무도 빠지지 않았습니다.";
+    const kill = e.kill ? `마피아가 ${e.kill}님을 지목` : "밤 행동 기록 없음";
+    const saved = e.saved ? `의사는 ${e.saved}님을 보호` : null;
+    if (!e.out) return `${kill} · ${saved ?? "아무도 보호하지 않음"} → 아무도 빠지지 않았습니다.`;
+    return `${kill}${saved ? ` · ${saved}` : ""} → ${e.out}님이 빠졌습니다.`;
+  }
+  if (!e.out) return e.runoff ? "결선에서도 동점 — 아무도 빠지지 않았습니다." : "아무도 빠지지 않았습니다.";
+  return `${e.out}님이 가장 많은 표를 받아 빠졌습니다.`;
 }
 
 function ResultPanel({ view }: { view: IceView }) {
@@ -702,6 +857,29 @@ function ResultPanel({ view }: { view: IceView }) {
           </p>
         ) : null}
       </Panel>
+
+      {result.timeline.length > 0 ? (
+        <>
+          <SecTitle note={`${result.timeline.length}번의 밤과 투표`}>이 판이 지나온 길</SecTitle>
+          <Rows className="mb-3">
+            {result.timeline.map((e, i) => (
+              <div key={`${e.day}-${e.how}-${i}`} className="px-[15px] py-3">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <Chip icon={e.how === "night" ? "moon" : "thumbs-up"}>{e.how === "night" ? "밤" : "투표"}</Chip>
+                  {e.day !== null ? <span className="t-cap text-txt-muted">{e.day}일차</span> : null}
+                  {e.runoff ? <Chip tone="warn" icon="split">결선</Chip> : null}
+                </div>
+                <p className="t-note m-0 text-txt">{timelineLine(e)}</p>
+                {e.cast.length > 0 ? (
+                  <p className="t-cap m-0 mt-1 text-txt-muted">
+                    {e.cast.map((c) => `${c.from} → ${c.to}`).join(" · ")}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </Rows>
+        </>
+      ) : null}
 
       <SecTitle>모두의 카드</SecTitle>
       <Rows className="mb-3">

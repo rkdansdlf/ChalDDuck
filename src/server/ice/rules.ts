@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomInt } from "node:crypto";
 import { LIAR_PROMPTS } from "@/data/liar-prompts";
+import { MAFIA_MIN_PLAYERS, MAFIA_PHASES, mafiaLineup, mafiaWinner } from "@/lib/mafia-rules";
 import type { IceGameKey, IceRole } from "@/lib/types";
 
 /**
@@ -14,8 +15,13 @@ import type { IceGameKey, IceRole } from "@/lib/types";
  * 데 쓰기에는 약하다.
  */
 
-/** 한 판이 지나가는 단계. DB의 `IceRound.phase` 에 그대로 저장한다. */
-export const ICE_PHASES = ["clue", "vote", "liar_guess", "play", "revealed"] as const;
+/**
+ * 한 판이 지나가는 단계. DB의 `IceRound.phase` 에 그대로 저장한다.
+ *
+ * ⚠️ 예전 마피아 판의 `play` 는 여기 없다 — 밤과 낮을 함께 뜻하던 값이다. 진행 중이던 판은
+ * 그대로 두고 읽을 때만 번역한다(`view.ts` 의 `icePhase`).
+ */
+export const ICE_PHASES = ["clue", "vote", "liar_guess", ...MAFIA_PHASES, "revealed"] as const;
 export type IcePhase = (typeof ICE_PHASES)[number];
 
 /** 라이어 게임의 승리자. 마피아 판은 `null`(아직 안 끝남)이거나 citizen/mafia 다. */
@@ -74,19 +80,9 @@ function pickIndexes(n: number, k: number): number[] {
 }
 
 /**
- * 마피아 역할 구성.
- *
- * 인원별 구성은 기획안에 없어 흔히 쓰는 비율로 임시로 정했다(화면의 <Undecided>):
- * 3명은 마피아 1·의사 1, 4~5명은 마피아 1·경찰 1, 6명부터 마피아 2·경찰 1·의사 1. 나머지는 시민.
- *
- * 3명은 경찰을 빼고 의사를 둔다 — 이 인원에서는 밤에 한 명이라도 죽으면 마피아가 1대1이 되어
- * 곧장 승리한다. 그래서 밤에 의사만 살릴 수 있고, 살린 사람이 저녁 투표를 여는 수가 된다.
+ * 마피아 역할 구성은 [`mafia-rules.ts`](@/lib/mafia-rules) 에 있다 — 서버와 화면이 같이
+ * 불러야 하는 값이라 여기 두지 않는다(2026-09-30).
  */
-export function mafiaLineup(players: number): IceRole[] {
-  const special: IceRole[] =
-    players >= 6 ? ["mafia", "mafia", "police", "doctor"] : players >= 4 ? ["mafia", "police"] : ["mafia", "doctor"];
-  return [...special, ...Array<IceRole>(players - special.length).fill("citizen")];
-}
 
 /** 뺄 수 있는 사람. 직전 판의 라이어를 다음 판에서 빼기 위해 지난 판 기록을 받는다. */
 export type LiarExclusions = {
@@ -129,6 +125,9 @@ export function deal(
   }
 
   const lineup = mafiaLineup(memberIds.length);
+  // 액션이 `minPlayers` 로 먼저 막는다. 여기까지 왔으면 인원 규칙이 어긋난 것이고,
+  // 조용히 시민만 나눠 줄 수는 없어 여기서 끊는다.
+  if (!lineup) throw new Error(`마피아 판은 ${MAFIA_MIN_PLAYERS}명부터입니다. 지금 ${memberIds.length}명입니다.`);
   const seats = pickIndexes(memberIds.length, memberIds.length);
   seats.forEach((seat, i) => roles.set(memberIds[seat], lineup[i]));
   return { roles, topic: null, word: null, aliases: [] };
@@ -233,20 +232,42 @@ export function checkLiarGuess(guess: string, word: string, aliases: string[] = 
   return [word, ...aliases].some((w) => norm(w) === g);
 }
 
-/** 마피아가 끝났는지. 끝났으면 결과 코드, 아니면 null. */
+/**
+ * 마피아가 끝났는지. 끝났으면 결과 **코드**, 아니면 null.
+ *
+ * 이긴 쪽을 세는 계산은 [`mafiaWinner`](@/lib/mafia-rules) 한 곳에 있다 — 화면이 "몇 명이
+ * 남아야 마피아가 이긴다" 를 설명할 때도 같은 계산을 불러야 하므로.
+ */
 export function mafiaOutcome(aliveRoles: IceRole[]): IceResultCode | null {
-  const mafia = aliveRoles.filter((r) => r === "mafia").length;
-  if (mafia === 0) return ICE_RESULT_CODES.townWin;
-  if (mafia >= aliveRoles.length - mafia) return ICE_RESULT_CODES.mafiaWin;
+  const side = mafiaWinner(aliveRoles);
+  if (side === "citizen") return ICE_RESULT_CODES.townWin;
+  if (side === "mafia") return ICE_RESULT_CODES.mafiaWin;
   return null;
 }
 
 /**
- * 라이어 게임에서 이 사람이 투표할 수 있는지. 이 단계에서만 투표가 열린다.
+ * 이 사람(·이 게임)에서 지금 투표할 수 있는지. **투표가 열린 단계에서만** 참이다.
  *
- * 예전에는 `phase === "play"` 였다 — 카드 확인과 투표가 한 단계여서 카드도 보자마자
- * 투표할 수 있었다. 지금은 투표가 **`vote` 에서만** 열리고, `clue` 에서는 않는다.
+ * 예전에는 마피아가 `play` 였다 — 밤이랑 낮이 한 단계여서 **밤에 투표할 수 있었다.**
+ * 이제 마피아는 `voting` 에서만 투표한다.
  */
 export function canVoteNow(game: IceGameKey, phase: string): boolean {
-  return game === "mafia" ? phase === "play" : phase === "vote";
+  return game === "mafia" ? phase === "voting" : phase === "vote";
+}
+
+
+/**
+ * 왜 지금 투표할 수 없는지 — 사람이 읽을 말로.
+ *
+ * 밤과 "아직 열리지 않음" 을 같은 말로 뭉개면, 밤에 투표하려다 안 되는 사람이 "내가 뭘 잘못
+ * 했지" 하고 폰을 붙여 들게 된다.
+ */
+export function voteBlockedText(game: IceGameKey, phase: IcePhase): string {
+  if (game === "mafia") {
+    if (phase === "night") return "밤에는 투표하지 않습니다. 아침에 투표가 열립니다.";
+    if (phase === "discussion") return "아직 투표가 열리지 않았습니다.";
+  } else if (phase === "clue") {
+    return "아직 투표가 열리지 않았습니다.";
+  }
+  return "투표가 끝났습니다.";
 }

@@ -786,6 +786,11 @@ export type IceGame = {
   howTo: string[];
   /** 이보다 적으면 시작하지 않는다. 서버도 같은 값으로 막는다. */
   minPlayers: number;
+  /**
+   * 이보다 많으면 시작하지 않는다. **없으면 상한이 없다** — 라이어는 인원이 늘어도 표 하나라
+   * 상한이 필요 없다. 서버도 같은 값으로 막는다(화면만 막으면 남의 요청으로 열린다).
+   */
+  maxPlayers?: number;
   /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
   playable: boolean;
 };
@@ -794,15 +799,28 @@ export type IceGame = {
 export type IceRole = "liar" | "citizen" | "mafia" | "police" | "doctor";
 
 /**
+ * 마피아의 밤 행동 — 지목 · 보호 · 조사.
+ *
+ * 밤 행동은 **목표 한 명만** 앱에 받는다. 밤의 결과는 참여자가 아니라 사회자가 밤을 마칠 때
+ * 서버가 한 번에 판정하고, 경찰의 조사 결과만 그 경찰에게 돌아간다.
+ * 판정은 [`mafia-rules.ts`](@/lib/mafia-rules) 가 한다.
+ */
+export type NightActionKind = "mafia_kill" | "doctor_save" | "police_check";
+
+/**
  * 판이 지나가는 단계.
  *
  * 라이어는 `clue`(카드 확인) → `vote`(투표) → `liar_guess`(라이어의 최종 추측) → `revealed`.
  * 예전에 `play` / `revealed` 두 개뿐이라 **카드 확인과 투표가 한 단계**였고, 그 결과 라이어의
  * 마지막 추측을 받을 단계가 아예 없었다.
  *
- * 마피아는 밤과 낮이 자꾸 엇갈리므로 `play` → `revealed` 다.
+ * 마피아는 `night`(밤) → `discussion`(토론) → `voting`(투표) 를 돌고, 이길 때까지 밤으로
+ * 돌아온다. 예전에는 `play` 하나가 밤과 낮을 함께 뜻해 **밤에 투표 버튼이 켜져 있었다.**
+ *
+ * ⚠️ `play` 는 여기 없다 — 예전에 진행 중이던 판을 읽기 위한 값이며
+ * [`server/ice/view.ts`](@/server/ice/view) 의 `icePhase` 가 읽을 때만 번역한다.
  */
-export type IcePhase = "clue" | "vote" | "liar_guess" | "play" | "revealed";
+export type IcePhase = "clue" | "vote" | "liar_guess" | "night" | "discussion" | "voting" | "revealed";
 
 /**
  * 한 판을 **내 눈으로 본 모습.** 서버가 보는 사람마다 따로 만든다.
@@ -812,10 +830,12 @@ export type IcePhase = "clue" | "vote" | "liar_guess" | "play" | "revealed";
  */
 export type IceView = {
   roundId: string;
-  /** 보는 사람의 팀원 id. 명단에서 "나"를 찾는 데 쓴다. */
+  /** 보는 사람의 팀원 id. 명단에서 "나" 를 찾는 데 쓴다. */
   meId: string;
   game: IceGameKey;
   phase: IcePhase;
+  /** 몇 번째 밤인가(1부터). 마피아 판에서만 의미가 있다 — 라이어 판은 언제나 1. */
+  day: number;
   hostName: string;
   /** 사회자(판을 연 사람)이거나 팀장이면 공개·마감·끝내기를 할 수 있다. */
   canHost: boolean;
@@ -832,16 +852,58 @@ export type IceView = {
     guessSubmitted: boolean;
     /** 마피아끼리는 서로를 안다. 그 밖의 역할에는 빈 배열. */
     allies: string[];
+    /**
+     * 경찰의 조사 결과 — **이 경찰에게만** 내려간다. 밤이 지나도 다음 밤까지 기억해야 해서
+     * 지우지 않는다. 다른 사람의 화면에는 이 칸이 없다.
+     */
+    check: { day: number; name: string; isMafia: boolean } | null;
   } | null;
   players: { id: string; name: string; alive: boolean }[];
+  /**
+   * 밤 정보. 마피아 판에만 있고, 라이어 판에는 없다.
+   *
+   * 세 값이 각각 다른 사람에게만 나간다 — `waiting` 은 사회자에게, `check` 는 그 경찰에게.
+   * 시민에게 밤 행동 진행도를 보여 주면 살아 있는 밤 행동 능력의 수가 그대로 말해진다.
+   */
+  night: {
+    day: number;
+    /** 내가 밤에 고를 수 있는 것. 시민과 관전자는 null — 밤에는 아무것도 하지 않는다. */
+    mine: NightActionKind | null;
+    /** 내가 이미 골랐다면 그 사람. 밤이 지나도 남는다(바꿀 수 있는 밤에만 유효). */
+    myTargetId: string | null;
+    /** 지금 고를 수 있는 밤인가. */
+    open: boolean;
+    /**
+     **내가 지금 고를 수 있는 사람의 id.** 규칙은 서버 한 곳에서 정한다
+     * (`mayTargetAtNight`) — 화면이 조건을 다시 쓰면 "자기 자신은 못 고른다" 와 "아직 안 죽었다" 가
+     * 어긋난다. 화면은 이 목록만 그린다.
+     */
+    canTarget: string[];
+    /** 아직 모이지 않은 밤 행동 수. 사회자가 아닌 사람에게는 null. */
+    waiting: number | null;
+    check: { day: number; name: string; isMafia: boolean } | null;
+  } | null;
   /**
    * 말할 순서. **누가 말을 끝냈는지는 앱이 모른다** — 대화는 오프라인에서 하고 앱은
    * 순서만 안내한다("누가 먼저 하지" 로 한 번도 안 넘어가게 하려고).
    * 라이어 판에만 있다. 마피아 판은 빈 배열.
    */
   turn: { id: string; name: string }[];
-  /** 지금 투표에 참여한 사람 수 / 투표할 수 있는 사람 수. 누가 누구를 골랐는지는 공개 전까지 모른다. */
-  votes: { cast: number; total: number };
+  /**
+   * 지금 투표의 상태. **누가 누구를 골랐는지는 공개 전까지 모른다.**
+   *
+   * `canVoteFor` 는 서버가 정한 목록이다 — 결선이면 동점자만, 보통 투표면 살아 있는 다른 사람 전부.
+   * 화면이 이 조건을 다시 쓰면 "결선인데 왜 저 사람은 목록에 있지" 처럼 어긋난다.
+   */
+  votes: {
+    cast: number;
+    total: number;
+    /** 이 판에서 몇 번째 투표 회차인가. 결선도 **같은 회차**에서 좁아진다. */
+    seq: number;
+    /** 결선인가 — 후보가 좁혀졌다면 true. */
+    runoff: boolean;
+    canVoteFor: string[];
+  };
   /** 마피아에서 지금까지 탈락한 순서. 라이어 게임은 빈 배열. */
   eliminated: { name: string; how: "vote" | "night" }[];
   /** 결과 공개 뒤에만 있다. */
@@ -852,6 +914,27 @@ export type IceView = {
     outcome: string;
     /** 라이어가 쓴 최종 답과 정답 여부. 라이어를 지목한 판에만 있다. */
     guess: { text: string; correct: boolean } | null;
+    /**
+     * 이 판이 지나온 길. **기록에서만 만든다** — 새 값을 지어내지 않는다.
+     *
+     * 밤과 낮이 한 줄씩, 빠진 사람이 누구였는지부터 누가 누구에게 표를 던졌는지까지.
+     * 라이어 판은 빈 배열 — 밤이 없고 "몇 일차" 도 없다.
+     */
+    timeline: {
+      /** 몇 번째 밤/낮인지. 되살릴 수 없어 모르는 자리는 null — 화면이 숫자 없이 말한다. */
+      day: number | null;
+      how: "night" | "vote";
+      /** 이 자리에서 누가 빠졌는지. 아무도 빠지지 않았으면 null. */
+      out: string | null;
+      /** 밤에만 — 마피아가 지목한 사람. 지목 기록이 없으면 null. */
+      kill: string | null;
+      /** 밤에만 — 의사가 보호하려던 사람. */
+      saved: string | null;
+      /** 투표에만 — 누가 누구에게 표를 던졌는지. */
+      cast: { from: string; to: string }[];
+      /** 투표에만 — 결선 투표였는지. */
+      runoff: boolean;
+    }[];
   } | null;
 };
 
