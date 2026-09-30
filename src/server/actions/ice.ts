@@ -14,6 +14,7 @@ import type { IceGameKey, IceRole, IceView, NightActionKind } from "@/lib/types"
 import { db } from "@/server/db";
 import {
   ICE_RESULT_CODES,
+  canForfeitLiarGuess,
   canVoteNow,
   checkLiarGuess,
   deal,
@@ -450,6 +451,56 @@ export async function submitLiarGuess(guess: string): Promise<IceResult> {
         guessCorrect: correct,
         winner: correct ? "liar" : "citizen",
         resultCode: correct ? ICE_RESULT_CODES.liarGuessed : ICE_RESULT_CODES.liarCaught,
+        phaseStartedAt: new Date(),
+      },
+    });
+    return undefined;
+  });
+
+  return done(me, note);
+}
+
+/**
+ * 사회자가 **라이어의 기권**을 선언한다 — 라이어가 최종 답을 내지 못한 채 판을 끝낸다.
+ *
+ * ## 왜 시계가 아니라 사람의 판단인가
+ *
+ * 라이어는 사회자 바로 옆에 앉아 폰을 들고 있다. 초읽기를 두면 그 사이는 "얼른 답해라"가 아니라
+ * **"무엇을 치고 있는지 슬쩍 보게"** 하는 유인이 된다. 게임이 아니라 감시를 만드는 장치다.
+ * 그래서 현장의 눈(사회자)이 판단하고, 앱은 그 결과를 안전하게 수렴시킨다.
+ *
+ * ## 왜 `submitLiarGuess` 와 같은 모양인가
+ *
+ * 라이어가 답을 전송하는 순간과 사회자가 기권을 누르는 순간은 실제로 겹친다. 둘 중 **먼저 잠금을
+ * 잡은 쪽이 그대로 판을 끝내고**, 나중에 도착한 쪽은 단계 검사에 걸려 조용히 무효가 된다.
+ * 그래서 기권이 `liarGuess` 를 **지우지 않는다** — 라이어가 이미 낸 답이 있으면 그 결과가 먼저다.
+ *
+ * 권한은 판을 연 사람과 팀장(`activeRound(me, true)`). 라이어가 스스로 기권할 수는 없다 —
+ * 자기 승패를 스스로 정하게 두면 판이 아니라 협상이다.
+ */
+export async function forfeitLiarGuess(): Promise<IceResult> {
+  const me = await requireSessionMember();
+  const { round, message } = await activeRound(me, true);
+  if (!round) return done(me, message);
+
+  const note = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "IceRound" WHERE id = ${round.id} FOR UPDATE`;
+    const fresh = await tx.iceRound.findUnique({ where: { id: round.id } });
+    if (!fresh || fresh.endedAt) return "이미 끝난 판입니다.";
+
+    const game = fresh.game as IceGameKey;
+    if (!canForfeitLiarGuess(game, icePhase(game, fresh.phase))) {
+      // 라이어가 이미 답을 냈다면 그 결과가 먼저다 — 기권이 덮어쓰지 않는다.
+      return fresh.liarGuess !== null ? "이미 라이어가 답을 냈습니다." : "지금은 기권 처리할 수 없습니다.";
+    }
+
+    await tx.iceRound.update({
+      where: { id: fresh.id },
+      data: {
+        phase: "revealed",
+        winner: "citizen",
+        resultCode: ICE_RESULT_CODES.liarForfeit,
+        // `guessCorrect` 는 두지 않는다 — 라이어가 추측을 하지 않았으므로 "틀렸다" 가 아니다.
         phaseStartedAt: new Date(),
       },
     });

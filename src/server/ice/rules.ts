@@ -44,6 +44,14 @@ export const ICE_RESULT_CODES = {
   liarCaught: "LIAR_CAUGHT_WRONG_GUESS",
   /** 시민이 지목됐다. */
   citizenAccused: "CITIZEN_ACCUSED",
+  /**
+   * 라이어가 최종 답을 내지 못한 상태에서 사회자가 판을 끝냈다.
+   *
+   * **시계로 끝내지 않는다.** 라이어는 사회자 바로 옆에 앉아 폰을 들고 있다 — 초읽기가 있으면
+   * 그건 "얼른 답 적어라" 가 아니라 **"라이어가 뭘 치고 있는지 슬쩍 보게"** 하는 유인이 된다.
+   * 그 사이는 모임의 눈(사회자)이 판단하고, 앱은 그 결과를 안전하게 수렴시킨다.
+   */
+  liarForfeit: "LIAR_FORFEIT",
   mafiaWin: "MAFIA_WIN",
   townWin: "TOWN_WIN",
 } as const;
@@ -60,6 +68,8 @@ export function iceResultText(code: string | null): string {
       return "라이어가 제시어를 틀렸습니다. 시민의 승리입니다.";
     case ICE_RESULT_CODES.citizenAccused:
       return "시민이 지목됐습니다. 라이어의 승리입니다.";
+    case ICE_RESULT_CODES.liarForfeit:
+      return "라이어가 최종 답을 내지 못했습니다. 시민의 승리입니다.";
     case ICE_RESULT_CODES.mafiaWin:
       return "마피아 수가 나머지와 같아졌습니다. 마피아 승리입니다.";
     case ICE_RESULT_CODES.townWin:
@@ -255,6 +265,16 @@ export function canVoteNow(game: IceGameKey, phase: string): boolean {
   return game === "mafia" ? phase === "voting" : phase === "vote";
 }
 
+/**
+ * 사회자가 지금 라이어의 답을 **기권 처리할 수 있는지.**
+ *
+ * **`liar_guess` 에서만 참이다.** 이미 라이어가 답을 냈다면 판은 끝났고(누가 이겼든) 나중에
+ * 도착한 기권 요청이 그 결과를 덮어쓰면 안 된다. 라이어가 답을 보내는 순간과 사회자가 기권
+ * 버튼을 누르는 순간은 실제로 겹친다 — 어느 쪽이 먼저 잠금을 잡았는지가 그대로 승자가 된다.
+ */
+export function canForfeitLiarGuess(game: IceGameKey, phase: string): boolean {
+  return game === "liar" && phase === "liar_guess";
+}
 
 /**
  * 왜 지금 투표할 수 없는지 — 사람이 읽을 말로.

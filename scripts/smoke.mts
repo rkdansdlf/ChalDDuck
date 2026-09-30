@@ -154,6 +154,7 @@ import type { ChatMessage, IcePhase, IceRole, MeetingProposal, RoleDrawResult, R
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
   ICE_RESULT_CODES,
+  canForfeitLiarGuess,
   canVoteNow,
   checkLiarGuess,
   deal,
@@ -3869,6 +3870,50 @@ console.log("\n라이어 게임: 단계");
   check("모르는 코드는 조용히 빈 문장", iceResultText("WHAT"), "");
 }
 
+console.log("\n라이어 게임: 기권(라이어가 답하지 못할 때)");
+{
+  /**
+   * `liar_guess` 는 판이 영구히 멈출 수 있는 **유일한 단계**다 — 라이어가 자리를 뜨거나 폰을
+   * 못 쓰면 아무도 진행시킬 수 없고, 사회자 화면에는 "결과 없이 그만하기" 뿐이었다.
+   *
+   * **시계로 끝내지 않는다.** 라이어는 사회자 바로 옆에서 폰을 들고 있다 — 초읽기가 있으면
+   * 그건 "얼른 답해라" 가 아니라 **"무엇을 치고 있는지 슬쩍 보게"** 하는 유인이 된다.
+   * 판단은 사회자가 하고 앱은 그 결과를 안전하게 수렴시킨다.
+   */
+  // 기권은 `liar_guess` 에서만 열린다.
+  check("최종 추측 단계에서 기권할 수 있다", canForfeitLiarGuess("liar", "liar_guess"), true);
+  check("카드 확인 단계에서는 기권할 수 없다", canForfeitLiarGuess("liar", "clue"), false);
+  check("투표 단계에서는 기권할 수 없다", canForfeitLiarGuess("liar", "vote"), false);
+  check("이미 끝난 판은 기권할 수 없다", canForfeitLiarGuess("liar", "revealed"), false);
+  check("마피아 판은 기권할 수 없다", canForfeitLiarGuess("mafia", "liar_guess"), false);
+
+  // ⑮ **경합.** 라이어가 답을 보낸 직후에 사회자가 기권을 누르면 그 결과는 **무효**여야 한다.
+  //     기권이 먼저 잠금을 잡았으면 그 판이 끝나고, 답이 먼저 갔으면 그 답이 이긴다 —
+  //     나중에 도착한 쪽이 이긴 결과를 덮어쓰면 안 된다.
+  check("답을 낸 뒤에는 기권이 닫힌다", canForfeitLiarGuess("liar", "revealed"), false);
+
+  // ⑯ 기권은 시민 승리다 — 라이어에게 "기권"이 벌이 아니라는 신호를 남긴다.
+  check("기권은 시민 승리", ICE_RESULT_CODES.liarForfeit, "LIAR_FORFEIT");
+  check("기권 문장이 있다", iceResultText(ICE_RESULT_CODES.liarForfeit), "라이어가 최종 답을 내지 못했습니다. 시민의 승리입니다.");
+
+  const forfeit = readCode("../src/server/actions/ice.ts");
+  const body = forfeit.match(/export async function forfeitLiarGuess[\s\S]*?\n}\n/)?.[0] ?? "";
+  // ⑰ 권한은 **사회자만.** 라이어가 스스로 기권할 수는 없다 — 자기 승패를 스스로 정하게 두면
+  //     판이 아니라 협상이 된다.
+  truthy("기권은 사회자 권한을 요구한다", /activeRound\(me,\s*true\)/.test(body));
+  // ⑱ 동시에 눌러도 결과는 한 번만 정해진다 — 잠근 뒤 다시 읽는다.
+  truthy("기권은 판의 행을 잠근 뒤 다시 읽는다", /FOR UPDATE/.test(body) && /findUnique/.test(body));
+  // ⑲ 기권은 라이어의 답을 **지우지 않는다.** 이미 낸 답이 있다면 그 판정이 먼저다.
+  truthy("기권은 답을 지우지 않는다", !/liarGuess:\s*null/.test(body));
+  // ⑳ 기권은 추측을 하지 않았으므로 "틀렸다" 를 남기지 않는다.
+  truthy("기권은 guessCorrect 를 쓰지 않는다", !/guessCorrect/.test(body));
+
+  // ㉑ 화면에서 한 번 확인하고, 되돌릴 수 없다는 사실을 먼저 말한다.
+  const screen = readCode("../src/features/social/icebreak-screen.tsx");
+  truthy("기권은 확인을 한 번 거친다", /setForfeitOpen\(true\)/.test(screen) && /기권 처리/.test(screen));
+  truthy("되돌릴 수 없음을 미리 말한다", /이 판은 다시 열지 않습니다/.test(screen));
+}
+
 console.log("\n마피아 게임: 밤과 낮");
 {
   // ㉖ 밤 → 낮은 순서를 한 표로 묶는다. 밤이랑 낮이 한 단계였을 때 생겼던 사고가
@@ -4629,6 +4674,20 @@ console.log("\n라이어 게임: 실제로 만든 판에서 비밀이 새지 않
     truthy("최종 추측 단계의 라이어 화면에 별칭도 없다", !guessJson.includes("학식쌤"));
     check("최종 추측 단계에서도 라이어의 제시어는 비어 있다", (await iceViewFor(asMember(liarId, "이서연")))?.me?.word, null);
     check("결과는 아직 없다", (await iceViewFor(asMember(liarId, "이서연")))?.result, null);
+
+    /**
+     * ㉒ **재조회해도 그대로여야 한다.** 라이어가 폰을 껐다 켜거나 새로고침하면 `iceViewFor` 를
+     * 처음부터 다시 부른다 — 그때 `phase` 가 DB 에서 복원되고, 제시어는 여전히 없다. 이게 깨지면
+     * "새로고침하면 정답이 보인다" 가 되는 종류의 버그라 한 번만 봐도 즉시 사고다.
+     */
+    await new Promise((r) => setTimeout(r, 5));
+    const afterReload = await iceViewFor(asMember(liarId, "이서연"));
+    check("새로고침 뒤에도 단계가 복원된다", afterReload?.phase, "liar_guess");
+    check("새로고침 뒤에도 라이어에게 제시어가 없다", afterReload?.me?.word, null);
+    truthy("새로고침 뒤에도 직렬화된 화면에 정답이 없다", !JSON.stringify(afterReload).includes(SECRET));
+    // 카드는 **다시 가려진다.** `shown` 은 화면 상태라 새로고침하면 거짓이 되어야 한다 —
+    // 라이어가 폰을 놓고 자리를 비웠는데 다음 사람이 그 화면을 봐야 하기 때문이다.
+    truthy("카드는 판을 key 로 다시 가려진다", /<SecretCard key=\{view\.roundId\}/.test(readCode("../src/features/social/icebreak-screen.tsx")));
 
     // ㉒ 판이 끝나면 **전원에게** 제시어가 열린다 — 이제 더 숨길 이유가 없다.
     await db.iceRound.update({

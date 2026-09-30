@@ -29,6 +29,7 @@ import {
   closeIceNight,
   closeIceVote,
   endIceRound,
+  forfeitLiarGuess,
   markIceNightOut,
   pollIce,
   restartIceRound,
@@ -363,6 +364,7 @@ function RoundView({
 }) {
   const [nightOpen, setNightOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [forfeitOpen, setForfeitOpen] = useState(false);
   const mafia = view.game === "mafia";
   const playing = view.phase !== "revealed";
   const voting = (mafia ? view.phase === "voting" : view.phase === "vote") && view.me !== null && view.me.alive;
@@ -586,6 +588,17 @@ function RoundView({
           ) : null}
 
           {/*
+            라이어가 자리를 뜨거나 폰을 못 쓰는 자리에서 판이 영구히 멈춘다 — 이게 `liar_guess`
+            의 유일한 정체 위험이다. **시계로 끝내지 않는다**(사회자가 옆에서 폰을 들고 있는
+            사람이라 초읽기가 감시가 된다). 현장의 눈으로 판단해 여기서 닫는다.
+          */}
+          {view.phase === "liar_guess" ? (
+            <Btn full v="ghost" size="sm" icon="ban" disabled={busy} onClick={() => setForfeitOpen(true)}>
+              라이어가 답할 수 없나요?
+            </Btn>
+          ) : null}
+
+          {/*
             밤을 앱이 못 푸는 밤을 위한 예외 길 — 의사를 못 물어본 밤, 마피아가 말로 정한 밤.
             "아무도 안 죽은 밤" 과 "직접 적기" 를 한 곳에 모았다 — 밤의 결과가 두 갈래로 퍼지면
             어느 쪽이 이 판의 밤인지 아무도 모른다.
@@ -637,6 +650,35 @@ function RoundView({
             }}
           >
             마감하기
+          </Btn>
+        </div>
+      </Sheet>
+
+      {/*
+        기권. **한 번 확인한다** — 이 버튼 하나로 판의 승자가 정해지는데, 라이어가 실제로 답을
+        치고 있는데 못 봤다며 눌렀다면 그 판은 다시 못 한다. 되돌릴 수 없다.
+      */}
+      <Sheet open={forfeitOpen} title="라이어 기권 처리" onClose={() => setForfeitOpen(false)}>
+        <p className="t-note m-0 mb-3 text-txt">
+          라이어가 최종 답을 내지 못한 상태인가요? <b>기권 처리하면 시민의 승리로 결과가 공개</b>되며
+          이 판은 다시 열지 않습니다.
+        </p>
+        <p className="t-cap m-0 mb-3 text-txt-muted">
+          라이어가 답을 보내는 중이라면 잠시만 기다리세요 — 답을 보낸 뒤에는 이 동작이 먹지 않습니다.
+        </p>
+        <div className="flex gap-2">
+          <Btn full v="outline" disabled={busy} onClick={() => setForfeitOpen(false)}>
+            더 기다리기
+          </Btn>
+          <Btn
+            full
+            disabled={busy}
+            onClick={async () => {
+              setForfeitOpen(false);
+              await run(forfeitLiarGuess);
+            }}
+          >
+            기권 처리
           </Btn>
         </div>
       </Sheet>
