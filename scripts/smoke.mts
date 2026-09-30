@@ -31,13 +31,23 @@ import {
   SCHEDULE_HOURS,
 } from "../src/data/catalog.js";
 import {
+  MAFIA_MAX_PLAYERS,
   MAFIA_MIN_PLAYERS,
   MAFIA_PRESETS,
+  canEnterMafiaPhase,
   countRoles,
   mafiaLineup,
   mafiaLineupText,
-  mafiaOutcome,
+  mafiaTimeline,
   mafiaWinner,
+  mayTargetAtNight,
+  nightAlreadyStruck,
+  nightRoleOf,
+  requiredNightActions,
+  resolveDayVote,
+  resolveNight,
+  MAX_RUNOFFS,
+  type MafiaPhase,
 } from "../src/lib/mafia-rules.js";
 import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "../src/lib/task-permission.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
@@ -144,12 +154,15 @@ import type { ChatMessage, IcePhase, IceRole, MeetingProposal, RoleDrawResult, R
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
   ICE_RESULT_CODES,
+  canForfeitLiarGuess,
   canVoteNow,
   checkLiarGuess,
   deal,
   iceResultText,
+  mafiaOutcome,
   maySeeWord,
   resolveLiarVote,
+  voteBlockedText,
 } from "../src/server/ice/rules.js";
 import { icePhase, iceViewFor } from "../src/server/ice/view.js";
 import {
@@ -621,10 +634,12 @@ console.log("\n마피아 역할 구성");
   check("3명도 없다", mafiaLineup(3), null);
   check("5명이 첫 줄이다", mafiaLineup(5), MAFIA_PRESETS[0].roles);
 
-  // 프리셋을 넘어선 인원은 시민만 늘어난다 — 모르는 역할이 새로 나오지 않는다.
-  const twelve = mafiaLineup(12)!;
-  check("12명은 10명 구성에서 시민만 늘어난다", twelve.filter((r) => r === "citizen").length, 7);
-  check("12명의 자리 수는 인원과 같다", twelve.length, 12);
+  // ⚠️ 프리셋을 넘어선 인원은 **시민만 늘어난다** — 12명 판도 15명 판도 마피아 3명이라 밤이 몇
+  //   초 만에 끝난다. 인원이 늘면 배분이 조용히 달라지는 이 길은 **없어야** 한다(2026-09-30).
+  check("12명에게 배분되는 역할이 없다", mafiaLineup(12), null);
+  check("11명에게도 없다", mafiaLineup(11), null);
+  // 표 안의 인원은 빠짐없이 배분된다 — 자리가 어긋나면 한 역할이 자리 없이 사라진다.
+  check("5~10명은 전부 배분된다", [5, 6, 7, 8, 9, 10].map((n) => mafiaLineup(n)!.length), [5, 6, 7, 8, 9, 10]);
 
   check("7명부터 마피아가 2명이다", countRoles(mafiaLineup(7)!).mafia, 2);
   check("10명부터 마피아가 3명이다", countRoles(mafiaLineup(10)!).mafia, 3);
@@ -644,6 +659,23 @@ console.log("\n마피아 역할 구성");
 
   check("구성 설명이 역할 수와 같다", mafiaLineupText(7), "마피아 2 · 경찰 1 · 의사 1 · 시민 3");
   check("인원이 모자라면 그 말만 한다", mafiaLineupText(4), `${MAFIA_MIN_PLAYERS}명부터`);
+  check("인원이 많으면 상한을 말한다", mafiaLineupText(12), `${MAFIA_MAX_PLAYERS}명까지`);
+
+  // ㊿ 상한은 프리셋의 마지막 줄에서 온다 — 별도 숫자를 두지 않는다.
+  check("마피아는 10명까지다", MAFIA_MAX_PLAYERS, 10);
+  check("상한이 프리셋의 끝이다", MAFIA_MAX_PLAYERS, MAFIA_PRESETS[MAFIA_PRESETS.length - 1].players);
+  // ⚠️ 상한이 없으면 15명 판도 마피아 3명이다 — 밤이 수십 번 반복돼 아이스브레이킹이 판이 된다.
+  check("15명에게 배분되는 역할이 없다", mafiaLineup(MAFIA_MAX_PLAYERS + 1), null);
+  // **화면이 막는 상한**과 **서버가 배분할 수 있는 상한**이 어긋나면 안 된다.
+  check("화면이 막는 상한이 규칙과 같다", mafiaGame.maxPlayers, MAFIA_MAX_PLAYERS);
+  // 라이어는 상한이 없다 — 표가 하나라 인원이 늘어도 상한이 필요 없다.
+  check("라이어에는 상한이 없다", ICE_GAMES.find((g) => g.key === "liar")!.maxPlayers, undefined);
+  // 서버도 상한을 본다 — 화면만 막으면 남의 요청으로 열린다.
+  truthy("서버가 상한을 함께 본다", /spec\.maxPlayers/.test(readCode("../src/server/actions/ice.ts")));
+  truthy(
+    "상한을 넘으면 거절한다",
+    /max !== undefined && wanted\.length > max/.test(readCode("../src/server/actions/ice.ts")),
+  );
 }
 
 console.log("\n마피아 승패 판정");
@@ -652,12 +684,12 @@ console.log("\n마피아 승패 판정");
   // 5명 판: 마피아 1. 밤에 **시민**이 1명 죽어도(4명) 아직 끝나지 않는다.
   // ⚠️ `five.slice(1)` 로는 안 된다 — 0번이 마피아라 **마피아가 죽어** 시민 승리가 된다.
   check("밤에 1명이 죽었을 때 아직 진행 중", mafiaOutcome(["mafia", "police", "citizen", "citizen"]), null);
-  check("밤에 마피아가 죽으면 시민 승리", mafiaOutcome(five.slice(1)), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  check("밤에 마피아가 죽으면 시민 승리", mafiaOutcome(five.slice(1)), ICE_RESULT_CODES.townWin);
   // 시민이 1명만 남으면 마피아와 1대1 — 이 순간에 끝난다. (마피아도 자리에 있어야 1대1 이다.
   // 시민만 남기면 마피아가 0명이라 판정이 먼저 끝난다.)
   const oneCitizen: IceRole[] = ["mafia", "citizen"];
   check("시민이 1명 남으면 마피아 승리", mafiaWinner(oneCitizen), "mafia");
-  check("마피아가 0이면 시민 승리", mafiaOutcome(["citizen", "citizen"]), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  check("마피아가 0이면 시민 승리", mafiaOutcome(["citizen", "citizen"]), ICE_RESULT_CODES.townWin);
   check("그것이 시민 쪽이다", mafiaWinner(["citizen", "citizen"]), "citizen");
 
   // 10명 판: 마피아 3. 3 대 3 이 되면 마피아가 이긴다 — 이보다 일찍 끝나면 안 된다.
@@ -670,12 +702,29 @@ console.log("\n마피아 승패 판정");
   // ⚠️ "시민 3명" 이라 해도 **경찰·의사도 시민 쪽**이다 — 3 대 3 이 되려면 시민은 1명이어야
   // 한다(마피아 3 + 경찰 + 의사 + 시민 1 = 3 대 3). 도시를 3으로 세면 판정이 영영 안 난다.
   check("10명 판: 시민 1명만 남으면 마피아 승리 (3 대 3)", mafiaWinner(withCitizens(1)), "mafia");
-  check("10명 판: 시민이 더 남으면 진행 중", [mafiaOutcome(withCitizens(2)), mafiaOutcome(withCitizens(4))], [null, null]);
-  check("10명 판: 마피아가 다 죽으면 시민 승리", mafiaWinner(withCitizens(10).filter((r) => r !== "mafia")), "citizen");
+  check(
+    "10명 판: 시민이 더 남으면 진행 중",
+    [mafiaOutcome(withCitizens(2)), mafiaOutcome(withCitizens(4))],
+    [null, null],
+  );
+  check(
+    "10명 판: 마피아가 다 죽으면 시민 승리",
+    mafiaWinner(withCitizens(10).filter((r) => r !== "mafia")),
+    "citizen",
+  );
 
   // 판정은 **살아 있는 자리만** 본다 — 죽은 마피아를 넣어 시민 승리를 조작할 수 없다.
-  check("마피아가 죽으면 시민 승리", mafiaOutcome(["citizen", "citizen", "citizen"]), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  check("마피아가 죽으면 시민 승리", mafiaOutcome(["citizen", "citizen", "citizen"]), ICE_RESULT_CODES.townWin);
   check("아무도 없는 판은 끝난 판이다", mafiaWinner([]), "citizen");
+
+  // **코드가 문장으로 이어져야** 결과 화면에 결과가 보인다. 두 값이 따로 놀면 안 된다.
+  check("마피아 승리 코드가 문장으로 붙는다", iceResultText(ICE_RESULT_CODES.mafiaWin).includes("마피아 승리"), true);
+  check("시민 승리 코드가 문장으로 붙는다", iceResultText(ICE_RESULT_CODES.townWin).includes("시민 승리"), true);
+  check("아무 코드도 없으면 문장도 없다", iceResultText(null), "");
+  // 이긴 쪽을 세는 계산은 한 곳에 있어야 한다 — 화면 설명과 서버 판정이 다른 수를 세면
+  // "여기까지는 안 끝나겠는데" 라는 말이 화면과 판정에서 어긋난다.
+  check("역할 구성도 승패 계산도 한 곳에서 온다", readCode("../src/server/ice/rules.ts").includes('@/lib/mafia-rules'), true);
+  truthy("프리셋 옆에 다른 역할 구성이 남아 있지 않다", !readCode("../src/server/ice/rules.ts").includes("special: IceRole[]"));
 }
 
 /* ── AI 입력 상한 ─────────────────────────────────────────── */
@@ -3781,13 +3830,26 @@ console.log("\n라이어 게임: 단계");
   check("투표 단계에서만 열린다", canVoteNow("liar", "vote"), true);
   check("최종 추측 단계에서는 닫혀 있다", canVoteNow("liar", "liar_guess"), false);
   check("결과 단계에서는 닫혀 있다", canVoteNow("liar", "revealed"), false);
-  check("마피아는 진행 중이 곧 투표다", canVoteNow("mafia", "play"), true);
+  // 마피아는 밤과 낮이 각각 단계다 — 예전에는 `play` 하나여서 **밤에 투표할 수 있었다.**
+  check("밤에는 투표가 닫혀 있다", canVoteNow("mafia", "night"), false);
+  check("낮(토론)에서도 닫혀 있다", canVoteNow("mafia", "discussion"), false);
+  check("마피아는 투표 단계에서만 열린다", canVoteNow("mafia", "voting"), true);
+  check("결과 단계에서는 닫혀 있다", canVoteNow("mafia", "revealed"), false);
+  check("예전 마피아 판의 play 는 투표로 읽는다", canVoteNow("mafia", icePhase("mafia", "play")), true);
 
   // ⑫ 마이그레이션 전부터 진행 중이던 판. 예전 라이어 판의 `play` 는 "투표가 열린" 상태였으므로
-  //     투표로 읽어야 한다 — 그대로 두면 투표가 닫힌 판이 된다.
+  //     투표로 읽어야 한다 — 그대로 두면 투표가 닫힌 판이 된다. 마피아도 같다(투표가 열려 있었다).
   check("예전 라이어 판의 play 는 투표로 읽는다", icePhase("liar", "play"), "vote");
-  check("예전 마피아 판의 play 는 그대로", icePhase("mafia", "play"), "play");
+  // ⚠️ 예전 마피아 판을 `night` 로 읽으면 **갑자기 밤으로 넘어가 아무도 투표할 수 없다.**
+  check("예전 마피아 판의 play 는 투표로 읽는다", icePhase("mafia", "play"), "voting");
   check("새 단계는 그대로 읽는다", icePhase("liar", "liar_guess"), "liar_guess");
+  check("마피아의 새 단계도 그대로 읽는다", icePhase("mafia", "discussion"), "discussion");
+
+  // 못 투표할 때 **왜**인지를 말로 만든다 — 밤과 "아직 열리지 않음" 을 같은 말로 뭉개면,
+  // 밤에 투표하려다 안 되는 사람이 "내가 뭘 잘못했지" 하고 폰을 붙여 든다.
+  check("밤에는 이유가 밤이다", voteBlockedText("mafia", "night").includes("밤"), true);
+  check("낮에는 이유가 대기다", voteBlockedText("mafia", "discussion").includes("열리지"), true);
+  check("끝나면 끝났다고 말한다", voteBlockedText("mafia", "revealed"), "투표가 끝났습니다.");
 
   // ⚠️ 읽을 때만 고치면 안 된다. **쓸 때도** 같은 해석을 써야 한다 — 배포 도중이던 판이
   //    투표할 수 없는 판이 되면 그 판은 그 자리에서 다시 열 수 없다.
@@ -3806,6 +3868,709 @@ console.log("\n라이어 게임: 단계");
   check("코드가 문장으로 바뀐다", iceResultText(ICE_RESULT_CODES.liarGuessed), "라이어가 제시어를 맞혔습니다. 라이어의 역전승입니다.");
   check("다른 코드는 다른 문장", iceResultText(ICE_RESULT_CODES.liarCaught) === iceResultText(ICE_RESULT_CODES.liarGuessed), false);
   check("모르는 코드는 조용히 빈 문장", iceResultText("WHAT"), "");
+}
+
+console.log("\n라이어 게임: 기권(라이어가 답하지 못할 때)");
+{
+  /**
+   * `liar_guess` 는 판이 영구히 멈출 수 있는 **유일한 단계**다 — 라이어가 자리를 뜨거나 폰을
+   * 못 쓰면 아무도 진행시킬 수 없고, 사회자 화면에는 "결과 없이 그만하기" 뿐이었다.
+   *
+   * **시계로 끝내지 않는다.** 라이어는 사회자 바로 옆에서 폰을 들고 있다 — 초읽기가 있으면
+   * 그건 "얼른 답해라" 가 아니라 **"무엇을 치고 있는지 슬쩍 보게"** 하는 유인이 된다.
+   * 판단은 사회자가 하고 앱은 그 결과를 안전하게 수렴시킨다.
+   */
+  // 기권은 `liar_guess` 에서만 열린다.
+  check("최종 추측 단계에서 기권할 수 있다", canForfeitLiarGuess("liar", "liar_guess"), true);
+  check("카드 확인 단계에서는 기권할 수 없다", canForfeitLiarGuess("liar", "clue"), false);
+  check("투표 단계에서는 기권할 수 없다", canForfeitLiarGuess("liar", "vote"), false);
+  check("이미 끝난 판은 기권할 수 없다", canForfeitLiarGuess("liar", "revealed"), false);
+  check("마피아 판은 기권할 수 없다", canForfeitLiarGuess("mafia", "liar_guess"), false);
+
+  // ⑮ **경합.** 라이어가 답을 보낸 직후에 사회자가 기권을 누르면 그 결과는 **무효**여야 한다.
+  //     기권이 먼저 잠금을 잡았으면 그 판이 끝나고, 답이 먼저 갔으면 그 답이 이긴다 —
+  //     나중에 도착한 쪽이 이긴 결과를 덮어쓰면 안 된다.
+  check("답을 낸 뒤에는 기권이 닫힌다", canForfeitLiarGuess("liar", "revealed"), false);
+
+  // ⑯ 기권은 시민 승리다 — 라이어에게 "기권"이 벌이 아니라는 신호를 남긴다.
+  check("기권은 시민 승리", ICE_RESULT_CODES.liarForfeit, "LIAR_FORFEIT");
+  check("기권 문장이 있다", iceResultText(ICE_RESULT_CODES.liarForfeit), "라이어가 최종 답을 내지 못했습니다. 시민의 승리입니다.");
+
+  const forfeit = readCode("../src/server/actions/ice.ts");
+  const body = forfeit.match(/export async function forfeitLiarGuess[\s\S]*?\n}\n/)?.[0] ?? "";
+  // ⑰ 권한은 **사회자만.** 라이어가 스스로 기권할 수는 없다 — 자기 승패를 스스로 정하게 두면
+  //     판이 아니라 협상이 된다.
+  truthy("기권은 사회자 권한을 요구한다", /activeRound\(me,\s*true\)/.test(body));
+  // ⑱ 동시에 눌러도 결과는 한 번만 정해진다 — 잠근 뒤 다시 읽는다.
+  truthy("기권은 판의 행을 잠근 뒤 다시 읽는다", /FOR UPDATE/.test(body) && /findUnique/.test(body));
+  // ⑲ 기권은 라이어의 답을 **지우지 않는다.** 이미 낸 답이 있다면 그 판정이 먼저다.
+  truthy("기권은 답을 지우지 않는다", !/liarGuess:\s*null/.test(body));
+  // ⑳ 기권은 추측을 하지 않았으므로 "틀렸다" 를 남기지 않는다.
+  truthy("기권은 guessCorrect 를 쓰지 않는다", !/guessCorrect/.test(body));
+
+  // ㉑ 화면에서 한 번 확인하고, 되돌릴 수 없다는 사실을 먼저 말한다.
+  const screen = readCode("../src/features/social/icebreak-screen.tsx");
+  truthy("기권은 확인을 한 번 거친다", /setForfeitOpen\(true\)/.test(screen) && /기권 처리/.test(screen));
+  truthy("되돌릴 수 없음을 미리 말한다", /이 판은 다시 열지 않습니다/.test(screen));
+}
+
+console.log("\n마피아 게임: 밤과 낮");
+{
+  // ㉖ 밤 → 낮은 순서를 한 표로 묶는다. 밤이랑 낮이 한 단계였을 때 생겼던 사고가
+  //     "밤에 두 사람이 빠졌다" 다 — 밤이 끝났다는 표시가 없었다.
+  check("밤에서 낮으로 간다", canEnterMafiaPhase("night", "discussion"), true);
+  check("밤에서 투표로 건너뛸 수 없다", canEnterMafiaPhase("night", "voting"), false);
+  check("밤이 두 번 오지 않는다", canEnterMafiaPhase("night", "night"), false);
+  check("낮에서 투표로 간다", canEnterMafiaPhase("discussion", "voting"), true);
+  check("낮에서 밤으로 건너뛸 수 없다", canEnterMafiaPhase("discussion", "night"), false);
+  // 동점이면 표를 지우고 다시 이야기한다 → 낮으로 되돌아간다.
+  check("투표에서 다시 낮으로 간다(동점)", canEnterMafiaPhase("voting", "discussion"), true);
+  // 이기지 않았으면 밤이 하나 더 온다.
+  check("투표에서 다음 밤으로 간다", canEnterMafiaPhase("voting", "night"), true);
+  // 이기는 조건은 어느 단계에서든 성립한다 → 결과는 어디서든 갈 수 있다.
+  check("아무 단계에서든 결과로 간다", ["night", "discussion", "voting"].every((p) => canEnterMafiaPhase(p as MafiaPhase, "revealed")), true);
+  // 끝난 판에서 되돌아갈 수는 없다.
+  check("결과에서 다시 밤으로 못 간다", canEnterMafiaPhase("revealed", "night"), false);
+
+  // ㉗ 밤에는 **한 명만** 빠진다. 같은 밤에 두 번 적히면 마피아가 두 번 죽인다.
+  const nightStart = new Date("2026-09-30T20:00:00Z");
+  const at = (ms: number) => new Date(nightStart.getTime() + ms);
+  check("이 밤에 아무도 빠지지 않았다", nightAlreadyStruck([{ outAt: null, outHow: null }], nightStart), false);
+  check("이 밤에 한 명 빠졌다", nightAlreadyStruck([{ outAt: at(60_000), outHow: "night" }], nightStart), true);
+  // ⚠️ **다른 밤**에 빠진 사람은 이 밤의 Deaths 가 아니다. 밤 번호를 안 세면 어느 밤인지
+  //   모른 채 모든 밤이 두 번째 밤으로 판정된다.
+  check("어젯밤에 빠진 사람은 이 밤의 것이 아니다", nightAlreadyStruck([{ outAt: at(-3_600_000), outHow: "night" }], nightStart), false);
+  check("투표로 빠진 사람은 밤의 것이 아니다", nightAlreadyStruck([{ outAt: at(60_000), outHow: "vote" }], nightStart), false);
+  check("시간이 없는데 방법만 밤이면 세지 않는다", nightAlreadyStruck([{ outAt: null, outHow: "night" }], nightStart), false);
+
+  // ㉘ 투표는 **마감과 경쟁한다.** 예전에는 단계를 읽고 → 자리를 확인하고 → 표를 쓰는데
+  //     그 사이에 잠금이 없었다. 그 틈에 마감이 끝나면 내 표가 다음 밤으로 넘어간다 —
+  //     투표한 흔적은 화면에 남아 있고 아무도 세지 않은 한 표가 조용히 사라진다.
+  const iceActions = readCode("../src/server/actions/ice.ts");
+  const castVote = iceActions.slice(
+    iceActions.indexOf("export async function castIceVote"),
+    iceActions.indexOf("\nexport async function", iceActions.indexOf("export async function castIceVote") + 10),
+  );
+  truthy("투표도 판의 행을 잠근다", /FOR UPDATE/.test(castVote));
+  truthy("잠근 뒤 다시 읽는다", castVote.indexOf("FOR UPDATE") < castVote.indexOf("canVoteNow"));
+  truthy("밤에는 표를 못 받는다", /voteBlockedText\(/.test(castVote));
+
+  // ㉙ 밤을 여는 쪽과 여는 곳은 한 곳이어야 한다. 마피아 판은 처음 단계가 `night` 다.
+  truthy("마피아 판은 밤으로 시작한다", /phase:\s*game === "liar" \? "clue" : "night"/.test(iceActions));
+  truthy("밤을 마치는 길이 있다", /export async function closeIceNight/.test(iceActions));
+  truthy("밤에는 한 명만 적는다", /nightAlreadyStruck\(/.test(iceActions));
+  // 투표 마감이 끝나면 다음 밤 번호가 올라간다 — 밤이 늘지 않으면 타임라인이 거짓말한다.
+  truthy("투표 뒤 밤 번호가 오른다", /day:\s*fresh\.day \+ 1/.test(iceActions));
+  // 동점은 승부가 아니다 — 같은 표로 처형하지 않는다.
+  truthy("동점이면 낮으로 돌아간다", /phase: "discussion", phaseStartedAt: new Date\(\)/.test(iceActions));
+}
+
+console.log("\n마피아 게임: 밤을 두 번 처리하지 않는다");
+{
+  /**
+   * 사회자 override("밤 결과를 직접 적기")와 앱 판정(`resolveIceNight`)이 **같은 밤을 두 번**
+   * 처리하면 안 된다 — 두 사람이 죽거나, 같은 밤이 두 줄로 남거나, 판정 뒤에 늦은 행동이 남는다.
+   *
+   * 막는 곳은 두 군데다. ① 단계가 `night` 가 아니면 거절한다. ② 그 밤에 이미 누군가 빠졌으면
+   * 거절한다(`nightAlreadyStruck`). 여기서는 ② 를 **실제 DB 행**으로 확인한다 —夜里에 적힌
+   * 자리가 있으면 밤은 이미 끝난 밤이다.
+   */
+  const team = await db.team.create({
+    data: { name: "밤 중복 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈", "정예진"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+
+    const nightStart = new Date("2026-09-30T12:00:00Z");
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "mafia",
+        phase: "night",
+        day: 1,
+        phaseStartedAt: nightStart,
+        hostId: seats[0].id,
+        seats: { create: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? "mafia" : "citizen" })) },
+      },
+    });
+    const asMember = (id: string, name: string) => ({ id, teamId: team.id, name, isLeader: false });
+
+    // 밤 행동이 이미 모였고, 의사가 지목한 사람을 살렸다.
+    await db.iceNightAction.createMany({
+      data: [
+        { roundId: round.id, day: 1, actorId: seats[0].id, kind: "mafia_kill", targetId: seats[3].id },
+        { roundId: round.id, day: 1, actorId: seats[1].id, kind: "doctor_save", targetId: seats[3].id },
+      ],
+    });
+
+    // ㊿ 社会자가 "직접 적기" 를 눌렀다 — 이 밤에 최수빈이 빠졌다.
+    await db.iceSeat.update({
+      where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } },
+      data: { outAt: new Date(nightStart.getTime() + 60_000), outHow: "night", outDay: 1 },
+    });
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "discussion" } });
+
+    // ㊿ ㊿ 같은 밤을 `resolveIceNight` 가 다시 처리하려 하면 **이미 끝난 밤**이라고 거절해야 한다.
+    const rows = await db.iceSeat.findMany({ where: { roundId: round.id }, select: { outAt: true, outHow: true } });
+    const fresh = await db.iceRound.findUnique({ where: { id: round.id } });
+    check("직접 적은 밤은 이미 끝난 밤이다", nightAlreadyStruck(rows, fresh!.phaseStartedAt), true);
+    // 단계도 `night` 가 아니다 — 두 번째 방어선.
+    check("단계도 밤이 아니다", fresh!.phase, "discussion");
+
+    // ㊿ 타임라인에는 그 밤이 **한 줄만** 남는다 — 수동과 앱 판정이 둘 다 남기면 두 줄이다.
+    const acts = await db.iceNightAction.findMany({ where: { roundId: round.id }, select: { day: true, kind: true, targetId: true } });
+    const tl = mafiaTimeline({
+      seats: (await db.iceSeat.findMany({ where: { roundId: round.id }, select: { memberId: true, outDay: true, outHow: true } })),
+      ballots: [],
+      nightActs: acts,
+    });
+    check("한 밤은 한 줄이다", tl.length, 1);
+    check("그 줄은 수동 판정의 밤이다", [tl[0].how, tl[0].outId], ["night", seats[3].id]);
+    // ⚠️ 밤 행동이 남아 있으므로 "아무도 안 죽었다" 로 세지지 않는다 — 직접 적었으니
+    //   기록과 다른 사람이 빠졌다는 사실이 화면에 그대로 보인다.
+    check("밤 줄이 세 번의 기록을 만들지 않는다", mafiaTimeline({
+      seats: (await db.iceSeat.findMany({ where: { roundId: round.id }, select: { memberId: true, outDay: true, outHow: true } })),
+      ballots: [],
+      nightActs: acts,
+    }).length, 1);
+
+    // ㊿ 다음 밤에서는 지난 밤의 행동이 새 밤을 막지 않는다 — 밤 번호가 다르다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "night", day: 2, phaseStartedAt: new Date(nightStart.getTime() + 3_600_000) } });
+    const nextRows = await db.iceSeat.findMany({ where: { roundId: round.id }, select: { outAt: true, outHow: true } });
+    const nextRound = await db.iceRound.findUnique({ where: { id: round.id } });
+    check("다음 밤은 새 밤이다", nightAlreadyStruck(nextRows, nextRound!.phaseStartedAt), false);
+    check("다음 밤에는 살아 있는 자리만 밤 행동이 필요하다", requiredNightActions(
+      (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({ memberId: s.memberId, role: s.role as IceRole, outAt: s.outAt })),
+    ).length, 1);
+
+    // ㊿ 밤이 끝나면 아무도 밤 행동을 고를 수 없다 — 늦게 들어온 행동을 화면이 아예 막는다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "discussion" } });
+    check("밤이 끝나면 고를 사람이 사라진다", (await iceViewFor(asMember(seats[0].id, "김민준")))!.night!.canTarget, []);
+    // 밤이 넘어가면 **새 밤의 고를 사람**이 생긴다 — 지난 밤과 섞이지 않는다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "night" } });
+    check("새 밤에는 고를 사람이 다시 생긴다", (await iceViewFor(asMember(seats[0].id, "김민준")))!.night!.canTarget.length, 3);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
+}
+
+console.log("\n마피아 게임: 낮 투표와 결선");
+{
+  const b = (targetId: string | null) => ({ targetId });
+  const everyone = ["a", "b", "c", "d"];
+
+  // ㊸ 표가 하나도 없으면 승부가 아니다 — 예전에는 이 상태에서 "결과 공개" 를 눌러도 처형이 났다.
+  check("표가 없으면 승부가 아니다", resolveDayVote({ ballots: [b(null)], eligible: everyone, runoffs: 0 }), { kind: "noVote" });
+  // 후보 밖의 표는 세지 않는다(결선에서 자기 투표를 못 한 사람이 남긴 표 등).
+  check("후보 밖의 표는 세지 않는다", resolveDayVote({ ballots: [b("z")], eligible: everyone, runoffs: 0 }).kind, "noVote");
+
+  check("한 명이 가장 많으면 그 사람이 빠진다", resolveDayVote({ ballots: [b("a"), b("a"), b("b")], eligible: everyone, runoffs: 0 }), {
+    kind: "eliminated",
+    targetId: "a",
+  });
+
+  // ㊹ 예전에는 동점이면 **표 전체를 버렸다.** 같은 사람들이 같은 이야기를 다시 하고 같은 동점이
+  //   되기를 반복했다. 지금은 동점자끼리만 다시 투표한다.
+  check("동점은 결선이다", resolveDayVote({ ballots: [b("a"), b("a"), b("b"), b("b")], eligible: everyone, runoffs: 0 }), {
+    kind: "runoff",
+    candidates: ["a", "b"],
+  });
+  check("세 명 동점이면 그 셋이 결선한다", resolveDayVote({ ballots: [b("a"), b("b"), b("c")], eligible: everyone, runoffs: 0 }), {
+    kind: "runoff",
+    candidates: ["a", "b", "c"],
+  });
+  check("결선에서 한 명을 더 받으면 그 사람이 빠진다", resolveDayVote({ ballots: [b("a"), b("a"), b("b")], eligible: ["a", "b"], runoffs: 0 }), {
+    kind: "eliminated",
+    targetId: "a",
+  });
+
+  // ㊺ 결선을 해도 동점이면 **무한 반복이 아니라 아무도 빠지지 않는다.** 두 명끼리는 후보를 더
+  //   좁힐 수 없다 — 몇 번을 반복해도 결과가 없다.
+  check("두 명 결선이 동점이면 부전이다", resolveDayVote({ ballots: [b("a"), b("b")], eligible: ["a", "b"], runoffs: 0 }), {
+    kind: "stuck",
+  });
+  check("후보 수만큼 동점이면 결선이 아니다", resolveDayVote({ ballots: [b("a"), b("b"), b("c")], eligible: ["a", "b", "c"], runoffs: 0 }).kind, "stuck");
+  // 한도에 닿으면 좁힐 수 있어도 부전 — 세 번째 투표 회차다.
+  check(
+    "한도(3회차)에는 결선하지 않는다",
+    resolveDayVote({ ballots: [b("a"), b("a"), b("b"), b("b")], eligible: ["a", "b", "c"], runoffs: MAX_RUNOFFS }).kind,
+    "stuck",
+  );
+
+  // ㊻ 투표는 **기록**된다 — 자리 한 칸에 있는 "지금 고른 사람" 이 아니다. 마감하면 표가 사라져
+  //   "누가 누구에게 표를 던졌는가" 가 남지 않았고, 결선을 판정할 대상도 사라졌다.
+  const iceActions = readCode("../src/server/actions/ice.ts");
+  truthy("투표는 기록된다", /iceBallot\.upsert\(/.test(iceActions));
+  truthy("동점이라고 표를 지우지 않는다", !/iceSeat\.updateMany\([^)]*voteForId/.test(iceActions));
+  truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(iceActions));
+  truthy("투표를 열 때 회차가 올라간다", /voteSeq: round\.voteSeq \+ 1/.test(iceActions));
+  truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: fresh\.day \+ 1, eligibleTargets: \[\]/.test(iceActions));
+  // ⚠️ 결선도 **새 회차**여야 한다. 같은 회차로 두면 결선 앞의 표가 결선 표에 덮어써져
+  //   "누가 누구에게 표를 던졌는가" 가 그 낮의 표만 남는다.
+  truthy("결선도 새 회차를 연다", /voteSeq: fresh\.voteSeq \+ 1/.test(iceActions));
+  truthy("결선 횟수를 센다", /runoffCount: fresh\.runoffCount \+ 1/.test(iceActions));
+  // ⚠️ 한도는 회차가 아니라 **이번 투표의 결선 횟수**로 잰다. 회차로 재면 밤이 지날 때도 올라가
+  //   하루에 세 번 결선한 판이 다음 날 아침 첫 투표에서 한도가 차 버린다.
+  truthy("투표를 열 때 결선 횟수가 0 이 된다", /runoffCount: 0/.test(iceActions));
+  truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /create: \{[^}]*runoff \}/.test(iceActions));
+
+  // ㊼ 자리에 있던 표 칸이 사라졌는지 — 두 벌이 있으면 어느 쪽이 진짜인지 알 수 없다.
+  const seatModel = readCode("../prisma/schema.prisma");
+  truthy("자리에는 현재 표가 없다", !/model IceSeat \{[\s\S]*?voteForId/.test(seatModel));
+  truthy("표는 자기 키를 가진다", /@@id\(\[roundId, seq, memberId\]\)/.test(seatModel));
+}
+
+console.log("\n마피아 게임: 결과 타임라인");
+{
+  // ㊻ 이 판이 지나온 길은 **기록에서만** 만든다. 새 값을 지어내면 그 판이 왜 그렇게 끝났는지
+  //   다시 볼 수 없고, 지어낸 줄은 읽는 사람마다 다르게 보인다.
+  const seats = [
+    // 1일차 밤에 마피아가 지목, 의사가 살렸다 → 아무도 안 빠졌다.
+    { memberId: "m", outDay: null, outHow: null },
+    { memberId: "d", outDay: null, outHow: null },
+    { memberId: "c1", outDay: 1, outHow: "vote" },
+    { memberId: "c2", outDay: 2, outHow: "night" },
+  ];
+  const ballots = [
+    { seq: 1, day: 1, memberId: "m", targetId: "c1", runoff: false },
+    { seq: 1, day: 1, memberId: "d", targetId: "c2", runoff: false },
+    // 2일차: 결선(seq 2)과 보통 투표(seq 3)가 남아 있다 — 앞 표가 덮어써지지 않았다.
+    { seq: 2, day: 2, memberId: "m", targetId: "c1", runoff: true },
+    { seq: 2, day: 2, memberId: "d", targetId: "c1", runoff: true },
+  ];
+  const nightActs = [
+    { day: 1, kind: "mafia_kill", targetId: "c2" },
+    { day: 1, kind: "doctor_save", targetId: "c2" },
+    { day: 2, kind: "mafia_kill", targetId: "c2" },
+  ];
+
+  const tl = mafiaTimeline({ seats, ballots, nightActs });
+  check("밤과 투표가 네 줄이다", tl.map((e) => `${e.day}-${e.how}`), [
+    "1-night",
+    "1-vote",
+    "2-night",
+    "2-vote",
+  ]);
+
+  // 밤 → 낮 순서다. 시간순이 아니라 "그날 밤이 그날 낮보다 먼저" 여야 읽힌다.
+  check("같은 날은 밤이 먼저 온다", tl.filter((e) => e.day === 1).map((e) => e.how), ["night", "vote"]);
+
+  // ㊼ 아무도 빠지지 않은 밤도 **줄이 남는다** — 지목과 보호 기록이 그 사실을 증명한다.
+  check("1일차 밤에는 아무도 빠지지 않았다", tl[0].outId, null);
+  check("1일차 밤의 지목과 보호가 남는다", [tl[0].killId, tl[0].savedId], ["c2", "c2"]);
+  check("2일차 밤에 빠른 사람이 남는다", tl[2].outId, "c2");
+  check("1일차 투표로 빠진 사람이 남는다", tl[1].outId, "c1");
+
+  // ㊽ 결선 투표는 결선이라고 표시된다 — 아니면 같은 낮의 두 투표가 구별되지 않는다.
+  check("결선 투표는 결선이다", tl[3].runoff, true);
+  check("보통 투표는 결선이 아니다", tl[1].runoff, false);
+  check("누가 누구에게 던졌는지 남는다", tl[1].cast, [
+    { from: "m", to: "c1" },
+    { from: "d", to: "c2" },
+  ]);
+  check("밤에는 표가 없다", tl[0].cast, []);
+
+  // ㊾ 기록이 없는 밤은 **줄을 지어내지 않는다.** 지목도 보호도 없는데 누가 죽었다면 그건
+  //   직접 적은 예외 길이고, 언제였는지는 알 수 없다.
+  const blind = mafiaTimeline({
+    seats: [{ memberId: "x", outDay: 3, outHow: "night" }],
+    ballots: [],
+    nightActs: [],
+  });
+  check("지목 기록이 없는 밤도 줄은 남는다", [blind.length, blind[0].day, blind[0].killId], [1, 3, null]);
+  check("아무 기록이 없으면 빈 타임라인이다", mafiaTimeline({ seats: [], ballots: [], nightActs: [] }), []);
+
+  // ㊿ 모르는 날짜는 null 이다 — 숫자를 지어내지 않는다.
+  const unknown = mafiaTimeline({
+    seats: [{ memberId: "x", outDay: null, outHow: "night" }],
+    ballots: [],
+    nightActs: [],
+  });
+  check("날짜를 모르면 모른다고 말한다", unknown, []);
+
+  // ⚠️ 타임라인은 **결과 공개 뒤에만** 만든다. 투표가 진행 중인데 결론이 보이면 안 된다.
+  truthy("타임라인은 결과 공개 뒤에만 만든다", /revealed && mafia[\s\S]{0,80}mafiaTimeline\(/.test(readCode("../src/server/ice/view.ts")));
+  // 자리를 빠질 때 **몇 번째 밤인지도** 함께 적는다 — 시각만으로는 밤을 구분할 수 없다(자정 넘김).
+  const iceActions = readCode("../src/server/actions/ice.ts");
+  truthy("밤 처형이 밤 번호를 적는다", /outHow: "night", outDay: fresh\.day/.test(iceActions));
+  truthy("투표 처형이 낮 번호를 적는다", /outHow: "vote", outDay: fresh\.day/.test(iceActions));
+}
+
+console.log("\n마피아 게임: 실제로 만든 판에서 투표가 기록으로 남는다");
+{
+  const team = await db.team.create({
+    data: { name: "투표 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈", "정예진"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "mafia",
+        phase: "voting",
+        day: 1,
+        voteSeq: 1,
+        hostId: seats[0].id,
+        seats: {
+          create: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? "mafia" : i === 1 ? "police" : "citizen" })),
+        },
+      },
+    });
+    const asMember = (id: string, name: string) => ({ id, teamId: team.id, name, isLeader: false });
+
+    // ㊽ 아무도 투표하지 않은 투표 단계.
+    // ⚠️ `canVoteFor` 는 **자리 정렬(이름순)** 을 따른다 — 생성 순서와 비교하면 이 검사가
+    //    사람 이름이 바뀔 때마다 조용히 깨진다. 집합으로 비교한다.
+    const sorted = (ids: string[]) => [...ids].sort();
+    const empty = (await iceViewFor(asMember(seats[2].id, "박지호")))!;
+    check("표가 하나도 없다", { ...empty.votes, canVoteFor: sorted(empty.votes.canVoteFor) }, {
+      cast: 0,
+      total: 5,
+      seq: 1,
+      runoff: false,
+      canVoteFor: sorted(seats.map((s) => s.id).filter((id) => id !== seats[2].id)),
+    });
+
+    // ㊾ 표는 한 줄씩 쌓인다. 같은 사람이 다시 고르면 **한 줄이 바뀐다** — 두 줄이면 "몇 명이
+    //   투표했나" 를 셀 수 없다.
+    for (const [voter, target] of [
+      [seats[2].id, seats[3].id],
+      [seats[3].id, seats[4].id],
+      [seats[4].id, seats[3].id],
+    ]) {
+      await db.iceBallot.create({ data: { roundId: round.id, seq: 1, day: 1, memberId: voter, targetId: target, runoff: false } });
+    }
+    const dup = await db.iceBallot
+      .create({ data: { roundId: round.id, seq: 1, day: 1, memberId: seats[2].id, targetId: seats[4].id, runoff: false } })
+      .catch((e: { code?: string }) => e.code);
+    check("같은 회차에 같은 사람의 표는 두 줄이 안 된다", dup, "P2002");
+
+    const voted = (await iceViewFor(asMember(seats[2].id, "박지호")))!;
+    check("세 명이 투표했다", voted.votes.cast, 3);
+    check("내 선택이 보인다", voted.me?.voteForId, seats[3].id);
+    // 다른 사람의 표는 그 화면에 없다 — 세 명 중 내 표 하나만 `me.voteForId` 로 내려간다.
+    const othersJson = JSON.stringify(await iceViewFor(asMember(seats[4].id, "정예진")));
+    check("각자 자기 표만 본다", (await iceViewFor(asMember(seats[4].id, "정예진")))!.me?.voteForId, seats[3].id);
+    truthy("투표한 사람 수가 공개되지 않는다", !othersJson.includes(`"cast":4`));
+
+    // ㊿ 결선은 **새 회차**에서 좁힌 후보로 열린다 — 앞 회차의 표가 남는다.
+    await db.iceRound.update({
+      where: { id: round.id },
+      data: { eligibleTargets: [seats[3].id, seats[4].id], voteSeq: 2, runoffCount: 1 },
+    });
+    const runoffView = (await iceViewFor(asMember(seats[2].id, "박지호")))!;
+    check("결선이라고 표시된다", runoffView.votes.runoff, true);
+    check("동점자만 고를 수 있다", runoffView.votes.canVoteFor, [seats[3].id, seats[4].id]);
+    // 동점자 자신이 투표할 때는 자기 자신이 빠진다 — 자기에게 투표하면 동점이 영영 안 끝난다.
+    check("동점자 자신에게는 자기 자신이 빠진다", (await iceViewFor(asMember(seats[3].id, "최수빈")))!.votes.canVoteFor, [seats[4].id]);
+    // ⚠️ 회차가 늘어야 한다 — 같은 회차라면 결선 앞 표가 결선 표에 덮어써진다.
+    check("결선은 새 회차다", runoffView.votes.seq, 2);
+    // 앞 회차의 표가 **남아 있어야** "누가 누구에게 표를 던졌는가" 를 읽을 수 있다.
+    check("결선 앞 회차의 표도 남는다", await db.iceBallot.count({ where: { roundId: round.id, seq: 1 } }), 3);
+
+    // ㊿ 표와 밤 행동이 남으면 **결과 공개 뒤의 타임라인이 그 기록에서 나온다.**
+    await db.iceBallot.createMany({
+      data: [
+        { roundId: round.id, seq: 2, day: 1, memberId: seats[3].id, targetId: seats[0].id, runoff: true },
+        { roundId: round.id, seq: 2, day: 1, memberId: seats[4].id, targetId: seats[0].id, runoff: true },
+      ],
+    });
+    // 마피아가 최수빈을 지목했고, 의사는 **다른 사람**을 보호했다 → 최수빈이 1일차 밤에 빠진다.
+    await db.iceNightAction.createMany({
+      data: [
+        { roundId: round.id, day: 1, actorId: seats[0].id, kind: "mafia_kill", targetId: seats[3].id },
+        { roundId: round.id, day: 1, actorId: seats[1].id, kind: "doctor_save", targetId: seats[4].id },
+      ],
+    });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } }, data: { outAt: new Date(), outHow: "night", outDay: 1 } });
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "revealed", resultCode: "TOWN_WIN", winner: "citizen", eligibleTargets: [] } });
+
+    const done = (await iceViewFor(asMember(seats[0].id, "김민준")))!.result!;
+    // ㋐ 밤 한 번 + 투표 **두 번**(보통 투표·결선)이 각각 한 줄이다. 결선 앞 표가 덮어써지지
+    //   않았으므로 두 줄이 남는다 — 하나였다면 "결선이 있었는지" 를 알 수 없다.
+    check("타임라인은 밤 → 투표 → 결선 순서다", done.timeline.map((e) => `${e.day}-${e.how}`), [
+      "1-night",
+      "1-vote",
+      "1-vote",
+    ]);
+    check("밤 줄에 지목과 보호가 남는다", [done.timeline[0].kill, done.timeline[0].saved], ["최수빈", "정예진"]);
+    check("밤에 빠진 사람이 남는다", done.timeline[0].out, "최수빈");
+    check("보통 투표 줄은 결선이 아니다", done.timeline[1].runoff, false);
+    check("보통 투표는 세 명", done.timeline[1].cast.length, 3);
+    check("결선 줄은 결선이라고 말한다", done.timeline[2].runoff, true);
+    check("결선 투표도 누가 누구에게 던졌는지 남는다", done.timeline[2].cast.length, 2);
+    // 이름으로 말하지 않는다 — 타임라인이 결과 공개 뒤에만 나온다는 뜻이다.
+    // 역할 이름은 결과 공개 뒤에만 나간다 — 결과를 보기 전에 "누가 마피아였지" 를 알 수 없다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "voting" } });
+    const midJson = JSON.stringify(await iceViewFor(asMember(seats[3].id, "최수빈")));
+    truthy("투표 중에는 남의 역할이 화면에 없다", !midJson.includes("police"));
+    check("투표 중에는 결과도 없다", (await iceViewFor(asMember(seats[3].id, "최수빈")))!.result, null);
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "revealed", resultCode: "TOWN_WIN", winner: "citizen" } });
+
+    await db.iceRound.delete({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
+}
+
+console.log("\n마피아 게임: 밤 행동");
+{
+  // ㉚ 시민은 밤에 아무것도 하지 않는다 — 선택지를 그리는 것만으로도 밤이 새어 나간다.
+  check("마피아는 밤에 지목한다", nightRoleOf("mafia"), "mafia_kill");
+  check("의사는 밤에 보호한다", nightRoleOf("doctor"), "doctor_save");
+  check("경찰은 밤에 조사한다", nightRoleOf("police"), "police_check");
+  check("시민은 밤에 아무것도 안 한다", nightRoleOf("citizen"), null);
+  check("라이어도 밤에 아무것도 안 한다", nightRoleOf("liar"), null);
+
+  const seats = [
+    { memberId: "m1", role: "mafia" as IceRole, outAt: null },
+    { memberId: "m2", role: "mafia" as IceRole, outAt: null },
+    { memberId: "p", role: "police" as IceRole, outAt: null },
+    { memberId: "d", role: "doctor" as IceRole, outAt: null },
+    { memberId: "c1", role: "citizen" as IceRole, outAt: null },
+    { memberId: "c2", role: "citizen" as IceRole, outAt: new Date() },
+  ];
+
+  // ㉛ 필요한 행동은 **살아 있는** 밤 행동 능력뿐이다. 어제 죽은 의사는 오늘 밤을 막지 않는다.
+  const required = requiredNightActions(seats);
+  check("살아 있는 밤 행동은 네 번이다", required.length, 4);
+  check("죽은 시민은 필요하지 않다", required.some((r) => r.memberId === "c2"), false);
+  check("마피아는 둘 다 필요하다", required.filter((r) => r.kind === "mafia_kill").length, 2);
+
+  // ㉜ 고를 수 있는 사람은 **규칙이 정한다** — 화면이 조건을 다시 쓰지 않는다.
+  check("마피아는 자기 자신을 못 지목한다", mayTargetAtNight("mafia_kill", "m1", { memberId: "m1", outAt: null }), false);
+  check("의사는 자기 자신을 보호할 수 있다", mayTargetAtNight("doctor_save", "d", { memberId: "d", outAt: null }), true);
+  // ⚠️ 경찰이 자기 자신을 조사하면 "마피아다" 를 배운다 — 아무것도 못 조사한 것과 같다.
+  check("경찰은 자기 자신을 조사할 수 없다", mayTargetAtNight("police_check", "p", { memberId: "p", outAt: null }), false);
+  check("죽은 사람은 못 고른다", mayTargetAtNight("mafia_kill", "m1", { memberId: "c2", outAt: new Date() }), false);
+  check("살아 있는 다른 사람은 된다", mayTargetAtNight("mafia_kill", "m1", { memberId: "c1", outAt: null }), true);
+
+  // ㉝ 밤 판정: 필요한 행동이 모이면 세 가지 결과 중 하나가 된다.
+  const kill = (actorId: string, targetId: string) => ({ actorId, kind: "mafia_kill" as const, targetId });
+  const save = (actorId: string, targetId: string) => ({ actorId, kind: "doctor_save" as const, targetId });
+  const checkAct = (actorId: string, targetId: string) => ({ actorId, kind: "police_check" as const, targetId });
+  const all = [kill("m1", "c1"), kill("m2", "c1"), save("d", "d"), checkAct("p", "m1")];
+
+  check("하나라도 모이면 밤이 안 풀린다", resolveNight(all.slice(0, 3), seats), { kind: "pending", missing: 1 });
+  // 죽은 자리가 있는 판에서는 죽은 쪽의 행동이 필요 없다.
+  const shortSeats = [seats[0], seats[1], seats[2], seats[3], seats[4]];
+  check("남은 행동이 모이면 풀린다", resolveNight(all, shortSeats), { kind: "resolved", outId: "c1", savedId: "d" });
+
+  // 의사가 지목한 사람이 마피아가 지목한 사람이면 아무도 빠지지 않는다.
+  check(
+    "의사가 살리면 아무도 안 빠진다",
+    resolveNight([kill("m1", "c1"), kill("m2", "c1"), save("d", "c1"), checkAct("p", "m1")], seats),
+    { kind: "resolved", outId: null, savedId: "c1" },
+  );
+  // ⚠️ 마피아가 다르게 골랐다면 **아무도 안 죽은 밤으로 넘기면 안 된다.** 밤이 풀리지 않았다는
+  //   사실을 사회자가 알아야 마피아끼리 다시 정할 수 있다.
+  check(
+    "마피아가 다르게 골랐으면 풀지 않는다",
+    resolveNight([kill("m1", "c1"), kill("m2", "d"), save("d", "d"), checkAct("p", "m1")], seats),
+    { kind: "disagree" },
+  );
+  // 마피아가 한 명이면 합의가 필요 없다. (의사가 앉아 있으면 **의사도 고쳐야** 밤이 풀린다 —
+  // 막판에 그 규칙이 빠져 있으면 "아무도 안 죽었다" 는 밤이 조용히 늘어난다.)
+  const solo = [
+    { memberId: "m1", role: "mafia" as IceRole, outAt: null },
+    { memberId: "c1", role: "citizen" as IceRole, outAt: null },
+  ];
+  check("마피아가 한 명이면 그 선택이 곧 밤이다", resolveNight([kill("m1", "c1")], solo), {
+    kind: "resolved",
+    outId: "c1",
+    savedId: null,
+  });
+  check("의사가 앉아 있으면 의사도 기다린다", resolveNight([kill("m1", "c1")], solo.concat(solo[1], { memberId: "d", role: "doctor" as IceRole, outAt: null })), {
+    kind: "pending",
+    missing: 1,
+  });
+  // 의사가 마피아를 보호했다(아무도 몰랐다) — 밤이 조용히 넘어간다.
+  const hidMafia = resolveNight([kill("m1", "c1"), save("d", "c1")], solo.concat([{ memberId: "d", role: "doctor" as IceRole, outAt: null }]));
+  check("의사가 마피아를 살려도 결과는 같아 보인다", hidMafia.kind === "resolved" && hidMafia.outId, null);
+
+  // ㉞ 밤 행동은 판정 규칙 한 곳에서 나온다 — 화면이 밤의 결과를 다시 계산하지 않는다.
+  truthy("밤 판정은 resolveNight 한 곳이다", /resolveNight\(/.test(readCode("../src/server/actions/ice.ts")));
+  truthy("밤 행동은 한 줄이 바뀐다(upsert)", /iceNightAction\.upsert\(/.test(readCode("../src/server/actions/ice.ts")));
+
+  // ㉟ **밤의 길 네 개가 모두 같은 잠금 경계를 쓴다.**
+  //
+  // ⚠️ `submitIceNightAction()` 만 잠금 밖에서 "아직 밤인가" 를 보면 이 경합이 가능하다.
+  //      A: 밤 확인 → B: 밤을 풀고 discussions 로 전환·커밋 → A: 늦게 표가 들어감.
+  //    그러면 **이미 끝난 밤에 행동 기록이 남고**, 그 밤의 판정이 그 행동 근거로 든 일이 아니다.
+  //    잠근 뒤 **다시 읽어서** 밤인지를 확인하면 늦게 온 행동은 거절된다.
+  const nightPaths = ["submitIceNightAction", "resolveIceNight", "closeIceNight", "markIceNightOut"] as const;
+  for (const name of nightPaths) {
+    const src = readCode("../src/server/actions/ice.ts");
+    const body = src.slice(src.indexOf(`export async function ${name}`), src.indexOf("\nexport async function", src.indexOf(`export async function ${name}`) + 10));
+    truthy(`${name} 은 판의 행을 잠근다`, /FOR UPDATE/.test(body));
+    // 잠긴 **뒤에** 밤인지를 다시 보는지 확인한다. 잠금 앞의 조기 종료는 빠른 실패일 뿐
+    // 근거가 아니다 — 두 번째 확인이 없으면 위의 경합이 그대로 열린다.
+    const afterLock = body.slice(body.indexOf("FOR UPDATE"));
+    truthy(`${name} 은 잠근 뒤 밤을 다시 본다`, afterLock.includes('phase !== "night"'));
+  }
+}
+
+console.log("\n마피아 게임: 실제로 만든 판에서 밤 행동이 새지 않는다");
+{
+  /**
+   * 밤 행동의 비밀은 **그 행동을 한 사람에게만** 보여 준다는 것이다.
+   * 아래는 실제로 만든 판에서 각 사람 눈의 `IceView` 를 **문자열로** 만든다 — 직렬화되어
+   * 브라우저로 나가는 그 순간을 본다.
+   */
+  const team = await db.team.create({
+    data: { name: "밤 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈", "정예진"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    // [마피아, 경찰, 의사, 시민, 시민]
+    const roles: IceRole[] = ["mafia", "police", "doctor", "citizen", "citizen"];
+    const mafiaId = seats[0].id;
+    const policeId = seats[1].id;
+    const doctorId = seats[2].id;
+
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "mafia",
+        phase: "night",
+        day: 2,
+        hostId: mafiaId,
+        seats: { create: seats.map((s, i) => ({ memberId: s.id, role: roles[i] })) },
+      },
+    });
+    const asMember = (id: string, name: string) => ({ id, teamId: team.id, name, isLeader: false });
+
+    // ㉟ 아직 아무것도 안 고른 밤. 사회자(마피아)에게는 남은 행동 수만 보인다.
+    const hostNight = (await iceViewFor(asMember(mafiaId, "김민준")))!.night!;
+    check("밤 행동이 하나도 없으면 전부 남았다", hostNight.waiting, 3);
+    check("사회자만 진행도를 본다", (await iceViewFor(asMember(seats[3].id, "최수빈")))!.night!.waiting, null);
+    // 마피아가 지목하고 의사가 살리고 경찰이 조사한다.
+    await db.iceNightAction.createMany({
+      data: [
+        { roundId: round.id, day: 2, actorId: mafiaId, kind: "mafia_kill", targetId: seats[4].id },
+        { roundId: round.id, day: 2, actorId: doctorId, kind: "doctor_save", targetId: seats[4].id },
+        { roundId: round.id, day: 2, actorId: policeId, kind: "police_check", targetId: seats[3].id },
+      ],
+    });
+
+    // ㊱ 같은 사람이 같은 밤에 다시 고르면 **두 줄이 아니라 한 줄이 바뀐다.** 두 줄이면
+    //   "몇 명이 골랐나" 를 셀 수 없고 밤이 풀렸는지 알 방법이 사라진다.
+    const again = await db.iceNightAction.create({
+      data: { roundId: round.id, day: 2, actorId: mafiaId, kind: "mafia_kill", targetId: seats[3].id },
+    }).catch((e: { code?: string }) => e.code);
+    check("같은 밤 같은 행동은 두 줄이 안 된다", again, "P2002");
+
+    const ready = (await iceViewFor(asMember(mafiaId, "김민준")))!.night!;
+    check("모두 고르면 밤이 풀릴 준비가 된다", ready.waiting, 0);
+    check("마피아는 자기 선택을 본다", [ready.mine, ready.myTargetId], ["mafia_kill", seats[4].id]);
+
+    // ㊴ 고를 수 있는 사람은 **서버가 정한 목록**이다 — 마피아는 자기 자신이 목록에 없다.
+    check("마피아는 자기 자신이 목록에 없다", ready.canTarget.includes(mafiaId), false);
+    check("고를 수 있는 사람은 살아 있는 자리다", ready.canTarget.length, 4);
+
+    // ㊵ **경찰의 조사 결과는 그 경찰에게만** 나간다. 다른 사람의 화면을 문자열로 확인한다.
+    const policeJson = JSON.stringify(await iceViewFor(asMember(policeId, "이서연")));
+    check("경찰은 자기 조회를 안다", (await iceViewFor(asMember(policeId, "이서연")))!.me!.check, {
+      day: 2,
+      name: "최수빈",
+      isMafia: false,
+    });
+    truthy("시민의 화면에 마피아 판정 낀 문자열이 없다", !JSON.stringify(await iceViewFor(asMember(seats[3].id, "최수빈"))).includes("isMafia"));
+    truthy("다른 마피아의 화면에도 조회가 없다", !JSON.stringify(await iceViewFor(asMember(mafiaId, "김민준"))).includes("isMafia"));
+    truthy("경찰의 화면에도 남의 밤 행동이 없다", !policeJson.includes("mafia_kill"));
+
+    // ㊶ 시민에게는 밤 선택지가 아예 없다.
+    const citizen = (await iceViewFor(asMember(seats[4].id, "정예진")))!.night!;
+    check("시민은 밤에 아무것도 안 한다", citizen.mine, null);
+    check("시민에게는 고를 사람도 없다", citizen.canTarget, []);
+
+    // ㊷ 밤이 지나도 경찰은 그 결과를 기억한다 — 다음 밤까지 지우면 없는 정보가 된다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "discussion" } });
+    check("낮에도 조회가 남는다", (await iceViewFor(asMember(policeId, "이서연")))!.me!.check?.day, 2);
+    check("낮에는 아무것도 고를 수 없다", (await iceViewFor(asMember(doctorId, "박지호")))!.night!.open, false);
+    check("낮에는 고를 사람도 없다", (await iceViewFor(asMember(doctorId, "박지호")))!.night!.canTarget, []);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
+}
+
+console.log("\n마피아 게임: 실제로 만든 판에서 밤과 낮이 맞아떨어진다");
+{
+  /**
+   * 규칙 함수는 위에서 봤다. 여기서는 **실제로 만든 판**을 보고 각 사람 눈의 `IceView` 를
+   * 만든다 — `day` 와 `phase` 가 직렬화되어 브라우저로 나가는 그 순간을 확인한다.
+   */
+  const team = await db.team.create({
+    data: { name: "마피아 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈", "정예진"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    const roles: IceRole[] = ["mafia", "police", "doctor", "citizen", "citizen"];
+
+    const mk = (phase: string, day: number) =>
+      db.iceRound.create({
+        data: {
+          teamId: team.id,
+          activeKey: team.id,
+          game: "mafia",
+          phase,
+          day,
+          hostId: seats[0].id,
+          seats: { create: seats.map((s, i) => ({ memberId: s.id, role: roles[i] })) },
+        },
+      });
+
+    const asMember = (id: string, name: string) => ({ id, teamId: team.id, name, isLeader: false });
+    const mafiaId = seats[0].id;
+
+    // ㉚ 첫 밤. 폰에 뜨는 것은 **몇 번째 밤인지** 다 — "3일차 밤" 이 없다면 밤이 몇 번인지
+    //     사람도 모르고, 결과 화면의 타임라인도 조작할 수 있다.
+    const first = await mk("night", 1);
+    const nightView = await iceViewFor(asMember(mafiaId, "김민준"));
+    check("첫 밤이다", [nightView?.phase, nightView?.day], ["night", 1]);
+    check("밤에는 투표할 수 없다", canVoteNow("mafia", nightView!.phase), false);
+    // 밤에는 투표가 닫혀 있고 표도 쌓이지 않는다 — 밤에 고른 표는 낮 표와 섞이지 않는다.
+    const nightVotes = nightView!.votes;
+    check("밤에는 표가 하나도 안 쌓였다", [nightVotes.cast, nightVotes.runoff], [0, false]);
+    check("밤의 밤 번호와 표 회차는 다르다", nightView!.day >= 1, true);
+
+    // ㉛ 밤이 넘어가고 세 번째 밤이 됐을 때.
+    await db.iceRound.update({ where: { id: first.id }, data: { phase: "night", day: 3, phaseStartedAt: new Date() } });
+    check("세 번째 밤으로 읽힌다", (await iceViewFor(asMember(mafiaId, "김민준")))?.day, 3);
+    await db.iceRound.update({ where: { id: first.id }, data: { phase: "discussion" } });
+    check("낮에도 밤 번호는 남는다", (await iceViewFor(asMember(mafiaId, "김민준")))?.day, 3);
+    check("낮에는 투표가 닫혀 있다", canVoteNow("mafia", (await iceViewFor(asMember(mafiaId, "김민준")))!.phase), false);
+    await db.iceRound.update({ where: { id: first.id }, data: { phase: "voting" } });
+    check("투표 단계에서만 열린다", canVoteNow("mafia", (await iceViewFor(asMember(mafiaId, "김민준")))!.phase), true);
+
+    await db.iceRound.delete({ where: { id: first.id } });
+
+    // ㉜ 마이그레이션 전에 진행 중이던 마피아 판. 예전 `play` 는 투표가 열려 있던 상태였다 —
+    //     밤으로 읽으면 그 판은 갑자기 아무도 투표할 수 없는 판이 된다.
+    const legacy = await mk("play", 1);
+    const legacyView = await iceViewFor(asMember(seats[1].id, "이서연"));
+    check("예전 판은 투표 단계로 읽는다", legacyView?.phase, "voting");
+    check("예전 판에서도 투표할 수 있다", canVoteNow("mafia", legacyView!.phase), true);
+    check("예전 판의 밤 번호는 1이다", legacyView?.day, 1);
+    await db.iceRound.delete({ where: { id: legacy.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
 }
 
 console.log("\n라이어 게임: 비밀은 서버에서만 막는다");
@@ -3909,6 +4674,20 @@ console.log("\n라이어 게임: 실제로 만든 판에서 비밀이 새지 않
     truthy("최종 추측 단계의 라이어 화면에 별칭도 없다", !guessJson.includes("학식쌤"));
     check("최종 추측 단계에서도 라이어의 제시어는 비어 있다", (await iceViewFor(asMember(liarId, "이서연")))?.me?.word, null);
     check("결과는 아직 없다", (await iceViewFor(asMember(liarId, "이서연")))?.result, null);
+
+    /**
+     * ㉒ **재조회해도 그대로여야 한다.** 라이어가 폰을 껐다 켜거나 새로고침하면 `iceViewFor` 를
+     * 처음부터 다시 부른다 — 그때 `phase` 가 DB 에서 복원되고, 제시어는 여전히 없다. 이게 깨지면
+     * "새로고침하면 정답이 보인다" 가 되는 종류의 버그라 한 번만 봐도 즉시 사고다.
+     */
+    await new Promise((r) => setTimeout(r, 5));
+    const afterReload = await iceViewFor(asMember(liarId, "이서연"));
+    check("새로고침 뒤에도 단계가 복원된다", afterReload?.phase, "liar_guess");
+    check("새로고침 뒤에도 라이어에게 제시어가 없다", afterReload?.me?.word, null);
+    truthy("새로고침 뒤에도 직렬화된 화면에 정답이 없다", !JSON.stringify(afterReload).includes(SECRET));
+    // 카드는 **다시 가려진다.** `shown` 은 화면 상태라 새로고침하면 거짓이 되어야 한다 —
+    // 라이어가 폰을 놓고 자리를 비웠는데 다음 사람이 그 화면을 봐야 하기 때문이다.
+    truthy("카드는 판을 key 로 다시 가려진다", /<SecretCard key=\{view\.roundId\}/.test(readCode("../src/features/social/icebreak-screen.tsx")));
 
     // ㉒ 판이 끝나면 **전원에게** 제시어가 열린다 — 이제 더 숨길 이유가 없다.
     await db.iceRound.update({

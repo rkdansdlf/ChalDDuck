@@ -18,27 +18,27 @@ datasource db {
 
 /// 팀. 초대 코드로만 들어온다 — 가입·로그인이 없다.
 model Team {
-  id        String   @id @default(cuid())
-  name      String
-  course    String
+  id             String    @id @default(cuid())
+  name           String
+  course         String
   /// 초대 코드. 이 코드를 아는 사람만 들어올 수 있다.
-  code      String   @unique
+  code           String    @unique
   /// "중간발표 D-12" 같은 표시 문자열. 날짜 계산은 아직 기획에 없다.
-  dday      String?
+  dday           String?
   /// 회의 후보(`MeetingSlot`)를 어느 날부터 7일로 만들었는지(한국 날짜). 날이 바뀌면 다시
   /// 만든다 — 지난 날이 후보에 남거나, 지난주에만 있던 시간이 후보를 막지 않게.
   candidatesFrom String?
   /// 29 누가 하지로 정한 밥. **팀에 하나** — 각자 돌리면 네 사람이 네 값을 보고
   /// 무엇을 먹을지 합의가 되지 않는다(예전에는 폰마다 따로 돌았다).
-  menuPick String?
-  menuDrawnBy String?
-  menuPickedAt DateTime?
+  menuPick       String?
+  menuDrawnBy    String?
+  menuPickedAt   DateTime?
   /// 29 누가 하지에서 **무엇으로** 정했는지 — `RANDOM_TOOLS` 의 이름("사다리타기" 등).
   ///
   /// 도구는 누가 눌렀는지만 고르지만, **결과와 짝으로 팀에 하나**여야 한다. 결과만 남기고
   /// 도구를 버리면 팀원마다 "저 건 무슨 것으로 뽑혔지"가 달라져, "정한 건 팀에 하나"라는
   /// 화면의 약속이 그 자리에서 어긋난다.
-  menuTool String?
+  menuTool       String?
   /// 기록이 `ok` 되려면 몇 명이 확인해야 하는가 — **팀이 정하는 값**이다.
   ///
   /// 예전에는 코드 상수(`CONFIRMS_NEEDED = 1`)였다. 상수로 두면 기준을 정하는 사람이
@@ -48,20 +48,20 @@ model Team {
   /// 1을 기본으로 두는 이유: 전원으로 두면 한 사람이 답하지 않을 때 영영 확정되지 않는다.
   /// 올릴 수 있는 최댓값은 팀원 수에서 자기 기록의 주인을 뺀 만큼이다(자기 기록은
   /// 확인하지 못한다) — 팀장이 화면 밖의 값을 넣지 못하게 서버가 막는다.
-  confirmsNeeded Int      @default(1)
-  createdAt DateTime @default(now())
+  confirmsNeeded Int       @default(1)
+  createdAt      DateTime  @default(now())
 
-  members        Member[]
-  joinRequests   JoinRequest[]
-  invites        TeamInvite[]
+  members         Member[]
+  joinRequests    JoinRequest[]
+  invites         TeamInvite[]
   submissionBoxes SubmissionBox[]
-  meetingSlots   MeetingSlot[]
-  proposals      MeetingProposal[]
-  messages       Message[]
-  tasks          Task[]
-  aiUsage        AiUsage[]
-  aiCalls        AiCall[]
-  iceRounds      IceRound[]
+  meetingSlots    MeetingSlot[]
+  proposals       MeetingProposal[]
+  messages        Message[]
+  tasks           Task[]
+  aiUsage         AiUsage[]
+  aiCalls         AiCall[]
+  iceRounds       IceRound[]
 }
 
 /// 팀에 들어올 수 있는 **초대 한 장.** 공유 한 번을 독립된 행으로 세운다.
@@ -102,7 +102,7 @@ model TeamInvite {
   ///
   /// 없으면 목록이 "3일 전 · 0/3명"처럼 읽혀서, 초대가 몇 개 쌓였을 때 **어느 것이 무엇인지
   /// 알 수 없다.** 되돌리려면 고를 수 있어야 하니 붙인다. 고유할 필요는 없다.
-  label     String?
+  label String?
 
   /// 몇 명이 **승인**되면 닫히는가. null 이면 무제한.
   ///
@@ -118,7 +118,7 @@ model TeamInvite {
   expiresAt DateTime?
   /// 되돌린 시각. 삭제를 쓰지 않는다 — 이 행이 "누가 이 초대를 만들었나"의 기록이기 때문.
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
   joinRequests JoinRequest[]
@@ -128,64 +128,64 @@ model TeamInvite {
 
 /// 팀원. 신원은 **초대 코드 + 이름**이라 팀 안에서 이름이 유일해야 한다.
 model Member {
-  id           String   @id @default(cuid())
-  teamId       String
-  name         String
+  id              String    @id @default(cuid())
+  teamId          String
+  name            String
   /// 16유형 중 하나. 고르지 않고 넘어갈 수 있다.
-  mbti         String?
+  mbti            String?
   /// 30초 컷으로 얻은 값인지. 화면 문구가 달라진다.
-  mbtiFromQuiz Boolean  @default(false)
+  mbtiFromQuiz    Boolean   @default(false)
   /// 팀을 만든 사람. 새 기기 재입장 요청을 승인한다. 팀마다 한 명이다.
-  isLeader     Boolean  @default(false)
+  isLeader        Boolean   @default(false)
   /// 재입장 코드의 해시. 첫 입장 때 한 번만 보여 주고 여기에는 해시만 남는다.
-  rejoinCodeHash String?
+  rejoinCodeHash  String?
   /// 로그인 및 재접속용 이메일
-  email        String?
+  email           String?
   emailVerifiedAt DateTime?
   /// 1순위 희망 역할 / 이번엔 피하고 싶은 역할.
-  wantRole     String?
-  vetoRole     String?
-  joinedAt     DateTime @default(now())
+  wantRole        String?
+  vetoRole        String?
+  joinedAt        DateTime  @default(now())
   /// 팀을 나간 시각. 행은 **지우지 않는다** — 기여 기록·메시지·파일 이력이 성적 근거라
   /// 사람이 나갔다고 팀 기록이 사라지면 안 된다. 명단·집계에서만 빠진다.
-  leftAt       DateTime?
+  leftAt          DateTime?
 
-  team            Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  sessions        Session[]
-  claims          MemberClaim[]     @relation("ClaimMember")
-  approvedClaims  MemberClaim[]     @relation("ClaimApprover")
-  approvedJoins   JoinRequest[]     @relation("JoinApprover")
-  busyBlocks      BusyBlock[]
-  ownedBoxes      SubmissionBox[]
-  fileVersions    FileVersion[]
-  messages        Message[]
-  reactions       MessageReaction[]
-  readMarks       ReadMark[]
-  readCushions    ReadCushion[]
-  contribRecords  ContribRecord[]   @relation("ContribOwner")
-  contribDisputes ContribRecord[]   @relation("ContribDisputer")
-  contribConfirms ContribConfirm[]
+  team                  Team                   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sessions              Session[]
+  claims                MemberClaim[]          @relation("ClaimMember")
+  approvedClaims        MemberClaim[]          @relation("ClaimApprover")
+  approvedJoins         JoinRequest[]          @relation("JoinApprover")
+  busyBlocks            BusyBlock[]
+  ownedBoxes            SubmissionBox[]
+  fileVersions          FileVersion[]
+  messages              Message[]
+  reactions             MessageReaction[]
+  readMarks             ReadMark[]
+  readCushions          ReadCushion[]
+  contribRecords        ContribRecord[]        @relation("ContribOwner")
+  contribDisputes       ContribRecord[]        @relation("ContribDisputer")
+  contribConfirms       ContribConfirm[]
   /// 이 사람이 남긴 의견들(`ContribDispute`).
-  disputesWritten ContribDispute[]   @relation("ContribDisputesBy")
+  disputesWritten       ContribDispute[]       @relation("ContribDisputesBy")
   /// 이 사람이 찍은 참여 표시들(`ContribParticipation`).
-  participationsShown ContribParticipation[] @relation("ParticipationShownBy")
+  participationsShown   ContribParticipation[] @relation("ParticipationShownBy")
   participationsCleared ContribParticipation[] @relation("ParticipationClearedBy")
-  assignedTasks   Task[]
+  assignedTasks         Task[]
   /// 누가 넣었나 — 담당자 지정 권한의 근거(`server/actions/tasks.ts` 의 `canEditTask`).
-  tasksCreated    Task[]      @relation("TaskCreator")
-  pokesSent       Poke[]
-  notifications   Notification[]    @relation("NotifyTo")
-  notificationsBy Notification[]    @relation("NotifyBy")
+  tasksCreated          Task[]                 @relation("TaskCreator")
+  pokesSent             Poke[]
+  notifications         Notification[]         @relation("NotifyTo")
+  notificationsBy       Notification[]         @relation("NotifyBy")
   /// 이 브라우저(단말)의 푸시 구독들. 기기 하나가 여러 개일 수 있다(여러 탭·프로필).
-  pushSubscriptions PushSubscription[]
-  proposalsMade   MeetingProposal[]
-  meetingResponses MeetingResponse[]
-  roleDraws       RoleDraw[]
-  roleRejections  RoleRejection[]
-  aiUsage         AiUsage[]
-  aiCalls         AiCall[]
-  iceHosted       IceRound[]        @relation("IceHost")
-  iceSeats        IceSeat[]         @relation("IceSeatOf")
+  pushSubscriptions     PushSubscription[]
+  proposalsMade         MeetingProposal[]
+  meetingResponses      MeetingResponse[]
+  roleDraws             RoleDraw[]
+  roleRejections        RoleRejection[]
+  aiUsage               AiUsage[]
+  aiCalls               AiCall[]
+  iceHosted             IceRound[]             @relation("IceHost")
+  iceSeats              IceSeat[]              @relation("IceSeatOf")
 
   @@unique([teamId, name])
   @@index([email])
@@ -277,7 +277,7 @@ model JoinRequest {
 
   team       Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
   invite     TeamInvite? @relation(fields: [inviteId], references: [id], onDelete: SetNull)
-  approvedBy Member? @relation("JoinApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedBy Member?     @relation("JoinApprover", fields: [approvedById], references: [id], onDelete: SetNull)
 
   /// 같은 이름으로 요청이 쌓이지 않게 한다.
   @@unique([teamId, name])
@@ -354,7 +354,7 @@ model PushSubscription {
 
 /// 안 되는 시간 한 칸. 표시하지 않은 시간은 가능한 시간으로 본다.
 model BusyBlock {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   memberId  String
   /// 0 = 월요일.
   day       Int
@@ -379,18 +379,18 @@ model BusyBlock {
 /// 팀원들의 `BusyBlock` 에서 계산한다(`server/meetings/candidates.ts`) — 오늘부터 7일,
 /// 주말 포함, 1시간 단위. 7일이라 요일(`day`)이 어느 날인지 하나로 정해진다.
 model MeetingSlot {
-  id         String @id @default(cuid())
-  teamId     String
+  id        String  @id @default(cuid())
+  teamId    String
   /// "수" 같은 요일 한 글자.
-  day        String
+  day       String
   /// "16:00 – 18:00"
-  time       String
-  available  Int
-  total      Int
+  time      String
+  available Int
+  total     Int
   /// 못 오는 사람과 사유. 전원 가능하면 null.
-  blockedBy  String?
+  blockedBy String?
   /// 어느 주의 후보인지. "this" = 이번 주, "none" = 전원 불가한 주(데모).
-  weekKey    String @default("this")
+  weekKey   String  @default("this")
 
   team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
   proposals MeetingProposal[]
@@ -475,18 +475,18 @@ model RoleRejection {
 
 /// 역할별 제출함. 마감이 지나도 잠그지 않고 라벨만 붙인다.
 model SubmissionBox {
-  id       String @id @default(cuid())
-  teamId   String
-  role     String
-  name     String
+  id      String    @id @default(cuid())
+  teamId  String
+  role    String
+  name    String
   /// 이 칸을 맡은 사람. **역할이 정해지기 전에는 비어 있다** — 팀을 만들면 제출함부터
   /// 생기고, 역할 추첨을 수락하면 그 사람이 주인이 된다.
-  ownerId  String?
+  ownerId String?
   /// 마감 시각. **"마감 후 제출" 라벨은 이 값과 버전의 `createdAt` 으로 그때그때 계산한다** —
   /// 마감을 옮기면 라벨도 따라 바뀐다. 정하지 않았으면 null 이고 라벨이 붙지 않는다.
-  dueAt    DateTime?
+  dueAt   DateTime?
   /// 예전 표시 문자열("9/15", "미정"). `dueAt` 이 없을 때만 화면에 보인다.
-  due      String
+  due     String
 
   team  Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
   owner Member?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
@@ -516,31 +516,31 @@ model SubmittedFile {
 
 /// 파일 버전. **덮어쓰지 않고 쌓인다** — 복원도 새 버전을 더하는 것이다.
 model FileVersion {
-  id         String   @id @default(cuid())
-  fileId     String
+  id             String   @id @default(cuid())
+  fileId         String
   /// "v4" 처럼 화면에 그대로 보이는 이름.
-  label      String
-  authorId   String
-  note       String
-  size       String
+  label          String
+  authorId       String
+  note           String
+  size           String
   /// pptx | docx | pdf | image
-  kind       String
+  kind           String
   /// 실제로 열리는 형식만 미리보기 주소를 갖는다. 저장소에 올린 파일은 볼 때마다
   /// 서명된 주소를 새로 만들므로 여기에는 남기지 않는다(시드 이미지에만 남아 있다).
-  previewUrl String?
+  previewUrl     String?
   /// Supabase Storage 안의 경로. 저장소에 없는 시드 데이터는 null 이다.
-  storagePath String?
+  storagePath    String?
   /// 실제 바이트 수. `size` 는 화면에 보이는 문자열이라 계산에 쓰면 안 된다.
-  bytes      Int?
+  bytes          Int?
   /// 내려받을 때 브라우저에 알려 줄 형식.
-  mimeType   String?
+  mimeType       String?
   /// 쓰지 않는다 — 올릴 때 한 번 적어 두면 마감을 옮겨도 라벨이 안 바뀌었다.
   /// 이제 `SubmissionBox.dueAt` 과 `createdAt` 으로 계산한다. 다음 정리 때 지운다.
-  isLate     Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  isLate         Boolean  @default(false)
+  createdAt      DateTime @default(now())
   /// 쓰지 않는다 — 저장된 "방금"이 영원히 "방금"으로 보였다. 화면 시각은 `createdAt` 으로
   /// 서버가 만든다. 다음 정리 때 지운다.
-  whenLabel  String?
+  whenLabel      String?
   /// 복원으로 생긴 버전이면 원본 버전 id. 복원은 마감과 무관한 작업이라 늦은 제출로 세지
   /// 않고, 같은 저장소 객체를 가리키므로 용량에도 두 번 세지 않는다.
   restoredFromId String?
@@ -550,7 +550,7 @@ model FileVersion {
 
   /// 드라이브에서 단톡방에 공유된 말들이 가리킨다. 공유는 **바이트를 복사하지 않는다** —
   /// 이 버전을 가리킬 뿐이라 용량에도 두 번 세지 않는다.
-  sharedInMessages Message[] @relation("MessageSharesVersion")
+  sharedInMessages  Message[] @relation("MessageSharesVersion")
   /// 채팅 첨부를 드라이브에 올려 생긴 버전. 한 첨부에 하나만 둔다.
   savedFromMessages Message[] @relation("MessageSavedAsVersion")
 
@@ -559,44 +559,44 @@ model FileVersion {
 
 /// 메시지. 팀 단톡방과 1:1 DM 이 같은 표에 들어가고 `threadKey` 로 갈린다.
 model Message {
-  id         String   @id @default(cuid())
-  teamId     String
+  id             String   @id @default(cuid())
+  teamId         String
   /// "team" 또는 DM 상대 두 명의 id 를 정렬해 이은 값("dm:<a>:<b>").
-  threadKey  String
-  authorId   String
-  text       String
+  threadKey      String
+  authorId       String
+  text           String
   /// 쿠션 번역기로 다듬어 보낸 말. **표시가 남는다.**
-  viaCushion Boolean  @default(false)
+  viaCushion     Boolean  @default(false)
   /// 화면이 보내기 전에 만들어 둔 id. **같은 값으로 두 번 도착하면 한 번만 저장한다.**
   ///
   /// 서버가 저장했는데 응답이 늦어 화면이 "실패"로 바꾸고 사용자가 다시 누르면, 그 말은
   /// 이미 들어 있다 — 예전에는 그 결과 같은 말이 두 개 생겼다. 첨부는 `attachPath` 로 막고
   /// 있었지만 글에는 그런 표가 없었으므로, 이 값으로 막는다. 두 번 저장되면 대화의 사실이
   /// 틀어지는 것이라 되돌리기 어렵다.
-  clientId String?
+  clientId       String?
   /// 첨부 파일(단톡방만). 저장소 경로는 `{teamId}/chat/{uuid}` — 드라이브와 같은 버킷·형식·용량 규칙.
   /// 파일만 보낸 말은 `text` 가 빈 문자열이다.
-  attachPath  String?
-  attachName  String?
-  attachBytes Int?
-  attachMime  String?
+  attachPath     String?
+  attachName     String?
+  attachBytes    Int?
+  attachMime     String?
   /// 드라이브 파일을 단톡방에 공유한 말. **저장소 객체를 복사하지 않고 그 버전만 가리킨다.**
   /// 공유는 단톡방에서만( DM 은 첨부와 마찬가지다).
   driveVersionId String?
   /// 이 첨부를 드라이브에 올려서 생긴 버전. 한 첨부에 하나만 — 두 번 올리면 같은 바이트가
   /// 용량에 두 번 세어진다. 이미 있으면 화면은 "드라이브에 있음"을 보여 주고 다시 만들지 않는다.
-  savedVersionId  String?
-  createdAt  DateTime @default(now())
+  savedVersionId String?
+  createdAt      DateTime @default(now())
   /// 화면에 보이는 시각 문자열("14:02").
-  whenLabel  String
+  whenLabel      String
 
-  team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  author    Member            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  team          Team                  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  author        Member                @relation(fields: [authorId], references: [id], onDelete: Cascade)
   /// 드라이브 파일·버전이 지워지면 공유/저장 자리만 비운다 — **말 자체는 남는다.**
   /// 드라이브 기록은 팀의 공식 기록이라 임의로 지우지 않지만, 말은 남기는 편이 낫다.
-  driveVersion FileVersion?     @relation("MessageSharesVersion", fields: [driveVersionId], references: [id], onDelete: SetNull)
-  savedVersion  FileVersion?     @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
-  reactions MessageReaction[]
+  driveVersion  FileVersion?          @relation("MessageSharesVersion", fields: [driveVersionId], references: [id], onDelete: SetNull)
+  savedVersion  FileVersion?          @relation("MessageSavedAsVersion", fields: [savedVersionId], references: [id], onDelete: SetNull)
+  reactions     MessageReaction[]
   /// 이 말을 읽기 설정별로 순화해 둔 결과(19·31 화면의 읽기 순화). **사람이 아니라
   /// 설정(강도·말투·프롬프트·모델)마다 한 줄**이라 팀원 수만큼 중복 계산되지 않는다.
   purifications MessagePurification[]
@@ -639,8 +639,8 @@ model ReadMark {
 
 /// 이 말을 **어떤 읽기 설정으로** 순화해 둔 결과.
 model MessagePurification {
-  id        String   @id @default(cuid())
-  messageId String
+  id               String    @id @default(cuid())
+  messageId        String
   /// 이 결과를 만든 설정의 지문. 같은 말 + 같은 설정 = 같은 결과다.
   ///
   /// **사람을 열쇠에 넣지 않는다** — 이것이 이 구조의 전부다. 예전에는 (말, 읽는 사람)마다
@@ -649,35 +649,35 @@ model MessagePurification {
   ///
   /// 지문에는 **결과를 바꾸는 것만** 넣는다: 읽기 강도·말투·프롬프트 버전·모델·검사 버전.
   /// 읽는 사람이 바뀐다고 결과가 바뀌지는 않는다.
-  policyHash String
+  policyHash       String
   /// 이 결과를 만든 조건 — 지문이 왜 그런 값인지 남긴다(재생성 판단용).
-  level    String
-  tone     String
-  model    String
+  level            String
+  tone             String
+  model            String
   promptVersion    String
   validatorVersion String
   /// 원문 지문. 원문은 안 바뀌지만, "같은 입력으로 만든 것인가" 를 판정하는 기준이다.
-  sourceHash String
+  sourceHash       String
   /// 화면에 그릴 문장. 실패 상태면 `null` 이고 그때는 **원문이 보인다**.
-  text   String?
+  text             String?
   /// 이 문장을 누가 썼나: `ai`(모델) / `mask`(규칙). **표시가 다르므로 반드시 남긴다.**
-  source String?
+  source           String?
   /// PENDING | PURIFIED | FALLBACK | REJECTED | FAILED
-  status String   @default("PENDING")
+  status           String    @default("PENDING")
   /// 실패 taxonomy(실패할 때만). 지표와 재생성 판단에 쓴다 — 화면에는 안 보여 준다.
-  reason  String?
+  reason           String?
   /// 실제로 모델을 부른 횟수. 무한 재호출의 근거이자, 몇 번을 더 시도할지 정하는 값.
-  attemptCount Int    @default(0)
+  attemptCount     Int       @default(0)
   /// 이 묶음의 **호출 시간**(ms). 묶음의 모든 행이 같은 값을 갖는다 — 그래서 "행 기준 평균"은
   /// 큰 묶음에 끌려간다. 호출 수와 함께 볼 때만 뜻가 있다.
-  latencyMs Int?
+  latencyMs        Int?
   /// 이 시각 전에는 다시 부르지 않는다. 재생성 가능해지면 서버가 지금으로 옮긴다.
-  retryAfter DateTime?
+  retryAfter       DateTime?
   /// `PENDING` 선점 토큰. **이 값이 내 것인 요청만 모델을 부른다** — 두 사람·두 탭이 같은
   /// 설정으로 같은 말을 동시에 시켜도 한 번만 부른다.
-  claimToken String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  claimToken       String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
@@ -724,51 +724,50 @@ model ReadCushion {
   @@unique([memberId, threadKey])
 }
 
-
 /// 기여 기록.
 ///
 /// 내 화면(16)과 팀 화면(17)이 **같은 표**를 본다 — 두 표로 나누면 같은 일이 두 곳에서
 /// 다르게 적히는 일이 생긴다.
 model ContribRecord {
-  id        String   @id @default(cuid())
-  memberId  String
+  id            String   @id @default(cuid())
+  memberId      String
   /// task | file | meet | help | due
-  kind      String
-  title     String
-  detail    String
+  kind          String
+  title         String
+  detail        String
   /// 사람이 적은 설명("9/8 – 9/12"). 없는 기록이 많다 — 언제 추가했는지는 `createdAt` 이
   /// 말하고 화면이 그때 그때 만든다("방금", "3주 전"). 시각을 여기 저장하면 저장한
   /// 순간의 말로 굳어 버린다(`lib/when.ts` 가 같은 이유로 파일 쪽은 `createdAt` 을 쓴다).
-  whenLabel String?
+  whenLabel     String?
   /// auto = 앱이 모음 / self = 본인이 직접 추가
-  source    String
+  source        String
   /// ok | pending | disputed — 확인 수와 의견에서 다시 계산한다(`server/contrib/state.ts`).
-  state     String   @default("pending")
+  state         String   @default("pending")
   /// 사실과 다르다고 적힌 의견. **한쪽 말로 덮지 않고 남긴다.**
   ///
   /// 여기 값이 있어도 지우지 않는다. 새로 의견이 달리면 아래 `ContribDispute` 에
   /// **추가**하고 이 칸은 "지금 떡고 있는 의견"으로 옮긴다. 예전에는 `update` 가 이 칸을
   /// 그냥 덮어써서, 정리된 뒤 새로 달린 의견이 앞선 의견과 합의 내용까지 함께 지웠다 —
   /// 17 화면이 약속한 "한쪽 말로 덮지 않고 둘 다 남깁니다" 와 정면으로 어긋났다.
-  dispute   String?
+  dispute       String?
   /// 그 의견을 적은 사람. 다툼이 생기면 누가 적었는지가 중요하다.
-  disputedById String?
+  disputedById  String?
   /// 정정에 어떻게 답했는지("공동 작업으로 나눔"). 적히면 의견 차이가 정리된 것으로 본다.
   /// `dispute` 는 여기 값이 생겨도 지우지 않는다 — 지우면 한쪽 말로 덮는 것이 된다.
-  resolution String?
+  resolution    String?
   /// 근거 파일. 본인이 직접 추가한 기록에만 붙는다 — 팀원이 확인할 때 열어 본다.
   /// 저장소 경로는 `{teamId}/evidence/{uuid}` 이고 드라이브와 같은 버킷·형식·용량 규칙을 따른다.
   evidencePath  String?
   evidenceName  String?
   evidenceBytes Int?
   evidenceMime  String?
-  createdAt DateTime @default(now())
+  createdAt     DateTime @default(now())
 
-  member     Member          @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
-  disputedBy Member?         @relation("ContribDisputer", fields: [disputedById], references: [id], onDelete: SetNull)
-  confirms   ContribConfirm[]
+  member         Member                 @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
+  disputedBy     Member?                @relation("ContribDisputer", fields: [disputedById], references: [id], onDelete: SetNull)
+  confirms       ContribConfirm[]
   /// 의견의 이력. **덮어쓰지 않는다.**
-  disputes   ContribDispute[]
+  disputes       ContribDispute[]
   participations ContribParticipation[]
 
   @@index([memberId])
@@ -822,17 +821,17 @@ model ContribConfirm {
 ///   아니라 사실 기록이라 조작이 드러나야 나중에 따져 볼 수 있다.
 /// - **확인과 독립이다.** 참여한다고 기록이 확정되지 않는다(확인은 팀원이 한다).
 model ContribParticipation {
-  id        String   @id @default(cuid())
-  recordId  String
+  id          String    @id @default(cuid())
+  recordId    String
   /// 현재 표시 중이면 그 기록의 id, 취소했으면 null.
   ///
   /// 유일 인덱스가 "한 기록에 표시가 두 개"를 **DB 에서** 막는다 — 두 사람이 우연히 동시에
   /// 눌러도 하나만 선다. `MeetingProposal.activeKey` · `IceRound.activeKey` 와 같은 방식이고,
   /// 지운 자리에 다시 찍을 수 있다는 이유로 과거 행까지 막지 않는다.
-  activeKey String?  @unique
+  activeKey   String?   @unique
   /// 표시한 팀장. "누가 찍었나"를 남긴다.
-  shownById String
-  shownAt   DateTime @default(now())
+  shownById   String
+  shownAt     DateTime  @default(now())
   /// 취소한 팀장과 시각. 지금 표시 중이면 null.
   clearedById String?
   clearedAt   DateTime?
@@ -846,27 +845,27 @@ model ContribParticipation {
 
 /// 할 일. 팀 업무·개인 학습·점검이 한 목록에 있고 종류로만 구분된다.
 model Task {
-  id         String   @id @default(cuid())
-  teamId     String
-  title      String
+  id          String   @id @default(cuid())
+  teamId      String
+  title       String
   /// team | study | check
-  kind       String
+  kind        String
   /// 담당자. 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다.
-  assigneeId String?
+  assigneeId  String?
   /// "9/19" 같은 표시 문자열.
-  due        String
+  due         String
   /// todo | doing | done
-  status     String   @default("todo")
+  status      String   @default("todo")
   /// clerk = AI 서기가 만듦 / manual = 사람이 직접 넣음
-  source     String   @default("manual")
+  source      String   @default("manual")
   /// 누가 넣었나. **담당자 지정 권한의 근거** — `server/actions/tasks.ts` 의 `canEditTask`.
   /// 기존 행은 `null` 이고, 그 할 일은 팀장만 고칠 수 있다(주인이 누구인지 되돌릴 수 없으므로).
   createdById String?
-  createdAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  assignee  Member?  @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  createdBy Member?  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  team      Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  assignee  Member? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy Member? @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
   pokes     Poke[]
 
   @@index([teamId])
@@ -878,10 +877,10 @@ model Task {
 /// 보낸 사람을 밝힌다. 누가 물었는지 알아야 답할 수 있고, 익명 재촉은
 /// 답할 곳 없는 압박이 된다. 대신 **업무당 하루 한 번**으로 횟수를 막는다.
 model Poke {
-  id       String   @id @default(cuid())
-  taskId   String
-  senderId String
-  sentOn   String
+  id        String   @id @default(cuid())
+  taskId    String
+  senderId  String
+  sentOn    String
   createdAt DateTime @default(now())
 
   task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -899,14 +898,14 @@ model Poke {
 ///
 /// 보관 기간은 `AI_POLICY.retentionDays` 다. 지난 행은 예약 작업이 지운다.
 model AiUsage {
-  id       String @id @default(cuid())
-  teamId   String
-  memberId String
+  id        String   @id @default(cuid())
+  teamId    String
+  memberId  String
   /// cushion | clerk | research | present | sentence
-  tool     String
+  tool      String
   /// 한국 날짜(YYYY-MM-DD). 콕 찌르기의 "하루"와 같은 기준이다 — 서버가 어디서 돌든
   /// 같은 하루여야 한다.
-  day      String
+  day       String
   createdAt DateTime @default(now())
 
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -949,21 +948,21 @@ model AiUsage {
 ///   이 도구는 일을 하지 못했다. 실패와 **다른 값**이어야 한다 — 고치는 길이 다르다.
 /// - `failed` — 아무 답도 못 받았다(타임아웃·429·깨진 JSON). 한도는 환불된다.
 model AiCall {
-  id       String @id @default(cuid())
-  teamId   String
-  memberId String
+  id        String   @id @default(cuid())
+  teamId    String
+  memberId  String
   /// cushion | clerk | research | present | sentence | read-cushion
-  tool String
+  tool      String
   /// **실제로 응답한 모델의 슬러그.** 폴백으로 다른 모델에 갔으면 그 모델이 적힌다 —
   /// "이 기능이 느린 것"과 "이 모델이 느린 것"을 나누는 값이다.
-  model  String
+  model     String
   /// 한국 날짜(YYYY-MM-DD). `AiUsage` 와 같은 기준이야 — 한 장부의 날짜가 두 종류일 수 없다.
-  day      String
+  day       String
   /// ok | refused | failed
-  outcome String
+  outcome   String
   latencyMs Int
   /// 첫 모델이 실패해서 **다른 모델로 다시 시도**했는가. 0/1 — 여기로 "폴백이 먹히나"를 잰다.
-  retried Boolean @default(false)
+  retried   Boolean  @default(false)
   createdAt DateTime @default(now())
 
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -975,46 +974,59 @@ model AiCall {
 }
 
 model IceRound {
-  id        String    @id @default(cuid())
-  teamId    String
-  activeKey String?   @unique
+  id              String    @id @default(cuid())
+  teamId          String
+  activeKey       String?   @unique
   /// liar | mafia
-  game      String
+  game            String
   /// 라이어: clue(카드 확인) → vote(투표) → liar_guess(최종 추측) → revealed
-  /// 마피아: play(낮·밤 진행) → revealed
+  /// 마피아: night(밤) → discussion(토론) → voting(투표) → (night 또 한 번 | revealed)
   /// **마피아 판에 clue 가 없는 것은 아니다** — 라이어 판은 카드 확인과 투표가 서로 다른
   /// 단계여야 "설명한다 → 투표한다"가 되지만, 마피아는 밤과 낮이 자꾸 엇갈리므로 한 단계다.
-  phase     String    @default("play")
+  phase           String    @default("play")
+  /// 몇 번째 밤인가. 마피아 판만 쓴다 — 라이어 판에는 밤이 없다.
+  day             Int       @default(1)
   /// 라이어 게임의 주제와 제시어. **제시어는 결과 공개 전에는 누구에게도 내려가지 않는다.**
-  topic     String?
-  word      String?
+  topic           String?
+  word            String?
   /// 제시어의 정답으로 받아들이는 또 쓴 표기. 최종 추측을 관대하게 판정한다.
-  aliases   String[]  @default([])
+  aliases         String[]  @default([])
   /// 라이어가 지목돼서 마지막 추측을 기다리는 사람. 끝나기 전에는 누구인지 모른다.
-  accusedId String?
+  accusedId       String?
   /// 라이어가 제출한 최종 답. 한 번만 쓰인다.
-  liarGuess String?
+  liarGuess       String?
   /// 최종 답이 맞았는지. 서버만 판정한다.
-  guessCorrect Boolean?
+  guessCorrect    Boolean?
   /// liar | citizen — 누가 이겼는지. 마피아 판은 끝나기 전 null.
-  winner String?
+  winner          String?
   /// 승패를 **코드로** 남긴다("LIAR_GUESSED_WORD"). 한국어 문장은 UI가 만든다 —
   /// 문장을 저장하면 말이 고쳐져도 쌓인 판의 결과는 옛말로 남는다.
-  resultCode String?
+  resultCode      String?
   /// 예전 판의 결과 문장. **이제부터는 쓰지 않는다** — `resultCode` 로 대신한다.
   /// 지우지 않는 이유는 그 문장이 저장된 판이 아직 DB에 있기 때문이다(기록을 지우는
   /// 마이그레이션은 하지 않는다). 읽을 때는 `resultCode` 를 먼저 보고, 없을 때만 이 값을 쓴다.
-  outcome   String?
+  outcome         String?
   /// 이 단계가 시작된 시각. 어느 단계에서 얼마나 머물렀는지 재고, 멈춘 판을 찾기 위한 것.
-  phaseStartedAt DateTime @default(now())
+  phaseStartedAt  DateTime  @default(now())
+  /// 이 판에서 투표가 몇 번째 회차인가. **늘어만 난다** — 밤이 지나도 결선이 지나도 되돌아가지
+  /// 않는다. 되돌아가면 그날 표와 오늘 표가 같은 키에 부딪혀 서로를 지운다.
+  voteSeq         Int       @default(0)
+  /// 이번 투표에서 결선을 몇 번 했는가. 투표를 열 때 0 으로 돌아간다.
+  /// **회차로 재지 않는다** — 밤이 지날 때도 회차가 올라, 하루에 세 번 결선하면 다음 날 아침에
+  /// 한도가 차 버린다.
+  runoffCount     Int       @default(0)
+  /// 지금 고를 수 있는 사람. 비어 있으면 "살아 있는 다른 사람 전부" 다. 결선에서는 동점자만.
+  eligibleTargets String[]  @default([])
   /// 판을 연 사람 = 사회자. 결과 공개·투표 마감·끝내기를 할 수 있다(팀장도 할 수 있다).
-  hostId    String
-  createdAt DateTime  @default(now())
-  endedAt   DateTime?
+  hostId          String
+  createdAt       DateTime  @default(now())
+  endedAt         DateTime?
 
-  team  Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  host  Member    @relation("IceHost", fields: [hostId], references: [id], onDelete: Cascade)
-  seats IceSeat[]
+  team      Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  host      Member           @relation("IceHost", fields: [hostId], references: [id], onDelete: Cascade)
+  seats     IceSeat[]
+  nightActs IceNightAction[]
+  ballots   IceBallot[]
 
   @@index([teamId, createdAt])
 }
@@ -1029,15 +1041,69 @@ model IceSeat {
   /// 대화는 오프라인에서 하는데 **순서만 앱이 안내한다** — "누가 먼저 하지" 로 한 번도 안
   /// 넘어가게 하려고. 누가 말을 끝냈는지는 앱이 모른다.
   turnOrder Int?
-  /// 마피아에서 탈락한 시각과 방법(vote = 낮 투표 / night = 사회자가 밤 결과로 표시).
+  /// 마피아에서 탈락한 시각과 방법(vote = 낮 투표 / night = 밤 판정 결과).
   /// 라이어 게임은 늘 null. 탈락 순서는 `outAt` 으로 정한다.
   outAt     DateTime?
   outHow    String?
-  /// 지금 투표에서 고른 사람. 동점 처리를 하면 비운다.
-  voteForId String?
+  /// 몇 번째 밤/낮에서 빠졌는가. **`outAt` 시각만으로는 알 수 없다** — 밤 하나가 자정을 넘겨
+  /// 진행되면 날짜로는 구분되지 않는다(2일차 밤이 다음 날 00:30일 수 있다).
+  /// 예전에 이미 죽은 자리는 null 로 남는다 — 되살릴 값이 없다.
+  outDay    Int?
 
   round  IceRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
   member Member   @relation("IceSeatOf", fields: [memberId], references: [id], onDelete: Cascade)
 
   @@id([roundId, memberId])
+}
+
+/// 밤 행동 한 건. 마피아 판의 밤에만 쌓인다.
+///
+/// **(roundId, day, actorId, kind) 가 곧 키다** — 같은 사람이 같은 밤에 같은 행동을 다시 하면
+/// 두 줄이 아니라 **한 줄이 바뀐다.** 밤에 결정을 바꿀 수 있어야 하고(손을 거두고 다시 고르는
+/// 것이 자연스럽다), 두 줄이 쌓이면 "몇 명이 이미 골랐나" 를 셀 수 없다.
+///
+/// 행동의 결과(누가 빠졌는지)는 저장하지 않는다. 밤을 마칠 때 서버가 한 번에 판정하고 자리에서
+/// 지운다 — 경찰의 조사 결과만 예외로, 그 경찰에게만 보여 주기 위해 **조사 대상은 남겨 둔다.**
+model IceNightAction {
+  roundId   String
+  /// 몇 번째 밤의 행동인가. 밤이 끝나도 남는다 — 경찰이 지난 밤의 조사 결과를 기억해야 한다.
+  day       Int
+  actorId   String
+  /// mafia_kill | doctor_save | police_check
+  kind      String
+  /// 대상은 한 명. 살아 있는 자리만 가리킨다(삭제된 자리의 기록은 남겨 둔다).
+  targetId  String
+  /// 언제 들어왔는가. 판을 마치는 데 쓰지 않는다 — 이 값이 지난 밤을 오늘 밤으로 착각하게 두면
+  /// 설명할 수 없는 버그가 된다.
+  createdAt DateTime @default(now())
+
+  round IceRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@id([roundId, day, actorId, kind])
+  /// 밤을 판정할 때 "이 판의 이 밤" 행동을 한 번에 읽는다.
+  @@index([roundId, day])
+  /// 경찰이 지난 밤의 조회를 찾는다 — 밤 번호를 몰라도 자기 것만 찾을 수 있어야 한다.
+  @@index([roundId, actorId])
+}
+
+/// 표 한 장. **(roundId, seq, memberId) 가 곧 키다** — 같은 사람이 같은 회차에서 다시 고르면 두 줄이
+/// 아니라 한 줄이 바뀐다. 지난 회차의 표는 지우지 않는다 — "누가 누구에게 표를 던졌는가" 의 기록이고
+/// 결과 화면이 읽는다.
+model IceBallot {
+  roundId  String
+  /// 몇 번째 투표 회차인가. **결선도 새 회차다** — 결선은 같은 표를 다시 고르는 것이 아니라
+  /// 후보가 좁혀진 새 투표라, 회차가 늘지 않으면 결선 앞의 표가 결선 표에 덮어써진다.
+  seq      Int
+  /// 몇 번째 낮의 투표인가.
+  day      Int
+  memberId String
+  targetId String
+  /// 이 표가 결선에서 나온 것인가. 결과 화면에서 결선 투표와 보통 투표를 구분한다.
+  runoff   Boolean @default(false)
+
+  round IceRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@id([roundId, seq, memberId])
+  @@index([roundId, seq])
+  @@index([roundId, memberId])
 }

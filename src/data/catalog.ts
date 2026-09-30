@@ -15,7 +15,7 @@ import type {
   SentenceMode,
   TaskKind,
 } from "@/lib/types";
-import { MAFIA_MIN_PLAYERS } from "@/lib/mafia-rules";
+import { MAFIA_MAX_PLAYERS, MAFIA_MIN_PLAYERS } from "@/lib/mafia-rules";
 
 /**
  * 제품 설정값.
@@ -356,10 +356,13 @@ export const ICE_GAMES: IceGame[] = [
       "밤에는 사회자가 진행합니다 — 모두 눈을 감고, 사회자가 부르는 역할만 눈을 떠 손짓으로 고릅니다.",
       "낮에는 이야기를 나누고 탈락시킬 사람에게 투표합니다.",
       "마피아가 모두 탈락하면 시민 승리, 마피아 수가 나머지와 같아지면 마피아 승리입니다.",
-      `${MAFIA_MIN_PLAYERS}명부터 열 수 있습니다. 7명부터 마피아 2명, 10명부터 마피아 3명입니다.`,
+      `${MAFIA_MIN_PLAYERS}명부터 ${MAFIA_MAX_PLAYERS}명까지 열 수 있습니다. 7명부터 마피아 2명, 10명부터 마피아 3명입니다.`,
     ],
     // 3~4명은 밤과 투표 한 번으로 끝나고 라이어 게임이 어울린다(`mafia-rules.ts`).
+    // ⚠️ 상한이 없다면 15명 판도 마피아 3명이다 — 밤이 수십 번 반복돼 아이스브레이킹이
+    //    판이 된다. 더 많은 사람이 하고 싶으면 두 판을 한다.
     minPlayers: MAFIA_MIN_PLAYERS,
+    maxPlayers: MAFIA_MAX_PLAYERS,
     playable: true,
   },
 ];
