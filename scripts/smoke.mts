@@ -1,6 +1,6 @@
 import "../scripts/load-env.mjs";
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { stripComments } from "../scripts/strip-comments.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
@@ -218,6 +218,111 @@ function truthy(what: string, got: boolean) {
 console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴다)");
 {
   const wanters = [
+/* ── 사용자 노출 용어: 기준에서 되돌아가지 않았는지 ─────────── */
+
+/**
+ * 예전 화면 문구 → 기준 용어. **기준은 [`docs/product-language.md`](../docs/product-language.md).**
+ *
+ * ## 왜 금지어가 아니라 **예전 문구 그대로**인가
+ *
+ * `순화` 를 부분 문자열로 막으면 지금도 남아 있는 내부 개념 설명(`api.ts` 의 "순화 상태",
+ * `use-chat-thread.ts` 의 "순화가 왜 멈췄는지")이 걸린다. 그건 오탐이고, 오탐이 있는
+ * 검사는 첫날부터 무력화된다 — 여기 적힌 문자열은 **모두 화면에 실제로 나갔던 문구**다.
+ *
+ * `거절하기` 를 넣지 않은 것도 이유가 있다. 재입장 승인에서 `거절` 은 **옳은 용어**다
+ * (`docs/product-language.md`). 역할 쪽만 `안 받기` 로 바꿨으므로, 전역 금지로 두면
+ * 엉뚱한 화면까지 망가뜨리는 검사가 된다. 예외가 있다는 사실이 곧 raw grep 이 못 가는 이유다.
+ */
+const LEGACY_PRODUCT_COPY = [
+  { legacy: "기여도", canonical: "기여 기록" },
+  { legacy: "합의한 역할", canonical: "확정된 역할" },
+  { legacy: "수락하기", canonical: "받기" },
+  { legacy: "순화해서 읽기", canonical: "읽기 도움" },
+  { legacy: "읽기 순화 설정", canonical: "읽기 도움 설정" },
+  { legacy: "순화됨", canonical: "다듬어 읽음" },
+  { legacy: "순화문", canonical: "다듬어 읽은 말" },
+  { legacy: "순화 몫", canonical: "읽기 도움 몫" },
+] as const;
+
+/**
+ * `src/` 아래의 화면·서버 소스. 생성물과 테스트는 뺀다.
+ *
+ * **`server/` 는 일부러 넣었다.** 서버에도 사용자 문자열이 산다 — 알림 본문
+ * (`actions/social.ts`) 과 공유 판정의 문구(`features/roles/roster-model.ts`) 다.
+ * 빼면 사용자에게 나가는 문구가 검사 밖으로 빠져나간다.
+ *
+ * `generated/` 는 Prisma 클라이언트라 한국어 문구가 없고 양만 많다.
+ */
+function productCopySources(dir: URL): URL[] {
+  const out: URL[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
+    if (entry.isDirectory()) {
+      if (entry.name === "generated" || entry.name === "node_modules") continue;
+      out.push(...productCopySources(child));
+      continue;
+    }
+    if (!/\.tsx?$/.test(entry.name)) continue;
+    if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
+    out.push(child);
+  }
+  return out;
+}
+
+/**
+ * 사용자 노출 카피가 기준대로인지 본다.
+ *
+ * **주석은 지운 뒤에 찾는다**(`strip-comments.mjs` 는 위치를 보존하므로 줄 번호가 그대로
+ * 남는다). 그렇지 않으면 `lib/types.ts` 같은 계약 파일의 설명이 "사용자 문구"로 잡힌다 —
+ * 그게 이 검사를 처음부터 무력화하는 길이다.
+ *
+ * 검사 대상 문자열은 전부 한국어라 **식별자가 될 수 없다.** 주석을 지우면 남는 곳은 문자열
+ * 리터럴과 JSX 텍스트뿐이고, 그게 검사하려는 대상이다.
+ *
+ * **`확인 대기` 는 넣지 않았다** — 기준 용어인 `팀원 확인 대기` 안에 부분 문자열로 들어 있어
+ * 올바른 문구를 실패로 본다.
+ */
+function checkProductLanguage() {
+  const root = new URL("../", import.meta.url);
+  const found: { at: string; line: number; text: string; legacy: string; canonical: string }[] =
+    [];
+
+  for (const file of productCopySources(new URL("src/", root))) {
+    // 원문을 따로 읽어야 줄을 그대로 인용할 수 있다 — 지운 뒤엔 빈칸만 남는다.
+    const original = readFileSync(file, "utf8");
+    const stripped = stripComments(original);
+    for (const { legacy, canonical } of LEGACY_PRODUCT_COPY) {
+      let at = stripped.indexOf(legacy);
+      while (at !== -1) {
+        const line = stripped.slice(0, at).split("\n").length;
+        found.push({
+          at: file.pathname.slice(root.pathname.length),
+          line,
+          text: original.split("\n")[line - 1]?.trim() ?? "",
+          legacy,
+          canonical,
+        });
+        at = stripped.indexOf(legacy, at + legacy.length);
+      }
+    }
+  }
+
+  if (found.length === 0) {
+    check("사용자 노출 용어가 기준과 같다", true, true);
+    return;
+  }
+
+  // `check` 의 집계만 빌리고 메시지는 직접 — "기대/실제" 로 이 일을 설명할 수 없다.
+  failed += found.length;
+  for (const hit of found) {
+    console.log(
+      `  ✗ [product-language] ${hit.at}:${hit.line}\n` +
+        `      "${hit.legacy}" 는 쓰지 않습니다. docs/product-language.md 기준: "${hit.canonical}"\n` +
+        `      > ${hit.text}`,
+    );
+  }
+}
+
     { id: "1", name: "김민준", veto: "present" as const },
     { id: "2", name: "최유나", veto: null },
   ];
@@ -2882,3 +2987,6 @@ await db.$disconnect();
 
 console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);
 if (failed > 0) process.exit(1);
+console.log("\n사용자 노출 용어");
+checkProductLanguage();
+
