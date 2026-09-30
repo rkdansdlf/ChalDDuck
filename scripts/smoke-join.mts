@@ -1,6 +1,11 @@
-import { db, check, readCode, finish } from "./db-test-base.mjs";
+import { db, check, truthy, readCode, finish } from "./db-test-base.mjs";
 import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
+import {
+  INVITE_TOKEN_LENGTH,
+  looksLikeInviteToken,
+  newInviteToken,
+} from "../src/server/auth/invite-token.js";
 import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
   clientGate,
@@ -177,6 +182,43 @@ console.log("\n초대 선택지 (서버가 다시 보는 값)");
   check("팀장 확인이 초대 발급보다 먼저 온다", action.indexOf("requireLeader()") < action.indexOf("createTeamInvite(leader.teamId"), true);
   check("화면 값을 서버가 다시 거른다", /!isUseChoice\(maxUses\)/.test(action) && /!isExpiryChoice\(days\)/.test(action), true);
   check("이름도 서버에서 자른다", /label\.length > INVITE_LABEL_MAX/.test(action), true);
+
+  /**
+   * **화면이 고르는 목록이 서버의 목록과 어긋나면 안 된다.** 서버가 조용히 값을 자르는
+   * 경로라(위 주석), 화면에만 적힌 값이 생기면 "몇 명분" 을 눌렀는데 반영이 안 되는 것으로
+   * 보인다 — 무엇이 틀렸는지 아무 화면에도 없다.
+   *
+   * `roster-screen.tsx` 이 `USE_CHOICES` 를 부르는지 소스로 본다. 상수만 맞아도 화면이 따로
+   * 적어 두면 이 검사는 통과하므로, **화면 쪽을 봐야 한다.**
+   */
+  const roster = readCode("../src/features/roles/roster-screen.tsx");
+  truthy("초대 화면은 USE_CHOICES 를 부른다", roster.includes("USE_CHOICES"));
+  truthy("초대 화면은 EXPIRY_CHOICES 를 부른다", roster.includes("EXPIRY_CHOICES"));
+  check("화면이 인원수를 다시 적지 않는다", /\[\s*"\d+"\s*,/.test(roster), false);
+  // 기한은 값과 이름을 같이 적어 두기 쉬워서 따로 본다 — 위 검사는 둘을 함께 본다.
+  check("화면이 기한 값을 다시 적지 않는다", /\[\s*"\d+"\s*,\s*"/.test(roster), false);
+}
+
+console.log("\n초대 토큰 (길이와 정규식이 같이 움직여야 한다)");
+{
+  /**
+   * **상수와 정규식을 따로 적으면 조용히 어긋난다.** 길이를 44로 바꾸고 정규식만 43으로
+   * 남으면 **정상 토큰을 버리는 문지기**가 된다. 이 필터는 해시하기 전에 버리는 비용 게이트라
+   * (`auth/invite-token.ts` 의 주석) 어느 쪽으로 틀어도 예외 없이 "초대가 안 먹힌다" 만
+   * 보인다 — 그래서 발급과 검증을 한 쌍으로 확인한다.
+   */
+  const token = newInviteToken();
+  check("발급한 토큰은 자기 길이다", token.length, INVITE_TOKEN_LENGTH);
+  truthy("발급한 토큰을 자기 검증기가 통과시킨다", looksLikeInviteToken(token));
+
+  // 알파벳은 base64url 이고 `+` `/` `=` 가 없어야 쿼리 문자열에서 안 깨진다.
+  check("알파벳이 base64url 이다", /^[A-Za-z0-9_-]+$/.test(token), true);
+
+  // 한 글자라도 다르면 버린다 — 조각 맞춰 붙이는 값이 통과해서는 안 된다.
+  check("한 글자 짧으면 버린다", looksLikeInviteToken(token.slice(0, -1)), false);
+  check("한 글자 길면 버린다", looksLikeInviteToken(`${token}x`), false);
+  check("공백이 섞이면 버린다", looksLikeInviteToken(`${token.slice(0, 5)} ${token.slice(6)}`), false);
+  check("아무것도 안 오면 버린다", looksLikeInviteToken(""), false);
 }
 
 console.log("\n초대가 지금 들어오는 길을 열어 주는가");
