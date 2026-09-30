@@ -10,20 +10,10 @@ import {
 import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
 import { levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
+import { orNull, shapeClerkDraft, shapePresentDraft } from "@/lib/ai-draft-shape";
 import type { CushionLevelKey } from "@/lib/types";
-import { askShape, askText, askWithSearch, isAiConfigured } from "./model";
+import { askShape, askText, askTextStreaming, askWithSearch, isAiConfigured } from "./model";
 import { defaultProvider, type CushionProvider } from "./cushion-provider";
-
-/**
- * 모델이 "없음"을 적는 방식이 제각각이다 — 빈 문자열, "null", "미정", "<UNKNOWN>".
- * 무료 라우터에서 실제로 겪었다. 프롬프트로 부탁만 하지 않고 여기서 한 번 더 거른다.
- */
-const NOTHING = new Set(["", "null", "none", "n/a", "미정", "없음", "<unknown>", "unknown", "-"]);
-
-function orNull(value: string | null | undefined): string | null {
-  const trimmed = (value ?? "").trim();
-  return NOTHING.has(trimmed.toLowerCase()) ? null : trimmed;
-}
 
 /**
  * AI 도구 5종의 실제 내용.
@@ -38,6 +28,12 @@ function orNull(value: string | null | undefined): string | null {
  * 예전에는 여기서 "화면은 `isAiConfigured()` 로 어느 쪽인지 알고 알린다" 고 적었고, 실제로
  * 다섯 화면이 그랬다. 그런데 그 기억이 한 곳에서 빠져서 **예시가 "AI 초안" 배지 아래에 있는**
  * 일이 생겼다. 그래서 판정하는 자리를 서버 한 곳(`runTool`)으로 모았다.
+ *
+ * ## 모델이 뭘 돌려주든 화면에 오게 정리하는 일은 여기 하지 않는다
+ *
+ * `lib/ai-draft-shape.ts` 가 한다. "담당자가 빈 문자열로 왔다" 같은 것을 걸러 내는 규칙은
+ * **계약**이고, 계약은 스모크가 **모델을 부르지 않고** 확인해야 한다. 여기에 그대로 두면
+ * 확인하려면 AI 를 불러야 하고, 그러면 안 지켜졌을 때 아무도 모른다.
  */
 
 /**
@@ -64,16 +60,14 @@ const TONE_GUIDE: Record<string, string> = {
 };
 
 /**
- * 말투만 바꾼다.
+ * 쿠션 번역기의 지시. **부르는 방식이 두 개여도 지시는 하나여야 한다.**
  *
- * **요구하는 내용(무엇이 필요한지·언제까지인지)은 그대로 둔다.** 부탁을 없애거나
- * 마감을 늦춰 적으면 말은 부드러워져도 일이 굴러가지 않는다.
+ * 스트리밍 여부를 나누면서 지시를 복사하면 언젠가 한쪽만 고쳐진다 — 그러면 "화면이 기다리는
+ * 버전"과 "안 기다리는 버전"의 결과가 달라지고, **같은 도구가 두 개의 품질을 갖게 된다.**
+ * 그래서 지시는 여기서 만들고(`cushionPrompt`) 부르는 자리만 나눈다.
  */
-export async function rewriteWithCushion(text: string, tone: string): Promise<string> {
-  if (!isAiConfigured()) return CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
-
-  return askText({
-    system: `${BASE}
+function cushionPrompt(tone: string): string {
+  return `${BASE}
 
 너는 쿠션 번역기다. 팀원에게 하려던 말을 **말투만** 바꿔 다시 적는다.
 
@@ -84,9 +78,52 @@ export async function rewriteWithCushion(text: string, tone: string): Promise<st
 - 원문과 비슷한 길이로, 두세 문장 안에서 끝낸다.
 - 다듬은 문장만 출력한다. 설명·따옴표·머리말을 붙이지 않는다.
 
-이번 말투: ${TONE_GUIDE[tone] ?? TONE_GUIDE.soft}`,
+이번 말투: ${TONE_GUIDE[tone] ?? TONE_GUIDE.soft}`;
+}
+
+/**
+ * 말투만 바꾼다.
+ *
+ * **요구하는 내용(무엇이 필요한지·언제까지인지)은 그대로 둔다.** 부탁을 없애거나
+ * 마감을 늦춰 적으면 말은 부드러워져도 일이 굴러가지 않는다.
+ */
+export async function rewriteWithCushion(text: string, tone: string, model?: string): Promise<string> {
+  if (!isAiConfigured()) return CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
+
+  return askText({
+    tool: "cushion",
+    ...(model ? { model } : {}),
+    system: cushionPrompt(tone),
     user: text,
     maxTokens: 512,
+  });
+}
+
+/**
+ * 말투만 바꾸되 **오는 동안마다** 알려 준다.
+ *
+ * 완성된 글은 `rewriteWithCushion` 과 **똑같다.** 다른 것은 사람이 기다리지 않아도 된다는 것뿐이다.
+ *
+ * **예시는 한 번에 보낸다.** 예시를 조각으로 흉내 내면 "AI 가 쓰는 것처럼" 보이는데 실제로는
+ * 모델이 한 일이 아니다 — 출처 표시는 남지만 첫인상이 틀리면 사람이 그 표지를 믿지 않게 된다.
+ */
+export async function rewriteWithCushionStreaming(
+  text: string,
+  tone: string,
+  onDelta: (delta: string) => void,
+): Promise<string> {
+  if (!isAiConfigured()) {
+    const sample = CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
+    onDelta(sample);
+    return sample;
+  }
+
+  return askTextStreaming({
+    tool: "cushion",
+    system: cushionPrompt(tone),
+    user: text,
+    maxTokens: 512,
+    onDelta,
   });
 }
 
@@ -187,14 +224,17 @@ ${hasContext ? BEFORE_GUIDE : NO_CONTEXT_GUIDE}
  * **담당자는 회의에서 실제로 정해진 경우에만 채운다.** AI 가 추측으로 채우면
  * 아무도 책임지지 않는 업무가 생긴다. 근거(`basis`)도 메모에 적힌 말이어야 한다.
  */
-export async function summarizeMeeting(raw: string): Promise<ClerkDraft> {
+export async function summarizeMeeting(raw: string, model?: string): Promise<ClerkDraft> {
   if (!isAiConfigured()) return CLERK_SAMPLE_DRAFT;
 
-  const draft = await askShape<{
-    summary: string;
-    candidates: Array<{ title: string; assignee: string | null; basis: string; due: string }>;
-  }>({
-    system: `${BASE}
+  return shapeClerkDraft(
+    await askShape<{
+      summary: string;
+      candidates: Array<{ title: string; assignee: string | null; basis: string; due: string }>;
+    }>({
+      tool: "clerk",
+      ...(model ? { model } : {}),
+      system: `${BASE}
 
 너는 AI 서기다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
 
@@ -206,49 +246,34 @@ export async function summarizeMeeting(raw: string): Promise<ClerkDraft> {
   담당자가 null 이면 "담당 미정 — 직접 정해 주세요" 처럼 정해지지 않았다고 적는다.
 - due 는 메모에 날짜가 있을 때만 "9/22" 형식으로 넣고, 없으면 "미정" 으로 둔다.
 - 할 일이 아닌 것(다음 회의 일정, 잡담)은 후보에 넣지 않는다.`,
-    user: raw,
-    shapeName: "meeting_draft",
-    shapeDescription: "회의 메모에서 뽑은 요약과 할 일 후보",
-    schema: {
-      type: "object",
-      properties: {
-        summary: { type: "string", description: "회의 요약. 두 문장 이내." },
-        candidates: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              title: { type: "string", description: "할 일 한 줄" },
-              assignee: {
-                type: ["string", "null"],
-                description: "메모에 적힌 담당자 이름. 정해지지 않았으면 null.",
+      user: raw,
+      shapeName: "meeting_draft",
+      shapeDescription: "회의 메모에서 뽑은 요약과 할 일 후보",
+      schema: {
+        type: "object",
+        properties: {
+          summary: { type: "string", description: "회의 요약. 두 문장 이내." },
+          candidates: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "할 일 한 줄" },
+                assignee: {
+                  type: ["string", "null"],
+                  description: "메모에 적힌 담당자 이름. 정해지지 않았으면 null.",
+                },
+                basis: { type: "string", description: "이 후보를 넣은 근거" },
+                due: { type: "string", description: '"9/22" 형식 또는 "미정"' },
               },
-              basis: { type: "string", description: "이 후보를 넣은 근거" },
-              due: { type: "string", description: '"9/22" 형식 또는 "미정"' },
+              required: ["title", "assignee", "basis", "due"],
             },
-            required: ["title", "assignee", "basis", "due"],
           },
         },
+        required: ["summary", "candidates"],
       },
-      required: ["summary", "candidates"],
-    },
-  });
-
-  return {
-    summary: draft.summary?.trim() ?? "",
-    candidates: (draft.candidates ?? [])
-      // 제목 없는 후보는 화면에서 빈 줄이 된다.
-      .filter((c) => orNull(c.title) !== null)
-      .map((c, index) => ({
-        id: `c${index + 1}`,
-        title: c.title.trim(),
-        // 담당자는 **정해졌을 때만** 이름이다. 빈 문자열이 넘어오면 정해진 것처럼 보여
-        // 아무도 책임지지 않는 업무가 생긴다 — 07 의 MBTI 배정 금지와 같은 급의 약속이다.
-        assignee: orNull(c.assignee),
-        basis: orNull(c.basis) ?? "담당 미정 — 직접 정해 주세요",
-        due: orNull(c.due) ?? "미정",
-      })),
-  };
+    }),
+  );
 }
 
 /* ── 25 AI 리서처 ───────────────────────────────────────────── */
@@ -266,10 +291,12 @@ export async function summarizeMeeting(raw: string): Promise<ClerkDraft> {
  * 왜 비었는지가 아무 데도 없었다 — 아무것도 못 찾은 것과 화면이 고장난 것이 구분되지 않는
  * 상태였다. 이제 그 말을 첫 번째 결과로 돌려준다.
  */
-export async function searchResearch(query: string): Promise<ResearchResult[]> {
+export async function searchResearch(query: string, model?: string): Promise<ResearchResult[]> {
   if (!isAiConfigured()) return RESEARCH_SAMPLE_RESULTS;
 
   const answer = await askWithSearch({
+    tool: "research",
+    ...(model ? { model } : {}),
     system: `${BASE}
 
 너는 AI 리서처다. 팀플 발표·보고서에 쓸 자료를 웹에서 찾아 정리한다.
@@ -294,6 +321,10 @@ export async function searchResearch(query: string): Promise<ResearchResult[]> {
   const shaped = await askShape<{
     results: Array<{ title: string; source: string; snippet: string; url: string }>;
   }>({
+    tool: "research",
+    // **카드 정리도 같은 모델로** 한다. 검색한 모델과 정리하는 모델이 다르면 앞 model's
+    // 인용 목록을 뒤 모델이 옮겨 적는 동안 주소가 뒤틀린다 — 출처 약속이 여기서 깨진다.
+    ...(model ? { model } : {}),
     system: `${BASE}
 
 아래는 웹 검색으로 찾은 내용과 그 출처 목록이다. 이것을 자료 카드로 정리한다.
@@ -364,11 +395,14 @@ function hostOf(url: string): string {
  * 내용을 새로 지어내지 않는다 — 대본에 없는 수치나 사례가 들어가면 발표자가
  * 무대에서 모르는 말을 읽게 된다.
  */
-export async function refineScript(raw: string): Promise<PresentDraft> {
+export async function refineScript(raw: string, model?: string): Promise<PresentDraft> {
   if (!isAiConfigured()) return PRESENT_SAMPLE_DRAFT;
 
-  const draft = await askShape<PresentDraft>({
-    system: `${BASE}
+  return shapePresentDraft(
+    await askShape<{ refined: string; questions: string[] }>({
+      tool: "present",
+      ...(model ? { model } : {}),
+      system: `${BASE}
 
 너는 발표 지원 도구다. 발표 대본의 표현을 다듬고, 나올 만한 질문을 뽑는다.
 
@@ -378,28 +412,24 @@ export async function refineScript(raw: string): Promise<PresentDraft> {
 - 원문과 비슷한 길이를 유지한다. 요약하지 않는다.
 - questions 는 청중이나 교수가 물을 법한 질문 3~5개. 대본 내용에서 나오는 것만 적는다.
   질문만 적고 답은 적지 않는다.`,
-    user: raw,
-    shapeName: "present_draft",
-    shapeDescription: "다듬은 대본과 예상 질문",
-    schema: {
-      type: "object",
-      properties: {
-        refined: { type: "string", description: "표현만 다듬은 대본" },
-        questions: {
-          type: "array",
-          items: { type: "string" },
-          description: "예상 질문 3~5개",
+      user: raw,
+      shapeName: "present_draft",
+      shapeDescription: "다듬은 대본과 예상 질문",
+      schema: {
+        type: "object",
+        properties: {
+          refined: { type: "string", description: "표현만 다듬은 대본" },
+          questions: {
+            type: "array",
+            items: { type: "string" },
+            description: "예상 질문 3~5개",
+          },
         },
+        required: ["refined", "questions"],
       },
-      required: ["refined", "questions"],
-    },
-    maxTokens: 3000,
-  });
-
-  return {
-    refined: draft.refined?.trim() ?? "",
-    questions: (draft.questions ?? []).map((q) => q.trim()).filter(Boolean),
-  };
+      maxTokens: 3000,
+    }),
+  );
 }
 
 /* ── 27 상황별 문장 변환 ────────────────────────────────────── */
@@ -414,18 +444,51 @@ const MODE_GUIDE: Record<string, string> = {
 - 묻고 싶은 내용 자체는 바꾸지 않는다.`,
 };
 
-/** 상황에 맞는 문장으로 바꾼다. 쿠션 번역기(말투)와는 다른 기능이다. */
-export async function convertSentence(text: string, mode: string): Promise<string> {
-  if (!isAiConfigured()) return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
-
-  return askText({
-    system: `${BASE}
+/** 문장 변환의 지시. 쿠션 번역기와 같은 이유로 **한 곳에만** 둔다. */
+function sentencePrompt(mode: string): string {
+  return `${BASE}
 
 너는 상황별 문장 변환 도구다. 바꾼 문장만 출력한다 — 설명·따옴표·머리말을 붙이지 않는다.
 
 이번 모드:
-${MODE_GUIDE[mode] ?? MODE_GUIDE.summary}`,
+${MODE_GUIDE[mode] ?? MODE_GUIDE.summary}`;
+}
+
+/** 상황에 맞는 문장으로 바꾼다. 쿠션 번역기(말투)와는 다른 기능이다. */
+export async function convertSentence(text: string, mode: string, model?: string): Promise<string> {
+  if (!isAiConfigured()) return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
+
+  return askText({
+    tool: "sentence",
+    ...(model ? { model } : {}),
+    system: sentencePrompt(mode),
     user: text,
     maxTokens: 1024,
+  });
+}
+
+/**
+ * 문장으로 바꾸되 **오는 동안마다** 알려 준다.
+ *
+ * 요약 모드에서는 **길이가 화면에서 줄어드는 것**이 특히 눈에 띈다 — 끝까지 빈 화면이었다가
+ * 한 번에 차는 것보다 훨씬 나아 보인다. 완성된 글은 `convertSentence` 와 똑같다.
+ */
+export async function convertSentenceStreaming(
+  text: string,
+  mode: string,
+  onDelta: (delta: string) => void,
+): Promise<string> {
+  if (!isAiConfigured()) {
+    const sample = SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
+    onDelta(sample);
+    return sample;
+  }
+
+  return askTextStreaming({
+    tool: "sentence",
+    system: sentencePrompt(mode),
+    user: text,
+    maxTokens: 1024,
+    onDelta,
   });
 }

@@ -1,6 +1,7 @@
 import "../scripts/load-env.mjs";
 
 import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { stripComments } from "../scripts/strip-comments.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
@@ -22,13 +23,23 @@ import {
   AI_POLICY,
   CUSHION_DEFAULT_MODE,
   CUSHION_LEVELS,
+  ICE_GAMES,
   MENU_OPTIONS,
   RANDOM_TOOLS,
   ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
 } from "../src/data/catalog.js";
-import { canEditTask, taskEditBlock } from "../src/lib/task-permission.js";
+import {
+  MAFIA_MIN_PLAYERS,
+  MAFIA_PRESETS,
+  countRoles,
+  mafiaLineup,
+  mafiaLineupText,
+  mafiaOutcome,
+  mafiaWinner,
+} from "../src/lib/mafia-rules.js";
+import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "../src/lib/task-permission.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
 import {
@@ -66,6 +77,19 @@ import {
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
 import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
+import { consumeAiQuota, refundAiQuota } from "../src/server/ai/limit.js";
+import { fallbackModelFor, isTransient, modelFor } from "../src/server/ai/model.js";
+import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
+import { flush, newLineSplitter, pushBytes } from "../src/lib/ai-stream-lines.js";
+import {
+  boxesDueSoon,
+  buildBriefing,
+  isDueUnset,
+  isMeetingToday,
+  pokeTargets,
+  suggestTools,
+} from "../src/features/home/briefing.js";
+import { aiCallStats, describeAiCalls, type AiCallStats } from "../src/server/ai/call-stats.js";
 import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
@@ -116,7 +140,18 @@ import {
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
 import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
-import type { ChatMessage, MeetingProposal, RoleDrawResult } from "../src/lib/types.js";
+import type { ChatMessage, IcePhase, IceRole, MeetingProposal, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
+import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
+import {
+  ICE_RESULT_CODES,
+  canVoteNow,
+  checkLiarGuess,
+  deal,
+  iceResultText,
+  maySeeWord,
+  resolveLiarVote,
+} from "../src/server/ice/rules.js";
+import { icePhase, iceViewFor } from "../src/server/ice/view.js";
 import {
   clientGate,
   isJoinCapped,
@@ -213,11 +248,6 @@ function truthy(what: string, got: boolean) {
   check(what, got, true);
 }
 
-/* ── 역할 추첨: Veto 는 후보에서 빠진다 ─────────────────────── */
-
-console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴다)");
-{
-  const wanters = [
 /* ── 사용자 노출 용어: 기준에서 되돌아가지 않았는지 ─────────── */
 
 /**
@@ -323,6 +353,11 @@ function checkProductLanguage() {
   }
 }
 
+/* ── 역할 추첨: Veto 는 후보에서 빠진다 ─────────────────────── */
+
+console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴다)");
+{
+  const wanters = [
     { id: "1", name: "김민준", veto: "present" as const },
     { id: "2", name: "최유나", veto: null },
   ];
@@ -570,6 +605,77 @@ console.log("\n이름");
   truthy("macOS 가 넘긴 이름이 실제로 다르게 보인다", nfd !== "김민준");
   check("그래도 같은 이름으로 정리된다", normalizeName(nfd), "김민준");
   check("양쪽 끝 공백도 함께", normalizeName("  김민준  "), "김민준");
+}
+
+/* ── 마피아: 역할 구성과 승패 (서버와 화면이 같은 표를 쓴다) ── */
+
+console.log("\n마피아 역할 구성");
+{
+  // 프리셋 한 줄이 인원과 어긋나면 나눠준 역할 중 하나가 자리 없이 사라진다.
+  for (const preset of MAFIA_PRESETS) {
+    check(`${preset.players}명은 자리 ${preset.players}개를 모두 받는다`, preset.roles.length, preset.players);
+    truthy(`${preset.players}명에는 마피아가 있다`, preset.roles.includes("mafia"));
+  }
+
+  check("4명은 판이 없다 — 밤 한 번으로 끝난다", mafiaLineup(4), null);
+  check("3명도 없다", mafiaLineup(3), null);
+  check("5명이 첫 줄이다", mafiaLineup(5), MAFIA_PRESETS[0].roles);
+
+  // 프리셋을 넘어선 인원은 시민만 늘어난다 — 모르는 역할이 새로 나오지 않는다.
+  const twelve = mafiaLineup(12)!;
+  check("12명은 10명 구성에서 시민만 늘어난다", twelve.filter((r) => r === "citizen").length, 7);
+  check("12명의 자리 수는 인원과 같다", twelve.length, 12);
+
+  check("7명부터 마피아가 2명이다", countRoles(mafiaLineup(7)!).mafia, 2);
+  check("10명부터 마피아가 3명이다", countRoles(mafiaLineup(10)!).mafia, 3);
+  check("인원이 늘어도 경찰은 한 명이다", countRoles(mafiaLineup(10)!).police, 1);
+
+  // **화면이 막는 최소 인원**과 **서버가 배분할 수 있는 최소 인원**이 어긋나면 아무도 오지
+  // 못하거나 역할이 없는 판이 열린다. 두 값은 프리셋에서 같은 곳을 본다.
+  const mafiaGame = ICE_GAMES.find((g) => g.key === "mafia")!;
+  check("화면이 막는 최소 인원이 규칙과 같다", mafiaGame.minPlayers, MAFIA_MIN_PLAYERS);
+  check("규칙상 최소 인원이 실제로 배분된다", mafiaLineup(mafiaGame.minPlayers) !== null, true);
+  truthy(
+    "최소 인원이 게임 방법에 적혀 있다",
+    mafiaGame.howTo.some((line) => line.includes(`${MAFIA_MIN_PLAYERS}명부터`)),
+  );
+  // 라이어 게임은 마피아 규칙을 받지 않는다 — 3명이면 그 인원으로도 한다.
+  check("라이어는 3명부터다", ICE_GAMES.find((g) => g.key === "liar")!.minPlayers, 3);
+
+  check("구성 설명이 역할 수와 같다", mafiaLineupText(7), "마피아 2 · 경찰 1 · 의사 1 · 시민 3");
+  check("인원이 모자라면 그 말만 한다", mafiaLineupText(4), `${MAFIA_MIN_PLAYERS}명부터`);
+}
+
+console.log("\n마피아 승패 판정");
+{
+  const five = mafiaLineup(5)!;
+  // 5명 판: 마피아 1. 밤에 **시민**이 1명 죽어도(4명) 아직 끝나지 않는다.
+  // ⚠️ `five.slice(1)` 로는 안 된다 — 0번이 마피아라 **마피아가 죽어** 시민 승리가 된다.
+  check("밤에 1명이 죽었을 때 아직 진행 중", mafiaOutcome(["mafia", "police", "citizen", "citizen"]), null);
+  check("밤에 마피아가 죽으면 시민 승리", mafiaOutcome(five.slice(1)), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  // 시민이 1명만 남으면 마피아와 1대1 — 이 순간에 끝난다. (마피아도 자리에 있어야 1대1 이다.
+  // 시민만 남기면 마피아가 0명이라 판정이 먼저 끝난다.)
+  const oneCitizen: IceRole[] = ["mafia", "citizen"];
+  check("시민이 1명 남으면 마피아 승리", mafiaWinner(oneCitizen), "mafia");
+  check("마피아가 0이면 시민 승리", mafiaOutcome(["citizen", "citizen"]), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  check("그것이 시민 쪽이다", mafiaWinner(["citizen", "citizen"]), "citizen");
+
+  // 10명 판: 마피아 3. 3 대 3 이 되면 마피아가 이긴다 — 이보다 일찍 끝나면 안 된다.
+  const ten = mafiaLineup(10)!;
+  // `IceRole[]` 로 붙여 둔다 — TS 5.5 부터는 `filter(r => r !== "citizen")` 를 **타입 술어로
+  // 읽어** citizen 이 빠진 좁은 배열로 좁혀지고, 그러면 citizen 을 다시 붙이는 `.concat` 이
+  // 형식 검사를 통과하지 못한다(원래 의도인 `Array<IceRole>` 와 어긋난다).
+  const tenSpecials: IceRole[] = ten.filter((r) => r !== "citizen");
+  const withCitizens = (n: number) => tenSpecials.concat(Array<IceRole>(n).fill("citizen"));
+  // ⚠️ "시민 3명" 이라 해도 **경찰·의사도 시민 쪽**이다 — 3 대 3 이 되려면 시민은 1명이어야
+  // 한다(마피아 3 + 경찰 + 의사 + 시민 1 = 3 대 3). 도시를 3으로 세면 판정이 영영 안 난다.
+  check("10명 판: 시민 1명만 남으면 마피아 승리 (3 대 3)", mafiaWinner(withCitizens(1)), "mafia");
+  check("10명 판: 시민이 더 남으면 진행 중", [mafiaOutcome(withCitizens(2)), mafiaOutcome(withCitizens(4))], [null, null]);
+  check("10명 판: 마피아가 다 죽으면 시민 승리", mafiaWinner(withCitizens(10).filter((r) => r !== "mafia")), "citizen");
+
+  // 판정은 **살아 있는 자리만** 본다 — 죽은 마피아를 넣어 시민 승리를 조작할 수 없다.
+  check("마피아가 죽으면 시민 승리", mafiaOutcome(["citizen", "citizen", "citizen"]), "마피아가 모두 탈락했습니다. 시민 승리입니다.");
+  check("아무도 없는 판은 끝난 판이다", mafiaWinner([]), "citizen");
 }
 
 /* ── AI 입력 상한 ─────────────────────────────────────────── */
@@ -2176,6 +2282,532 @@ console.log("\nAI 한도");
   }
 }
 
+/* ── AI 한도: 실패한 호출은 한도를 쓰지 않는다 ──────────────── */
+
+console.log("\nAI 한도: 실패하면 되돌아온다");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    /**
+     * 여기서는 `runTool` 을 부르지 않는다 — 세션 쿠키가 필요하고, 쿠키를 만들면
+     * "실패 경로가 한도를 되돌리는가" 가 아니라 "액션을 우회했다" 를 테스트하게 된다.
+     * 대신 **되돌림이 지켜야 할 값(행 id) 을 주고받는 두 함수**를 그대로 부른다.
+     */
+    const me = { id: member.id, teamId: team.id, name: member.name, isLeader: false };
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const usage = () => db.aiUsage.count({ where: { memberId: me.id, day } });
+    const before = await usage();
+
+    // 1) 실패할 호출이 한도를 깎는다 — 이건 그대로여야 한다(한도가 없으면 무제한이다).
+    const taken = await consumeAiQuota(me, "cushion");
+    if (!taken.ok) {
+      console.log("  · 오늘 AI 한도가 이미 바닥이라, 이 항목은 오늘 다시 보지 않습니다");
+    } else {
+      check("모델을 부르기 전에 한도를 깎는다", await usage(), before + 1);
+      check("깎은 줄이 무엇인지 알려 준다", typeof taken.usageId, "string");
+
+      // 2) **남의 몫은 되돌릴 수 없다.** id 하나만 믿고 지우면 그 팀원의 그날 기록이 사라진다.
+      const other =
+        (await db.member.findFirst({ where: { teamId: team.id, id: { not: member.id } } })) ?? null;
+      if (other) {
+        const othersBefore = await db.aiUsage.count({ where: { memberId: other.id, day } });
+        const stolen = await refundAiQuota({ ...me, id: other.id }, taken.usageId);
+        check("남의 몫은 되돌릴 수 없다", stolen, false);
+        check("남의 기록도 그대로다", await db.aiUsage.count({ where: { memberId: other.id, day } }), othersBefore);
+      }
+
+      // 3) 자기 몫은 **그 한 건만** 돌아온다.
+      const refunded = await refundAiQuota(me, taken.usageId);
+      check("실패한 호출은 한도를 되돌려 받는다", refunded, true);
+      check("되돌린 뒤 기록이 원래대로다", await usage(), before);
+    }
+  }
+}
+
+/**
+ * 실패 경로가 **정말** 환불을 부르는지는 코드로 본다 — 위 검사는 되돌림 함수가 옳다는
+ * 증명일 뿐, `runTool` 이 그 함수를 부르는지는 아무도 보지 않는다.
+ *
+ * `readCode` 는 주석을 지운다. 주석에 "환불" 이 적혀 있기만 하고 코드가 그대로여도
+ * 통과하는 검사가 되어선 안 되므로, **함수 호출**과 **순서**를 본다.
+ */
+{
+  const run = readCode("../src/server/ai/run.ts");
+  check("실패한 호출은 한도를 되돌린다", /refundAiQuota\(\s*me\s*,\s*usageId\s*\)/.test(run), true);
+  check("되돌림은 실패 경로 안에서 일어난다", run.indexOf("catch") < run.indexOf("refundAiQuota("), true);
+  // **성공 경로에서 지우면** 그게 한도가 없는 도구가 된다. 성공은 usageId 를 그대로 두고
+  // 결과만 돌려주는 쪽이다 — `return { ok: true, value:` 이 환불보다 먼저 와야 한다.
+  check("성공한 호출은 한도를 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiQuota("), true);
+  // 키가 없으면 애초에 깎지 않았으므로, 되돌릴 것도 없다.
+  check("키가 없으면 한도를 깎지 않는다", /if \(live\) \{[\s\S]*?consumeAiQuota/.test(run), true);
+}
+
+/* ── AI 모델: 도구마다 다른 모델을 쓴다 ──────────────────────── */
+
+console.log("\nAI 모델 라우팅");
+{
+  // ⚠️ 이 검사는 **환경 변수를 바꿔 본다.** 라우팅은 호출 때 env 를 읽어야 하니 이 방법밖에
+  // 없고, 다 읽으면 원래대로 되돌린다 — 되돌리지 않으면 이 스모크가 실행된 뒤의 모든
+  // AI 호출이 이 값으로 부른다(개발 중에는 그게 실제 버그가 된다).
+  const KEYS = [
+    "OPENROUTER_MODEL",
+    "OPENROUTER_MODEL_CUSHION",
+    "OPENROUTER_MODEL_CLERK",
+    "OPENROUTER_MODEL_RESEARCH",
+    "OPENROUTER_MODEL_PRESENT",
+    "OPENROUTER_MODEL_SENTENCE",
+    "OPENROUTER_MODEL_READ_CUSHION",
+    "OPENROUTER_FALLBACK_MODEL",
+  ];
+  const saved = new Map(KEYS.map((k) => [k, process.env[k]]));
+  const set = (k: string, v: string) => { process.env[k] = v; };
+  const restore = () => {
+    for (const [k, v] of saved) if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  };
+
+  const TOOLS = ["cushion", "clerk", "research", "present", "sentence", "read-cushion"] as const;
+
+  try {
+    // 1) 아무것도 없으면 무료 라우터 — **유료 슬러그가 되지 않는다.** 유료는 사람이 고르는
+    //    값이라 `.env` 가 빈 상태에서 돈이 나가면 안 된다.
+    for (const k of KEYS) delete process.env[k];
+    check("아무 설정이 없으면 무료 라우터", new Set(TOOLS.map((t) => modelFor(t))), new Set(["openrouter/free"]));
+
+    // 2) 도구별로 다르게 정할 수 있다 — 이게 2번의 전부다.
+    set("OPENROUTER_MODEL_CLERK", "free/model-a");
+    set("OPENROUTER_MODEL_PRESENT", "free/model-b");
+    check("도구별로 다른 모델을 고른다", [modelFor("clerk"), modelFor("present")], ["free/model-a", "free/model-b"]);
+    check("정하지 않은 도구는 전체 기본값을 쓴다", modelFor("cushion"), "openrouter/free");
+
+    // 3) 전체 기본값이 있으면 **도구별 값이 없을 때만** 뒤받침된다.
+    set("OPENROUTER_MODEL", "free/default");
+    check("전체 기본값이 뒤받침한다", modelFor("cushion"), "free/default");
+    check("도구별 값이 이긴다", modelFor("clerk"), "free/model-a");
+
+    // 4) **여섯 도구 모두** env 이름을 갖는다. 하나라도 빠지면 그 도구는 조용히 전체
+    //    기본값으로 떨어지고, "설정했는데 안 먹힌" 것처럼 보인다.
+    set("OPENROUTER_MODEL_CUSHION", "free/c");
+    set("OPENROUTER_MODEL_RESEARCH", "free/r");
+    set("OPENROUTER_MODEL_SENTENCE", "free/s");
+    set("OPENROUTER_MODEL_READ_CUSHION", "free/rc");
+    check("여섯 도구 모두 따로 정할 수 있다", TOOLS.map((t) => modelFor(t)), [
+      "free/c", "free/model-a", "free/r", "free/model-b", "free/s", "free/rc",
+    ]);
+
+    // 5) **빈 문자열은 없는 것으로 본다.** `.env` 에 `KEY=""` 로 남겨두는 일이 흔하고,
+    //    빈 문자열이 값이 되면 그 도구는 이름 없는 모델을 부른다.
+    set("OPENROUTER_MODEL_CUSHION", "   ");
+    check("빈 값은 없는 것으로 본다", modelFor("cushion"), "free/default");
+
+    // 6) 폴백은 **첫 모델과 같을 수 없다.** 같으면 두 번 부르는 것이 시간이 두 배일 뿐이다.
+    set("OPENROUTER_FALLBACK_MODEL", "free/default");
+    check("폴백이 첫 모델과 같으면 다른 모델로 내려간다", fallbackModelFor("cushion"), "openrouter/free");
+    set("OPENROUTER_FALLBACK_MODEL", "free/other");
+    check("지정한 폴백을 쓴다", fallbackModelFor("clerk"), "free/other");
+    check("폴백이 없는 첫 모델은 무료 라우터가 받는다", fallbackModelFor("cushion"), "free/other");
+  } finally {
+    restore();
+  }
+}
+
+/* ── AI 실패: 다시 시도해도 되는 종류 ────────────────────────── */
+
+console.log("\nAI 재시도 정책");
+{
+  const err = (status: number, name = "Error", message = "") =>
+    Object.assign(new Error(message), { status, name });
+
+  // 일시적인 것 — 다시 시도한다.
+  check("타임아웃은 다시 시도한다", isTransient(err(408, "APIConnectionTimeoutError", "Request timed out.")), true);
+  check("연결 오류는 다시 시도한다", isTransient(err(500, "InternalServerError")), true);
+  check("빈 응답은 다시 시도한다", isTransient(new Error("빈 응답")), true);
+  check("도구 호출이 없으면 다시 시도한다", isTransient(new Error("도구 호출이 없는 응답")), true);
+
+  // 다시 해도 같은 것 — 시도하지 않는다. **무료 티어에서 429 가 가장 흔하다.**
+  check("429 는 다시 시도하지 않는다", isTransient(err(429, "RateLimitError", "Provider returned error")), false);
+  check("메시지에 429 가 있어도 그렇다", isTransient(new Error("429 Too Many Requests")), false);
+  check("키가 없으면 다시 시도하지 않는다", isTransient(err(401, "AuthenticationError", "invalid api key")), false);
+  check("잘못된 요청도 다시 시도하지 않는다", isTransient(err(400, "BadRequestError")), false);
+}
+
+/* ── AI 초안: 모델이 뭘 주든 화면에 오게 정리한다 ────────────── */
+
+console.log("\nAI 초안 정리 (모델을 부르지 않고 확인한다)");
+{
+  // **담당자가 null 이어야 하는 곳** — 0단계 5번이 "담당자가 null 이어야 하는 메모에서 null
+  // 이 나온다" 를 모델 행동으로 잰다면, 여기는 그 뒷부분이다. **빈 값을 사람이 이름인 것처럼
+  // 보면 아무도 책임지지 않는 업무가 생긴다.**
+  for (const empty of ["", "   ", "미정", "없음", "null", "NULL", "없음.", "-", "n/a", "<unknown>"]) {
+    const draft = shapeClerkDraft({ summary: "회의", candidates: [{ title: "자료 정리", assignee: empty, basis: "b", due: "d" }] });
+    if (draft.candidates[0]?.assignee !== null) {
+      check(`담당자 "${empty}" 는 사람이 아니다`, draft.candidates[0]?.assignee, null);
+    }
+  }
+  check("담당자가 빈 값이면 null 이 된다", shapeClerkDraft({ candidates: [{ title: "a", assignee: "" }] }).candidates[0]?.assignee, null);
+  check("담당자 칸이 아예 없어도 null 이 된다", shapeClerkDraft({ candidates: [{ title: "a" }] }).candidates[0]?.assignee, null);
+  // **진짜 이름은 살아야 한다** — 위를 너무 넓게 걸면 아무도 못 고치게 된다.
+  check("이름은 살아남는다", shapeClerkDraft({ candidates: [{ title: "a", assignee: "민준" }] }).candidates[0]?.assignee, "민준");
+  check("이름 앞뒤 공백은 걷어낸다", shapeClerkDraft({ candidates: [{ title: "a", assignee: "  민준 " }] }).candidates[0]?.assignee, "민준");
+
+  // **근거도 없다면 사람이 직접 정해야 한다** — 빈 화면이 아니라 안내가 있어야 한다.
+  check("근거가 없으면 직접 정하라고 한다", shapeClerkDraft({ candidates: [{ title: "a", assignee: "민준" }] }).candidates[0]?.basis, "담당 미정 — 직접 정해 주세요");
+  check("마감도 없으면 미정", shapeClerkDraft({ candidates: [{ title: "a" }] }).candidates[0]?.due, "미정");
+
+  // **줄 번호는 모델이 정하지 않는다.** 두 후보에 같은 번호가 오면 화면에서 한 줄이 두 번
+  // 다뤄진다. 그래서 순서대로 다시 매긴다.
+  check("번호가 비면 줄도 빠진다", shapeClerkDraft({ candidates: [{ title: "a", assignee: null }, { title: "  ", assignee: null }, { title: "b", assignee: null }] }).candidates.map((c) => c.title), ["a", "b"]);
+  check("번호는 순서대로 다시 매긴다", shapeClerkDraft({ candidates: [{ title: "a" }, { title: "b" }] }).candidates.map((c) => c.id), ["c1", "c2"]);
+  check("모델이 준 번호는 무시한다", shapeClerkDraft({ candidates: [{ title: "a" }, { title: "b" }] as never }).candidates[0]?.id, "c1");
+
+  // **응답이 아예 없을 때** — 빈 화면이 아니라 빈 결과여야 한다(화면이 "0건" 을 알 수 있게).
+  check("응답이 없어도 죽지 않는다", shapeClerkDraft(null), { summary: "", candidates: [] });
+  check("후보가 문자열이어도 죽지 않는다", shapeClerkDraft({ candidates: "x" as never }).candidates, []);
+
+  // 발표 지원 — **질문만** 담는다. 답이 섞이면 "발표자가 모르는 답"이 초안이 된다.
+  const present = shapePresentDraft({ refined: "  다듬은 대본  ", questions: ["  왜?  ", "   ", null] });
+  check("대본은 다듬는다", present.refined, "다듬은 대본");
+  check("빈 질문은 버린다", present.questions, ["왜?"]);
+  check("발표 응답이 없어도 죽지 않는다", shapePresentDraft(null), { refined: "", questions: [] });
+
+  // `orNull` 은 두 도구가 함께 쓰는 **하나의 규칙**이다 — 두 곳에서 따로 걸러 냈던 것을
+  // 한 곳으로 모았다. "없음" 을 적는 방식은 은근히 많다.
+  check("orNull 은 빈 공백도 없다로 본다", orNull("  "), null);
+  check("orNull 은 숫자 0 도 값으로 본다", orNull("0"), "0");
+}
+
+/* ── AI 스트리밍: 바이트 경계에서 글자가 깨지지 않는다 ────────── */
+
+console.log("\nAI 스트리밍 줄 분해");
+{
+  const encoder = new TextEncoder();
+  /**
+   * 서버가 실제로 밀어주는 것을 흉내 낸다 — **바이트 경계를 일부러 글자 한자 안에서 자른다.**
+   *
+   * 네트워크는 이렇게 온다. 한국어는 한 글자가 3바이트라 1바이트씩 쪼개면 중간에서 잘린다.
+   * 여기서 `TextDecoder` 를 **한 번에** 쓰면 `�` 가 남고, 화면엔 깨진 글자가 보인다 —
+   * 사용자는 "모델이 이상한 글자를 냈다" 하고 오해한다.
+   *
+   * ⚠️ **디코더는 하나만 쓴다.** 매 바이트마다 새로 만들면 상태가 없어서 **어떤 입력에서도**
+   * 깨진다(첫 인자를 만들다가 여기서 실제로 그랬다). 클라이언트는 하나를 재사용하고
+   * `{ stream: true }` 로 중간의 bytes 를 붙여 받는다 — 이게 전부다.
+   */
+  const makeDecode = () => {
+    const decoder = new TextDecoder();
+    return (bytes: Uint8Array) => decoder.decode(bytes, { stream: true });
+  };
+
+  // 1) 한 줄이 바이트 경계에서 잘려 온다 — 그래도 한 줄로 복구된다.
+  {
+    const full = encoder.encode('{"delta":"안녕"}\n{"delta":"하세요"}\n');
+    const s = newLineSplitter();
+    const decode = makeDecode();
+    const lines: string[] = [];
+    // **한 바이트씩** 준다 — 가장 나쁜 경우다.
+    for (const byte of full) lines.push(...pushBytes(s, Uint8Array.of(byte), decode));
+    check("한 바이트씩 잘려도 글자가 안 깨진다", lines, ['{"delta":"안녕"}', '{"delta":"하세요"}']);
+    check("끝에 남은 것이 없다", flush(s), null);
+  }
+
+  // 1-1) **디코더를 매번 새로 만들면 깨진다** — 이게 위 검사가 통과해야 하는 이유다.
+  //      나쁜 구현이 통과하지 않는지 확인해야 좋은 검사가 된다.
+  {
+    const full = encoder.encode('{"delta":"안녕"}\n');
+    const s = newLineSplitter();
+    const lines: string[] = [];
+    for (const byte of full) {
+      lines.push(...pushBytes(s, Uint8Array.of(byte), (b) => new TextDecoder().decode(b, { stream: true })));
+    }
+    check("디코더를 매번 새로 만들면 글자가 깨진다(위 검사가 값을 보는 이유)", /�/.test(lines.join("")), true);
+  }
+
+  // 2) 한 번에 여러 줄이 온다 — **뒤의 줄을 놓치면** 조각이 사라진다.
+  {
+    const s = newLineSplitter();
+    const lines = pushBytes(s, encoder.encode('{"d":1}\n{"d":2}\n{"d":3}\n'), makeDecode());
+    check("한 번에 세 줄이 와도 다 읽는다", lines, ['{"d":1}', '{"d":2}', '{"d":3}']);
+  }
+
+  // 3) 줄이 **둘에 걸쳐** 온다 — 절반만 주고 멈춘다.
+  {
+    const s = newLineSplitter();
+    const decode = makeDecode();
+    check("줄이 아직 안 끝났으면 아무 것도 내지 않는다", pushBytes(s, encoder.encode('{"delta":'), decode), []);
+    check("이어서 오면 그때 한 줄이 나온다", pushBytes(s, encoder.encode('"안녕"}\n'), decode), ['{"delta":"안녕"}']);
+  }
+
+  // 4) 마지막 줄에 **개행이 없을 수 있다** — stream 이 닫히면서 밀어 넣는다. 이걸 놓치면
+  //    **완성값이 영영 오지 않아** 사용자는 "도중에 끊겼다" 를 본다.
+  {
+    const s = newLineSplitter();
+    const decode = makeDecode();
+    check("마지막 줄에 개행이 없어도 나온다", [pushBytes(s, encoder.encode('{"source":"ai"}'), decode), flush(s)], [[], '{"source":"ai"}']);
+    check("두 번 꺼내도 같은 게 나오지 않는다", flush(s), null);
+  }
+
+  // 5) 빈 줄은 건너뛴다 — 빈 문자열을 "한 줄" 로 돌려주면 클라이언트가 `JSON.parse("")` 를
+  //    시도하고 매번 예외를 삼킨다(조용하지만 매 프레임마다).
+  {
+    const s = newLineSplitter();
+    check("빈 줄은 건너뛴다", pushBytes(s, encoder.encode('\n\n{"a":1}\n\n'), makeDecode()), ['{"a":1}']);
+  }
+
+  // 6) splitter 를 **공유하면 두 호출이 섞인다.** 그래서 호출마다 새로 만들어야 한다.
+  //    (a 에 온 줄이 b 의 버퍼에 섞이면 **다른 사람의 AI 글**이 화면에 나타난다.)
+  {
+    const a = newLineSplitter();
+    const b = newLineSplitter();
+    const first = pushBytes(a, encoder.encode('{"who":"a"}\n'), makeDecode());
+    // **b 에는 아무것도 없다** — 아직 줄이 끝나지 않은 `{"who":"b` 조각만 있는 상태로 둔다.
+    const second = pushBytes(b, encoder.encode('{"who":"b'), makeDecode());
+    check("splitter 는 호출마다 따로다", [first, second, flush(a), flush(b)], [['{"who":"a"}'], [], null, '{"who":"b']);
+  }
+}
+
+/* ── 홈 브리핑: 있는 숫자만 말한다 ──────────────────────────── */
+
+console.log("\n홈 브리핑");
+{
+  const TODAY = "2026-09-30";
+  const task = (over: Partial<Task> = {}): Task =>
+    ({
+      id: "t1",
+      title: "자료 정리",
+      kind: "team",
+      assignee: "민준",
+      mbti: null,
+      assigneeLeft: false,
+      isMine: false,
+      due: "9/22",
+      status: "todo",
+      source: "manual",
+      canEdit: false,
+      editBlockedBecause: null,
+      ...over,
+    }) as Task;
+
+  const meeting = (over: Partial<MeetingProposal> = {}): MeetingProposal =>
+    ({
+      stage: "confirmed",
+      slot: { id: "s1", day: "수", time: "16:00 – 18:00", available: 4, total: 5, blockedBy: null },
+      date: TODAY,
+      agreed: 4,
+      pending: 0,
+      against: 0,
+      respondBy: null,
+      myResponse: "agree",
+      ...over,
+    }) as MeetingProposal;
+
+  // 1) **0 인 줄은 그리지 않는다** — "오늘 0건" 상자를 띄우면 그게 소음이 된다.
+  {
+    const clean = buildBriefing({ today: TODAY, awaitingMe: 0, meeting: meeting({ stage: "idle", date: null }), tasks: [] });
+    check("할 일이 없으면 카드를 그리지 않는다", clean.length, 0);
+  }
+
+  // 2) 마감 미정 — **`dueOf` 가 빈 값을 "미정" 으로 저장한다**(`server/actions/tasks.ts`).
+  //    빈 문자열과 "미정" 둘 다 세야, 저장 전에 만든 일과 나중에 만든 일이 함께 잡힌다.
+  check("빈 마감을 아직 안 정한 일로 센다", isDueUnset({ due: "" }), true);
+  check("미정 도 아직 안 정한 일이다", isDueUnset({ due: "미정" }), true);
+  check("마감을 정했으면 세지 않는다", isDueUnset({ due: "9/22" }), false);
+  // **자유 텍스트 마감을 파싱하지 않는다.** "다음 주" 를 오늘로 읽으면 틀린 숫자가 된다.
+  check("자유 텍스트 마감은 세지 않는다(오해 없기 위해)", isDueUnset({ due: "다음 주" }), false);
+
+  // 3) 마감 미정 줄 — **끝난 일은 제외한다.** 끝난 일에 마감을 재촉하는 것은 아니다.
+  {
+    const lines = buildBriefing({
+      today: TODAY,
+      awaitingMe: 0,
+      meeting: meeting({ stage: "idle", date: null }),
+      tasks: [task({ id: "a", due: "" }), task({ id: "b", due: "미정" }), task({ id: "c", due: "9/22" }), task({ id: "d", due: "", status: "done" })],
+    });
+    const due = lines.find((l) => l.key === "due");
+    check("마감 미정을 센다(끝난 일은 빼고)", due?.count, 2);
+    check("숫자가 문장에 그대로 들어간다", due?.text, "마감을 아직 안 정한 일이 2건이에요");
+  }
+
+  // 4) 오늘 회의 — **확정된 것만.** 제안 중인 건 오늘 회의가 아니다.
+  check("확정되고 오늘이면 오늘 회의다", isMeetingToday(meeting(), TODAY), true);
+  check("제표 중인 건 오늘 회의가 아니다", isMeetingToday(meeting({ stage: "proposed", myResponse: null }), TODAY), false);
+  check("이월된 건 오늘 회의가 아니다", isMeetingToday(meeting({ stage: "carried" }), TODAY), false);
+  // ⚠️ **`date` 가 null 인 확정 회의** — 화면도 날짜를 되짚지 않는다(types.ts:144).
+  //    모르는 것과 아닌 것을 같은 값으로 보면 "오늘 회의 없음" 이라는 **거짓말**이 된다.
+  check("날짜를 모르면 오늘 회의라고 하지 않는다", isMeetingToday(meeting({ date: null }), TODAY), false);
+  {
+    const lines = buildBriefing({ today: TODAY, awaitingMe: 0, meeting: meeting(), tasks: [] });
+    check("회의 시간이 문장에 들어간다", lines.find((l) => l.key === "meeting")?.text, "오늘 16:00에 회의가 있어요");
+  }
+  // **어제면 오늘이 아니다** — 하루 밀리면 브리핑이 거짓말이 된다.
+  check("다른 날짜면 오늘 회의가 아니다", isMeetingToday(meeting(), "2026-10-01"), false);
+
+  // 5) 독촉 — **poke 화면과 같은 조건이어야 한다.** 한쪽만 세면 두 화면이 어긋난다.
+  {
+    const targets = pokeTargets([
+      task({ id: "a" }),                                        // 남의 일 → 가능
+      task({ id: "b", isMine: true }),                          // 내 일 → 불가(알림이 안 감)
+      task({ id: "c", assigneeLeft: true }),                    // 나간 담당자 → 불가
+      task({ id: "d", status: "done" }),                        // 끝남 → 불가
+      task({ id: "e", assignee: null }),                        // 담당자 없음 → 보낼 사람 없음
+    ]);
+    check("독촉할 수 있는 일만 센다", targets.map((t) => t.id), ["a"]);
+    const lines = buildBriefing({ today: TODAY, awaitingMe: 0, meeting: meeting({ stage: "idle", date: null }), tasks: [task({ id: "a" })] });
+    check("독촉 줄이 poke 화면으로 연결된다", lines.find((l) => l.key === "poke")?.href, "/home/tasks/poke");
+  }
+
+  // 6) 확인 대기 — **화면이 이미 센 값을 그대로 받는다.** 여기서 다시 세지 않는다.
+  {
+    const lines = buildBriefing({ today: TODAY, awaitingMe: 3, meeting: meeting({ stage: "idle", date: null }), tasks: [] });
+    check("확인 대기 수를 그대로 말한다", lines.find((l) => l.key === "awaiting")?.count, 3);
+  }
+
+  // 7) 제출함 마감 — **`dueAt` 이 DateTime 인 유일한 곳**이라 "며칠 남았나" 를 말할 수 있다.
+  {
+    const box = (role: RoleKey, name: string, dueAt: string | null) => ({ role, name, dueAt });
+    const soon = boxesDueSoon(
+      [
+        box("deck", "발표자료", "2026-10-02T23:59"), // 2일 뒤 → 임박
+        box("research", "자료", "2026-10-20T23:59"), // 20일 뒤 → 아님
+        box("script", "대본", null),                 // 마감 없음 → 아님
+        box("deck", "지난 제출함", "2026-09-01T23:59"), // 이미 지남 → "임박" 이 아님
+      ],
+      TODAY,
+    );
+    check("임박한 마감만 센다", soon.map((b) => b.name), ["발표자료"]);
+    check("며칠 남았나를 말한다", soon[0]?.daysLeft, 2);
+  }
+
+  // 8) 추천 — **규칙으로만.** 왜 이 도구인지는 반드시 붙는다(추천에 이유가 없으면 광고다).
+  {
+    const boxes = [
+      { role: "deck" as const, name: "발표자료", dueAt: "2026-10-01T23:59" },
+      { role: "research" as const, name: "자료", dueAt: "2026-10-02T23:59" },
+    ];
+    const withPoke = suggestTools({ tasks: [task({ id: "a" })], today: TODAY, boxes });
+    check("독촉할 일이 있으면 쿠션 번역기", withPoke.map((s) => s.toolKey), ["cushion", "present", "research"]);
+    check("추천에 이유가 붙는다", withPoke.every((s) => s.because.length > 0), true);
+    // 도구 추천과 화면 연결이 **한 번에** 되어야 한다 — 쿠션 번역기로 가서 poke 화면이 열린다.
+    check("쿠션 번역기가 poke 로 연결된다", withPoke[0]?.href, "/home/tasks/poke");
+    // 오늘 마감은 "0일 뒤" 가 아니라 **"오늘"** 이라고 말한다(0일 뒤는 한국어로 이상하다).
+    const dueToday = suggestTools({
+      tasks: [],
+      today: TODAY,
+      boxes: [{ role: "deck" as const, name: "발표자료", dueAt: "2026-09-30T23:59" }],
+    });
+    check("오늘 마감이라고 말한다", dueToday[0]?.because.includes("오늘"), true);
+    check("0일 뒤라고 말하지 않는다", dueToday[0]?.because.includes("0일"), false);
+    // 1일 뒤는 "오늘" 이 아니다 — 날짜를 하루 밀면 문장이 어긋난다.
+    const dueTomorrow = suggestTools({
+      tasks: [],
+      today: TODAY,
+      boxes: [{ role: "deck" as const, name: "발표자료", dueAt: "2026-10-01T23:59" }],
+    });
+    check("내일 마감은 1일 뒤라고 말한다", dueTomorrow[0]?.because.includes("1일 뒤"), true);
+
+    // **임박한 제출함이 없으면 추천도 없다** — 없는 걸 지어내지 않는다.
+    const none = suggestTools({ tasks: [], today: TODAY, boxes: [{ role: "deck" as const, name: "발표자료", dueAt: "2026-12-01T23:59" }] });
+    check("맞는 상황이 없으면 추천하지 않는다", none, []);
+  }
+
+  // 9) **AI 서기 추천이 없는 이유** — 기획안의 규칙("회의가 끝났는데 메모가 없으면")은
+  //    회의록을 저장하는 곳이 없어 판정할 수 없다. 지어내면 사용자는 "내 회의록이
+  //    사라졌다" 고 오해한다. 저장소가 생기면 그때 이 자리에 규칙 하나를 더한다.
+  //
+  // ⚠️ **`readCode` 를 쓰면 안 된다.** 이 검사는 **주석에 적힌 설명**을 보는 것이고,
+  // `readCode` 는 주석을 지운다(그 이유가 `readCode` 자신의 주석에 적혀 있다). 여기서
+  // 구조 검사를 하려고 하면 **어떻게 고쳐도 통과하지 않는다.**
+  const briefingRaw = readFileSync(new URL("../src/features/home/briefing.ts", import.meta.url), "utf8");
+  check("세지 않는 이유를 코드에 남긴다", /안 세는 이유|세지 않는다/.test(briefingRaw), true);
+  check("서기 추천이 없음을 적어 둔다", /AI 서기 추천은 없습니다/.test(briefingRaw), true);
+  check("회의록 저장소가 없다는 사실을 적어 둔다", /저장하는 곳이 없|저장하는 곳이 없다/.test(briefingRaw), true);
+
+  // 10) 구조 검사 — **모델을 부르는 코드가 없어야 한다**(`readCode` 로 주석이 지워진 상태).
+  const briefingSource = readCode("../src/features/home/briefing.ts");
+  check("브리핑은 모델을 부르지 않는다", /askText|askShape|runTool|fetch\(/.test(briefingSource), false);
+  // **네 가지만 센다.** 나중에 다섯째를 넣을 때 여기 갱신해야 한다는 표시를 남긴다.
+  check("네 개의 규칙만 센다", ["buildBriefing", "pokeTargets", "isDueUnset", "boxesDueSoon"].every((fn) => briefingSource.includes(`function ${fn}`)), true);
+}
+
+/* ── AI 계측: 장부에 무엇이 남는가 ───────────────────────────── */
+
+console.log("\nAI 계측");
+{
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const where = { teamId: team.id, day };
+    // **이 검사만의 행만** 지운다. `day` 전체를 지우면 사람이 그날 쓴 기록이 함께 사라진다
+    // (`AI 한도` 항목의 같은 사고 참고).
+    const before = await db.aiCall.count({ where });
+    const ids = (
+      await Promise.all(
+        (
+          [
+            { tool: "clerk", model: "free/x", outcome: "ok", latencyMs: 1_000, retried: false },
+            { tool: "clerk", model: "free/x", outcome: "failed", latencyMs: 61_000, retried: true },
+            { tool: "cushion", model: "free/y", outcome: "refused", latencyMs: 2_000, retried: false },
+          ] as const
+        ).map((data) => db.aiCall.create({ data: { ...where, memberId: member.id, ...data }, select: { id: true } })),
+      )
+    ).map((row) => row.id);
+
+    try {
+      const stats = await aiCallStats(team.id);
+      const mine = stats.calls - before;
+      // **거절은 실패가 아니다.** 답이 온 것이기 때문이다. 한 값으로 합치면 "모델을 바꿔야 한다" 와
+      // "다시 시도하면 된다" 가 같은 0 으로 보인다.
+      check("거절이 따로 세어진다", stats.outcomes.refused - (before > 0 ? 0 : 0) >= 1, true);
+      check("이 검사가 만든 3 줄만 더해진다", mine >= 3, true);
+      check("폴백을 탔는지 남는다", stats.retried >= 1, true);
+
+      // **입력 글은 남지 않는다.** 표에 글짜기 열이 있으면 그 순간 약속이 깨진 것이다.
+      const columns = Object.keys(
+        (db.aiCall as unknown as { fields: Record<string, unknown> }).fields ?? {},
+      );
+      if (columns.length > 0) {
+        const hasText = columns.some((c) => /text|input|prompt|content|message/i.test(c));
+        check("계측표에 글짜기 칸이 없다", hasText, false);
+        check("모델 이름을 남긴다", columns.includes("model"), true);
+        check("지연을 남긴다", columns.includes("latencyMs"), true);
+      }
+
+      // 읽기는 계측을 늘리지 않는다 — "지표를 보려고 부른 것"이 호출이 되면 안 된다.
+      check("지표를 읽어도 줄이 늘지 않는다", (await aiCallStats(team.id)).calls, stats.calls);
+    } finally {
+      await db.aiCall.deleteMany({ where: { id: { in: ids } } });
+    }
+    check("이 검사가 만든 줄만 치운다", await db.aiCall.count({ where }), before);
+  }
+
+  // **한 줄 요약이 사람이 읽는 형태인지** — 예약 작업 로그와 curl 응답에 그대로 나온다.
+  const sample: AiCallStats = {
+    day: "2026-09-30",
+    calls: 10,
+    outcomes: { ok: 7, refused: 2, failed: 1 },
+    byModel: [{ model: "free/x", calls: 8, failed: 1 }, { model: "free/y", calls: 2, failed: 0 }],
+    retried: 3,
+    avgLatencyMs: 4200,
+    slow: 0.2,
+  };
+  const line = describeAiCalls(sample);
+  check("요약에 날짜와 횟수가 있다", /2026-09-30.*10/.test(line), true);
+  check("요약에 거절이 보인다", /거절 2/.test(line), true);
+  check("요약에 실패가 보인다", /실패 1/.test(line), true);
+  check("요약에 폴백이 보인다", /폴백 3/.test(line), true);
+  check("요약에 모델별 실패가 보인다", /free\/x\(8\/실패1\)/.test(line), true);
+  // 호출이 0 이면 나눗셈이 그대로 드러난다 — 0 으로 나누면 `NaN` 이 문장에 찍힌다.
+  const empty = describeAiCalls({
+    day: "2026-09-30", calls: 0, outcomes: { ok: 0, refused: 0, failed: 0 },
+    byModel: [], retried: 0, avgLatencyMs: null, slow: 0,
+  });
+  check("호출이 0 이어도 NaN 이 없다", /NaN|Infinity/.test(empty), false);
+}
+
 /* ── 타이핑은 한 번도 AI 를 부르지 않는다 ─────────────────── */
 
 console.log("\nAI 초안: 언제 부르는가");
@@ -2983,10 +3615,375 @@ console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
   check("서버도 같은 순수 판정을 부른다", actions.includes("canEditTask("), true);
 }
 
+console.log("\n사용자 노출 용어");
+checkProductLanguage();
+
+/* ── 미결 목록은 주석까지 세지 않는다 ─────────────────────────── */
+
+console.log("\n미결 목록 도구 (npm run decisions)");
+{
+  // 이 도구는 `Undecided` 를 **소스에서** 찾는다. 그래서 두 가지를 함께 고정한다 —
+  //
+  // ① 주석을 지운다 (`strip-comments` ). 주석 안의 `<Undecided>` 을 세면 목록이 거짓말을
+  //    하고, 주석 안의 중괄호 하나가 항목의 끝을 잘못 잡는다. 두 문제가 한 곳에서 온다.
+  const script = readCode("../scripts/list-open-decisions.mjs");
+  check("소스를 주석 제거하고 읽는다", script.includes("stripComments("), true);
+
+  // ② **놓치지 않는다.** 주석을 지우는 변경으로 항목이 사라지면 그건 조용한 실패다.
+  //    화면에 있는 `Undecided` 수와 도구가 세는 수를 직접 비교한다.
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(join(dir, ""), { withFileTypes: true })) {
+      if (["node_modules", "generated", ".next", "prototype", "handoff"].includes(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".tsx")) files.push(full);
+    }
+  };
+  walk(new URL("../src", import.meta.url).pathname);
+
+  let inCode = 0;
+  for (const file of files) {
+    const source = stripComments(readFileSync(file, "utf8"));
+    inCode += (source.match(/<Undecided/g) ?? []).length;
+  }
+  // 도구가 실제로 세는 값(같은 규칙으로 직접 센 것) — 이 검사는 도구의 **출력**을 보지 않고
+  // 같은 계산을 두 번 해서 비교한다. 출력을 실행하는 것은 느리고(파일 훑는다) 실패 이유가
+  // "도구가 망가짐" 과 "화면에 항목이 줄었다" 로 갈리기 때문이다.
+  check("주석을 지우면 화면의 미결 표시가 하나도 줄지 않는다", inCode > 0, true);
+
+  // 주석 제거가 실제로 뭘 세는지 — 손으로 만든 두 경우로 확인한다.
+  const sample = "/* <Undecided> 주석 안이니 세면 안 된다 */\nconst x = 1; // <Undecided> 이것도\n<Undecided>실제</Undecided>";
+  const cleaned = stripComments(sample);
+  check("주석 안의 <Undecided> 은 지워진다", (cleaned.match(/<Undecided/g) ?? []).length, 1);
+  check("주석 지워도 줄 수는 그대로다", cleaned.split("\n").length, sample.split("\n").length);
+}
+
+/* ── 28 라이어 게임: 규칙이랑 비밀 ──────────────────────────── */
+
+console.log("\n라이어 게임: 역할과 제시어");
+{
+  const ids = ["a", "b", "c", "d", "e"];
+
+  // ① 한 판에는 라이어가 **정확히 한 명**이다. 300 판을 돌려도 한 번도 어긋나면 안 된다 —
+  //    라이어가 0명이면 아무도 모른다, 2명이면 판정이 성립하지 않는다.
+  const liarCounts = new Set<number>();
+  for (let i = 0; i < 300; i++) {
+    const { roles } = deal("liar", ids);
+    liarCounts.add([...roles.values()].filter((r) => r === "liar").length);
+  }
+  check("한 판의 라이어는 정확히 1명 (300 판)", [...liarCounts], [1]);
+
+  // ② 라이어는 자기가 앉은 자리 중 하나여야 하고, 제시어는 누군가에게 하나 정해진다.
+  const dealt = deal("liar", ids);
+  check("라이어는 참가자 중에서 나온다", ids.includes([...dealt.roles].find(([, role]) => role === "liar")?.[0] ?? ""), true);
+  check("제시어를 하나 정한다", typeof dealt.word === "string" && dealt.word.length > 0, true);
+  check("주제도 하나 정한다", typeof dealt.topic === "string" && (dealt.topic ?? "").length > 0, true);
+
+  // ③ 직전 판의 라이어는 다음 판에서 빠진다. 연달아 같은 사람이 라이어가 되는 것이 실제로
+  //    체감을 깎았다 — 세 판 연속 같은 사람이면 "그냥 그 사람이 라이어구나" 가 된다.
+  let sawDifferent = false;
+  for (let i = 0; i < 40; i++) {
+    const { roles } = deal("liar", ids, { recentWords: [], previousLiarId: "c" });
+    if ([...roles].find(([, role]) => role === "liar")?.[0] !== "c") sawDifferent = true;
+  }
+  check("직전 라이어는 다음 판 후보에서 빠진다", sawDifferent, true);
+  // 한 명뿐인 팀이라면 뺄 것이 없어서 그 사람이 라이어가 되어야 한다 (게임이 안 열리면 더 나쁘다).
+  const solo = deal("liar", ["only"], { recentWords: [], previousLiarId: "only" });
+  check("뺄 사람이 없으면 그 사람이 라이어가 된다", [...solo.roles.values()], ["liar"]);
+
+  // ④ 최근에 나온 제시어는 다시 나오지 않는다.
+  let recentLeak = 0;
+  for (let i = 0; i < 200; i++) {
+    const { word } = deal("liar", ids, { recentWords: ["떡볶이", "기숙사", "펭귄", "골프", "여권"], previousLiarId: null });
+    if (["떡볶이", "기숙사", "펭귄", "골프", "여권"].includes(word ?? "")) recentLeak++;
+  }
+  check("최근 5판의 제시어는 다시 나오지 않는다 (200 판)", recentLeak, 0);
+
+  // ⑤ 뺄 목록이 제시어 전체를 덮으면 게임이 안 열린다. 겹치는 것보다 판이 열리는 편이 낫다.
+  const everything = LIAR_PROMPTS.map((p) => p.word);
+  const fallback = deal("liar", ids, { recentWords: everything, previousLiarId: null });
+  check("모든 제시어를 뺐어도 판은 열린다", typeof fallback.word === "string" && fallback.word.length > 0, true);
+}
+
+console.log("\n라이어 게임: 제시어 데이터");
+{
+  // 같은 단어가 두 번 있으면 "설명하면 두 정답이 동시에 맞는다"가 되어 판정이 뒤집힌다.
+  const words = LIAR_PROMPTS.map((p) => p.word);
+  check("제시어 단어가 겹치지 않는다", new Set(words).size, words.length);
+  check("제시어 id 가 겹치지 않는다", new Set(LIAR_PROMPTS.map((p) => p.id)).size, LIAR_PROMPTS.length);
+  check("모든 제시어에 주제가 있다", LIAR_PROMPTS.filter((p) => !p.category).length, 0);
+  check("모든 제시어에 난이도가 있다", LIAR_PROMPTS.filter((p) => !["easy", "normal", "hard"].includes(p.difficulty)).length, 0);
+  check("알리어스가 다른 정답과 겹치지 않는다", LIAR_PROMPTS.filter((p) => (p.aliases ?? []).some((a) => words.includes(a) && a !== p.word)).length, 0);
+
+  // 새 단어를 넣다가 **설명할 수 없는 것**을 넣지 않게 하는 자리다. 추상 명사는 어떤 문장으로도
+  // 우회되지 않아 게임이 성립하지 않는다 — 사람이 검수할 수 있는 값으로 남긴다.
+  check("제시어 수가 두 자리 이상이다", LIAR_PROMPTS.length >= 200, true);
+  console.log(`     (제시어 ${LIAR_PROMPTS.length}개 · 주제 ${LIAR_PROMPT_CATEGORIES.length}개)`);
+
+  /**
+   * 팀플·성격을 연상시키는 단어는 기본 팩에 넣지 않는다.
+   *
+   * 예전 `팀플과 성격` 주제에 있던 말들이다. **친목을 하려는 자리에서 실제로 쓰면** 그 판의
+   * 대답이 되고 팀의 진단이 된다 — 게임이 아니라 회의가 된다.
+   */
+  const banned = ["무임승차", "마감직전", "역할분담", "칼마감", "발표자"];
+  check("친목 자리에서 갈등을 부르는 단어는 기본에 없다", LIAR_PROMPTS.filter((p) => banned.includes(p.word)).length, 0);
+}
+
+console.log("\n라이어 게임: 표 정산");
+{
+  const seats = [
+    { memberId: "a", role: "liar" },
+    { memberId: "b", role: "citizen" },
+    { memberId: "c", role: "citizen" },
+  ];
+
+  // ⑥ **동점과 0표는 승패가 아니다.** 예전에는 둘 다 곧 라이어 승리가 됐다 — 표를 하나도 못
+  //    받은 상태에서 사회자가 "결과 공개"를 눌러도 라이어가 이겼다.
+  check("아무도 투표하지 않으면 동점", resolveLiarVote([null, null, null], seats), { kind: "tie" });
+  check("동점이면 동점", resolveLiarVote(["b", "c", null], seats), { kind: "tie" });
+  check("삼방이 같아도 동점", resolveLiarVote(["a", "b", "c"], seats), { kind: "tie" });
+  // ⚠️ **한 표만 모였고 그것이 최다표라면 그것이 승부다.** 사회자가 "그래도 마감할까요?"를
+  // 확인한 뒤 일찍 마감을 누를 수 있으므로, 표가 적다고 임의로 되돌리면 그 확인이 무의미해진다.
+  // 여기가 아니라 **화면의 확인 창**에서 막는 자리다.
+  check("한 표뿐이어도 최다표는 승부다", resolveLiarVote(["c", null, null], seats).kind, "ended");
+
+  // ⑦ 라이어가 아닌 사람이 지목되면 라이어 승리.
+  const citizen = resolveLiarVote(["b", "b", "b"], seats);
+  check("시민이 지목되면 라이어 승리", [citizen.kind, citizen.kind === "ended" ? citizen.winner : null], ["ended", "liar"]);
+
+  // ⑧ 라이어가 지목되면 **곧바로 공개하지 않는다** — 라이어에게 마지막 추측을 준다.
+  const liar = resolveLiarVote(["a", "a", "b"], seats);
+  check("라이어가 지목되면 최종 추측으로 간다", liar.kind, "liarGuess");
+  check("지목된 사람이 남는다", liar.kind === "liarGuess" ? liar.accusedId : null, "a");
+
+  // ⑨ 이 판에 없는 사람을 가리키는 표도 승부가 아니다(구경만 하던 사람이 찍혔을 때).
+  check("이 판에 없는 사람이 지목돼도 동점", resolveLiarVote(["ghost", "b", "c"], seats), { kind: "tie" });
+}
+
+console.log("\n라이어 게임: 최종 추측");
+{
+  // ⑩ 사람이 폰으로 직접 친다 — 띄어쓰기를 빠뜨리고 오타를 낸다. 관대하게 판정한다.
+  check("맞으면 맞았다", checkLiarGuess("떡볶이", "떡볶이", ["떡보끼"]), true);
+  check("뒤에 공백이 있어도 맞는다", checkLiarGuess("  떡볶이 ", "떡볶이"), true);
+  check("띄어쓰기가 섞여도 맞는다", checkLiarGuess("떡 볶이", "떡볶이"), true);
+  check("알리어스도 정답이다", checkLiarGuess("떡보끼", "떡볶이", ["떡보끼", "떡복기"]), true);
+  check("틀린 답은 오답이다", checkLiarGuess("김치찌개", "떡볶이", ["떡보끼"]), false);
+  check("빈 답은 오답이다", checkLiarGuess("   ", "떡볶이"), false);
+  check("제시어를 일부러 늘린 답은 오답이다", checkLiarGuess("떡볶이 맛있네요", "떡볶이"), false);
+}
+
+console.log("\n라이어 게임: 단계");
+{
+  // ⑪ 투표는 투표 단계에서만 열린다. 예전에는 `play` 하나가 카드 확인과 투표를 함께 뜻했다.
+  check("카드 확인에서는 투표가 닫혀 있다", canVoteNow("liar", "clue"), false);
+  check("투표 단계에서만 열린다", canVoteNow("liar", "vote"), true);
+  check("최종 추측 단계에서는 닫혀 있다", canVoteNow("liar", "liar_guess"), false);
+  check("결과 단계에서는 닫혀 있다", canVoteNow("liar", "revealed"), false);
+  check("마피아는 진행 중이 곧 투표다", canVoteNow("mafia", "play"), true);
+
+  // ⑫ 마이그레이션 전부터 진행 중이던 판. 예전 라이어 판의 `play` 는 "투표가 열린" 상태였으므로
+  //     투표로 읽어야 한다 — 그대로 두면 투표가 닫힌 판이 된다.
+  check("예전 라이어 판의 play 는 투표로 읽는다", icePhase("liar", "play"), "vote");
+  check("예전 마피아 판의 play 는 그대로", icePhase("mafia", "play"), "play");
+  check("새 단계는 그대로 읽는다", icePhase("liar", "liar_guess"), "liar_guess");
+
+  // ⚠️ 읽을 때만 고치면 안 된다. **쓸 때도** 같은 해석을 써야 한다 — 배포 도중이던 판이
+  //    투표할 수 없는 판이 되면 그 판은 그 자리에서 다시 열 수 없다.
+  truthy("액션도 예전 단계를 같은 방법으로 읽는다", /canVoteNow\(\s*\w+,\s*icePhase\(/.test(readCode("../src/server/actions/ice.ts")));
+
+  // ⑬ 두 사람이 동시에 마감을 눌러도 결과는 한 번만 결정된다. 마감을 잠근 뒤 **다시 읽고**
+  //     여전히 투표 중인지 확인하는 것이 그 방법이다 — `liar_guess` 는 투표가 닫힌 상태다.
+  const afterClose = resolveLiarVote(["a", "a", "b"], [
+    { memberId: "a", role: "liar" },
+    { memberId: "b", role: "citizen" },
+    { memberId: "c", role: "citizen" },
+  ]);
+  check("두 번째 마감은 진행할 수 없다", canVoteNow("liar", afterClose.kind === "liarGuess" ? "liar_guess" : "revealed"), false);
+
+  // ⑭ 결과 문장은 코드로 저장하고 화면이 만든다 — 문장을 저장하면 말이 바뀌어도 옛말로 남는다.
+  check("코드가 문장으로 바뀐다", iceResultText(ICE_RESULT_CODES.liarGuessed), "라이어가 제시어를 맞혔습니다. 라이어의 역전승입니다.");
+  check("다른 코드는 다른 문장", iceResultText(ICE_RESULT_CODES.liarCaught) === iceResultText(ICE_RESULT_CODES.liarGuessed), false);
+  check("모르는 코드는 조용히 빈 문장", iceResultText("WHAT"), "");
+}
+
+console.log("\n라이어 게임: 비밀은 서버에서만 막는다");
+{
+  // 이 검사가 진짜 자산이다. 라이어 게임은 **카드 나눠 주고 투표하는 화면**이 아니라,
+  // 라이어에게 정답이 한 글자도 내려가지 않아야 성립한다. 화면에서 가리는 것으로는 부족하다
+  // (개발자 도구로 보인다).
+  //
+  // ⑮ 라이어는 `revealed` 가 되기 전까지 제시어를 받지 않는다 — **최종 추측 단계에서도 같다.**
+  //     그 단계는 이름부터 정답을 알려 주는 단계이기 때문이다.
+  check("라이어는 카드 확인 단계에 못 받는다", maySeeWord("liar", "clue"), false);
+  check("라이어는 투표 단계에 못 받는다", maySeeWord("liar", "vote"), false);
+  check("라이어는 최종 추측 단계에 못 받는다", maySeeWord("liar", "liar_guess"), false);
+  check("결과 공개 뒤에는 라이어도 받는다", maySeeWord("liar", "revealed"), true);
+  // ⑯ 시민은 언제나 받는다 — 라이어가 판 안에서 계속 설명해야 하는 이유가 이것이다.
+  check("시민은 언제나 받는다", ["clue", "vote", "liar_guess"].map((p) => maySeeWord("citizen", p as IcePhase)), [true, true, true]);
+
+  // ⑰ 판을 만드는 곳이 **이 판정 한 곳만** 지킨다. 조건을 두 번 쓰면 한쪽만 고쳐져 라이어에게
+  //     제시어가 나가고, 어느 쪽이 맞는지는 아무도 모른다.
+  const viewSource = readCode("../src/server/ice/view.ts");
+  truthy("제시어는 maySeeWord 로만 정한다", /word:\s*maySeeWord\(/.test(viewSource));
+  truthy("view.ts 가 조건을 다시 쓰지 않는다", !/role\s*!==\s*"liar"\s*\?/.test(viewSource));
+  truthy("view.ts 의 maySeeWord 정의는 rules 에 있다", !/function maySeeWord/.test(viewSource));
+
+  // ⑱ 참가자를 고를 때 **같은 팀인지, 팀을 나가지 않았는지**를 서버가 다시 본다. 화면이
+  //     골라 온 id 를 믿으면 남의 팀 사람을 판에 앉힐 수 있다.
+  const iceSource = readCode("../src/server/actions/ice.ts");
+  truthy("참가자 검증이 팀을 함께 본다", /teamId,[\s\S]*?leftAt:\s*null/.test(iceSource));
+  truthy("참가자 중복을 거른다", /new Set\(ids\)/.test(iceSource));
+  truthy("자기 자신에게는 투표하지 못한다", /targetId === me\.id/.test(iceSource));
+  truthy("투표 표시는 열린 단계만 받는다", /canVoteNow\(/.test(iceSource));
+  truthy("마감은 판의 행을 잠근 뒤 다시 읽는다", /FOR UPDATE/.test(iceSource));
+  truthy("최종 답은 한 번만 받는다", /liarGuess !== null/.test(iceSource));
+}
+
+console.log("\n라이어 게임: 실제로 만든 판에서 비밀이 새지 않는가");
+{
+  /**
+   * 여기서부터는 **실제로 만든 판**을 보고 각 사람 눈의 `IceView` 를 만든다.
+   *
+   * 위 검사는 규칙 함수만 본다. 하지만 비명은 `IceView` 를 **직렬화해서 브라우저로 보내는
+   * 그 순간**에 일어난다. 그래서 팀·팀원·판을 만들어 두고 라이어 본인의 화면을 문자열로
+   * 바꿔 그 안에 정답이 있는지 본다 — 화면을 가리는 것으로는 막히지 않는다.
+   */
+  const team = await db.team.create({
+    data: { name: "라이어 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  const other = await db.team.create({
+    data: { name: "남의 팀", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호"];
+    const seats = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    const stranger = await db.member.create({ data: { teamId: other.id, name: "남" } });
+
+    const SECRET = "학식선생님";
+    const role = new Map<string, string>([
+      [seats[0].id, "citizen"],
+      [seats[1].id, "liar"],
+      [seats[2].id, "citizen"],
+    ]);
+
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "liar",
+        phase: "clue",
+        topic: "캠퍼스",
+        word: SECRET,
+        aliases: ["학식쌤"],
+        hostId: seats[0].id,
+        seats: {
+          create: seats.map((s, i) => ({ memberId: s.id, role: role.get(s.id)!, turnOrder: i + 1 })),
+        },
+      },
+    });
+
+    const asMember = (id: string, name: string) => ({ id, teamId: team.id, name, isLeader: false });
+    const liarId = seats[1].id;
+
+    // ⑲ 라이어의 화면을 **문자열로** 만든다 — 실제 브라우저가 받는 것과 같은 형태다.
+    const liarView = await iceViewFor(asMember(liarId, "이서연"));
+    const liarJson = JSON.stringify(liarView);
+    truthy("라이어의 화면에 제시어가 없다", !liarJson.includes(SECRET));
+    truthy("라이어의 화면에 정답의 별칭도 없다", !liarJson.includes("학식쌤"));
+    check("라이어의 내 카드는 제시어가 비어 있다", liarView?.me?.word, null);
+    check("라이어의 주제는 안다", liarView?.me?.topic, "캠퍼스");
+    check("라이어에게 결과는 없다", liarView?.result, null);
+
+    // ⑳ 시민에게는 제시어가 간다 — 라이어가 판 안에서 계속 설명해야 하는 이유가 이것이다.
+    const citizenJson = JSON.stringify(await iceViewFor(asMember(seats[0].id, "김민준")));
+    truthy("시민의 화면에 제시어가 있다", citizenJson.includes(SECRET));
+    check("시민의 카드는 제시어를 받는다", (await iceViewFor(asMember(seats[0].id, "김민준")))?.me?.word, SECRET);
+
+    // ㉑ **최종 추측 단계에서도** 제시어는 나가지 않는다. 이 한 줄이 라이어 게임을 성립시킨다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "liar_guess", accusedId: liarId } });
+    const guessJson = JSON.stringify(await iceViewFor(asMember(liarId, "이서연")));
+    truthy("최종 추측 단계의 라이어 화면에도 제시어가 없다", !guessJson.includes(SECRET));
+    truthy("최종 추측 단계의 라이어 화면에 별칭도 없다", !guessJson.includes("학식쌤"));
+    check("최종 추측 단계에서도 라이어의 제시어는 비어 있다", (await iceViewFor(asMember(liarId, "이서연")))?.me?.word, null);
+    check("결과는 아직 없다", (await iceViewFor(asMember(liarId, "이서연")))?.result, null);
+
+    // ㉒ 판이 끝나면 **전원에게** 제시어가 열린다 — 이제 더 숨길 이유가 없다.
+    await db.iceRound.update({
+      where: { id: round.id },
+      data: { phase: "revealed", liarGuess: "학식선생님", guessCorrect: true, winner: "liar", resultCode: ICE_RESULT_CODES.liarGuessed },
+    });
+    const done = await iceViewFor(asMember(liarId, "이서연"));
+    truthy("결과 공개 뒤에는 라이어에게도 보인다", JSON.stringify(done).includes(SECRET));
+    check("라이어도 결과를 본다", done?.me?.word, SECRET);
+    check("결과 문장은 코드로 만든다", done?.result?.outcome, "라이어가 제시어를 맞혔습니다. 라이어의 역전승입니다.");
+    check("마지막 답이 남는다", done?.result?.guess, { text: "학식선생님", correct: true });
+
+    // ㉓ 설명 순서는 1부터 차례로, 한 번만 정해진다.
+    check("설명 순서가 있다", done?.turn.map((t) => t.name), ["김민준", "이서연", "박지호"]);
+
+    // ㉔ 남의 팀 사람이 판을 볼 수 없다 — 판은 팀과 묶여 있다.
+    check("다른 팀은 이 판을 볼 수 없다", await iceViewFor({ id: stranger.id, teamId: other.id, name: "남", isLeader: false }), null);
+
+    // ㉕ 참가자 목록에서 남의 팀원은 세어지지 않는다. 이것이 참가자 선택의 방어선이다.
+    const roster = await db.member.findMany({
+      where: { id: { in: [seats[0].id, seats[1].id, stranger.id] }, teamId: team.id, leftAt: null },
+      select: { id: true },
+    });
+    check("참가자 검증은 남의 팀원을 걸러 낸다", roster.length, 2);
+
+    // ㉖ 팀을 나간 사람은 이 판에 새로 앉을 수 없다.
+    const gone = await db.member.create({ data: { teamId: team.id, name: "정수빈" } });
+    await db.member.update({ where: { id: gone.id }, data: { leftAt: new Date() } });
+    const afterLeave = await db.member.findMany({
+      where: { id: { in: [seats[0].id, gone.id] }, teamId: team.id, leftAt: null },
+      select: { id: true },
+    });
+    check("나간 사람은 참가자에서 빠진다", afterLeave.map((m) => m.id), [seats[0].id]);
+
+    await db.iceRound.deleteMany({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+    await db.team.delete({ where: { id: other.id } }).catch(() => {});
+  }
+}
+
+/* ── 배정은 조용하지 않다 ────────────────────────────────────── */
+
+console.log("\n배정 알림 (맡은 사람은 그 사실을 알아야 한다)");
+{
+  // ① **처음 맡기면 말한다** — 이게 구멍이었던 자리다. 예전에는 행만 쓰고 아무도 말하지
+  //    않았다(담당자는 목록을 열어야 알았다).
+  check("처음 남에게 배정하면 알린다", shouldNotifyAssignee("B", null, "A"), true);
+  // ② **중복으로 말하지 않는다** — 이미 그 사람에게 있던 것을 다시 저장하면 넣을 때 알았다.
+  check("이미 그 사람에게 있던 것은 다시 말하지 않는다", shouldNotifyAssignee("B", "B", "A"), false);
+  // ③ **담당자를 비우면 말할 사람이 없다.**
+  check("담당자를 비우면 알리지 않는다", shouldNotifyAssignee(null, "B", "A"), false);
+  // ④ **나에게 배정하면 알리지 않는다** — `notify` 가 걸러 내지만 의도가 그럴 리 없다.
+  check("나에게 배정하면 알리지 않는다", shouldNotifyAssignee("A", null, "A"), false);
+  // ⑤ **남에게서 나로 옮긴 것은 나만 알고 있으므로 말하지 않는다.**
+  check("남에게서 나로 옮기면 알리지 않는다", shouldNotifyAssignee("A", "B", "A"), false);
+  // ⑥ **남에게서 다른 남에게로 옮기면** 그 사람에게 말해야 한다 — 이게 빠지면 조용한 배정이다.
+  check("남에게서 다른 남에게로 옮기면 알린다", shouldNotifyAssignee("C", "B", "A"), true);
+
+  // 배정 알림이 **실제로 배정 길에서** 나가는지 — 알림 종류가 등록되어 있어야 하고,
+  // 화면이 그 종류를 알지 못하면 `LOOK` 에서 빠진 채 조용히 안 보인다.
+  const policy = readCode("../src/server/notify/policy.ts");
+  check("알림 종류로 등록되어 있다", /"task-assigned"/.test(policy), true);
+  // 배정은 **아는 게 핵심**이라 푸시로 간다 — 나중에 목록을 열면서 알게 되는 것과 다르다.
+  check("푸시로 보낸다", /case "task-assigned"[\s\S]{0,200}return "push"/.test(policy), true);
+  const look = readCode("../src/features/home/notifications-screen.tsx");
+  check("알림함이 그 종류를 그린다", /"task-assigned":\s*\{/.test(look), true);
+
+  const actions = readCode("../src/server/actions/tasks.ts");
+  check("배정 길이 알림을 부른다", actions.includes("notifyAssignee("), true);
+  // 제목만 바꾸고 **부르는 것을 잊으면** 조용해진다 — 그래서 실제로 부르는지 고정한다.
+  check("순수 판정을 거친다", actions.includes("shouldNotifyAssignee("), true);
+}
+
 await db.$disconnect();
 
 console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);
 if (failed > 0) process.exit(1);
-console.log("\n사용자 노출 용어");
-checkProductLanguage();
-

@@ -46,3 +46,32 @@ export function taskEditBlock(
   if (task.createdById === null) return "leader-only";
   return "not-creator";
 }
+
+/**
+ * 배정 알림을 **보내야 하는가** — 순수 판정.
+ *
+ * ## 왜 알림을 보내는가 (2026-09-28)
+ *
+ * 배정이 **조용했다.** 행만 쓰고 아무도 말하지 않았다 — 담당자는 자기 할 일 목록을 열어서야
+ * 알게 됐고, 그 사이에 "안 받기로" 할 기회도 없었다. 앱이 다른 모든 변경(회의 확정·기여
+ * 확인·콤 찌르기)은 말하는데 담당 배정만 조용했다.
+ *
+ * ## 무엇을 하지 않는가
+ *
+ * **배정을 미루지 않는다.** 수락을 기다리는 상태는 4명 팀에 절차가 되고, "안 받으면 언제까지"
+ * 같은 새 정책이 한 벌 더 생긴다. 배정은 지금 바로 효력이 있고, 그 사실을 알려 주는 것으로
+ * 끝낸다.
+ *
+ * - **이미 그 사람에게 있던 것을 다시 저장** → 넣을 때 이미 알았다.
+ * - **담당자를 비움** → 돌아갈 사람이 없다.
+ * - **나에게 배정** → `notify` 가 본인을 걸러 내지만, 의도가 그럴 리 없으므로 부르지 않는다.
+ */
+export function shouldNotifyAssignee(
+  assigneeId: string | null,
+  previousAssigneeId: string | null,
+  meId: string,
+): boolean {
+  if (!assigneeId) return false;
+  if (assigneeId === meId) return false;
+  return assigneeId !== previousAssigneeId;
+}

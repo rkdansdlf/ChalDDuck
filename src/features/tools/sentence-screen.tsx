@@ -3,9 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppBar, Body, Btn, CompareCard, Note, Textarea, Undecided } from "@/components/ui";
-import { convertSentence, getSentenceSample } from "@/server/actions/ai";
+import { getSentenceSample } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { readAi } from "./ai-result";
+import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
 import { useAiQuota } from "./use-ai-quota";
 import { cn } from "@/lib/cn";
@@ -64,16 +64,27 @@ export function SentenceScreen({
     };
   }, [mode, initialMode]);
 
-  // 입력이 멎은 뒤 한 번만 부른다 — 글자마다 부르면 모델 호출이 그만큼 나간다.
+  /**
+   * 조각으로 받는다 — **요약 모드에서 특히 그렇다.**
+   *
+   * 요약은 끝까지 빈 화면이었다가 한 번에 차는 게 가장 답답하다. 요약은 **늘어나는** 것이
+   * 보이는데 그것이 한 번에 일어나면 기다리는 시간이 길게 느껴지고, 사용자는 두 번째로
+   * 눌러버린다(그때 또 한도가 깎인다).
+   *
+   * 반환값은 `convertSentence` 와 같은 `{ value, source }` — 스트리밍이 별도 계약이 되지
+   * 않게 하는 것이 목적이다.
+   */
   const run = useCallback(
-    (value: string, key: string) => convertSentence(value, key).then(readAi),
+    (value: string, key: string, onDelta?: (partial: string) => void) =>
+      runAiStream({ tool: "sentence", text: value, variant: key, onDelta }),
     [],
   );
-  const { result, working, error, source, canRun, stale, run: generate } = useAiDraft({
+  const { result, partial, working, error, source, canRun, stale, run: generate } = useAiDraft({
     text,
     variant: mode,
     initial: { text: initialInput, variant: initialMode, result: initialOutput },
     run,
+    stream: true,
   });
 
   return (
@@ -145,7 +156,7 @@ export function SentenceScreen({
             />
           }
           resultLabel="변환 결과"
-          result={working ? "바꾸는 중…" : result || "—"}
+          result={working ? partial || "바꾸는 중…" : result || "—"}
           resultSource={source === "none" ? null : source}
         />
 

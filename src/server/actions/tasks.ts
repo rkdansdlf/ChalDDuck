@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { TASK_KINDS } from "@/data/catalog";
 import type { Task, TaskKindKey } from "@/lib/types";
-import { canEditTask } from "@/lib/task-permission";
+import { canEditTask, shouldNotifyAssignee } from "@/lib/task-permission";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -122,11 +122,15 @@ export async function updateTask(
   const title = fields.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("할 일 제목을 적어 주세요.");
 
+  const nextAssigneeId = await assigneeIdOf(me.teamId, fields.assignee);
+  // **누가 누구에게** 배정했는지 — 알림 문장에 들어간다(아래).
+  const beforeAssigneeId = await db.task.findUnique({ where: { id: task.id }, select: { assigneeId: true } });
+
   await db.task.update({
     where: { id: task.id },
     data: {
       title,
-      assigneeId: await assigneeIdOf(me.teamId, fields.assignee),
+      assigneeId: nextAssigneeId,
       due: dueOf(fields.due),
       // **주인이 없던 업무는 지금 고치는 사람이 주인이 된다**(2026-09-28).
       //
@@ -138,7 +142,46 @@ export async function updateTask(
     },
   });
 
+  await notifyAssignee(me, task.id, nextAssigneeId, beforeAssigneeId?.assigneeId ?? null);
   revalidatePath("/home", "layout");
+}
+
+/**
+ * **맡은 사람은 그 사실을 알게 해야 한다**(2026-09-28).
+ *
+ * 예전에는 배정이 조용했다 — 행만 쓰고 아무도 말하지 않았다. 담당자는 자기 할 일 목록을
+ * 열어서야 알게 되고, 그 사이에 "안 받기로" 할 기회도 없다. 앱이 다른 모든 변경(회의 확정·
+ * 기여 확인·콤 찌르기)은 말하는데 **담당 배정만 조용했다** — 그게 유일한 구멍이었다.
+ *
+ * ## 무엇을 하지 않는가
+ *
+ * - **배정을 미루지 않는다.** 수락을 기다리는 상태는 4명 팀에 절차가 되고, "안 받으면
+ *   언제까지" 같은 새 정책이 한 벌 더 생긴다. 배정은 지금 바로 효력이 있다.
+ * - **이미 그 사람에게 있던 것이면 말하지 않는다.** 넣을 때 이미 알았다.
+ * - **담당자를 비우면 말하지 않는다.** 돌아갈 사람이 없기 때문이다.
+ * - **나에게 배정하면 말하지 않는다.** `notify` 가 본인을 걸러 내지만, 의도가 그럴
+ *   리 없으므로 아예 부르지 않는다.
+ */
+async function notifyAssignee(
+  me: { id: string; name: string },
+  taskId: string,
+  assigneeId: string | null,
+  previousAssigneeId: string | null,
+): Promise<void> {
+  if (!assigneeId) return;
+  if (!shouldNotifyAssignee(assigneeId, previousAssigneeId, me.id)) return;
+
+  const task = await db.task.findUnique({ where: { id: taskId }, select: { title: true } });
+  if (!task) return;
+
+  await notify({
+    to: [assigneeId],
+    kind: "task-assigned",
+    title: `${me.name}님이 업무를 맡겼습니다`,
+    body: task.title,
+    href: "/home/tasks",
+    actorId: me.id,
+  });
 }
 
 /** 이름으로 담당자를 찾는다. 우리 팀에 지금 있는 사람만 — 없으면 미정으로 둔다. */

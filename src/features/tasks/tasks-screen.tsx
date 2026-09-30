@@ -23,7 +23,6 @@ import {
 import { cn } from "@/lib/cn";
 import type { Member, Task, TaskKind, TaskKindKey } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
-import { taskEditBlock } from "@/lib/task-permission";
 import { addTask, cycleTaskStatus, updateTask } from "@/server/actions/tasks";
 
 /**

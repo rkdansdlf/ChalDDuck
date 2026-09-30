@@ -100,11 +100,32 @@ export async function aiQuotaFor(me: SessionMember): Promise<AiQuota> {
  * 멎을 때(800ms) 자동으로 부르니, **고치는 행위 자체가 과금**이었다 — 고칠수록 한도가 줄었다.
  * 이제 생성은 버튼을 눌렀을 때만 일어난다(`use-ai-draft`).
  *
- * ## 실패하면 돌려 주는가 — 아니다
+ * ## 성공했다면 무엇을 돌려 주는가 — **방금 적은 행의 id**
  *
- * 모델을 부르기 **전에** 적는 이유다. 실패한 호출도 시간과 돈이 들었고(타임아웃은 특히 그렇다),
- * 실패를 공짜로 두면 실패하는 요청을 무한히 보낼 수 있다 — 한도가 아니라 **지속 가능한
- * 비용**이 된다. 이 선택을 바꾸려면 여기만 고치면 된다.
+ * 만든 행을 다시 찾지 않게 하려고다. 실패했을 때 그 행 하나만 지우려면("`refundAiQuota`")
+ * **내가 어느 행을 지운다는 뜻인지** 호출한 곳이 알고 있어야 한다. 예전에는 `{ ok: true }`
+ * 만 돌려줬으므로 되돌릴 방법이 없었고, 이 함수를 부를 때 남긴 값이 전부였다.
+ *
+ * ## 실패하면 돌려 주는가 — **모델이 실패했을 때만 돌려 준다**
+ *
+ * 예전에는 **돌려 주지 않았다.** 그때의 이유는 "실패한 호출도 시간과 돈이 들었고(타임아웃은
+ * 특히 그렇다), 실패를 공짜로 두면 실패하는 요청을 무한히 보낼 수 있다"였다 — 한도가 아니라
+ * **지속 가능한 비용**이 된다는 계산이었다.
+ *
+ * 그 계산은 무료 라우터(`openrouter/free`)에서는 성립하지 않는다. 이 모델은 **사용자가
+ * 고를 수 없는 쪽**에서 실패한다 — 타임아웃 899초, 안전 필터 거절, 빈 응답. 한도가 붙은
+ * 채로 그 실패를 쓰게 두면 **내 돈으로 내 몫의 실패를 산다.** 실제로 이 한도는 순화가 가장
+ * 필요할 때(심한 욕설) 가장 자주 거절당하는 구간에서 먼저 바닥났다.
+ *
+ * 그래서 실패는 **사용자에게 돌려주고, 제공자에게 청구한다.** 되돌림이 막는 것은 사람이
+ * 일부러 실패를 부르는 것이 아니라 **같은 실패를 무한히 누르는 것**뿐이고, 그것은 이후에
+ * 폴백 모델·재시도(0단계 2번)와 함께 다룬다. 지금 이 자리에서 고치면 된다.
+ *
+ * **거절(안전 필터)은 환불하지 않는다.** 거절은 `throw` 가 아니라 **모델이 돌려준 답**이라
+ * 여기까지 오지 않는다 — 즉 이 규칙이 거절을 공짜로 만들지 않는다. 환불되는 것은 **아무
+ * 답도 못 받은** 호출뿐이다.
+ *
+ * 한도 초과로 막힌 경우에도 환불할 것이 없다 — 애초에 행을 만들지 않았다.
  *
  * ## 왜 세는 것과 쓰는 것이 한 함수에 있나
  *
@@ -125,12 +146,13 @@ export async function aiQuotaFor(me: SessionMember): Promise<AiQuota> {
  * 기다림이 눈에 띄지 않는다.
  *
  * **모델을 부르는 동안은 잡고 있지 않는다** — 여기서 끝나면 락이 풀린다. 그 사이에 한도가
- * 차는 것은 맞다(실제로 그만큼 부른 것이므로).
+ * 차는 것은 맞다(실제로 그만큼 부른 것이므로). 실패해서 되돌린 몫은 그 사이 다른 호출이
+ * 이미 썼을 수 있으므로 **한도가 원래보다 많아지지는 않는다** — 적게 되는 것뿐이다.
  */
 export async function consumeAiQuota(
   me: SessionMember,
   tool: AiToolKey,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true; usageId: string } | { ok: false; message: string }> {
   const day = todayInSeoul();
   // 읽는 쪽(`aiQuotaFor`)과 **같은 선택**을 한다. 여기서만 다르면 화면의 숫자는 남았는데
   // 실제로는 막히는(또는 그 반대) 상태가 조용히 생긴다.
@@ -141,7 +163,9 @@ export async function consumeAiQuota(
       ? { tool: "read-cushion" as const }
       : { tool: { not: "read-cushion" as const } };
 
-  return db.$transaction(async (tx): Promise<{ ok: true } | { ok: false; message: string }> => {
+  return db.$transaction(async (tx): Promise<
+    { ok: true; usageId: string } | { ok: false; message: string }
+  > => {
     // 한 팀의 한도를 한 명씩 지킨다.
     await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
 
@@ -164,12 +188,45 @@ export async function consumeAiQuota(
       };
     }
 
-    await tx.aiUsage.create({
+    const written = await tx.aiUsage.create({
       data: { teamId: me.teamId, memberId: me.id, tool, day },
     });
 
-    return { ok: true };
+    // 방금 적은 행의 id 를 돌려준다 — 실패했을 때 **이 행 하나만** 되돌릴 수 있게.
+    return { ok: true, usageId: written.id };
   });
+}
+
+/**
+ * 실패한 호출이 깎은 한도를 **그 행 하나만** 되돌린다.
+ *
+ * ## 왜 `deleteMany({ teamId, memberId, day })` 가 아니라 id 인가
+ *
+ * 예전의 사고를 그대로 피하기 위한 것이다 — 같은 날 그 사람이 쓴 다른 도구의 기록이 함께
+ * 지워졌다. 되돌릴 수 있는 것은 **지금 되돌리고 있는 그 호출**뿐이다.
+ *
+ * `teamId`·`memberId` 를 함께 단다. id 하나만 믿으면 이 함수가 잘못 불렸을 때 **남의 행**을
+ * 지울 수 있다(지금 이 값을 만들어 손에 쥔 곳은 `run.ts` 하나뿐이지만, 방어 없이 두지 않는다).
+ *
+ * ## 돌아오지 않는다
+ *
+ * DB 조회가 실패하면 **사용자에게 보여 줄 원래 실패 사유를 가리지 않는다.** 되돌림은 배려이고
+ * 그 배려가 원래 목적을 해치는 경우(한도를 못 돌려받았다고 말해야 할 때 조용히 지워짐)가 더
+ * 나쁘다. 서버 로그에 남기고 `false` 를 돌려준다.
+ *
+ * 지워진 행은 어디에도 남지 않는다는 사실도 그대로 적어 둔다 — 실패의 원인을 아는 길은 서버
+ * 로그뿐이다(`runTool` 이 `console.error` 로 남긴다).
+ */
+export async function refundAiQuota(me: SessionMember, usageId: string): Promise<boolean> {
+  try {
+    const { count } = await db.aiUsage.deleteMany({
+      where: { id: usageId, teamId: me.teamId, memberId: me.id },
+    });
+    return count > 0;
+  } catch (cause: unknown) {
+    console.error(`[ai:limit] 한도를 되돌리지 못했습니다 (${usageId})`, cause);
+    return false;
+  }
 }
 
 /**

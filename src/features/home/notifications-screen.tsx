@@ -24,6 +24,7 @@ import { readPushState, turnOffPush, turnOnPush, type PushTurnOn } from "./push-
 /** 알림 종류마다 다른 아이콘·색. 상태는 색만으로 구분하지 않는다는 규칙대로 글도 함께 있다. */
 const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; label: string }> = {
   poke: { icon: "bell", surface: "bg-yellow-200 text-yellow-700", label: "진행상황 요청" },
+  "task-assigned": { icon: "list-checks", surface: "bg-yellow-200 text-yellow-700", label: "담당 배정" },
   meeting: { icon: "calendar-clock", surface: "bg-yellow-200 text-yellow-700", label: "회의" },
   "schedule-ask": { icon: "calendar-clock", surface: "bg-yellow-200 text-yellow-700", label: "시간표 요청" },
   "contrib-dispute": { icon: "circle-alert", surface: "bg-coral-100 text-coral-700", label: "의견 차이" },

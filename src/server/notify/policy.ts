@@ -30,6 +30,8 @@
  */
 export type NotifyKind =
   | "poke"
+  /** 누군가 나에게 업무를 배정했다(21). */
+  | "task-assigned"
   | "meeting"
   | "schedule-ask"
   | "contrib-dispute"
@@ -72,6 +74,10 @@ export function pushPolicy(kind: NotifyKind, context: NotifyContext = {}): PushP
 
   switch (kind) {
     // 1. 응답이 없으면 일이 밀린다. 팀장에게 가는 요청이 여기 전부다.
+    case "task-assigned":
+      // **아는 게 핵심이다.** 맡은 일을 나중에 목록을 열면서 알게 되는 것과, 그때
+      // 알려지는 것은 다르다 — 그 사이에 그 사람은 "안 받기로" 결정할 기회를 잃는다.
+      return "push";
     case "join-request":
     case "rejoin-request":
     case "contrib-dispute":

@@ -12,7 +12,6 @@ import {
   Toast,
   Undecided,
 } from "@/components/ui";
-import { rewriteWithCushion } from "@/server/actions/ai";
 import { sendChatMessage } from "@/server/actions/chat";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
@@ -24,7 +23,7 @@ import {
 } from "./cushion-handoff";
 import { TonePicker } from "./tone-picker";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { readAi } from "./ai-result";
+import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
 import { DraftSourceChip } from "./draft-source-chip";
 import { useAiQuota } from "./use-ai-quota";
@@ -73,16 +72,28 @@ export function CushionScreen({
   // (`use-ai-draft` 의 규칙) — 결과는 `stale` 로 표시되고 누를 때만 새로 만든다.
   useEffect(() => clearCushionDraft, []);
 
-  // 말투를 바꾸거나 원문을 고치면 결과를 다시 받는다 — 입력이 멎은 뒤 한 번만.
+  /**
+   * 쿠션 번역기만 **조각으로** 받는다.
+   *
+   * 다듬는 문장은 짧아서 전체가 2~4초 안에 나온다. 그 2~4초 동안 화면이 "다듬는 중…" 만
+   * 보여 주면 이 도구가 느린 것처럼 느껴진다 — 실제로는 빠르다. **글자가 조금씩 오는 것**이
+   * 가장 값싼 개선이다.
+   *
+   * **반환값은 `rewriteWithCushion` 과 같은 `{ value, source }`** 다. 화면이 어느 길로
+   * 불렀는지 알지 못하고, 출처 배지도 두 길에서 똑같이 붙는다 — 스트리밍이 "별도 기능"이 되면
+   * 여기서부터 어긋난다.
+   */
   const run = useCallback(
-    (value: string, key: string) => rewriteWithCushion(value, key).then(readAi),
+    (value: string, key: string, onDelta?: (partial: string) => void) =>
+      runAiStream({ tool: "cushion", text: value, variant: key, onDelta }),
     [],
   );
-  const { result, working, error, source, canRun, stale, run: generate } = useAiDraft({
+  const { result, partial, working, error, source, canRun, stale, run: generate } = useAiDraft({
     text,
     variant: tone,
     initial: { text: sample, variant: initialTone, result: initialResult },
     run,
+    stream: true,
   });
   const { left, perDay } = useAiQuota(aiReady);
 
@@ -167,10 +178,16 @@ export function CushionScreen({
             )}
           >
             {working ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="animate-spin text-coral-600">🪄</span>
-                쿠션어로 다듬는 중…
-              </span>
+              partial ? (
+                // **도착한 글만 보여 준다.** 스피너와 글자를 함께 놓으면 "만드는 중" 과
+                // "다듬은 말" 이 한 화면에 두 개 있어, 아직 반도 안 된 글이 결과인 것처럼 보인다.
+                partial
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="animate-spin text-coral-600">🪄</span>
+                  쿠션어로 다듬는 중…
+                </span>
+              )
             ) : (
               result || "원문을 적으면 다듬은 말이 여기에 나옵니다."
             )}

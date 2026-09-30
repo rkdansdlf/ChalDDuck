@@ -60,6 +60,7 @@ model Team {
   messages       Message[]
   tasks          Task[]
   aiUsage        AiUsage[]
+  aiCalls        AiCall[]
   iceRounds      IceRound[]
 }
 
@@ -182,6 +183,7 @@ model Member {
   roleDraws       RoleDraw[]
   roleRejections  RoleRejection[]
   aiUsage         AiUsage[]
+  aiCalls         AiCall[]
   iceHosted       IceRound[]        @relation("IceHost")
   iceSeats        IceSeat[]         @relation("IceSeatOf")
 
@@ -922,19 +924,89 @@ model AiUsage {
 /// 팀마다 진행 중인 판은 하나다. `activeKey` 는 진행 중일 때만 `teamId` 를 담고 끝나면
 /// 비운다 — 여기에 unique 가 걸려 있어 두 사람이 동시에 "시작"을 눌러도 판이 둘 생기지 않는다.
 /// (Postgres 의 unique 는 NULL 을 여럿 허용하므로 끝난 판은 얼마든지 쌓인다.)
+/// AI 도구가 **한 번 부를 때마다** 남기는 한 줄.
+///
+/// ## 왜 `AiUsage` 와 다른 표인가
+///
+/// `AiUsage` 는 **몇 번 썼나**(하루 한도) 를 세는 장부이고, 이 표는 **어떻게 됐나** 를
+/// 세는 장부다. 둘을 한 표에 넣을 수 없어서 갈랐다.
+///
+/// **실패하면 `AiUsage` 행은 사라진다**(0단계 1번 — 실패한 호출은 한도를 쓰지 않는다).
+/// 그러면 실패의 흔적이 어디에도 남지 않는다. 그래서 실패를 세려면 **삭제되지 않는** 자리가
+/// 따로 필요하다. 지연을 재지 않으면 "느려서 안 쓰는 것"과 "못 해서 안 쓰는 것"을 구분할 수
+/// 없고, 그 둘의 차이는 어떤 모델을 고를지의 전부다.
+///
+/// ## 무엇을 남기고 무엇을 남기지 않는가
+///
+/// 남긴다: 도구 · **어느 모델로** · 지연 · 결과 · 한국 날짜 · 팀 · 팀원.
+/// **남기지 않는다: 입력한 글도 결과도 아니다.** "횟수와 성격만 남긴다"는 약속을 여기서도
+/// 지킨다 — 남기기 시작하면 "무엇을 얼마나 보관하는지"가 곧 지켜야 할 약속이 된다.
+///
+/// ## 결과 세 가지
+///
+/// - `ok` — 답을 받았다.
+/// - `refused` — **답은 왔는데 거절했다**(안전 필터). throw 가 아니므로 한도는 깎였지만
+///   이 도구는 일을 하지 못했다. 실패와 **다른 값**이어야 한다 — 고치는 길이 다르다.
+/// - `failed` — 아무 답도 못 받았다(타임아웃·429·깨진 JSON). 한도는 환불된다.
+model AiCall {
+  id       String @id @default(cuid())
+  teamId   String
+  memberId String
+  /// cushion | clerk | research | present | sentence | read-cushion
+  tool String
+  /// **실제로 응답한 모델의 슬러그.** 폴백으로 다른 모델에 갔으면 그 모델이 적힌다 —
+  /// "이 기능이 느린 것"과 "이 모델이 느린 것"을 나누는 값이다.
+  model  String
+  /// 한국 날짜(YYYY-MM-DD). `AiUsage` 와 같은 기준이야 — 한 장부의 날짜가 두 종류일 수 없다.
+  day      String
+  /// ok | refused | failed
+  outcome String
+  latencyMs Int
+  /// 첫 모델이 실패해서 **다른 모델로 다시 시도**했는가. 0/1 — 여기로 "폴백이 먹히나"를 잰다.
+  retried Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  /// 하룻값 집계는 항상 "이 팀 · 이 날 · 이 도구" 로 묶인다.
+  @@index([teamId, day, tool])
+  @@index([memberId, day])
+}
+
 model IceRound {
   id        String    @id @default(cuid())
   teamId    String
   activeKey String?   @unique
   /// liar | mafia
   game      String
-  /// play = 진행 중(투표 받는 중) / revealed = 결과 공개
+  /// 라이어: clue(카드 확인) → vote(투표) → liar_guess(최종 추측) → revealed
+  /// 마피아: play(낮·밤 진행) → revealed
+  /// **마피아 판에 clue 가 없는 것은 아니다** — 라이어 판은 카드 확인과 투표가 서로 다른
+  /// 단계여야 "설명한다 → 투표한다"가 되지만, 마피아는 밤과 낮이 자꾸 엇갈리므로 한 단계다.
   phase     String    @default("play")
-  /// 라이어 게임의 주제와 제시어. 제시어는 결과 공개 전에는 라이어가 아닌 사람에게만 보인다.
+  /// 라이어 게임의 주제와 제시어. **제시어는 결과 공개 전에는 누구에게도 내려가지 않는다.**
   topic     String?
   word      String?
-  /// 마피아의 결과 문구("시민 승리"). 끝나기 전에는 null.
+  /// 제시어의 정답으로 받아들이는 또 쓴 표기. 최종 추측을 관대하게 판정한다.
+  aliases   String[]  @default([])
+  /// 라이어가 지목돼서 마지막 추측을 기다리는 사람. 끝나기 전에는 누구인지 모른다.
+  accusedId String?
+  /// 라이어가 제출한 최종 답. 한 번만 쓰인다.
+  liarGuess String?
+  /// 최종 답이 맞았는지. 서버만 판정한다.
+  guessCorrect Boolean?
+  /// liar | citizen — 누가 이겼는지. 마피아 판은 끝나기 전 null.
+  winner String?
+  /// 승패를 **코드로** 남긴다("LIAR_GUESSED_WORD"). 한국어 문장은 UI가 만든다 —
+  /// 문장을 저장하면 말이 고쳐져도 쌓인 판의 결과는 옛말로 남는다.
+  resultCode String?
+  /// 예전 판의 결과 문장. **이제부터는 쓰지 않는다** — `resultCode` 로 대신한다.
+  /// 지우지 않는 이유는 그 문장이 저장된 판이 아직 DB에 있기 때문이다(기록을 지우는
+  /// 마이그레이션은 하지 않는다). 읽을 때는 `resultCode` 를 먼저 보고, 없을 때만 이 값을 쓴다.
   outcome   String?
+  /// 이 단계가 시작된 시각. 어느 단계에서 얼마나 머물렀는지 재고, 멈춘 판을 찾기 위한 것.
+  phaseStartedAt DateTime @default(now())
   /// 판을 연 사람 = 사회자. 결과 공개·투표 마감·끝내기를 할 수 있다(팀장도 할 수 있다).
   hostId    String
   createdAt DateTime  @default(now())
@@ -953,11 +1025,15 @@ model IceSeat {
   memberId  String
   /// 라이어: liar | citizen / 마피아: mafia | police | doctor | citizen
   role      String
+  /// 말할 순서(1부터). 시작할 때 무작위로 한 번 정한다.
+  /// 대화는 오프라인에서 하는데 **순서만 앱이 안내한다** — "누가 먼저 하지" 로 한 번도 안
+  /// 넘어가게 하려고. 누가 말을 끝냈는지는 앱이 모른다.
+  turnOrder Int?
   /// 마피아에서 탈락한 시각과 방법(vote = 낮 투표 / night = 사회자가 밤 결과로 표시).
   /// 라이어 게임은 늘 null. 탈락 순서는 `outAt` 으로 정한다.
   outAt     DateTime?
   outHow    String?
-  /// 지금 투표에서 고른 사람. 투표를 마감하면 비운다.
+  /// 지금 투표에서 고른 사람. 동점 처리를 하면 비운다.
   voteForId String?
 
   round  IceRound @relation(fields: [roundId], references: [id], onDelete: Cascade)

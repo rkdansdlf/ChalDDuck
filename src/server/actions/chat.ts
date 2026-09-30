@@ -37,6 +37,7 @@ import {
 } from "@/lib/read-cushion";
 import type { ChatMessage, DmThread } from "@/lib/types";
 import { db } from "@/server/db";
+import { markLastCallRefused } from "@/server/ai/call-context";
 import { runTool } from "@/server/ai/run";
 import { softenIncoming } from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
@@ -707,6 +708,16 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   // 4) 항목별 판정.
   const refused = isRefusal(result.value.raw);
   const parsed = parsePurifyResponse(result.value.raw);
+
+  /**
+   * 계측에 **거절**이라고 남긴다.
+   *
+   * 모델 층은 이 호출이 거절인지 몰랐다 — 답이 왔으므로 성공으로 적었다. 그런데 이 도구는
+   * 일을 하지 못했다. 계측이 `ok` 로 남으면 "느린 것"과 "거절당하는 것"이 같은 0 으로
+   * 보이고, **모델을 바꿔야 할 문제를 "다시 눌러라" 고 안내하게 된다.** (거부는 다시 눌러도
+   * 같은 결과가 나온다 — 실측 16/26.)
+   */
+  if (refused) markLastCallRefused();
 
   for (const item of items) {
     if (refused) {

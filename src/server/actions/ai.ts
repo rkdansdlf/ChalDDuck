@@ -19,12 +19,15 @@ import { requireSessionMember } from "@/server/session";
  *
  * 키(`OPENROUTER_KEY`)가 없으면 도구는 미리 적어 둔 샘플을 돌려준다.
  * 화면은 `getAiStatus()` 로 어느 쪽인지 알고 사용자에게 그대로 알린다.
+ *
+ * ## 15 쿠션 번역기 · 27 문장 변환은 **여기에 없다**
+ *
+ * 그 둘은 예전에 여기서 불렀고, 이제는 `/api/ai/stream` 이 조각으로 보낸다
+ * (6번 — 사람이 기다리는 시간을 줄이는 것이 목적). **액션을 남겨 둔 채 화면을 옮기면
+ * 아무도 부르지 않는 모델 호출단이 하나 더 생긴다** — 돈이 드는 죽은 코드라서 지웠다.
+ * 되돌리려면 같은 `runTool` 을 쓰는 액션 하나면 충분하고(한도·환불·출처가 그대로다),
+ * 조각이 필요 없을 때 그 길이 된다.
  */
-
-/** 말투만 바꾼다 — 요구하는 내용(마감·필요한 것)은 그대로 둔다. */
-export async function rewriteWithCushion(text: string, tone: string): Promise<AiResult<string>> {
-  return runTool("cushion", () => ai.rewriteWithCushion(text, tone));
-}
 
 /** 회의 메모에서 요약과 할 일 **후보**를 뽑는다. 그대로 반영되지는 않는다. */
 export async function summarizeMeeting(raw: string): Promise<AiResult<ClerkDraft>> {
@@ -39,10 +42,6 @@ export async function searchResearch(query: string): Promise<AiResult<ResearchRe
 /** 표현만 다듬고 내용을 새로 지어내지 않는다. */
 export async function refineScript(raw: string): Promise<AiResult<PresentDraft>> {
   return runTool("present", () => ai.refineScript(raw));
-}
-
-export async function convertSentence(text: string, mode: string): Promise<AiResult<string>> {
-  return runTool("sentence", () => ai.convertSentence(text, mode));
 }
 
 /**

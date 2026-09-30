@@ -197,7 +197,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "drive";
+  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "drive";
   title: string;
   body: string;
   href: string | null;
@@ -794,6 +794,17 @@ export type IceGame = {
 export type IceRole = "liar" | "citizen" | "mafia" | "police" | "doctor";
 
 /**
+ * 판이 지나가는 단계.
+ *
+ * 라이어는 `clue`(카드 확인) → `vote`(투표) → `liar_guess`(라이어의 최종 추측) → `revealed`.
+ * 예전에 `play` / `revealed` 두 개뿐이라 **카드 확인과 투표가 한 단계**였고, 그 결과 라이어의
+ * 마지막 추측을 받을 단계가 아예 없었다.
+ *
+ * 마피아는 밤과 낮이 자꾸 엇갈리므로 `play` → `revealed` 다.
+ */
+export type IcePhase = "clue" | "vote" | "liar_guess" | "play" | "revealed";
+
+/**
  * 한 판을 **내 눈으로 본 모습.** 서버가 보는 사람마다 따로 만든다.
  *
  * 남의 역할·제시어는 결과가 공개되기 전에는 여기 들어오지 않는다 — 화면에서 가리는 것이
@@ -804,7 +815,7 @@ export type IceView = {
   /** 보는 사람의 팀원 id. 명단에서 "나"를 찾는 데 쓴다. */
   meId: string;
   game: IceGameKey;
-  phase: "play" | "revealed";
+  phase: IcePhase;
   hostName: string;
   /** 사회자(판을 연 사람)이거나 팀장이면 공개·마감·끝내기를 할 수 있다. */
   canHost: boolean;
@@ -815,12 +826,20 @@ export type IceView = {
     voteForId: string | null;
     /** 라이어 게임의 주제. 라이어도 주제는 안다. */
     topic: string | null;
-    /** 제시어. 라이어에게는 null. */
+    /** 제시어. 라이어는 `revealed` 가 되기 전까지 항상 null 이고, 시민도 판이 끝난 뒤에야 받는다. */
     word: string | null;
+    /** 라이어가 최종 추측을 이미 냈는지. 한 번만 낼 수 있다. */
+    guessSubmitted: boolean;
     /** 마피아끼리는 서로를 안다. 그 밖의 역할에는 빈 배열. */
     allies: string[];
   } | null;
   players: { id: string; name: string; alive: boolean }[];
+  /**
+   * 말할 순서. **누가 말을 끝냈는지는 앱이 모른다** — 대화는 오프라인에서 하고 앱은
+   * 순서만 안내한다("누가 먼저 하지" 로 한 번도 안 넘어가게 하려고).
+   * 라이어 판에만 있다. 마피아 판은 빈 배열.
+   */
+  turn: { id: string; name: string }[];
   /** 지금 투표에 참여한 사람 수 / 투표할 수 있는 사람 수. 누가 누구를 골랐는지는 공개 전까지 모른다. */
   votes: { cast: number; total: number };
   /** 마피아에서 지금까지 탈락한 순서. 라이어 게임은 빈 배열. */
@@ -831,6 +850,8 @@ export type IceView = {
     word: string | null;
     tally: { name: string; votes: number }[];
     outcome: string;
+    /** 라이어가 쓴 최종 답과 정답 여부. 라이어를 지목한 판에만 있다. */
+    guess: { text: string; correct: boolean } | null;
   } | null;
 };
 

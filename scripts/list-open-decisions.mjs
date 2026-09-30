@@ -37,6 +37,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { stripComments } from "./strip-comments.mjs";
 import { join, relative } from "node:path";
 
 const ROOTS = ["src/features", "src/app"];
@@ -84,7 +85,14 @@ function plainText(jsx) {
 const found = [];
 for (const root of ROOTS) {
   for (const file of walk(root)) {
-    const source = readFileSync(file, "utf8");
+    // **주석을 지운 뒤에 센다.** 두 이유가 있다 —
+    //
+    // ① 주석 안에 적힌 `<Undecided>` 은 목록에 **아니어야** 한다. 주석 처리된 항목을
+    //    "확인이 필요한 정책" 으로 세면 목록이 거짓말을 한다(2026-09-28 실제로 두 번 그렇게
+    //    깨졌다 — `notify` 와 `confirm-due` 의 검사).
+    // ② 아래에서 중괄호 깊이를 세어 항목의 끝을 찾는데, 주석 안에 균형이 맞지 않는 중괄호가
+    //    하나만 있어도 끝을 잘못 잡는다. 지우면 그 위험도 함께 사라진다.
+    const source = stripComments(readFileSync(file, "utf8"));
     const lines = source.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (!lines[i].includes("<Undecided")) continue;

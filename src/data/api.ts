@@ -231,6 +231,23 @@ export async function getIceView(): Promise<IceView | null> {
   const session = await getSessionMember();
   return session ? iceViewFor(session) : null;
 }
+
+/**
+ * 이번 판에 **앉을 사람을 고르는** 목록. 팀에 남아 있는 사람 전부.
+ *
+ * 예전에는 서버가 팀원 전원을 자동으로 앉혔다 — 오늘 회의에 오지 않은 사람이 라이어가 되는
+ * 일이 실제로 났기 때문에, 고르는 것으로 바꿨다.
+ */
+export async function getIceRoster(): Promise<{ id: string; name: string }[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+  return db.member.findMany({
+    where: { teamId: session.teamId, leftAt: null },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 export async function getMenuOptions(_teamId: string): Promise<string[]> {
   return MENU_OPTIONS;
 }
@@ -708,6 +725,28 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
   });
 
   return boxes.map(toSubmissionBox);
+}
+
+/**
+ * 홈 브리핑이 **마감 임박**을 판단할 만큼만 읽는다 — 역할과 마감 시각 둘.
+ *
+ * `getSubmissionBoxes` 를 부르지 않는 이유가 있다: 그 함수는 **모든 제출함의 모든 파일의
+ * 모든 버전**을 함께 읽는다(`toSubmissionBox` 의 `fileCount`·`hasLate` 때문). 홈은 그
+ * 두 값을 쓰지 않는데 **버전 기록까지 통째로** 당기면 11개가 되던 홈 조회가 무거워진다.
+ *
+ * **같은 값을 두 판정으로 나누지 않는다.** "마감이 며칠 남았나" 는 여기서 한 번만 계산하고
+ *(`briefing.ts` 의 `boxesDueSoon`), 제출함 화면이 `dueAt` 을 읽을 때도 같은 문자열을
+ * 쓴다 — 다른 곳에서 `new Date(dueAt)` 를 직접 파싱하면 기준이 어긋난다.
+ */
+export async function getBoxDeadlines(
+  teamId: string,
+): Promise<Array<{ role: RoleKey; name: string; dueAt: string | null }>> {
+  const boxes = await db.submissionBox.findMany({
+    where: { teamId },
+    select: { role: true, name: true, dueAt: true },
+    orderBy: { id: "asc" },
+  });
+  return boxes.map((b) => ({ role: b.role as RoleKey, name: b.name, dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null }));
 }
 
 /** 제출함 안의 파일 목록. 각 파일의 최신 버전을 함께 준다. */

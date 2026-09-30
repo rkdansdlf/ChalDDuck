@@ -37,23 +37,30 @@ function openRouterProvider(id: string): CushionProvider {
     async purify({ items, system }) {
       if (!isAiConfigured()) throw new Error("AI 가 연결되어 있지 않습니다.");
       const raw = await askText({
+        tool: "read-cushion",
         system,
         user: buildPurifyRequest(items),
         maxTokens: 1200,
-        // id 가 "openrouter/free" 면 기본값을 그대로 쓴다 — 경로를 두 개 만들지 않는다.
-        ...(id === DEFAULT_PROVIDER_ID ? {} : { model: id }),
+        // provider 가 id 를 직접 받았을 때만 그 슬러그를 쓴다. 기본 provider 는 id 가
+        // **비어 있고**(`defaultProvider` 아래 참고), 그러면 `modelFor("read-cushion")` 이
+        // `.env` 의 도구별 설정을 그대로 고른다 — 라우팅과 벤치가 한 값을 본다.
+        ...(id ? { model: id } : {}),
       });
       return { raw, refused: isRefusal(raw) };
     },
   };
 }
 
-/** `.env` 가 없으면 이 이름이 된다. */
-const DEFAULT_PROVIDER_ID = process.env.OPENROUTER_MODEL || "openrouter/free";
-
-/** 지금 쓰는 provider. */
+/**
+ * 지금 쓰는 provider.
+ *
+ * **기본값은 여기서 정하지 않는다.** 예전에는 `.env` 의 `OPENROUTER_MODEL` 을 여기서 다시
+ * 읽어 provider 의 id 로 삼았는데, 그건 같은 값을 **두 곳에서** 고른 셈이라 도구별 라우팅이
+ * 켜졌을 때 어긋났다(읽기 순화만 옛 기본값을 쓰는 것이 실제로 벌어졌다). 이제 이 id 는
+ * 비어 있고, `askText` 가 `modelFor("read-cushion")` 을 본다 — **모델을 고르는 자리는 한 곳.**
+ */
 export function defaultProvider(): CushionProvider {
-  return openRouterProvider(DEFAULT_PROVIDER_ID);
+  return openRouterProvider("");
 }
 
 /**

@@ -11,15 +11,18 @@ import {
   SecTitle,
   type IconName,
 } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import { useNavBadges } from "@/components/nav-badges-store";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
+import { buildBriefing, suggestTools, type BriefingLine, type ToolSuggestion } from "./briefing";
 import type {
   AiTool,
   MeetingProposal,
   Member,
   RecentItem,
   Role,
+  RoleKey,
   RoleNegotiation,
   Task,
   Team,
@@ -55,6 +58,8 @@ export function HomeScreen({
   tasks,
   negotiation,
   meeting,
+  boxDeadlines,
+  today,
   rejoinRequests,
   awaitingMyConfirm,
   unreadNotifications,
@@ -67,6 +72,14 @@ export function HomeScreen({
   tasks: Task[];
   negotiation: RoleNegotiation;
   meeting: MeetingProposal;
+  /**
+   * 제출함의 역할과 마감 시각만(파일·버전 없음). **마감 임박 추천에 쓴다.**
+   * 홈이 12번째 조회를 얻는 값인데, 이게 없으면 "발표 임박 → 발표 지원" 추천이 영영
+   * 나오지 않습니다 — 팀 발표일 필드가 없어서(스키마에 없다) 제출함 마감을 쓴 것입니다.
+   */
+  boxDeadlines: Array<{ role: RoleKey; name: string; dueAt: string | null }>;
+  /** 한국 날짜(`YYYY-MM-DD`). **서버가 정한다** — 화면이 자기 시계로 맞추면 사람마다 다르다. */
+  today: string;
   /** 팀장이 승인해 줘야 하는 요청 수(가입 + 재입장). 팀장이 아니면 0. */
   rejoinRequests: number;
   /** 내가 확인해 줘야 하는 팀원의 기여 기록 수. */
@@ -182,6 +195,29 @@ export function HomeScreen({
     return list;
   }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse, rejoinRequests, awaitingMyConfirm]);
 
+  /**
+   * "오늘의 브리핑" — **있던 숫자로 만든다.** 계산과 세는 기준은 `briefing.ts` 다.
+   *
+   * 여기서 다시 세지 않는다. 화면이 개수를 세면 그 숫자는 화면 안에만 존재해서
+   * "왜 3건이냐" 를 물을 때 답할 곳이 없어진다 — 그리고 질문이 사라지면 규칙도 사라진다.
+   */
+  const briefing = useMemo(
+    () => buildBriefing({ today, awaitingMe: todos.length, meeting, tasks }),
+    [today, todos.length, meeting, tasks],
+  );
+
+  /**
+   * 도구 추천 — **규칙으로만.** 규칙이 하나도 맞지 않으면 추천을 그리지 않는다.
+   *
+   * 규칙이 하나도 맞지 않으면 **기존 정적 칩으로 되돌린다.** 도구는 언제 쓸 수 있으므로
+   * "지금은 아무 도구도 필요 없다" 는 사실 자체가 아니다 — 빈 추천 칸을 보여 주는 것은
+   * 도구 목록을 감춘 것이다.
+   */
+  const suggestions = useMemo<ToolSuggestion[]>(
+    () => suggestTools({ tasks, today, boxes: boxDeadlines }),
+    [tasks, today, boxDeadlines],
+  );
+
   return (
     <>
       <AppBar
@@ -199,6 +235,10 @@ export function HomeScreen({
             왼쪽은 "지금 나를 기다리는 것", 오른쪽은 "필요할 때 꺼내 쓰는 것". */}
         <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
         <div>
+        {/* 오늘의 브리핑이 맨 위다 — "내 확인이 필요한 일" 보다 먼저.
+            아래 목록은 **내가** 해야 하는 것이고, 이 카드는 **우리 팀 전체**가 지금 어디인지다.
+            내 것만 보면 팀이 어딘가에서 밀리고 있다는 사실을 모른다. */}
+        <BriefingCard lines={briefing} onOpen={(href) => router.push(href)} />
         <SecTitle
           note={
             todos.length > 0
@@ -284,17 +324,28 @@ export function HomeScreen({
         </Rows>
 
         <SecTitle
-          note="채팅·일정·팀 탭에는 없는 자리"
+          note={
+            suggestions.length > 0
+              ? "지금 팀 상황에 맞는 것"
+              : "채팅·일정·팀 탭에는 없는 자리"
+          }
           action="전체 보기"
           onAction={() => router.push("/tools")}
         >
-          AI 도구 바로가기
+          {suggestions.length > 0 ? "지금 쓸 도구" : "AI 도구 바로가기"}
         </SecTitle>
         <div className="flex flex-wrap gap-2">
-          {/* 열 수 있는 도구만 바로가기에 둔다 — 누르면 "준비 중"만 뜨는 칸은 자리만 차지한다. */}
+          {/*
+            추천이 있으면 그것을 먼저 보여 주고, **원래 목록으로 되돌린다.**
+            도구 다섯 개를 잘라 보여 주던 것을 네 개로 줄인 것이 아니다 — 도구는 언제나 쓸 수
+            있으므로 목록이 줄면 그만큼 **찾기 어려워진다.**
+          */}
+          {suggestions.map((s) => (
+            <SuggestionChip key={s.key} suggestion={s} onOpen={() => router.push(s.href)} />
+          ))}
           {aiTools
             .filter((tool): tool is typeof tool & { href: string } => tool.ready && tool.href !== null)
-            .slice(0, 4)
+            .slice(0, suggestions.length > 0 ? 2 : 4)
             .map((tool) => (
               <button
                 key={tool.key}
@@ -314,6 +365,91 @@ export function HomeScreen({
       </Body>
 
     </>
+  );
+}
+
+/**
+ * "오늘의 브리핑" 한 장.
+ *
+ * ## **아무 말도 없으면 그리지 않는다**
+ *
+ * 할 일이 없는 팀에 "오늘 다 괜찮아요" 라는 빈 상자를 띄우면 그게噪音가 된다 — 그리고 그
+ * 상태를 사용자가 "앱이 뭔가 말 안 하네" 로 오해한다. 아래 "내 확인이 필요한 일" 의 빈 상태
+ * 패널이 이미 그 자리를 하고 있다. **두 곳에 "괜찮아요" 를 쓰지 않는다.**
+ *
+ * ## 숫자를 여기서 만들지 않는다
+ *
+ * `lines` 는 `briefing.ts` 가 만든 **문자열**이고, 이 컴포넌트는 그것을 그릴 뿐이다.
+ * 개수를 다시 세지 않는 이유는 그 숫자의 근거가 화면 안에 갇히면 안 되기 때문이다.
+ */
+function BriefingCard({ lines, onOpen }: { lines: BriefingLine[]; onOpen: (href: string) => void }) {
+  if (lines.length === 0) return null;
+  const urgent = lines.filter((line) => line.tone === "warn").length;
+
+  return (
+    <Panel s="cream" pad={14} r={18} className="mb-[18px]">
+      <div className="mb-2.5 flex items-baseline gap-2">
+        <span className="t-cap-strong keep-all font-bold text-txt-strong">오늘의 브리핑</span>
+        {/* "확인이 필요한 일이 N건" 을 다시 쓰지 않는다 — 카드가 이미 그걸 말하고 있다. */}
+        <span className="keep-all font-medium text-[12px] text-txt-muted">
+          {urgent > 0 ? `오늘 확인할 것 ${urgent}가지` : "오늘은 조용합니다"}
+        </span>
+      </div>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {lines.map((line) => (
+          <li key={line.key}>
+            <button
+              type="button"
+              onClick={() => onOpen(line.href)}
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-xl border-none bg-transparent px-1 py-1.5 text-left select-none",
+                "transition-colors duration-150 hover:bg-cr-50 active:scale-[0.99]",
+              )}
+            >
+              <span
+                className={cn(
+                  "grid size-[26px] flex-none place-items-center rounded-lg",
+                  line.tone === "warn" ? "bg-yellow-200 text-yellow-700" : "bg-fill text-txt-muted",
+                )}
+              >
+                <Icon name={line.icon} size={14} />
+              </span>
+              <span className="keep-all min-w-0 flex-1 font-medium text-[13.5px] leading-[1.45] text-txt-strong">
+                {line.text}
+              </span>
+              <Icon name="chevron-right" size={15} className="flex-none text-txt-muted" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+/**
+ * 상황별 도구 추천 한 칩.
+ *
+ * **이유를 함께 보여 준다.** 이유 없는 추천 칩은 광고이고, 사용자는 한 번 눌러보고
+ * "왜?" 하고 닫는다 — 그러면 두 번째부터는 보이지 않게 되어 추천의 값이 사라진다.
+ * 짧게 한 줄로 붙인다.
+ */
+function SuggestionChip({ suggestion, onOpen }: { suggestion: ToolSuggestion; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex min-h-[68px] flex-[1_1_140px] cursor-pointer flex-col items-start gap-1 rounded-2xl border border-line bg-card px-3 py-2.5 text-left select-none transition-all duration-150 hover:bg-cr-25 hover:shadow-xs hover:-translate-y-0.5 active:scale-95"
+    >
+      <span className="flex items-center gap-1.5">
+        <Icon name={suggestion.icon} size={16} className="text-info" />
+        <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
+          {suggestion.toolName}
+        </span>
+      </span>
+      <span className="keep-all font-medium text-[11.5px] leading-[1.35] text-txt-muted">
+        {suggestion.because}
+      </span>
+    </button>
   );
 }
 

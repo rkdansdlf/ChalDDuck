@@ -21,8 +21,10 @@
     "db:storage": "node scripts/setup-storage.mjs",
     "storage:check": "node scripts/check-storage.mjs",
     "storage:check:gate": "node scripts/check-storage.mjs --if-configured",
+    "deploy:why": "node scripts/why-deploy-failed.mjs",
     "verify:code": "npm run test && npm run build && npx tsc --noEmit && npm run lint",
-    "verify": "npm run db:check && npm run db:migrations && npm run storage:check:gate && npm run verify:code"
+    "verify": "npm run db:check && npm run db:migrations && npm run storage:check:gate && npm run verify:code",
+    "tool:bench": "tsx --conditions=react-server scripts/tool-bench.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

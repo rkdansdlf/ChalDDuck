@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { sweepAttempts } from "@/server/auth/attempts";
 import { describePurification, purificationStats } from "@/server/ai/purify-stats";
+import { aiCallStats, describeAiCalls, sweepAiCalls } from "@/server/ai/call-stats";
 import { db } from "@/server/db";
 import { sweepAiUsage } from "@/server/ai/limit";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
@@ -47,14 +48,17 @@ export async function GET(request: Request) {
   revalidatePath("/schedule", "layout");
   revalidatePath("/home");
 
-  // 같이 치우는 두 가지. 둘 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
+  // 같이 치우는 두 가지. 셋 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
   // 예약 작업이 이미 있는 이 자리에 붙인다. 회의 확정이 실패하면 여기까지 오지 않지만,
   // 그때는 치우는 일이 하루 밀리는 것뿐이다.
-  const [attempts, aiUsage] = await Promise.all([
+  const [attempts, aiUsage, aiCalls] = await Promise.all([
     // 창이 지난 재입장 시도 기록.
     sweepAttempts(),
     // 보관 기간이 지난 AI 사용 기록 — 화면이 "N일 뒤 삭제"라고 적고 있으므로 실제로 지운다.
     sweepAiUsage(),
+    // 계측도 **같은 기간**으로 지운다. 기간이 다르면 하나는 지워지고 하나는 남아,
+    // "기록은 언제 지워지는가" 의 답이 두 개가 된다.
+    sweepAiCalls(),
   ]);
 
   /**
@@ -69,12 +73,27 @@ export async function GET(request: Request) {
    */
   const byTeam = await db.team.findMany({ select: { id: true, name: true } });
   const purifications = [];
+  /**
+   * AI 호출의 하루 지표.
+   *
+   * 순화와 **같은 자리, 같은 형식**에 붙인다 — 측정은 늘 두 군데를 오가서 보게 되면 안 된다.
+   * 순화가 "이 말들을 순화했나" 를 말한다면 여기는 "**어떤 모델이, 몇 초에, 몇 번 실패하고
+   * 몇 번 거절했나**" 를 말한다. 이것이 없으면 모델을 바꾸는 판단을 또 감으로 하게 된다.
+   */
+  const calls = [];
   for (const team of byTeam) {
     const stats = await purificationStats(team.id);
-    if (stats.rows === 0) continue;
-    console.log(`[${team.name}] ${describePurification(stats)}`);
-    purifications.push({ team: team.name, ...stats });
+    if (stats.rows > 0) {
+      console.log(`[${team.name}] ${describePurification(stats)}`);
+      purifications.push({ team: team.name, ...stats });
+    }
+    const callStats = await aiCallStats(team.id);
+    // **아무 호출도 없으면 조용히 넘어간다.** 0 을 0 으로 찍는 로그는 사람이 읽지 않는다.
+    if (callStats.calls > 0) {
+      console.log(`[${team.name}] ${describeAiCalls(callStats)}`);
+      calls.push({ team: team.name, ...callStats });
+    }
   }
 
-  return Response.json({ confirmed, swept: { attempts, aiUsage }, purification: purifications });
+  return Response.json({ confirmed, swept: { attempts, aiUsage, aiCalls }, purification: purifications, aiCalls: calls });
 }

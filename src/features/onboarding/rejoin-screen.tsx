@@ -158,8 +158,8 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
               이미 쓰이고 있는 이름입니다
             </h1>
             <p className="text-pretty-keep m-0 mb-5 text-[15px] leading-[1.62] text-txt">
-              <b>{name}</b>님이 맞다면 첫 입장 때 받은 <b>재입장 코드</b>를 적어 주세요. 코드가
-              없으면 팀장이 승인해 줄 수 있습니다.
+              <b>{name}</b>님, 이 이름은 이미 팀에 있습니다. <b>본인이면</b> 첫 입장 때 받은{" "}
+              <b>재입장 코드</b>를 적어 주세요.
             </p>
 
             <Field label="재입장 코드" required error={error}>
@@ -179,6 +179,26 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
             <Note tone="info" icon="key-round" title="재입장 코드는 첫 입장 때 한 번만 보입니다">
               저장해 두지 않으셨다면 아래 <b>팀장 승인</b>으로 들어오세요. 들어온 뒤 팀 화면에서 새
               코드를 받을 수 있습니다.
+            </Note>
+
+            {/*
+              **본인이 아닌 경우를 여기서 말해야 한다**(2026-09-28).
+
+              이 화면은 예전에 "<name>님이 맞다면" 으로 시작해 **같은 이름의 다른 사람**에게도
+              본인인 것처럼 보였다. 그리고 "코드가 없으면 팀장이 승인해 줄 수 있습니다" 고 말해
+              두었는데, **그 길은 다른 사람에게 열려 있지 않다** — 팀 안에서 이름은 유일해야
+              하고(`Member` 의 유일 제약), 팀장이 승인해도 같은 이름이 이미 있으므로 막힌다.
+              예전에는 막힌 뒤 그 예외가 "폴링이 겹쳤다" 고 읽혀 요청이 조용히 사라졌다
+              (`actions/onboarding.ts` 의 `name-taken`).
+
+              즉 다른 사람에게는 "일단 신청해 보세요" 가 **거짓말**이었다. 승인 요청을 남겨도
+              무반응으로 끝나므로, 팀장에게 갈 일이 없다는 사실과 **다른 이름**이 필요하다는
+              것을 지금 말하는 편이 낫다.
+            */}
+            <Note tone="warn" icon="circle-alert" title="본인이 아니라면" className="mt-2.5">
+              팀 안에서는 이름이 겹칠 수 없어 <b>이 이름으로는 들어올 수 없습니다</b>. 팀장에게
+              승인 요청을 남겨도 마찬가지입니다. 위쪽 <b>이름 다시 적기</b>로{" "}
+              <b>다른 이름</b>으로 신청해 주세요.
             </Note>
 
             <Btn

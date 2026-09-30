@@ -10,6 +10,7 @@ import {
   Chip,
   Dock,
   Icon,
+  Input,
   Note,
   Panel,
   Rows,
@@ -20,14 +21,17 @@ import {
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { IceGame, IceGameKey, IceRole, IceView } from "@/lib/types";
+import type { IceGame, IceGameKey, IcePhase, IceRole, IceView } from "@/lib/types";
 import {
   castIceVote,
   closeIceVote,
   endIceRound,
   markIceNightOut,
   pollIce,
+  restartIceRound,
   startIceRound,
+  startIceVote,
+  submitLiarGuess,
   type IceResult,
 } from "@/server/actions/ice";
 
@@ -35,8 +39,20 @@ import {
  * 28 아이스브레이킹 — 라이어 게임·마피아.
  *
  * 둘 다 **각자 자기 폰으로 자기 카드만 보고, 대화는 한자리(회의·단톡방)에서** 하는 게임이다.
- * 앱은 비밀을 나누고, 투표를 받고, 결과를 공개하는 일만 한다. 비밀은 서버가 나누고
- * 보는 사람마다 자기 것만 내려보낸다(`server/ice/view.ts`).
+ * 앱은 비밀을 나누고, 순서를 안내하고, 투표를 받고, 결과를 공개하는 일만 한다. 비밀은 서버가
+ * 나누고 보는 사람마다 자기 것만 내려보낸다(`server/ice/view.ts`).
+ *
+ * ## 라이어 판은 네 단계로 간다
+ *
+ * ```
+ * clue  카드 확인        ← 투표가 아직 열리지 않는다
+ * vote  비밀 투표
+ * liar_guess 최종 추측   ← 라이어에게 제시어가 여기서도 내려가지 않는다
+ * revealed 결과
+ * ```
+ *
+ * 예전에는 `play` / `revealed` 두 단계뿐이라 ① 카드 확인 직후 투표가 열리고 ② 라이어에게
+ * 마지막 추측을 받을 자리가 없었다. 두 가지 다 게임 규칙의 결함이었다.
  *
  * 다른 팀원이 판을 열거나 투표하면 몇 초 안에 보이도록 화면에 있는 동안만 묻는다.
  */
@@ -50,7 +66,18 @@ const ROLE_LABEL: Record<IceRole, string> = {
   doctor: "의사",
 };
 
-export function IceBreakScreen({ games, initial }: { games: IceGame[]; initial: IceView | null }) {
+export type IceRosterEntry = { id: string; name: string };
+
+export function IceBreakScreen({
+  games,
+  initial,
+  roster,
+}: {
+  games: IceGame[];
+  initial: IceView | null;
+  /** 이번 판에 앉을 사람 고르기용. 지금 팀에 남아 있는 사람 전부. */
+  roster: IceRosterEntry[];
+}) {
   const router = useRouter();
   const [view, setView] = useState<IceView | null>(initial);
   const [toast, setToast] = useState<string | null>(null);
@@ -112,7 +139,7 @@ export function IceBreakScreen({ games, initial }: { games: IceGame[]; initial: 
       {view ? (
         <RoundView games={games} view={view} busy={busy} run={run} />
       ) : (
-        <Picker games={games} busy={busy} onStart={(key) => run(() => startIceRound(key))} />
+        <Picker games={games} roster={roster} busy={busy} onStart={(key, ids) => run(() => startIceRound(key, ids))} />
       )}
 
       <Toast msg={toast} />
@@ -128,15 +155,21 @@ function gameName(games: IceGame[], key: IceGameKey) {
 
 function Picker({
   games,
+  roster,
   busy,
   onStart,
 }: {
   games: IceGame[];
+  roster: IceRosterEntry[];
   busy: boolean;
-  onStart: (key: IceGameKey) => void;
+  onStart: (key: IceGameKey, ids: string[]) => void;
 }) {
   const [picked, setPicked] = useState<IceGameKey | null>(null);
+  const [ids, setIds] = useState<string[]>(() => roster.map((m) => m.id));
   const game = games.find((g) => g.key === picked) ?? null;
+
+  const toggle = (id: string) => setIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const tooFew = game !== null && ids.length < game.minPlayers;
 
   return (
     <>
@@ -183,10 +216,56 @@ function Picker({
                 ))}
               </ol>
             </Panel>
-            <Note tone="info" icon="eye-off" className="mb-3">
-              시작하면 팀원 모두에게 알림이 가고, 각자 폰에서 <b>자기 카드만</b> 볼 수 있습니다. 여는
-              사람이 사회자가 됩니다.
-            </Note>
+
+            {/*
+              참가자를 고르는 이유를 화면에도 적는다. 예전에는 팀에 등록된 사람 **전원**이
+              자동으로 들어와, 오늘 회의에 오지 않은 사람이 라이어가 되는 일이 실제로 났다.
+            */}
+            <SecTitle note={`${ids.length}명 참가`}>이번 판에 참여하는 사람</SecTitle>
+            <Panel s="fill" className="mb-3">
+              <div role="group" aria-label="이번 판에 참여하는 사람" className="flex flex-col">
+                {roster.map((m) => {
+                  const on = ids.includes(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={on}
+                      onClick={() => toggle(m.id)}
+                      className="flex min-h-[48px] cursor-pointer items-center gap-3 border-none bg-transparent px-1 py-2 text-left"
+                    >
+                      <span
+                        className={cn(
+                          "grid size-[22px] flex-none place-items-center rounded-md text-ink-900 transition-all duration-150",
+                          on ? "scale-105 border-[1.5px] border-transparent bg-yellow-400" : "border-[1.5px] border-line-strong bg-card",
+                        )}
+                      >
+                        {on ? (
+                          <span className="animate-pop inline-flex">
+                            <Icon name="check" size={14} />
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className={cn("t-body flex-1", on ? "text-txt-strong" : "text-txt-faint line-through")}>
+                        {m.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Panel>
+
+            {tooFew ? (
+              <Note tone="warn" icon="user-minus" className="mb-3">
+                {game.name}은 <b>{game.minPlayers}명</b>부터 진행할 수 있습니다. 지금 {ids.length}명입니다.
+              </Note>
+            ) : (
+              <Note tone="info" icon="eye-off" className="mb-3">
+                고른 {ids.length}명에게 알림이 가고, 각자 폰에서 <b>자기 카드만</b> 볼 수 있습니다. 여는
+                사람이 사회자가 됩니다.
+              </Note>
+            )}
           </>
         ) : null}
 
@@ -199,8 +278,14 @@ function Picker({
 
       {game?.playable ? (
         <Dock>
-          <Btn full size="lg" icon="dices" disabled={busy} onClick={() => onStart(game.key)}>
-            {busy ? "카드 나누는 중…" : `${game.name} 시작하기`}
+          <Btn
+            full
+            size="lg"
+            icon="dices"
+            disabled={busy || tooFew}
+            onClick={() => onStart(game.key, ids)}
+          >
+            {busy ? "카드 나누는 중…" : tooFew ? `${game.minPlayers}명 이상 고르세요` : `${game.name} 시작하기`}
           </Btn>
         </Dock>
       ) : null}
@@ -209,6 +294,25 @@ function Picker({
 }
 
 /* ── 판이 열린 뒤 ─────────────────────────────────────────────── */
+
+/** 이번 판이 어디까지 왔는지. 라이어는 네 단계, 마피아는 두 단계. */
+function phaseOf(view: IceView): { step: number; total: number; label: string } {
+  if (view.game === "mafia") {
+    return view.phase === "revealed"
+      ? { step: 2, total: 2, label: "결과" }
+      : { step: 1, total: 2, label: "진행 중" };
+  }
+  const order: IcePhase[] = ["clue", "vote", "liar_guess", "revealed"];
+  const names: Record<IcePhase, string> = {
+    clue: "카드 확인",
+    vote: "투표",
+    liar_guess: "최종 추측",
+    revealed: "결과",
+    play: "진행 중",
+  };
+  const step = order.indexOf(view.phase);
+  return { step: step < 0 ? 0 : step, total: order.length, label: names[view.phase] };
+}
 
 function RoundView({
   games,
@@ -222,22 +326,69 @@ function RoundView({
   run: (action: () => Promise<IceResult>) => Promise<void>;
 }) {
   const [nightOpen, setNightOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
   const mafia = view.game === "mafia";
-  const playing = view.phase === "play";
-  const canVote = playing && view.me !== null && view.me.alive;
+  const playing = view.phase !== "revealed";
+  const voting = (mafia ? view.phase === "play" : view.phase === "vote") && view.me !== null && view.me.alive;
+  const { step, total, label } = phaseOf(view);
+  const name = gameName(games, view.game);
 
   return (
     <>
       <Body dense>
+        <div className="mb-4 flex items-center gap-2">
+          {Array.from({ length: total }, (_, i) => (
+            <span
+              key={i}
+              aria-hidden
+              className={cn(
+                "h-[5px] flex-1 rounded-full transition-colors duration-300",
+                i <= step ? "bg-yellow-500" : "bg-line",
+              )}
+            />
+          ))}
+          <span className="t-cap flex-none text-txt-muted">{label}</span>
+        </div>
+
         {view.me ? (
-          <SecretCard key={view.roundId} me={view.me} game={view.game} />
+          <SecretCard key={view.roundId} me={view.me} game={view.game} phase={view.phase} />
         ) : (
           <Note tone="info" icon="eye" className="mb-4">
             판이 시작된 뒤에 들어와 이번 판은 <b>구경만</b> 할 수 있습니다. 다음 판부터 함께할 수 있습니다.
           </Note>
         )}
 
+        {/* 라이어에게 내려가는 마지막 기회. 여기서도 제시어는 화면에 없다. */}
+        {view.phase === "liar_guess" ? <LiarGuessPanel view={view} busy={busy} run={run} /> : null}
+
         {view.result ? <ResultPanel view={view} /> : null}
+
+        {/*
+          설명 순서. **누가 말을 끝냈는지는 앱이 모른다** — 대화는 오프라인에서 하고 앱은
+          순서만 알려 준다. "누가 먼저 하지" 로 한 번도 넘어가지 않게 하려고.
+        */}
+        {view.turn.length > 0 && view.phase !== "revealed" ? (
+          <>
+            <SecTitle>설명 순서</SecTitle>
+            <Panel s="fill" className="mb-4">
+              <ol className="m-0 flex list-none flex-col gap-0 p-0">
+                {view.turn.map((p, i) => (
+                  <li
+                    key={p.id}
+                    className={cn(
+                      "t-body flex items-center gap-2.5 py-1.5",
+                      p.id === view.meId ? "text-txt-strong" : "text-txt",
+                    )}
+                  >
+                    <span className="t-cap w-[18px] flex-none text-txt-faint">{i + 1}.</span>
+                    <span className={cn("flex-1", p.id === view.meId && "font-semibold")}>{p.name}</span>
+                    {p.id === view.meId ? <Chip>나</Chip> : null}
+                  </li>
+                ))}
+              </ol>
+            </Panel>
+          </>
+        ) : null}
 
         {mafia && view.eliminated.length > 0 ? (
           <>
@@ -252,16 +403,20 @@ function RoundView({
           </>
         ) : null}
 
-        {playing ? (
+        {/*
+          라이어의 `clue` 단계에는 투표 목록을 아예 그리지 않는다. 눌러야 하는데 아무 일도
+          일어나지 않는 것보다, 아직 하지 않은 단계임을 아는 편이 낫다.
+        */}
+        {voting || (playing && !mafia && view.phase === "clue") ? (
           <>
-            <SecTitle note={`${view.votes.cast} / ${view.votes.total}명 투표함`}>
+            <SecTitle note={view.phase === "clue" ? "아직 닫혀 있습니다" : `${view.votes.cast} / ${view.votes.total}명 투표함`}>
               {mafia ? "탈락시킬 사람" : "라이어라고 생각하는 사람"}
             </SecTitle>
             <Rows className="mb-3">
               {view.players.map((p) => {
                 const isMe = p.id === view.meId;
                 const chosen = view.me?.voteForId === p.id;
-                const disabled = !canVote || isMe || !p.alive || busy;
+                const disabled = !voting || isMe || !p.alive || busy;
                 return (
                   <button
                     key={p.id}
@@ -291,8 +446,9 @@ function RoundView({
               })}
             </Rows>
             <p className="t-cap m-0 mb-4 text-txt-muted">
-              누가 누구를 골랐는지는 {mafia ? "투표를 마감할 때까지" : "결과를 공개할 때까지"} 보이지 않습니다.
-              같은 사람을 다시 누르면 취소됩니다.
+              {view.phase === "clue"
+                ? "설명이 끝나면 사회자가 투표를 엽니다. 설명하는 동안 카드를 다시 보지 마세요."
+                : `누가 누구를 골랐는지는 ${mafia ? "투표를 마감할 때까지" : "결과를 공개할 때까지"} 보이지 않습니다. 같은 사람을 다시 누르면 취소됩니다.`}
             </p>
           </>
         ) : null}
@@ -305,31 +461,82 @@ function RoundView({
 
         {!view.canHost ? (
           <p className="t-cap m-0 text-txt-muted">
-            {playing
-              ? `${mafia ? "투표 마감은" : "결과 공개는"} 사회자 ${view.hostName}님이 합니다.`
-              : `다음 판은 사회자 ${view.hostName}님이 이 판을 끝내면 열 수 있습니다.`}
+            {view.phase === "liar_guess"
+              ? `${view.hostName}님이 기다리고 있습니다. 라이어가 최종 답을 냅니다.`
+              : view.phase === "revealed"
+                ? `다음 판은 ${view.hostName}님이 이 판을 끝내면 열 수 있습니다.`
+                : `${mafia ? "투표 마감은" : "결과 공개는"} 사회자 ${view.hostName}님이 합니다.`}
           </p>
         ) : null}
       </Body>
 
       {view.canHost ? (
         <Dock>
-          {playing ? (
-            <Btn full size="lg" icon={mafia ? "thumbs-up" : "eye"} disabled={busy} onClick={() => run(closeIceVote)}>
-              {mafia ? "투표 마감하기" : "결과 공개하기"}
+          {/* 라이어: 카드 확인 → 투표 열기 → 마감 → (결과). */}
+          {!mafia && view.phase === "clue" ? (
+            <Btn full size="lg" icon="thumbs-up" disabled={busy} onClick={() => run(startIceVote)}>
+              투표 시작하기
             </Btn>
-          ) : (
-            <Btn full size="lg" icon="rotate-ccw" disabled={busy} onClick={() => run(endIceRound)}>
-              이 판 끝내기
+          ) : voting ? (
+            <Btn full size="lg" icon="thumbs-up" disabled={busy} onClick={() => setCloseOpen(true)}>
+              투표 마감하기
             </Btn>
-          )}
-          {playing ? (
-            <Btn full v="ghost" size="sm" disabled={busy} onClick={() => run(endIceRound)}>
-              결과 없이 {gameName(games, view.game)} 그만하기
+          ) : view.phase === "liar_guess" ? (
+            <Btn full size="lg" icon="eye" disabled>
+              라이어의 답을 기다립니다
+            </Btn>
+          ) : view.phase === "revealed" ? (
+            <Btn full size="lg" icon="rotate-ccw" disabled={busy} onClick={() => run(restartIceRound)}>
+              한 판 더
             </Btn>
           ) : null}
+
+          {view.phase === "revealed" ? (
+            <Btn full v="ghost" size="sm" disabled={busy} onClick={() => run(endIceRound)}>
+              이 판 끝내기
+            </Btn>
+          ) : (
+            <Btn full v="ghost" size="sm" disabled={busy} onClick={() => run(endIceRound)}>
+              결과 없이 {name} 그만하기
+            </Btn>
+          )}
         </Dock>
       ) : null}
+
+      {/*
+        전원이 투표하지 않았는데 마감하려 한다면 한 번 확인한다. 동점 · 0표는 승패가 아니라
+        재투표가 되므로, 마감했을 때 무엇이 일어나는지 사용자가 미리 알고 있어야 한다.
+      */}
+      <Sheet open={closeOpen} title="투표 마감" onClose={() => setCloseOpen(false)}>
+        <p className="t-note m-0 mb-3 text-txt">
+          {view.votes.cast < view.votes.total ? (
+            <>
+              <b>{view.votes.total - view.votes.cast}명</b>이 아직 투표하지 않았습니다. 그래도 마감할까요? 마감하면{" "}
+              {mafia ? "지금까지 모인 표로" : "지금까지 모인 표로"} 판이 진행됩니다.
+            </>
+          ) : (
+            "모두가 투표했습니다. 표를 모아 진행합니다."
+          )}
+        </p>
+        <p className="t-cap m-0 mb-3 text-txt-muted">
+          동점이면 누구도 탈락하지 않습니다(라이어) — 다시 이야기한 뒤 다시 투표하면 됩니다.
+        </p>
+        <div className="flex gap-2">
+          <Btn full v="outline" disabled={busy} onClick={() => setCloseOpen(false)}>
+            더 기다리기
+          </Btn>
+          <Btn
+            full
+            disabled={busy}
+            onClick={async () => {
+              setCloseOpen(false);
+              await run(closeIceVote);
+            }}
+          >
+            마감하기
+          </Btn>
+        </div>
+      </Sheet>
 
       <Sheet open={nightOpen} title="밤에 탈락한 사람" onClose={() => setNightOpen(false)}>
         <p className="t-note m-0 mb-3 text-txt">
@@ -361,10 +568,81 @@ function RoundView({
 }
 
 /**
+ * 라이어의 최종 추측.
+ *
+ * **라이어 본인이 입력한다.** 예전에는 "라이어가 제시어를 맞혀 보세요" 문구만 있고 받을 입구가
+ * 없어서 사회자가 맞았다/틀렸다를 눌러야 했다. 그러면 사회자도 모르는 판을 임의로 확정하게
+ * 된다. 서버가 판정하고 **한 번만** 받는다.
+ */
+function LiarGuessPanel({
+  view,
+  busy,
+  run,
+}: {
+  view: IceView;
+  busy: boolean;
+  run: (action: () => Promise<IceResult>) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const me = view.me;
+  const iAmLiar = me?.role === "liar";
+  const submitted = me?.guessSubmitted ?? false;
+
+  if (!me) return null;
+
+  if (!iAmLiar) {
+    return (
+      <Note tone="info" icon="clock" className="mb-4">
+        라이어로 지목된 사람이 최종 답을 내고 있습니다.
+      </Note>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <Note tone="info" icon="check" className="mb-4">
+        최종 답을 냈습니다. 결과를 기다리세요.
+      </Note>
+    );
+  }
+
+  return (
+    <>
+      <Panel s="yellow" pad={18} r={18} className="mb-3">
+        <div className="t-cap-strong mb-1.5 text-yellow-700">당신이 라이어로 지목됐습니다</div>
+        <p className="t-note m-0 text-txt">
+          마지막 기회입니다. 주제 <b>{me.topic}</b>에서 지금 대화하고 있는 단어는 무엇이었을까요?
+        </p>
+      </Panel>
+      <div className="mb-4">
+        <Input
+          value={text}
+          onChange={setText}
+          maxLength={20}
+          placeholder="제시어를 적어 주세요"
+          aria-label="제시어 최종 답"
+        />
+      </div>
+      <Btn full size="lg" icon="send" disabled={busy || !text.trim()} onClick={() => run(() => submitLiarGuess(text))}>
+        최종 답 제출
+      </Btn>
+    </>
+  );
+}
+
+/**
  * 내 카드. **처음에는 가려 둔다** — 한자리에 모여 폰을 들고 있으면 옆 사람 화면이 보인다.
  * 판이 바뀌면(`key`) 다시 가린다.
  */
-function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGameKey }) {
+function SecretCard({
+  me,
+  game,
+  phase,
+}: {
+  me: NonNullable<IceView["me"]>;
+  game: IceGameKey;
+  phase: IcePhase;
+}) {
   const [shown, setShown] = useState(false);
 
   return (
@@ -381,7 +659,7 @@ function SecretCard({ me, game }: { me: NonNullable<IceView["me"]>; game: IceGam
                   {" "}
                   · 제시어 <b>{me.word}</b>
                 </>
-              ) : (
+              ) : phase === "revealed" ? null : (
                 <> · 제시어를 모릅니다. 들키지 않게 설명해 보세요.</>
               )}
             </p>
@@ -416,6 +694,11 @@ function ResultPanel({ view }: { view: IceView }) {
         {result.word ? (
           <p className="t-note m-0 mt-1.5 text-txt">
             이번 판의 제시어 · <b>{result.word}</b>
+          </p>
+        ) : null}
+        {result.guess ? (
+          <p className="t-note m-0 mt-1.5 text-txt">
+            라이어의 마지막 답 · <b>{result.guess.text}</b> {result.guess.correct ? "(맞음)" : "(틀림)"}
           </p>
         ) : null}
       </Panel>
