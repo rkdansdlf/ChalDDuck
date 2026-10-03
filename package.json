@@ -22,6 +22,7 @@
     "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
     "decisions": "node scripts/list-open-decisions.mjs",
     "notify:check": "tsx --conditions=react-server scripts/check-notify-setup.mts",
+    "push:subs": "tsx --conditions=react-server scripts/watch-push-subscriptions.mts",
     "db:storage": "node scripts/setup-storage.mjs",
     "storage:check": "node scripts/check-storage.mjs",
     "storage:check:gate": "node scripts/check-storage.mjs --if-configured",
