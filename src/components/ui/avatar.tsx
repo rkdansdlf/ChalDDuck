@@ -20,7 +20,7 @@ export function Avatar({
   if (mbti) {
     return (
       <span
-        className="block flex-none overflow-hidden rounded-full border border-line bg-yellow-100 transition-transform duration-200 hover:scale-105 hover:animate-jelly active:scale-95 cursor-pointer select-none"
+        className="block flex-none overflow-hidden rounded-full border border-line bg-yellow-100 select-none"
         style={{ width: size, height: size }}
       >
         <Image

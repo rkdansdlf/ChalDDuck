@@ -1,5 +1,8 @@
 import "./load-env.mjs";
 
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { refineScript, rewriteWithCushion, searchResearch, summarizeMeeting, convertSentence } from "../src/server/ai/tools.js";
 import { projectTeamToolContext, type TeamToolContext } from "../src/lib/team-tool-context.js";
 import {
@@ -23,7 +26,18 @@ import {
  * npm run tool:bench -- --tool clerk    --models openrouter/free,qwen/qwen3.8-27b:free
  * npm run tool:bench -- --tool present  --models openrouter/free --strict
  * npm run tool:bench -- --tool research --models openrouter/free
+ * npm run tool:bench -- --tool clerk    --models openrouter/free --repeat 3 --compare
+ * npm run tool:bench -- --check-env      # .env 의 슬러그가 카탈로그에 있는지
  * ```
+ *
+ * ## 반복 · 저장 · 비교
+ *
+ * 무료 라우터는 요청마다 다른 모델을 잡으므로 **한 번의 통과/실패는 표본이 아니다.**
+ * - `--repeat N` — 케이스마다 N 번 돌려 통과율과 **최악 회차**(가장 낮은 회차 통과 수)를 낸다.
+ * - 결과는 `scripts/bench-results/<날짜>-<도구>.json` 에 저장된다(`--no-save` 로 끈다).
+ *   모델 출력이 아니라 **판정 요약만** 담는다.
+ * - `--compare` — 같은 도구의 **직전 저장 결과**와 모델별 통과율 차이를 보여 준다.
+ * - 유형(`kind`)별 통과율도 낸다 — 적대적 입력에서만 무너지는 모델을 가려낸다.
  *
  * ## 왜 이게 필요한가
  *
@@ -64,7 +78,15 @@ type ToolKey = "clerk" | "present" | "research" | "cushion" | "sentence";
 
 const TOOLS: ToolKey[] = ["clerk", "present", "research", "cushion", "sentence"];
 
-function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; withContext: boolean; repeat: number } {
+function readArgs(): {
+  tool: ToolKey;
+  models: string[];
+  strict: boolean;
+  repeat: number;
+  compare: boolean;
+  save: boolean;
+  withContext: boolean;
+} {
   const argv = process.argv.slice(2);
   const pick = (flag: string) => {
     const at = argv.indexOf(flag);
@@ -79,17 +101,19 @@ function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; withCon
     throw new Error(`--tool 은 ${TOOLS.join(" · ")} 중 하나여야 합니다. 받은 값: ${tool}`);
   }
   const models = (pick("--models") ?? "openrouter/free").split(",").map((m) => m.trim()).filter(Boolean);
+  const repeat = Math.max(1, Math.floor(Number(pick("--repeat") ?? 1)) || 1);
   return {
     tool,
     models,
     strict: argv.includes("--strict"),
-    // `--with-context` — 팀원 명단을 프롬프트에 넣고 부른다. 2단계의 기본 동작이다.
+    repeat,
+    compare: argv.includes("--compare"),
+    save: !argv.includes("--no-save"),
+    // `--with-context` — **팀원 명단을 프롬프트에 넣고** 부른다. 2단계 이후 앱의 기본 동작이다.
+    // ⭐ **이 플래그가 없으면 오늘의 앱을 측정하지 못한다.** 2단계에서 서기 화면은 항상
+    // 문맥을 받는데, 벤치가 문맥 없이 돌면 "앱이 하는 일" 을 재는 것이 아니라 2단계 이전을
+    // 재게 된다. **앱과 벤치가 같은 조건이어야 비교가 성립한다.**
     withContext: argv.includes("--with-context"),
-    // ⭐ **반복 횟수.** 무료 모델은 비결정적이라 **한 번 돌린 결과는 측정값이 아니다.**
-    // 실측: 같은 설정·같은 코퍼스에서 `unnamed-1` 이 한 번은 `최유나`(실패), 한 번은 `null`(통과)
-    // 이었다. 그래서 `--repeat 3` 처럼 **여러 번 돌려 합쳐야** "이 설정이 몇 % 틀리는가" 를
-    // 말할 수 있다.
-    repeat: Math.max(1, Number(pick("--repeat") ?? "1") || 1),
   };
 }
 
@@ -142,6 +166,38 @@ async function listFreeModels() {
   );
 }
 
+/**
+ * `--check-env` — `.env` 에 적힌 모델 슬러그가 **지금 카탈로그에 있는지** 본다.
+ *
+ * 슬러그는 썩는다(사라지면 404). 그걸 사용자가 먼저 알게 되면 늦다 — 주기 실행(CI)이 먼저
+ * 알도록 한다. `openrouter/free` 는 라우터라 카탈로그 항목이 아니므로 검사하지 않는다.
+ * 없는 슬러그가 하나라도 있으면 종료 코드 1.
+ */
+async function checkEnvSlugs() {
+  const key = process.env.OPENROUTER_KEY;
+  if (!key) throw new Error("OPENROUTER_KEY 가 없어 슬러그를 확인할 수 없습니다.");
+  const res = await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  const body = (await res.json()) as { data: Array<{ id: string }> };
+  const known = new Set(body.data.map((m) => m.id));
+
+  const configured = Object.entries(process.env).filter(
+    ([name, value]) => /^OPENROUTER_(MODEL|FALLBACK_MODEL)(_|$)/.test(name) && value?.trim(),
+  );
+  let missing = 0;
+  for (const [name, value] of configured) {
+    const slug = value!.trim();
+    if (slug === "openrouter/free") continue;
+    const ok = known.has(slug);
+    if (!ok) missing += 1;
+    console.log(`  ${ok ? "✓" : "✗"} ${name.padEnd(32)} ${slug}${ok ? "" : "  ← 카탈로그에 없음"}`);
+  }
+  if (configured.length === 0) console.log("  지정된 슬러그가 없습니다(전부 무료 라우터).");
+  if (missing > 0) {
+    console.error(`\n✗ 카탈로그에 없는 슬러그 ${missing}개 — .env 를 고치세요.`);
+    process.exit(1);
+  }
+}
+
 /** 서기 한 건의 판정. `ok` 이 false 면 아래 `why` 를 사람이 읽는다. */
 type ClerkVerdict = { ok: boolean; why: string; assignee: string | null; invented: number; found: number };
 
@@ -159,7 +215,7 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
   }
 
   // ⚠️ **명단이 있는데 명단 밖 이름을 배정하면 그건 실패다** — 그 사람은 이 팀 사람이 아니다.
-  //    2단계-a 의 코드가 이걸 지우지만, **벤치는 모델의 원래 출력을 본다.** 지운 뒤를 재면
+  //    2단계-a 의 코드가 이걸 지우지만 **벤치는 모델의 원래 출력을 본다.** 지운 뒤를 재면
   //    "코드가 잘 막았다" 와 "모델이 안 썼다" 를 구분하지 못한다.
   const outsider = draft.candidates.filter((c) => c.assignee !== null && !item.roster.includes(c.assignee));
   if (outsider.length > 0) {
@@ -186,7 +242,7 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
     }
   } else {
     // ⚠️ **코퍼스는 사람이 말한 형태(`서연`)로 적었고, 앱은 매칭 후의 이름(`이서연`)을 돌려준다.**
-    //    그대로 비교하면 정상 매칭이 실패로 보인다 — 비교는 **둘 다 명단 형태로** 한다.
+    //    그대로 비교하면 정상 매칭이 실패로 보인다 — **둘 다 명단 형태로** 비교한다.
     const hit = draft.candidates.some((c) => c.assignee !== null && item.roster.includes(c.assignee));
     if (!hit) {
       return {
@@ -300,8 +356,8 @@ const CORPUS_LENGTH: Record<ToolKey, number> = {
 /**
  * 코퍼스 한 건의 명단으로 **실제 앱과 같은 문맥**을 만든다.
  *
- * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. 벤치가 다른 모양을 쓰면
- * **앱이 아닌 걸 측정하는 것**이 되므로 같은 함수를 쓴다(`projectTeamToolContext`).
+ * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. **벤치가 다른 모양을 쓰면 앱이
+ * 아닌 걸 측정하는 것**이므로 같은 함수(`projectTeamToolContext`)를 쓴다.
  */
 function contextOf(item: ClerkCase, withContext: boolean): TeamToolContext | undefined {
   if (!withContext) return undefined;
@@ -324,19 +380,20 @@ function caseAt(tool: ToolKey, index: number) {
   return SENTENCE_CORPUS[index];
 }
 
-type Row = { id: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
+type Row = { id: string; kind: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
 
 async function runOne(tool: ToolKey, model: string, index: number, withContext: boolean): Promise<Row> {
   const started = Date.now();
   try {
     if (tool === "clerk") {
       const item = CLERK_CORPUS[index];
-      // ⭐ **문맥을 주는지와 주지 않는지를 나눠서 잰다.** 같은 코퍼스·같은 모델인데 명단만
-      // 다르다. 그래서 "명단을 주니 담당자를 추측했다" 를 **숫자로** 비교할 수 있다.
+      // ⭐ **같은 코퍼스·같은 모델인데 명단만 다르다.** 그래서 "명단을 주니 담당자를 추측했다" 를
+      // 숫자로 비교할 수 있다 — 이것이 이 플래그의 존재 이유다.
       const draft = await summarizeMeeting(item.memo, model, contextOf(item, withContext));
       const v = judgeClerk(item, draft);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -349,6 +406,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
       const v = judgePresent(item, draft);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -361,6 +419,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
       const v = judgeResearch(item, results);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -373,6 +432,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
       const v = judgeCushion(item, out);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -384,6 +444,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
     const v = judgeSentence(item, out);
     return {
       id: item.id,
+      kind: item.kind ?? "normal",
       ok: v.ok,
       why: v.why,
       seconds: (Date.now() - started) / 1000,
@@ -394,6 +455,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
     // "내 코드가 못 돌렸다" 가 같은 0 으로 보인다.
     return {
       id: caseAt(tool, index).id,
+      kind: caseAt(tool, index).kind ?? "normal",
       ok: false,
       why: `호출 실패: ${(error as Error).message}`,
       seconds: (Date.now() - started) / 1000,
@@ -402,50 +464,148 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
   }
 }
 
-const { tool, models, strict, withContext, repeat } = readArgs();
+const { tool, models, strict, repeat, compare, save, withContext } = readArgs();
 
 if (process.argv.includes("--list-models")) {
   await listFreeModels();
   process.exit(0);
 }
 
+if (process.argv.includes("--check-env")) {
+  await checkEnvSlugs();
+  process.exit(0);
+}
+
 const total = CORPUS_LENGTH[tool];
 
-console.log(`도구 벤치 · ${tool} · 입력 ${total}개\n`);
+/** 저장되는 한 모델의 요약. 모델 출력은 담지 않는다. */
+type ModelSummary = {
+  model: string;
+  /** 회차별 통과 수. */
+  passesPerRun: number[];
+  total: number;
+  /** 전체 통과율(0~1). */
+  rate: number;
+  /** 가장 나빴던 회차의 통과율(0~1). */
+  worst: number;
+  avgSeconds: number;
+  byKind: Record<string, { passed: number; total: number }>;
+  /** 한 번이라도 실패한 케이스 id → 실패 횟수. */
+  failures: Record<string, number>;
+};
 
-const table: Array<{ model: string; passed: number; total: number; seconds: number }> = [];
+type SavedRun = { tool: ToolKey; at: string; repeat: number; corpus: number; models: ModelSummary[] };
+
+const RESULTS_DIR = path.join(import.meta.dirname, "bench-results");
+
+/** 같은 도구의 가장 최근 저장 결과. 이번 실행을 저장하기 **전에** 읽어야 직전 것이 된다. */
+function previousRun(): SavedRun | null {
+  try {
+    const files = readdirSync(RESULTS_DIR)
+      .filter((f) => f.endsWith(`-${tool}.json`))
+      .sort();
+    const last = files.at(-1);
+    return last ? (JSON.parse(readFileSync(path.join(RESULTS_DIR, last), "utf8")) as SavedRun) : null;
+  } catch {
+    return null;
+  }
+}
+
+const previous = compare ? previousRun() : null;
+
+console.log(`도구 벤치 · ${tool} · 입력 ${total}개 × ${repeat}회\n`);
+
+const summaries: ModelSummary[] = [];
 for (const model of models) {
   console.log(`— ${model} 부르는 중…`);
-  const rows: Row[] = [];
-  // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
-  // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
-  // 같은 입력을 **반복**한다 — 비결정적인 모델의 실패율이 1회로는 0 이거나 100 이 되어
-  // 아무것도 말하지 못한다. 반복해야 그 구간이 보인다.
-  for (let turn = 0; turn < repeat; turn += 1) {
+  const passesPerRun: number[] = [];
+  const byKind: ModelSummary["byKind"] = {};
+  const failures: Record<string, number> = {};
+  let seconds = 0;
+  let calls = 0;
+
+  for (let run = 0; run < repeat; run += 1) {
+    if (repeat > 1) console.log(`  회차 ${run + 1}/${repeat}`);
+    const rows: Row[] = [];
+    // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
+    // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
     for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i, withContext));
+
+    for (const row of rows) {
+      const mark = row.ok ? "✓" : "✗";
+      const cells = Object.entries(row.cells).map(([k, v]) => `${k} ${v}`).join(" · ");
+      console.log(`    ${mark} ${row.id} (${row.seconds.toFixed(1)}초) ${cells}${row.why ? `\n        ${row.why}` : ""}`);
+      const bucket = (byKind[row.kind] ??= { passed: 0, total: 0 });
+      bucket.total += 1;
+      if (row.ok) bucket.passed += 1;
+      else failures[row.id] = (failures[row.id] ?? 0) + 1;
+      seconds += row.seconds;
+      calls += 1;
+    }
+    passesPerRun.push(rows.filter((r) => r.ok).length);
   }
 
-  for (const row of rows) {
-    const mark = row.ok ? "✓" : "✗";
-    const cells = Object.entries(row.cells).map(([k, v]) => `${k} ${v}`).join(" · ");
-    console.log(`    ${mark} ${row.id} (${row.seconds.toFixed(1)}초) ${cells}${row.why ? `\n        ${row.why}` : ""}`);
-  }
-  table.push({
+  const passedAll = passesPerRun.reduce((a, b) => a + b, 0);
+  summaries.push({
     model,
-    passed: rows.filter((r) => r.ok).length,
-    total: rows.length,
-    seconds: rows.reduce((acc, r) => acc + r.seconds, 0) / (rows.length || 1),
+    passesPerRun,
+    total,
+    rate: passedAll / (total * repeat),
+    worst: Math.min(...passesPerRun) / total,
+    avgSeconds: seconds / (calls || 1),
+    byKind,
+    failures,
   });
 }
 
-console.log(`\n${"모델".padEnd(30)}${"통과".padStart(8)}${"평균초".padStart(9)}`);
-for (const row of table) {
-  console.log([row.model.slice(0, 29).padEnd(30), `${row.passed}/${row.total}`.padStart(8), row.seconds.toFixed(1).padStart(9)].join(""));
+const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
+
+console.log(`\n${"모델".padEnd(30)}${"통과율".padStart(8)}${"최악".padStart(8)}${"평균초".padStart(9)}`);
+for (const row of summaries) {
+  console.log([row.model.slice(0, 29).padEnd(30), pct(row.rate).padStart(8), pct(row.worst).padStart(8), row.avgSeconds.toFixed(1).padStart(9)].join(""));
 }
+
+console.log("\n유형별 통과율");
+for (const row of summaries) {
+  const parts = Object.entries(row.byKind).map(([k, v]) => `${k} ${v.passed}/${v.total}`);
+  console.log(`  ${row.model.slice(0, 29).padEnd(30)}${parts.join(" · ")}`);
+}
+
+if (compare) {
+  console.log("\n직전 결과와 비교");
+  if (!previous) {
+    console.log("  저장된 직전 결과가 없습니다(이번이 첫 기록).");
+  } else {
+    console.log(`  직전: ${previous.at} (코퍼스 ${previous.corpus}개 × ${previous.repeat}회)`);
+    for (const row of summaries) {
+      const before = previous.models.find((m) => m.model === row.model);
+      if (!before) {
+        console.log(`  ${row.model.slice(0, 29).padEnd(30)}직전 기록 없음`);
+        continue;
+      }
+      const delta = (row.rate - before.rate) * 100;
+      const sign = delta > 0 ? "+" : "";
+      // 코퍼스가 달라졌으면 숫자를 그대로 비교하면 안 된다 — 같은 시험이 아니다.
+      const note = previous.corpus !== total ? " (코퍼스 크기가 달라 참고용)" : "";
+      console.log(`  ${row.model.slice(0, 29).padEnd(30)}${pct(before.rate)} → ${pct(row.rate)} (${sign}${delta.toFixed(0)}%p)${note}`);
+    }
+  }
+}
+
 console.log(`\n**0 이어야 하는 열(담당자 추측 · 수치 지어냄 · 지어낸 주소)이 0 이 아닌 모델은 다른 수치를 믿으면 안 된다.**`);
 
+if (save) {
+  mkdirSync(RESULTS_DIR, { recursive: true });
+  const at = new Date().toISOString();
+  const file = path.join(RESULTS_DIR, `${at.replace(/[:.]/g, "-")}-${tool}.json`);
+  const record: SavedRun = { tool, at, repeat, corpus: total, models: summaries };
+  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+  console.log(`저장: ${path.relative(process.cwd(), file)}`);
+}
+
 if (strict) {
-  const broken = table.filter((row) => row.passed < row.total);
+  // 한 회차라도 실패가 있으면 계약을 어긴 것이다 — 평균이 아니라 **최악 회차**로 판정한다.
+  const broken = summaries.filter((row) => row.worst < 1);
   if (broken.length > 0) {
     console.error(`\n✗ ${broken.length}개 모델이 계약을 어겼다.`);
     process.exit(1);

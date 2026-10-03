@@ -2,8 +2,14 @@ import "server-only";
 
 import { db } from "@/server/db";
 
-/** 트랜잭션 안에서 돌릴 때 받는 Prisma 클라이언트. 같은 표를 잠근 상태로 읽게 한다. */
-type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+/**
+ * 트랜잭션 안에서 돌릴 때 받는 Prisma 클라이언트. 같은 표를 잠근 상태로 읽게 한다.
+ *
+ * **내보내는 이유** — 읽기와 그 갱신을 한 트랜잭션에 묶는 곳이 여러 군데 생겼다
+ * (`actions/contrib.ts` 의 정정 응답). 타입을 두 번 적으면 한쪽이 Prisma 업그레이드로
+ * 조용히 뒤처진다. 규칙은 여기 한 곳에 두고 필요한 곳이 불러 쓴다.
+ */
+export type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
 
 /**
  * 기여 기록의 상태 규칙 — **한 곳에서만 정한다.**
@@ -43,7 +49,7 @@ export type ContribState = "ok" | "pending" | "disputed";
  * 정정에 응답할 수 있는 사람.
  *
  * **기록 주인과 지금 의견을 적은 사람뿐이다.** 전원이 응답하면 "기록을 고칠 권리"가
- *ubi 무효가 된다 — 아무나 남긴 의견에 아무나 답할 수 있으면 결정이 되지 않는다.
+ *없어진다 — 아무나 남긴 의견에 아무나 답할 수 있으면 결정이 되지 않는다.
  * 지금 떠 있는 의견(`dispute`)에 대한 응답이므로, 정리되고 뒤에 남은 의견은 아무도
  * 답할 수 없다.
  *

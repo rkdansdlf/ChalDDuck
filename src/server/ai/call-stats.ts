@@ -137,3 +137,151 @@ export async function sweepAiCalls(): Promise<number> {
     .filter(Boolean)
     .join("");
 }
+
+
+export type AiAnomalies = {
+  hasFailureSpike: boolean;
+  hasRetrySpike: boolean;
+  hasHighLatency: boolean;
+  warnings: string[];
+};
+
+/**
+ * AI 호출 상태의 이상 징후를 판정하는 순수 함수.
+ * UI와 cron 작업이 동일한 단일 기준을 공유한다.
+ */
+export function detectAiAnomalies(input: {
+  totalCalls: number;
+  failureRate: number | null;
+  retryRate: number | null;
+  slowRate: number | null;
+}): AiAnomalies {
+  const { totalCalls, failureRate, retryRate, slowRate } = input;
+  if (totalCalls < 5) {
+    return {
+      hasFailureSpike: false,
+      hasRetrySpike: false,
+      hasHighLatency: false,
+      warnings: [],
+    };
+  }
+
+  const hasFailureSpike = (failureRate ?? 0) >= 0.2;
+  const hasRetrySpike = (retryRate ?? 0) >= 0.3;
+  const hasHighLatency = (slowRate ?? 0) >= 0.3;
+
+  const warnings: string[] = [];
+  if (hasFailureSpike && failureRate !== null) {
+    warnings.push(`최근 AI 호출 실패율이 ${(failureRate * 100).toFixed(0)}%로 높습니다.`);
+  }
+  if (hasRetrySpike && retryRate !== null) {
+    warnings.push(`재시도(폴백) 비율이 ${(retryRate * 100).toFixed(0)}%로 높습니다.`);
+  }
+  if (hasHighLatency) {
+    warnings.push("지연 응답 비율이 기준치보다 높습니다.");
+  }
+
+  return {
+    hasFailureSpike,
+    hasRetrySpike,
+    hasHighLatency,
+    warnings,
+  };
+}
+
+export type TeamAiWeeklySummary = {
+  days: number;
+  hasData: boolean;
+  totalCalls: number;
+  successRate: number | null;
+  refusalRate: number | null;
+  failureRate: number | null;
+  avgLatencyMs: number | null;
+  slowRate: number | null;
+  /** 재시도(폴백)가 일어난 호출 수 */
+  retryCount: number;
+  /** 재시도 비율 (호출이 없으면 null) */
+  retryRate: number | null;
+  /** 이상 상태 경고 메시지 목록 */
+  warnings: string[];
+};
+
+/**
+ * 최근 N일(기본 7일) 동안의 팀 전체 AI 호출 요약 지표.
+ * 개인 정보(누가 무엇을 요청했는지)는 일체 포함하지 않고 집계 수치만 제공한다.
+ */
+export async function teamAiWeeklySummary(teamId: string, days = 7): Promise<TeamAiWeeklySummary> {
+  const cutoffDate = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
+  const cutoffDay = seoulDay(cutoffDate.getTime());
+
+  const rows = await db.aiCall.findMany({
+    where: {
+      teamId,
+      day: { gte: cutoffDay },
+    },
+    select: { outcome: true, latencyMs: true, retried: true },
+  });
+
+  const total = rows.length;
+  if (total === 0) {
+    return {
+      days,
+      hasData: false,
+      totalCalls: 0,
+      successRate: null,
+      refusalRate: null,
+      failureRate: null,
+      avgLatencyMs: null,
+      slowRate: null,
+      retryCount: 0,
+      retryRate: null,
+      warnings: [],
+    };
+  }
+
+  let ok = 0;
+  let refused = 0;
+  let failed = 0;
+  let retried = 0;
+  let latencyTotal = 0;
+  let slow = 0;
+  const slowThreshold = slowThresholdMs();
+
+  for (const row of rows) {
+    if (row.outcome === "ok") ok += 1;
+    else if (row.outcome === "refused") refused += 1;
+    else failed += 1;
+
+    if (row.retried) retried += 1;
+    latencyTotal += row.latencyMs;
+    if (row.latencyMs > slowThreshold) slow += 1;
+  }
+
+  const successRate = ok / total;
+  const refusalRate = refused / total;
+  const failureRate = failed / total;
+  const slowRate = slow / total;
+  const retryRate = retried / total;
+  const avgLatencyMs = Math.round(latencyTotal / total);
+
+  const { warnings } = detectAiAnomalies({
+    totalCalls: total,
+    failureRate,
+    retryRate,
+    slowRate,
+  });
+
+  return {
+    days,
+    hasData: true,
+    totalCalls: total,
+    successRate,
+    refusalRate,
+    failureRate,
+    avgLatencyMs,
+    slowRate,
+    retryCount: retried,
+    retryRate,
+    warnings,
+  };
+}

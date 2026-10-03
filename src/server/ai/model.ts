@@ -1,6 +1,7 @@
 import "server-only";
 
 import OpenAI from "openai";
+import { extractJsonObject, missingRequired } from "@/lib/ai-json";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 import type { AiToolKey } from "@/server/ai/limit";
 import { currentAiCaller, noteCallWritten } from "@/server/ai/call-context";
@@ -257,7 +258,7 @@ export function isTransient(error: unknown): boolean {
  * 벤치가 **한 모델을 재려면** 그렇다. 측정하는 값은 "그 모델이 어떻게 하는가" 인데, 첫 모델이
  * 실패했을 때 다른 모델로 물어보면 **둘의 점수가 섞인다** — 비교가 아니다.
  */
-async function withFallback<T>(
+export async function withFallback<T>(
   tool: AiToolKey,
   primary: string,
   fallback: string | null,
@@ -517,12 +518,31 @@ export async function askShape<T>(input: {
         deadline(),
       );
 
-      const call = completion.choices[0]?.message?.tool_calls?.[0];
+      const message = completion.choices[0]?.message;
+      const call = message?.tool_calls?.[0];
       const args = call && "function" in call ? call.function.arguments : null;
-      // **도구 호출이 없는 응답**은 shape 를 못 받은 것이다. 빈 응답과 같은 일로 친다 —
+
+      // 1순위는 함수 인자다. 인자가 깨져 있으면(따옴표 하나에 JSON.parse 가 터진다) 그 글에서
+      // 객체를 한 번 건져 본다. 2순위는 본문이다 — `tool_choice` 를 무시하고 본문에 JSON 을
+      // 쏟는 모델이 많다(코드펜스·앞뒤 설명 포함). 같은 답을 받고도 통째로 실패로 치면 사용자가
+      // 한도를 걸고 다시 눌러야 한다. 모양만 건지고, 내용은 `lib/ai-draft-shape.ts` 가 거른다.
+      const value = extractJsonObject(args) ?? extractJsonObject(message?.content);
+
+      // **건질 것이 없으면** shape 를 못 받은 것이다. 빈 응답과 같은 일로 친다 —
       // 다른 모델이면 함수 호출을 잘 하는 경우가 실제로 있어서, 재시도할 여지가 있다.
-      if (!args) throw new Error("도구 호출이 없는 응답");
-      return JSON.parse(args) as T;
+      if (!value) throw new Error("도구 호출이 없는 응답");
+
+      // 필수 필드가 **전부** 빠진 응답(`{}` 등)을 성공으로 올리면 빈 초안이 "AI 결과" 로 보인다.
+      // 이것도 일시적 실패로 치면 폴백 모델이 한 번 더 시도한다. 일부만 빠진 응답은 통과시킨다 —
+      // 회의가 아닌 입력에서 `candidates` 를 생략하는 것은 정직한 답이고, 모양은 `lib/ai-draft-shape`
+      // 가 빈 값으로 채운다.
+      const missing = missingRequired(input.schema, value);
+      const requiredCount = Array.isArray(input.schema.required) ? input.schema.required.length : 0;
+      if (requiredCount > 0 && missing.length === requiredCount) {
+        throw new Error(`필수 필드가 없는 응답: ${missing.join(", ")}`);
+      }
+
+      return value as T;
     });
   } catch (error) {
     return fail("askShape", error);

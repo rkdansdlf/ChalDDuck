@@ -45,6 +45,9 @@ export default async function HomePage() {
       aiTools={aiTools}
       tasks={tasks}
       negotiation={negotiation}
+      // **서버가 본 시각을 그대로 내려보낸다.** 홈의 동의 대기는 `respondBy` 와 "지금"을
+      // 비교하므로, 클라이언트가 다시 재면 하이드레이션 불일치가 난다(팀 탭과 같은 이유).
+      now={new Date().toISOString()}
       meeting={meeting}
       boxDeadlines={boxDeadlines}
       /**

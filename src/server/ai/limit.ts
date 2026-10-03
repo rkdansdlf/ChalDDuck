@@ -31,161 +31,126 @@ function todayInSeoul(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 }
 
-/** 오늘 남은 횟수. 읽기 전용 — 이 함수는 한도를 깎지 않는다. */
-export type AiQuota = {
-  /** 내 몫의 남은 횟수. */
-  mineLeft: number;
-  /** 팀 몫의 남은 횟수. */
-  teamLeft: number;
-  /** 하루 총량. 화면이 "60회 중 N회" 라고 보여 준다. */
-  perDay: number;
-  /** 순화 몫은 따로다 — 도구 화면이 아니라 읽기 화면이 이 숫자를 본다. */
-  cushion: {
-    mineLeft: number;
-    teamLeft: number;
-    perDay: number;
-  };
+/**
+ * 오늘 **쓴** 횟수. 읽기 전용 — 아무것도 적지 않는다.
+ *
+ * ## 왜 "남은 횟수"가 아니라 "쓴 횟수"인가 (2026-09-28)
+ *
+ * 원래는 `mineLeft`·`teamLeft`·`perDay` 였다 — **한도가 있을 때의 모양**이다. 한도를 지우고
+ * 나면 남은 횟수는 산술적으로 무의미해진다(없는 것을 남은 것으로 말하게 된다). 그러면 화면은
+ * "57회 남음" 이라 말해야 하는데 실제로는 **한도가 없다.**
+ *
+ * **쓴 횟수**는 거짓이 될 수 없다. 오늘 팀이 18번 불렀다면 18 이다. 그리고 이 값이 유일하게
+ * 답할 수 있는 질문 — "우리 팀이 AI 를 하루에 몇 번이나 쓰는가" 에 대한 답이다 — 이기도 하다.
+ */
+export type AiUsageToday = {
+  /** 오늘 이 팀이 AI 도구를 부른 횟수. */
+  team: number;
+  /** 오늘 내가 AI 도구를 부른 횟수. */
+  mine: number;
+  /** 오늘 이 팀이 읽기 순화를 돌린 횟수. 도구와 따로 센다(순화는 자동 실행). */
+  cushionTeam: number;
+  /** 오늘 내가 읽기 순화를 돌린 횟수. */
+  cushionMine: number;
 };
 
 /**
- * 이 도구가 **어느 장부**를 쓰는지.
+ * 오늘 **쓴** 횟수. 읽기 전용 — 아무것도 적지 않는다.
  *
- * 읽기 순화만 따로 센다(`AI_POLICY` 주석 참고). 판정을 한 함수로 모아야 화면의 숫자와
- * 실제로 막히는 지점이 어긋나지 않는다 — **읽는 쪽(`aiQuotaFor`)과 쓰는 쪽
- * (`consumeAiQuota`)이 같은 이 함수를 불러야** 그것이 보장된다.
+ * 남은 횟수가 아니라 **쓴 횟수**를 세는 이유는 `AiUsageToday` 타입의 주석에 있다 — 한도가 없으면
+ * "남음" 은 거짓이다.
  */
-export function quotaPicks(tool: AiToolKey): { team: number; member: number } {
-  return tool === "read-cushion"
-    ? { team: AI_POLICY.readCushionPerTeamPerDay, member: AI_POLICY.readCushionPerMemberPerDay }
-    : { team: AI_POLICY.perTeamPerDay, member: AI_POLICY.perMemberPerDay };
-}
-
-/**
- * 남은 횟수만 센다. **아무것도 적지 않는다.**
- *
- * 화면이 진입할 때 부를 수 있어야 하니, 세는 것과 쓰는 것을 반드시 갈라 둔다 — 한 함수에
- * 같이 두면 "상태를 보려고 부른 것"이 한도가 되어 이유를 알 수 없다.
- */
-export async function aiQuotaFor(me: SessionMember): Promise<AiQuota> {
+export async function aiUsageToday(me: SessionMember): Promise<AiUsageToday> {
   const day = todayInSeoul();
-  const picks = quotaPicks("read-cushion");
-  // **본 장부는 순화를 세지 않는다.** 세면 분리가 아니라 두 번 차감이다 — 순화가 도구 몫까지
-  // 먹으므로, 순화 몫이 남아 있는데도 쿠션 번역기가 막히는 상황이 그대로 생긴다.
+  /** 본 장부는 순화를 세지 않는다 — 세면 분리가 아니라 두 번 세게 된다. */
   const withoutCushion = { tool: { not: "read-cushion" as const } };
-  const [teamUsed, mineUsed, cushionTeam, cushionMine] = await Promise.all([
+  const [team, mine, cushionTeam, cushionMine] = await Promise.all([
     db.aiUsage.count({ where: { teamId: me.teamId, day, ...withoutCushion } }),
     db.aiUsage.count({ where: { memberId: me.id, day, ...withoutCushion } }),
     db.aiUsage.count({ where: { teamId: me.teamId, day, tool: "read-cushion" } }),
     db.aiUsage.count({ where: { memberId: me.id, day, tool: "read-cushion" } }),
   ]);
-  return {
-    mineLeft: Math.max(0, AI_POLICY.perMemberPerDay - mineUsed),
-    teamLeft: Math.max(0, AI_POLICY.perTeamPerDay - teamUsed),
-    perDay: AI_POLICY.perMemberPerDay,
-    cushion: {
-      mineLeft: Math.max(0, picks.member - cushionMine),
-      teamLeft: Math.max(0, picks.team - cushionTeam),
-      perDay: picks.member,
-    },
-  };
+  return { team, mine, cushionTeam, cushionMine };
 }
 
 /**
- * 한 번 쓸 수 있는지 보고, 쓸 수 있으면 썼다고 적는다. **한도를 깎는 유일한 자리.**
+ * 한 번 썼다고 **적는다.** 막지 않는다 — **`read-cushion` 의 폭주 차단 하나만 예외**다.
  *
- * ## 언제 깎나
+ * ## 왜 세는 것은 남기고 막는 것은 지웠는가 (2026-09-28)
  *
- * **모델을 부르는 그 순간에 깎는다.** 타이핑할 때도 깎지 않고, 화면을 열어도 깎지 않는다
- * (조회는 `aiQuotaFor` 가 한다). 예전에는 쿠션 번역기·문장 변환이 원문이 바뀔 때마다 입력이
- * 멎을 때(800ms) 자동으로 부르니, **고치는 행위 자체가 과금**이었다 — 고칠수록 한도가 줄었다.
- * 이제 생성은 버튼을 눌렀을 때만 일어난다(`use-ai-draft`).
+ * **`AiUsage` 는 한도 장부가 아니라 유일한 사용량 기록이었다.** "이 숫자가 한 번이라도 걸린 적이
+ * 있는가" 라는 질문에 5분 만에 답한 것이 이 표였고, 답은 "14일간 한 번도 없었다" 였다. 그래서
+ * 막는 쪽을 지웠다 — **근거 없는 숫자는 사용자에게 한도로 보이면서 아무 일도 하지 않는다.**
  *
- * ## 성공했다면 무엇을 돌려 주는가 — **방금 적은 행의 id**
+ * 기록을 지우면 **다음번에 같은 질문을 할 수 없다.** 그래서 이 행은 그대로 둔다.
  *
- * 만든 행을 다시 찾지 않게 하려고다. 실패했을 때 그 행 하나만 지우려면("`refundAiQuota`")
- * **내가 어느 행을 지운다는 뜻인지** 호출한 곳이 알고 있어야 한다. 예전에는 `{ ok: true }`
- * 만 돌려줬으므로 되돌릴 방법이 없었고, 이 함수를 부를 때 남긴 값이 전부였다.
+ * ## 남긴 막힘 하나 — 순화 폭주
+ *
+ * 도구는 사람이 누른다. 아무도 안 누르면 아무 일도 없다. **읽기 순화만 메시지마다 자동으로**
+ * 도므로, 여기만 무제한이 가능한 형태의 사고다. 재시도 폭주는 `MAX_ATTEMPTS`·`FAILURE_BACKOFF_MS`
+ * 로 묶여 있으니 순환은 구속된다 — 여기는 그 위에 있는 마지막 방어선이고, 관측치가 하루 1회인
+ * 숫자(5,000)는 폭주만 잡는다.
+ *
+ * **이 막힘을 사용자에게 한도로 말하지 않는다.** 관측치의 5,000배인 숫자를 "한도" 라고 말하면
+ * 그것은 방어선이 아니라 다시 거짓말이다.
+ *
+ * ## 성공하면 돌려 주는 것 — **방금 적은 행의 id**
+ *
+ * 만든 행을 다시 찾지 않게 하려고다. 실패했을 때 그 행 하나만 지우려면("`refundAiUsage`")
+ * **어느 행을 지운다는 뜻인지** 호출한 곳이 알고 있어야 한다. 예전에는 `{ ok: true }` 만 돌려줘서
+ * 되돌릴 방법이 없었고, 이 함수를 부를 때 남긴 값이 전부였다.
  *
  * ## 실패하면 돌려 주는가 — **모델이 실패했을 때만 돌려 준다**
  *
- * 예전에는 **돌려 주지 않았다.** 그때의 이유는 "실패한 호출도 시간과 돈이 들었고(타임아웃은
- * 특히 그렇다), 실패를 공짜로 두면 실패하는 요청을 무한히 보낼 수 있다"였다 — 한도가 아니라
- * **지속 가능한 비용**이 된다는 계산이었다.
- *
- * 그 계산은 무료 라우터(`openrouter/free`)에서는 성립하지 않는다. 이 모델은 **사용자가
- * 고를 수 없는 쪽**에서 실패한다 — 타임아웃 899초, 안전 필터 거절, 빈 응답. 한도가 붙은
- * 채로 그 실패를 쓰게 두면 **내 돈으로 내 몫의 실패를 산다.** 실제로 이 한도는 순화가 가장
- * 필요할 때(심한 욕설) 가장 자주 거절당하는 구간에서 먼저 바닥났다.
- *
- * 그래서 실패는 **사용자에게 돌려주고, 제공자에게 청구한다.** 되돌림이 막는 것은 사람이
- * 일부러 실패를 부르는 것이 아니라 **같은 실패를 무한히 누르는 것**뿐이고, 그것은 이후에
- * 폴백 모델·재시도(0단계 2번)와 함께 다룬다. 지금 이 자리에서 고치면 된다.
+ * 예전에도 돌려 주지 않았다. 그때의 이유는 "실패한 호출도 비용이 드니까"였고, 그 계산은 무료
+ * 라우터(`openrouter/free`)에서는 성립하지 않는다. 이 모델은 **사용자가 고를 수 없는 쪽**에서
+ * 실패한다 — 60초 타임아웃, 안전 필터 거절, 빈 응답. 기록에 남은 실패 3건이 전부 이 종류였다
+ * (안전 필터 거절 2건 · 타임아웃 1건). 남겨 두면 **내 기록이 내 몫의 실패를 산다.**
  *
  * **거절(안전 필터)은 환불하지 않는다.** 거절은 `throw` 가 아니라 **모델이 돌려준 답**이라
- * 여기까지 오지 않는다 — 즉 이 규칙이 거절을 공짜로 만들지 않는다. 환불되는 것은 **아무
- * 답도 못 받은** 호출뿐이다.
+ * 여기까지 오지 않는다 — 이 규칙이 거절을 공짜로 만들지 않는다. 지워지는 것은 **아무 답도 못
+ * 받은** 호출뿐이다.
  *
- * 한도 초과로 막힌 경우에도 환불할 것이 없다 — 애초에 행을 만들지 않았다.
+ * ## 읽기와 쓰기는 **반드시 다른 함수**다
  *
- * ## 왜 세는 것과 쓰는 것이 한 함수에 있나
+ * 상태를 보려고 부른 것이 기록이 되는 사고를 막기 위해서다. 읽기는 `aiUsageToday`, 쓰기는 여기.
  *
- * 부르는 쪽이 둘 중 하나를 빠뜨리면 한도가 조용히 사라진다. 읽기(`aiQuotaFor`)와 쓰기는
- * **반드시 다른 함수**로 갈라 둔다 — 상태를 보려고 부른 것이 한도가 되는 사고를 막기 위해서다.
+ * ## 판단과 기록은 잠근 안에서 함께 한다
  *
- * 한도를 넘으면 `message` 를 돌려준다. 화면이 그대로 보여 줄 문장이다.
+ * 순화 폭주 판정은 팀의 하루 총량을 본다. 그 판단과 기록이 따로 놀면 **동시에 들어온 순화가
+ * 둘 다 "아직 안 찼다" 를 보고 둘 다 지나간다** — 이것이 드라이브 용량에서 실제로 겪은 일이었고,
+ * 같은 관용구(`Team` 행 `FOR UPDATE`)를 쓴다. 한 팀의 동시 호출은 많지 않아 기다림이 눈에 띄지
+ * 않는다.
  *
- * ## 셋과 읽기는 잠근 안에서 함께 한다
- *
- * 예전에는 `count` 두 번 → `create` 로 있었다. `AiUsage` 에는 이를 잡아 줄 유니크 제약이
- * 없어서, 동시에 300개가 들어오면 300개 다 `0 회` 를 보고 300개 다 적고 **300개 다 모델을
- * 부른다** — 돈이 드는 길이 정확히 그 병목인데, 지킨 게 아니었다. 화면에 적히는 숫자는
- * 정확했다.
- *
- * 그래서 팀 행을 `FOR UPDATE` 로 잠근 안에서 센다(같은 관용구를 `server/actions/ice.ts` 와
- * `server/actions/drive.ts` 가 이미 쓴다). 한 팀의 동시 호출은 많지 않아(하루 200회 한도)
- * 기다림이 눈에 띄지 않는다.
- *
- * **모델을 부르는 동안은 잡고 있지 않는다** — 여기서 끝나면 락이 풀린다. 그 사이에 한도가
- * 차는 것은 맞다(실제로 그만큼 부른 것이므로). 실패해서 되돌린 몫은 그 사이 다른 호출이
- * 이미 썼을 수 있으므로 **한도가 원래보다 많아지지는 않는다** — 적게 되는 것뿐이다.
+ * **모델을 부르는 동안은 잡고 있지 않는다** — 여기서 끝나면 락이 풀린다. 실패해서 지운 몫은 그
+ * 사이에 다른 호출이 이미 썼을 수 있으므로 기록이 원래보다 많아지지는 않는다 — 적게 되는 것뿐.
  */
-export async function consumeAiQuota(
+export async function recordAiUsage(
   me: SessionMember,
   tool: AiToolKey,
 ): Promise<{ ok: true; usageId: string } | { ok: false; message: string }> {
   const day = todayInSeoul();
-  // 읽는 쪽(`aiQuotaFor`)과 **같은 선택**을 한다. 여기서만 다르면 화면의 숫자는 남았는데
-  // 실제로는 막히는(또는 그 반대) 상태가 조용히 생긴다.
-  const picks = quotaPicks(tool);
-  // 순화는 자기 장부에만 적는다 — 본 장부에서 빼지 않으면 두 번 차감된다.
-  const inBook =
-    tool === "read-cushion"
-      ? { tool: "read-cushion" as const }
-      : { tool: { not: "read-cushion" as const } };
+  // 순화는 자기 장부에만 적는다 — 본 장부에 함께 세면 두 번으로 세게 된다.
+  const isCushion = tool === "read-cushion";
+  const inBook = isCushion
+    ? { tool: "read-cushion" as const }
+    : { tool: { not: "read-cushion" as const } };
 
   return db.$transaction(async (tx): Promise<
     { ok: true; usageId: string } | { ok: false; message: string }
   > => {
-    // 한 팀의 한도를 한 명씩 지킨다.
+    // 순화 폭주 판정은 팀의 하루 총량을 본다 — 판단과 기록을 한 잠금 안에서 함께 한다.
     await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
 
-    const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day, ...inBook } });
-    if (teamUsed >= picks.team) {
-      return {
-        ok: false,
-        message: cushionRefusal(tool, `오늘 팀이 쓸 수 있는 AI 횟수(${picks.team}회)를 다 썼습니다. 내일 0시(한국)에 다시 채워집니다.`),
-      };
-    }
-
-    const mineUsed = await tx.aiUsage.count({ where: { memberId: me.id, day, ...inBook } });
-    if (mineUsed >= picks.member) {
-      return {
-        ok: false,
-        message: cushionRefusal(
-          tool,
-          `오늘 내가 쓸 수 있는 AI 횟수(${picks.member}회)를 다 썼습니다. 팀의 남은 횟수와는 별개입니다 — 내일 0시(한국)에 다시 채워집니다.`,
-        ),
-      };
+    // **순화만** 막는다 — 폭주 차단. 도구는 사람이 누르므로 필요 없다.
+    if (isCushion) {
+      const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day, ...inBook } });
+      if (teamUsed >= AI_POLICY.cushionRunawayCapPerTeamPerDay) {
+        return {
+          ok: false,
+          message: "읽는 순화가 오늘 지나치게 많이 돌아갑니다. 원문은 그대로 보입니다.",
+        };
+      }
     }
 
     const written = await tx.aiUsage.create({
@@ -198,7 +163,7 @@ export async function consumeAiQuota(
 }
 
 /**
- * 실패한 호출이 깎은 한도를 **그 행 하나만** 되돌린다.
+ * 실패한 호출이 적은 기록을 **그 행 하나만** 지운다.
  *
  * ## 왜 `deleteMany({ teamId, memberId, day })` 가 아니라 id 인가
  *
@@ -211,33 +176,23 @@ export async function consumeAiQuota(
  * ## 돌아오지 않는다
  *
  * DB 조회가 실패하면 **사용자에게 보여 줄 원래 실패 사유를 가리지 않는다.** 되돌림은 배려이고
- * 그 배려가 원래 목적을 해치는 경우(한도를 못 돌려받았다고 말해야 할 때 조용히 지워짐)가 더
+ * 그 배려가 원래 목적을 해치는 경우(실패 이유를 말해야 할 때 조용히 지워짐)가 더
  * 나쁘다. 서버 로그에 남기고 `false` 를 돌려준다.
  *
  * 지워진 행은 어디에도 남지 않는다는 사실도 그대로 적어 둔다 — 실패의 원인을 아는 길은 서버
- * 로그뿐이다(`runTool` 이 `console.error` 로 남긴다).
+ * 로그뿐이다(`runTool` 이 `console.error` 로 남긴다). 쓰지 못한 시도를 세면 실패가 잘 안 되는
+ * 앱으로 보이므로 **성공한 시도만** 세는 편이 정직하다.
  */
-export async function refundAiQuota(me: SessionMember, usageId: string): Promise<boolean> {
+export async function refundAiUsage(me: SessionMember, usageId: string): Promise<boolean> {
   try {
     const { count } = await db.aiUsage.deleteMany({
       where: { id: usageId, teamId: me.teamId, memberId: me.id },
     });
     return count > 0;
   } catch (cause: unknown) {
-    console.error(`[ai:limit] 한도를 되돌리지 못했습니다 (${usageId})`, cause);
+    console.error(`[ai:limit] 기록을 되돌리지 못했습니다 (${usageId})`, cause);
     return false;
   }
-}
-
-/**
- * 순화가 멈췄을 때 **왜**를 덧붙인다.
- *
- * 순화 몫이 바닥나면 원문이 보인다(안전한 실패다). 그런데 그 문장이 다른 AI 도구의 그것과
- * 같으면, 순화가 앱의 일부라는 사실이 사라진다 — "AI 한도를 다 썼습니다" 만 보면 무엇이
- * 멈춘 건지 알 수 없다.
- */
-function cushionRefusal(tool: AiToolKey, message: string): string {
-  return tool === "read-cushion" ? `${message} 읽는 순화만 멈췄습니다 — 다른 AI 도구는 쓸 수 있습니다.` : message;
 }
 
 /**

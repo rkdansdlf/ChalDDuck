@@ -1,7 +1,7 @@
 "use client";
 
 import { flush, newLineSplitter, pushBytes } from "@/lib/ai-stream-lines";
-import type { AiAnswerSource } from "@/lib/types";
+import type { AiAnswerSource, ResearchResult } from "@/lib/types";
 
 /**
  * AI 초안을 **조각으로** 받아온다(15 쿠션 번역기 · 27 문장 변환).
@@ -29,15 +29,55 @@ import type { AiAnswerSource } from "@/lib/types";
 /** 조각을 누적하는 중 상태. **호출마다 새로 만든다** — 모듈 변수로 두면 두 호출이 섞인다. */
 type StreamState = {
   partial: string;
-  settled: { value: string; source: AiAnswerSource } | null;
+  settled: { value: unknown; source: AiAnswerSource } | null;
 };
 
+/** 프레임을 읽을 때 부르는 통로들. 필요한 것만 넘긴다. */
+type Handlers = {
+  onDelta?: (partial: string) => void;
+  onPhase?: (phase: string) => void;
+};
+
+/** 글을 조각으로 받는다(쿠션 번역기 · 문장 변환). */
 export async function runAiStream(input: {
   tool: "cushion" | "sentence";
   text: string;
   variant: string;
   onDelta?: (partial: string) => void;
 }): Promise<{ value: string; source: AiAnswerSource }> {
+  const settled = await readStream(
+    { tool: input.tool, text: input.text, variant: input.variant },
+    { onDelta: input.onDelta },
+  );
+  // 이 도구들의 값은 항상 글이다. 아니면 프로토콜이 어긋난 것이다.
+  if (typeof settled.value !== "string") throw new Error("AI 응답 형식이 올바르지 않습니다.");
+  return { value: settled.value, source: settled.source };
+}
+
+/**
+ * 리서처 — 조각은 없고 **단계**만 알린다(`searching` → `shaping`). 돌려주는 값은
+ * `searchResearch` 서버 액션과 같은 `{ value, source }` 이다.
+ */
+export async function runAiResearch(input: {
+  query: string;
+  onPhase?: (phase: "searching" | "shaping") => void;
+}): Promise<{ value: ResearchResult[]; source: AiAnswerSource }> {
+  const settled = await readStream(
+    { tool: "research", text: input.query, variant: "" },
+    {
+      onPhase: (phase) => {
+        if (phase === "searching" || phase === "shaping") input.onPhase?.(phase);
+      },
+    },
+  );
+  if (!Array.isArray(settled.value)) throw new Error("AI 응답 형식이 올바르지 않습니다.");
+  return { value: settled.value as ResearchResult[], source: settled.source };
+}
+
+async function readStream(
+  input: { tool: string; text: string; variant: string },
+  handlers: Handlers,
+): Promise<{ value: unknown; source: AiAnswerSource }> {
   const response = await fetch("/api/ai/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -78,12 +118,12 @@ export async function runAiStream(input: {
      * (`lib/ai-stream-lines.ts`)로 따로 두고 스모크가 확인한다.
      */
     for (const line of pushBytes(splitter, value, (bytes) => decoder.decode(bytes, { stream: true }))) {
-      applyLine(line, state, input.onDelta);
+      applyLine(line, state, handlers);
     }
   }
   // 마지막 줄에 개행이 없을 수 있다 — 서버가 stream 을 닫으면서 마지막 프레임을 밀어 넣는다.
   const tail = flush(splitter);
-  if (tail) applyLine(tail, state, input.onDelta);
+  if (tail) applyLine(tail, state, handlers);
 
   if (!state.settled) throw new Error("AI 응답이 중간에 끊겼습니다.");
   return state.settled;
@@ -93,7 +133,7 @@ export async function runAiStream(input: {
 function applyLine(
   line: string,
   state: StreamState,
-  onDelta: ((partial: string) => void) | undefined,
+  handlers: Handlers,
 ): void {
   let frame: unknown;
   try {
@@ -109,8 +149,9 @@ function applyLine(
     return;
   }
 
-  const { delta, source, value, error } = frame as {
+  const { delta, phase, source, value, error } = frame as {
     delta?: unknown;
+    phase?: unknown;
     source?: unknown;
     value?: unknown;
     error?: unknown;
@@ -119,8 +160,13 @@ function applyLine(
   // 실패는 **서버가 환불까지 끝낸 뒤** 보낸다. 여기서 던지면 화면은 그 문구를 그대로 보여 준다.
   if (typeof error === "string") throw new Error(error);
 
-  if (typeof value === "string" && (source === "ai" || source === "sample")) {
+  if (value !== undefined && (source === "ai" || source === "sample")) {
     state.settled = { value, source };
+    return;
+  }
+
+  if (typeof phase === "string") {
+    if (!state.settled) handlers.onPhase?.(phase);
     return;
   }
 
@@ -128,6 +174,6 @@ function applyLine(
     // 이미 확정됐으면(비정상적으로 뒤에 조각이 더 온 경우) 손대지 않는다.
     if (state.settled) return;
     state.partial += delta;
-    onDelta?.(state.partial);
+    handlers.onDelta?.(state.partial);
   }
 }

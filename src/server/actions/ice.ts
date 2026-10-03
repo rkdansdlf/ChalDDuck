@@ -7,7 +7,6 @@ import {
   mayTargetAtNight,
   nightAlreadyStruck,
   nightRoleOf,
-  resolveDayVote,
   resolveNight,
 } from "@/lib/mafia-rules";
 import type { IceGameKey, IceRole, IceView, NightActionKind } from "@/lib/types";
@@ -23,6 +22,7 @@ import {
   resolveLiarVote,
   voteBlockedText,
 } from "@/server/ice/rules";
+import { applyMafiaDayVote, clearBridgeVotes } from "@/server/ice/day-vote";
 import { icePhase, iceViewFor } from "@/server/ice/view";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember, type SessionMember } from "@/server/session";
@@ -38,6 +38,7 @@ import { requireSessionMember, type SessionMember } from "@/server/session";
  * 사라져도 판이 멈추지 않도록 팀장을 함께 둔다.
  */
 export type IceResult = { view: IceView | null; message?: string };
+
 
 async function done(me: SessionMember, message?: string): Promise<IceResult> {
   return { view: await iceViewFor(me), message };
@@ -223,6 +224,9 @@ export async function startIceVote(): Promise<IceResult> {
       phaseStartedAt: new Date(),
     },
   });
+  // 새 회차에는 지난 표가 없다. 다리 칸을 그대로 두면 구버전이 마감할 때 **지난 표를 세어**
+  // 엉뚱한 사람이 빠진다 — 옛 코드에는 회차가 없으므로 여기서 한 번에 비운다.
+  await clearBridgeVotes(db, round.id);
   return done(me, "이제 투표할 수 있습니다.");
 }
 
@@ -270,9 +274,17 @@ export async function castIceVote(targetId: string): Promise<IceResult> {
       where: { roundId_seq_memberId: { roundId: fresh.id, seq: fresh.voteSeq, memberId: me.id } },
     });
     // 같은 사람을 다시 누르면 취소된다 — 표는 지우는 대신 **아예 없는 줄로 만든다.**
+    // ⚠️ **다리**: 구버전 인스턴스가 이 판을 마감할 수 있다. 그 구버전은 표를 이 칸에서만 보므로
+    //   여기에 같이 두지 않으면 표가 0장으로 보이면서 마감되고 아무도 탈락하지 않는다.
+    //   구버전이 모두 사라진 다음 배포에서 이 쓰기를 지운다(`20260930210000` 의 주석).
+    const bridge = { voteForId: current?.targetId === targetId ? null : targetId };
     if (current?.targetId === targetId) {
       await tx.iceBallot.delete({
         where: { roundId_seq_memberId: { roundId: fresh.id, seq: fresh.voteSeq, memberId: me.id } },
+      });
+      await tx.iceSeat.update({
+        where: { roundId_memberId: { roundId: fresh.id, memberId: me.id } },
+        data: bridge,
       });
       return undefined;
     }
@@ -282,6 +294,10 @@ export async function castIceVote(targetId: string): Promise<IceResult> {
       where: { roundId_seq_memberId: { roundId: fresh.id, seq: fresh.voteSeq, memberId: me.id } },
       update: { targetId, day: fresh.day, runoff },
       create: { roundId: fresh.id, seq: fresh.voteSeq, day: fresh.day, memberId: me.id, targetId, runoff },
+    });
+    await tx.iceSeat.update({
+      where: { roundId_memberId: { roundId: fresh.id, memberId: me.id } },
+      data: bridge,
     });
     return undefined;
   });
@@ -327,6 +343,7 @@ export async function closeIceVote(): Promise<IceResult> {
       if (outcome.kind === "tie") {
         // ⚠️ 예전에는 여기서 표를 지웠다. 그러면 같은 사람들이 같은 이야기를 다시 하고 같은 동점이
         // 되기를 반복했다. 지금은 **지우지 않는다** — 다시 고르면 같은 회차의 그 줄이 바뀐다.
+        await clearBridgeVotes(tx, fresh.id);
         return "동점이거나 아직 아무도 투표하지 않았습니다. 이야기를 더 나눈 뒤 다시 투표해 주세요.";
       }
 
@@ -352,65 +369,19 @@ export async function closeIceVote(): Promise<IceResult> {
       return undefined;
     }
 
-    const aliveIds = new Set(alive.map((s) => s.memberId));
-    const eligible =
-      fresh.eligibleTargets.length > 0 ? fresh.eligibleTargets.filter((id) => aliveIds.has(id)) : [...aliveIds];
-    const vote = resolveDayVote({ ballots, eligible, runoffs: fresh.runoffCount });
-
-    if (vote.kind === "noVote") {
-      // 승부가 나지 않았다. **토론으로 되돌린다** — 같은 표로 재투표하게 두지 않는다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { phase: "discussion", eligibleTargets: [], phaseStartedAt: new Date() },
-      });
-      return "아직 아무도 투표하지 않았습니다. 이야기를 나눈 뒤 다시 투표해 주세요.";
-    }
-
-    if (vote.kind === "runoff") {
-      // **동점자끼리만** 다시 투표한다. 결선은 새 회차다 — 같은 회차로 두면 결선 앞의 표가
-      // 결선 표에 덮어써져 "누가 누구에게 표를 던졌는가" 가 그 낮의 표만 남는다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { voteSeq: fresh.voteSeq + 1, runoffCount: fresh.runoffCount + 1, eligibleTargets: vote.candidates },
-      });
-      return `동점입니다. ${vote.candidates.length}명끼리 다시 투표합니다.`;
-    }
-
-    if (vote.kind === "stuck") {
-      // 결선을 해도 동점이다. 아무도 빠지지 않고 **전체 후보로 돌아간다** — 여기서 또 좁히면
-      // 무한 반복이다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { phase: "discussion", eligibleTargets: [], phaseStartedAt: new Date() },
-      });
-      return "결선을 해도 동점입니다. 아무도 탈락하지 않습니다. 이야기를 더 나눈 뒤 다시 투표해 주세요.";
-    }
-
-    await tx.iceSeat.update({
-      where: { roundId_memberId: { roundId: fresh.id, memberId: vote.targetId } },
-      data: { outAt: new Date(), outHow: "vote", outDay: fresh.day },
+    // 마피아: 표를 모으고(구버전이 던진 표까지 흡수해) 결과를 적용한다. 적용 로직이 액션 밖에 있어
+    // 실제 DB 로 부를 수 있다(`server/ice/day-vote.ts` — 정규식 검사가 이 분기의 누락을 놓쳤었다).
+    return applyMafiaDayVote(tx, {
+      roundId: fresh.id,
+      game: fresh.game,
+      voteSeq: fresh.voteSeq,
+      runoffCount: fresh.runoffCount,
+      eligibleTargets: fresh.eligibleTargets,
+      day: fresh.day,
+      alive: alive.map((s) => ({ memberId: s.memberId, role: s.role as IceRole })),
+      ballots,
+      legacy: fresh.seats.map((s) => ({ memberId: s.memberId, voteForId: s.voteForId })),
     });
-    const code = mafiaOutcome(alive.filter((s) => s.memberId !== vote.targetId).map((s) => s.role as IceRole));
-    if (code) {
-      // 끝난 판은 마지막 투표를 그대로 남겨 결과 화면에 보여 준다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: {
-          phase: "revealed",
-          resultCode: code,
-          winner: code === ICE_RESULT_CODES.mafiaWin ? "mafia" : "citizen",
-          eligibleTargets: [],
-          phaseStartedAt: new Date(),
-        },
-      });
-      return undefined;
-    }
-    // 끝나지 않았으면 **밤이 곧바로 온다** — 밤 번호가 하나 올라가고, 후보는 처음부터 다시 넓어진다.
-    await tx.iceRound.update({
-      where: { id: fresh.id },
-      data: { phase: "night", day: fresh.day + 1, eligibleTargets: [], phaseStartedAt: new Date() },
-    });
-    return undefined;
   });
 
   return done(me, note);
@@ -606,6 +577,7 @@ export async function resolveIceNight(): Promise<IceResult> {
         where: { roundId_memberId: { roundId: fresh.id, memberId: resolution.outId } },
         data: { outAt: new Date(), outHow: "night", outDay: fresh.day },
       });
+      await clearBridgeVotes(tx, fresh.id, resolution.outId);
     }
 
     const code = resolution.outId
@@ -695,6 +667,7 @@ export async function markIceNightOut(memberId: string): Promise<IceResult> {
       where: { roundId_memberId: { roundId: fresh.id, memberId } },
       data: { outAt: new Date(), outHow: "night", outDay: fresh.day },
     });
+    await clearBridgeVotes(tx, fresh.id, memberId);
 
     const code = mafiaOutcome(
       fresh.seats.filter((s) => s.outAt === null && s.memberId !== memberId).map((s) => s.role as IceRole),

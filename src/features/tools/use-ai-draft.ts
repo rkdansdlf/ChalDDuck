@@ -41,6 +41,12 @@ export type DraftSource = AiAnswerSource | "none";
  * 그래도 이 자리는 두 길의 차이를 **화면마다 판단하게 하지 않는다** — 판단은 `run` 을
  * 넘겨주는 쪽이 한다.
  */
+/** 이전에 받은 AI 결과 하나. 글과 말투를 함께 들고 있어야 되돌렸을 때 화면이 맞는다. */
+export type DraftHistoryEntry = { text: string; variant: string; result: string };
+
+/** 보관하는 이전 결과의 수. 많으면 고르는 일이 일이 된다. */
+const HISTORY_MAX = 3;
+
 export function useAiDraft({
   text,
   variant,
@@ -80,6 +86,22 @@ export function useAiDraft({
   /** 마지막으로 만든 뒤 손댄 것이 있는가(누르면 다시 만들어야 함). */
   stale: boolean;
   run: () => void;
+  /**
+   * **같은 글·같은 말투로 다시 만든다.** 평소에는 이미 있는 답이라 부르지 않지만, 마음에 안 들면
+   * 사람이 일부러 한 번 더 받을 수 있어야 한다. **한도는 새로 1회 깎인다** — 화면이 그 사실을
+   * 버튼 곁에 알린다.
+   */
+  redo: () => void;
+  /** 지금 \"다시 만들기\" 를 누를 수 있는가(만든 결과가 있고, 글이 그대로이며, 만드는 중이 아님). */
+  canRedo: boolean;
+  /**
+   * 직전까지의 **AI 결과**(최신순, 최대 3건). 예시는 넣지 않는다 — 모델이 만든 것이 아닌 글을
+   * "이전 결과" 로 되돌리면 출처 약속이 흐려진다. **이 화면이 열려 있는 동안만** 있다 —
+   * 글은 서버에도 브라우저 저장소에도 남기지 않는다(`AiUsage`/`AiCall` 과 같은 약속).
+   */
+  history: DraftHistoryEntry[];
+  /** 이전 결과를 다시 화면에 올린다. 모델을 부르지 않으므로 한도가 깎이지 않는다. */
+  restore: (index: number) => void;
 } {
   const [result, setResult] = useState(initial.result);
   // 화면을 열자마자 보여 주는 것은 예시다. 키가 있어도 마찬가지 — 이건 모델이 만든 게 아니다.
@@ -93,6 +115,7 @@ export function useAiDraft({
   // **만드는 중 도착한 글.** 끝나면 비운다 — 남으면 다음 호출이 새 결과를 받기 전까지
   // 옛 글자를 보여 준다(결과가 두 개처럼 보인다).
   const [partial, setPartial] = useState("");
+  const [history, setHistory] = useState<DraftHistoryEntry[]>([]);
 
   const trimmed = text.trim();
   const empty = trimmed.length === 0;
@@ -100,30 +123,62 @@ export function useAiDraft({
   const sameAsMade = made !== null && made.text === trimmed && made.variant === variant;
   const stale = !empty && !sameAsMade;
 
-  const start = useCallback(() => {
-    if (empty || working || sameAsMade) return;
-    setWorking(true);
-    setError(null);
-    setPartial("");
+  const execute = useCallback(
+    (force: boolean) => {
+      if (empty || working || (sameAsMade && !force)) return;
+      setWorking(true);
+      setError(null);
+      setPartial("");
 
-    run(trimmed, variant, stream ? setPartial : undefined)
-      .then(({ value, source: made_by }) => {
-        setResult(value);
-        // 화면이 판단하지 않는다 — 서버가 함께 보낸 값을 그대로 쓴다.
-        setSource(made_by);
-        setMade({ text: trimmed, variant });
-      })
-      .catch((cause: unknown) => {
-        // 실패한 호출의 한도 처리는 서버가 정한다(`ai/limit.ts`). 화면은 말만 전한다.
-        setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
-      })
-      .finally(() => {
-        setWorking(false);
-        // 조각은 **결과가 정해졌을 때만** 치운다. 먼저 치우면 마지막 조각이 화면에서 사라졌다가
-        // 완성값으로 다시 나타나 화면이 두 번 그린다.
-        setPartial("");
+      run(trimmed, variant, stream ? setPartial : undefined)
+        .then(({ value, source: made_by }) => {
+          // 바꾸기 전 결과가 **AI 가 만든 것이면** 이전 결과로 남긴다. 같은 글이 또 오면 쌓지 않는다.
+          if (source === "ai" && made && result && result !== value) {
+            const previous: DraftHistoryEntry = { text: made.text, variant: made.variant, result };
+            setHistory((list) =>
+              [previous, ...list.filter((entry) => entry.result !== previous.result)].slice(0, HISTORY_MAX),
+            );
+          }
+          setResult(value);
+          // 화면이 판단하지 않는다 — 서버가 함께 보낸 값을 그대로 쓴다.
+          setSource(made_by);
+          setMade({ text: trimmed, variant });
+        })
+        .catch((cause: unknown) => {
+          // 실패한 호출의 한도 처리는 서버가 정한다(`ai/limit.ts`). 화면은 말만 전한다.
+          setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
+        })
+        .finally(() => {
+          setWorking(false);
+          // 조각은 **결과가 정해졌을 때만** 치운다. 먼저 치우면 마지막 조각이 화면에서 사라졌다가
+          // 완성값으로 다시 나타나 화면이 두 번 그린다.
+          setPartial("");
+        });
+    },
+    [empty, working, sameAsMade, run, stream, trimmed, variant, source, made, result],
+  );
+
+  const start = useCallback(() => execute(false), [execute]);
+  const redo = useCallback(() => execute(true), [execute]);
+
+  const restore = useCallback(
+    (index: number) => {
+      const entry = history[index];
+      if (!entry || working) return;
+      // 되돌린 결과는 AI 가 만든 것이다(역사에는 AI 결과만 있다). 지금 결과는 그 자리로 밀려난다.
+      setHistory((list) => {
+        const rest = list.filter((_, i) => i !== index);
+        const current: DraftHistoryEntry | null =
+          source === "ai" && made && result ? { text: made.text, variant: made.variant, result } : null;
+        return (current ? [current, ...rest] : rest).slice(0, HISTORY_MAX);
       });
-  }, [empty, working, sameAsMade, run, stream, trimmed, variant]);
+      setResult(entry.result);
+      setSource("ai");
+      setMade({ text: entry.text, variant: entry.variant });
+      setError(null);
+    },
+    [history, working, source, made, result],
+  );
 
   // 원문이 비었을 때의 화면은 상태가 아니라 계산이다 — 효과 안에서 비우면 렌더가 한 번 더
   // 돌고, "비웠다가 다시 채우는" 중간 상태가 보인다.
@@ -136,5 +191,9 @@ export function useAiDraft({
     canRun: !empty && !working && !sameAsMade,
     stale: empty ? false : stale,
     run: start,
+    redo,
+    canRedo: !empty && !working && sameAsMade,
+    history: empty ? [] : history,
+    restore,
   };
 }

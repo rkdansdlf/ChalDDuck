@@ -59,12 +59,14 @@ export function ChatHubScreen({
           })}
         </div>
 
-        <ChatThreadList
-          team={team}
-          teamMessages={teamMessages}
-          threads={threads}
-          show={filter}
-        />
+        <div key={filter} className="animate-fade-in">
+          <ChatThreadList
+            team={team}
+            teamMessages={teamMessages}
+            threads={threads}
+            show={filter}
+          />
+        </div>
       </Body>
     </>
   );

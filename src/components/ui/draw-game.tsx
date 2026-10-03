@@ -114,18 +114,50 @@ function usePop() {
   return shown;
 }
 
+const CONFETTI_PIECES = [
+  { dx: "-75px", dy: "-65px", rot: "120deg", bg: "bg-yellow-400", size: "w-2.5 h-2 rounded-xs" },
+  { dx: "70px", dy: "-70px", rot: "-90deg", bg: "bg-coral-400", size: "w-2 h-2.5 rounded-xs" },
+  { dx: "-95px", dy: "-20px", rot: "180deg", bg: "bg-yellow-500", size: "w-2 h-2 rounded-full" },
+  { dx: "90px", dy: "-25px", rot: "75deg", bg: "bg-ok", size: "w-2.5 h-1.5 rounded-xs" },
+  { dx: "-45px", dy: "-90px", rot: "-140deg", bg: "bg-coral-300", size: "w-2 h-2 rounded-full" },
+  { dx: "50px", dy: "-85px", rot: "160deg", bg: "bg-yellow-300", size: "w-3 h-2 rounded-xs" },
+  { dx: "-105px", dy: "25px", rot: "-60deg", bg: "bg-coral-600", size: "w-2 h-2.5 rounded-xs" },
+  { dx: "100px", dy: "20px", rot: "110deg", bg: "bg-yellow-600", size: "w-2.5 h-2 rounded-xs" },
+  { dx: "-30px", dy: "-105px", rot: "45deg", bg: "bg-ok", size: "w-2 h-2 rounded-full" },
+  { dx: "30px", dy: "-110px", rot: "-75deg", bg: "bg-coral-200", size: "w-2.5 h-2.5 rounded-xs" },
+  { dx: "-65px", dy: "45px", rot: "-110deg", bg: "bg-yellow-400", size: "w-2 h-2 rounded-full" },
+  { dx: "70px", dy: "50px", rot: "135deg", bg: "bg-coral-400", size: "w-2.5 h-2 rounded-xs" },
+];
+
+function ConfettiBurst() {
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 grid place-items-center z-20">
+      {CONFETTI_PIECES.map((piece, i) => (
+        <span
+          key={i}
+          className={cn("absolute animate-confetti", piece.bg, piece.size)}
+          style={{
+            ["--dx" as string]: piece.dx,
+            ["--dy" as string]: piece.dy,
+            ["--rot" as string]: piece.rot,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function WinnerCard({ candidate }: { candidate: DrawCandidate }) {
   const shown = usePop();
   return (
     <div
       className={cn(
-        "flex flex-col items-center gap-2 transition-all duration-300 ease-out",
+        "relative flex flex-col items-center gap-2 transition-all duration-300 ease-out",
         shown ? "scale-100 opacity-100 animate-pop" : "scale-75 opacity-0",
       )}
     >
-      <div className="animate-jelly">
-        <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
-      </div>
+      {shown ? <ConfettiBurst /> : null}
+      <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
       <span className="t-h2 keep-all text-txt-strong">{candidate.name}</span>
       <Chip tone="ok" icon="check" iconClassName="animate-pop">
         당첨

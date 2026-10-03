@@ -23,6 +23,7 @@ import type {
   AppNotification,
   BusyBlock,
   BusyKind,
+  CalendarEvent,
   ChatMessage,
   ChatPurified,
   CushionLevelKey,
@@ -37,9 +38,11 @@ import type {
   IceGame,
   IceView,
   Member,
+  MeetingNote,
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
+  PublicReportData,
   RandomTool,
   RecentItem,
   ResearchResult,
@@ -63,9 +66,12 @@ import {
   candidateDates,
   scheduleWeeks,
   weekName,
+  todayInSeoul,
   weekRange,
   type CandidateDate,
 } from "@/features/schedule/week";
+import { calcDday, normalizeTaskDueDate, sortCalendarEvents } from "@/features/schedule/calendar-events";
+import { candidateDateOf } from "@/server/meetings/candidates";
 import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
@@ -312,7 +318,7 @@ export async function getAcceptedRoleAssignments(
 
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
-  const [draws, rejections] = await Promise.all([
+  const [draws, rejections, consents, members, session] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
       include: { winner: { select: { id: true, name: true, leftAt: true } } },
@@ -321,9 +327,22 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
       where: { teamId },
       include: { member: { select: { name: true } } },
     }),
+    // 동의 제안은 **마감을 지나도 행이 남는다** — 팀이 동의한 도구가 계속 쓰여야 하므로.
+    // 살아 있는지만 여기서 보지 않는다(읽을 때마다 시각으로 계산한다).
+    db.roleDrawConsent.findMany({
+      where: { teamId },
+      include: {
+        proposedBy: { select: { id: true, name: true } },
+        responses: { select: { memberId: true, agree: true } },
+      },
+    }),
+    // 배지와 "몇 명이 응답해야 하는지" 를 말하려면 팀 전체 인원이 필요하다. 나간 사람은 뺀다.
+    db.member.findMany({ where: { teamId, leftAt: null }, select: { id: true } }),
+    // **내가 동의했는지** — 화면이 자기 응답 버튼을 숨기려면 판정자가 있어야 한다.
+    getSessionMember(),
   ]);
 
-  const result: RoleNegotiation = { draws: {}, rejected: {} };
+  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {} };
 
   for (const d of draws) {
     result.draws[d.role as RoleKey] = {
@@ -341,6 +360,21 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
   for (const r of rejections) {
     const role = r.role as RoleKey;
     result.rejected[role] = [...(result.rejected[role] ?? []), r.member.name];
+  }
+  for (const c of consents) {
+    // **반대는 저장되지 않는다**(제안이 지워진다). 그래도 `agree: false` 가 들어오면
+    // 카운트에서 빼 둔다 — 나중에 반대를 저장하는 방식으로 바꿔도 이 조회가 그대로 맞는다.
+    const agrees = c.responses.filter((r) => r.agree).length;
+    result.consents[c.role as RoleKey] = {
+      tool: c.tool,
+      proposedBy: c.proposedBy.name,
+      proposedById: c.proposedById,
+      agreed: agrees,
+      responded: c.responses.length,
+      totalMembers: members.length,
+      respondBy: formatDeadline(c.respondBy),
+      iAgreed: session ? c.responses.some((r) => r.memberId === session.id && r.agree) : false,
+    };
   }
 
   return result;
@@ -629,7 +663,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
   const proposal = await db.meetingProposal.findFirst({
     where: { teamId },
     orderBy: { createdAt: "desc" },
-    include: { slot: true, responses: true },
+    include: { slot: true, responses: true, note: { select: { id: true } } },
   });
 
   if (!proposal) {
@@ -642,6 +676,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
       against: 0,
       respondBy: null,
       myResponse: null,
+      hasNote: false,
     };
   }
 
@@ -651,6 +686,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
   const mine = proposal.responses.find((r) => r.memberId === session?.id);
 
   return {
+    id: proposal.id,
     // 저장된 값이 아니라 **계산한** 상태를 보여 준다 — 예약 작업이 표를 고치기 전에
     // 화면을 열어도 지나간 마감이 "대기 중"으로 보이지 않게.
     stage: effectiveStage({
@@ -674,7 +710,112 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     pending: Math.max(0, total - proposal.responses.length),
     respondBy: formatDeadline(proposal.respondBy),
     myResponse: mine ? (mine.agree ? "agree" : "against") : null,
+    location: proposal.location ?? null,
+    agenda: proposal.agenda ?? null,
+    durationMinutes: proposal.durationMinutes ?? 60,
+    hasNote: Boolean(proposal.note),
   };
+}
+
+/**
+ * 팀 통합 캘린더 이벤트 목록.
+ *
+ * 확정된 회의·제안 중인 회의 + 마감일이 있는 업무(Task) + 마감일이 있는 제출함(DriveBox)을
+ * 모아 날짜순·D-Day 순으로 돌려준다.
+ */
+export async function getTeamCalendarEvents(teamId: string): Promise<CalendarEvent[]> {
+  const today = todayInSeoul();
+  const currentYear = Number(today.slice(0, 4));
+
+  const [proposals, tasks, boxes] = await Promise.all([
+    db.meetingProposal.findMany({
+      where: { teamId },
+      include: { slot: true, responses: true, note: { select: { id: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.task.findMany({
+      where: { teamId, due: { not: "" } },
+      include: { assignee: { select: { name: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    db.submissionBox.findMany({
+      where: { teamId, dueAt: { not: null } },
+      orderBy: { dueAt: "asc" },
+    }),
+  ]);
+
+  const events: CalendarEvent[] = [];
+
+  // 1. 회의 이벤트 (확정된 회의 or 응답 대기 제안)
+  for (const p of proposals) {
+    const stage = effectiveStage({
+      stage: p.stage as MeetingProposal["stage"],
+      respondBy: p.respondBy,
+      against: p.responses.filter((r) => !r.agree).length,
+    });
+    if (stage === "confirmed" || stage === "proposed") {
+      const date = p.date ?? (p.slot ? candidateDateOf(p.slot.day)?.date ?? today : today);
+      const { dday, ddayText } = calcDday(date, today);
+      const isConfirmed = stage === "confirmed";
+      events.push({
+        id: `meeting-${p.id}`,
+        type: "meeting",
+        title: isConfirmed ? "정기 팀 회의" : "회의 제안 (응답 대기)",
+        date,
+        time: p.slot?.time ?? null,
+        status: stage,
+        dday,
+        ddayText,
+        location: p.location ?? null,
+        agenda: p.agenda ?? null,
+        meetingId: p.id,
+        hasNote: Boolean(p.note),
+        href: "/schedule/slots",
+      });
+    }
+  }
+
+  // 2. 할 일 마감 이벤트 (Task.due)
+  for (const t of tasks) {
+    const normDate = normalizeTaskDueDate(t.due, currentYear);
+    if (!normDate) continue;
+    const { dday, ddayText } = calcDday(normDate, today);
+    events.push({
+      id: `task-${t.id}`,
+      type: "task",
+      title: t.title,
+      date: normDate,
+      time: null,
+      status: t.status,
+      dday,
+      ddayText,
+      assignee: t.assignee?.name ?? null,
+      href: "/home/tasks",
+    });
+  }
+
+  // 3. 드라이브 제출함 마감 이벤트 (SubmissionBox.dueAt)
+  for (const b of boxes) {
+    if (!b.dueAt) continue;
+    const kstDate = toKstInputValue(b.dueAt); // "YYYY-MM-DDTHH:mm"
+    const date = kstDate.slice(0, 10);
+    const time = kstDate.slice(11, 16);
+    const { dday, ddayText } = calcDday(date, today);
+    events.push({
+      id: `box-${b.id}`,
+      type: "box",
+      title: `${b.name} 제출 마감`,
+      date,
+      time,
+      status: "due",
+      dday,
+      ddayText,
+      roleName: b.role,
+      href: `/drive/${b.id}`,
+    });
+  }
+
+  return sortCalendarEvents(events);
 }
 
 /* ── 12 / 13 / 22 드라이브 ─────────────────────────────────── */
@@ -696,12 +837,18 @@ function toSubmissionBox(
     id: string;
     role: string;
     name: string;
+    ownerId?: string | null;
     due: string;
     dueAt: Date | null;
     owner: { name: string } | null;
     files: Array<{ versions: Array<{ createdAt: Date; restoredFromId: string | null }> }>;
   },
+  session?: { id: string; isLeader: boolean } | null,
 ): SubmissionBox {
+  const canEditDeadline = session
+    ? (b.ownerId !== undefined ? b.ownerId === session.id : false) || session.isLeader
+    : undefined;
+
   return {
     id: b.id,
     role: b.role as RoleKey,
@@ -713,10 +860,12 @@ function toSubmissionBox(
     due: b.dueAt ? formatDue(b.dueAt) : b.due,
     dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
     hasLate: b.files.some((f) => f.versions.some((v) => isLateVersion(v, b.dueAt))),
+    canEditDeadline,
   };
 }
 
 export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[]> {
+  const session = await getSessionMember();
   const boxes = await db.submissionBox.findMany({
     where: { teamId },
     include: {
@@ -726,7 +875,7 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     orderBy: { id: "asc" },
   });
 
-  return boxes.map(toSubmissionBox);
+  return boxes.map((box) => toSubmissionBox(box, session));
 }
 
 /**
@@ -856,6 +1005,7 @@ export async function getSubmissionBox(
   teamId: string,
   boxId: string,
 ): Promise<SubmissionBox | null> {
+  const session = await getSessionMember();
   const box = await db.submissionBox.findFirst({
     where: { id: boxId, teamId },
     include: {
@@ -864,11 +1014,12 @@ export async function getSubmissionBox(
     },
   });
 
-  return box ? toSubmissionBox(box) : null;
+  return box ? toSubmissionBox(box, session) : null;
 }
 
 /** 버전 기록. **맨 앞이 최신**이다. */
 export async function getFileVersions(teamId: string, fileId: string): Promise<FileVersion[]> {
+  const session = await getSessionMember();
   const versions = await db.fileVersion.findMany({
     where: { fileId, file: { box: { teamId } } },
     include: { author: { select: { name: true } }, file: { select: { box: { select: { dueAt: true } } } } },
@@ -886,6 +1037,7 @@ export async function getFileVersions(teamId: string, fileId: string): Promise<F
     kind: v.kind as FileVersion["kind"],
     previewUrl: v.previewUrl,
     isLate: isLateVersion(v, v.file.box.dueAt),
+    canRestore: session ? v.authorId === session.id || session.isLeader : undefined,
   }));
 }
 
@@ -1195,6 +1347,7 @@ export async function getFileViewContext(
   boxId: string,
   fileId: string,
 ): Promise<FileViewContext | null> {
+  const session = await getSessionMember();
   const row = await db.submittedFile.findFirst({
     // 어느 팀의 것인지, **그리고 어느 제출함의 것인지** 를 한 번에 확인한다. 예전에는 팀만
     // 확인한 뒤 제출함을 따로 찾아, 팀의 다른 제출함에 있는 파일을 받아올 수도 있었다.
@@ -1215,6 +1368,9 @@ export async function getFileViewContext(
   if (!row) return null;
 
   const late = row.versions.some((v) => isLateVersion(v, row.box.dueAt));
+  const canEditDeadline = session
+    ? row.box.ownerId === session.id || session.isLeader
+    : undefined;
   const box: SubmissionBox = {
     id: row.box.id,
     role: row.box.role as RoleKey,
@@ -1225,6 +1381,7 @@ export async function getFileViewContext(
     due: row.box.dueAt ? formatDue(row.box.dueAt) : row.box.due,
     dueAt: row.box.dueAt ? toKstInputValue(row.box.dueAt) : null,
     hasLate: late,
+    canEditDeadline,
   };
 
   const latest = row.versions[0];
@@ -1362,7 +1519,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
   // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
   // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles] = await Promise.all([
+  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
     db.member.findMany({
       where: { teamId },
       // `wantRole`(희망)은 **읽지 않는다** — 역할은 수락된 추첨에서만 온다. 아래 주석 참고.
@@ -1397,6 +1554,12 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
     }),
     // 역할은 **수락이 끝난 추첨**에서만 온다(`getAcceptedRoleAssignments`).
     getAcceptedRoleAssignments(teamId),
+    // 확인된 주요 기록 (리포트 요약 표시용)
+    db.contribRecord.findMany({
+      where: { member: { teamId }, state: "ok" },
+      select: { memberId: true, title: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    }),
   ]);
 
   // **어느 칸에 넣는지는 `data/contrib-report-totals.ts` 한 곳이 정한다.** 모으는 규칙이
@@ -1407,6 +1570,15 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
     shownPerRecord: shownPerRecord.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
     unresolved: unresolvedRows.map((r) => ({ memberId: r.memberId, n: r._count._all })),
   });
+
+  const highlightsByMember = new Map<string, string[]>();
+  for (const r of okRecords) {
+    const list = highlightsByMember.get(r.memberId) ?? [];
+    if (list.length < 3) {
+      list.push(r.title);
+      highlightsByMember.set(r.memberId, list);
+    }
+  }
 
   return members.map((m) => {
     // 기록이 한 건도 없는 사람도 줄은 서야 한다(성적 근거는 빈칸이 아니라 0 이다).
@@ -1430,6 +1602,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
       participations: bucket?.participations ?? 0,
       unresolved: bucket?.unresolved ?? 0,
+      highlights: highlightsByMember.get(m.id) ?? [],
     };
   });
 }
@@ -1622,3 +1795,133 @@ export async function getSentenceSample(mode: string): Promise<string> {
 export async function getSentenceSampleOutput(mode: string): Promise<string> {
   return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
 }
+
+/* ── 회의록 아카이브 ─────────────────────────────────────────── */
+
+export async function getMeetingProposalById(
+  teamId: string,
+  proposalId: string,
+): Promise<{
+  id: string;
+  date: string | null;
+  time: string | null;
+  location: string | null;
+  agenda: string | null;
+  durationMinutes: number;
+} | null> {
+  const proposal = await db.meetingProposal.findFirst({
+    where: { id: proposalId, teamId },
+    include: { slot: true },
+  });
+  if (!proposal) return null;
+  return {
+    id: proposal.id,
+    date: proposal.date,
+    time: proposal.slot?.time ?? null,
+    location: proposal.location ?? null,
+    agenda: proposal.agenda ?? null,
+    durationMinutes: proposal.durationMinutes ?? 60,
+  };
+}
+
+export async function getMeetingNote(noteId: string): Promise<MeetingNote | null> {
+  const session = await getSessionMember();
+  if (!session) return null;
+
+  const note = await db.meetingNote.findFirst({
+    where: { id: noteId, teamId: session.teamId },
+    include: { createdBy: { select: { name: true } } },
+  });
+  if (!note) return null;
+
+  return {
+    id: note.id,
+    teamId: note.teamId,
+    meetingId: note.meetingId,
+    title: note.title,
+    rawText: note.rawText,
+    summary: note.summary,
+    taskCount: note.taskCount,
+    createdById: note.createdById,
+    createdByName: note.createdBy?.name ?? null,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+  };
+}
+
+export async function getMeetingNoteByProposal(meetingId: string): Promise<MeetingNote | null> {
+  const session = await getSessionMember();
+  if (!session) return null;
+
+  const note = await db.meetingNote.findFirst({
+    where: { meetingId, teamId: session.teamId },
+    include: { createdBy: { select: { name: true } } },
+  });
+  if (!note) return null;
+
+  return {
+    id: note.id,
+    teamId: note.teamId,
+    meetingId: note.meetingId,
+    title: note.title,
+    rawText: note.rawText,
+    summary: note.summary,
+    taskCount: note.taskCount,
+    createdById: note.createdById,
+    createdByName: note.createdBy?.name ?? null,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+  };
+}
+
+/* ── 공개 기여도 리포트 ─────────────────────────────────────────── */
+
+/**
+ * 로그인 없는 외부 열람자(교수님 등)를 위한 리포트 조회.
+ * 유효한 토큰일 때만 성적 증빙 데이터를 반환한다.
+ */
+export async function getPublicReport(token: string): Promise<PublicReportData | null> {
+  const record = await db.reportShareToken.findFirst({
+    where: {
+      token,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    include: {
+      team: { select: { id: true, name: true, course: true } },
+    },
+  });
+
+  if (!record) return null;
+
+  const rows = await getContribReport(record.teamId);
+  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
+  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
+  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
+  const totalAll = totalConfirmed + totalPending + totalDisputed;
+  const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
+
+  const issuedOn = new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Seoul",
+  })
+    .format(record.createdAt)
+    .replace(/\.$/, "");
+
+  return {
+    teamName: record.team.name,
+    course: record.team.course,
+    issuedOn,
+    scope: (record.scope as "professor" | "internal") ?? "professor",
+    memberCount: rows.length,
+    totalConfirmed,
+    totalPending,
+    totalDisputed,
+    consensusRate,
+    rows,
+  };
+}
+
+

@@ -80,6 +80,11 @@ export async function issueEmailToken(email: string): Promise<{
 /**
  * 이메일에 찍을 우리 주소(매직 링크의 기준점).
  *
+ * **내보내는 이유** — 이 함수의 계산 순서가 곧 "운영 메일이 어디로 가는지" 다
+ * (`APP_URL` → Vercel 이 박아 둔 배포 주소 → `localhost`). 그 순서를 **복사본으로 다시 적으면
+ * 검사가 실제 코드를 검사하지 않게 된다.** 그래서 진단 도구(`scripts/check-notify-setup.mts`)
+ * 는 이 함수를 불러 쓴다 — 같은 계산을 두 번 하지 않는다.
+ *
  * ⚠️ **예전에는 `NEXT_PUBLIC_APP_URL` 만 봤다 — 그게 이 문제의 절반이었다.**
  * `NEXT_PUBLIC_` 접두사는 **빌드 시점에 값이 인라인되어 동결**된다
  * (next/dist/docs/01-app/02-guides/environment-variables.md). 그래서 Vercel 대시보드에서
@@ -93,7 +98,7 @@ export async function issueEmailToken(email: string): Promise<{
  * 마지막 `localhost` 폴백은 로컬 개발을 위한 것이고, 운영에서 여기까지 내려왔다면 아래
  * `undelivered` 가 조용히 실패하지 않도록 경고로 드러낸다.
  */
-function appBaseUrl(): string {
+export function appBaseUrl(): string {
   const configured = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
   if (configured) return configured.replace(/\/+$/, "");
 

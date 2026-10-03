@@ -1,7 +1,8 @@
 import { runTool } from "@/server/ai/run";
-import { convertSentenceStreaming, rewriteWithCushionStreaming } from "@/server/ai/tools";
+import { convertSentenceStreaming, rewriteWithCushionStreaming, searchResearch } from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
 import type { AiToolKey } from "@/server/ai/limit";
+import type { ResearchResult } from "@/lib/types";
 
 /**
  * AI 초안을 **조각으로** 흘려보내는 길(15 쿠션 번역기 · 27 문장 변환).
@@ -33,6 +34,7 @@ import type { AiToolKey } from "@/server/ai/limit";
  * - `{"delta":"..."}` — 조각. 화면은 이걸 이어 붙여 **만드는 중** 글자를 보여 준다.
  * - `{"source":"ai"|"sample","value":"..."}` — **마지막 줄.** 화면이 최종적으로 보여 줄 글과
  *   그것이 예시인지 모델 것인지.
+ * - `{"phase":"searching"|"shaping"}` — (구조화 도구만) 지금 어느 단계인지.
  * - `{"error":"..."}` — 실패. **한도는 이미 환불된 상태**다(`runTool` 의 `catch` 가 끝났음).
  *
  * ## 출처를 **마지막**에 보내는 이유 — 추측하지 않기 위해서
@@ -61,8 +63,20 @@ const STREAMABLE = {
 
 type StreamableTool = keyof typeof STREAMABLE;
 
-function parseTool(value: unknown): StreamableTool | null {
-  return typeof value === "string" && value in STREAMABLE ? (value as StreamableTool) : null;
+/**
+ * 글이 아니라 **구조화된 값**을 돌려주는 도구 — 조각은 없고 **단계**(`{"phase":"…"}`)만 흘린다.
+ *
+ * 리서처만 있다: 검색 → 카드 정리로 실제 두 단계이고 한 번에 수십 초가 걸린다. 서기·발표는
+ * 모델을 한 번 부를 뿐이라 단계를 지어내지 않는다 — 없는 단계를 보여 주는 것은 "AI 가 쓰는
+ * 것처럼 보이는" 연출이고, 이 저장소는 그런 표시를 하지 않는다.
+ */
+const STRUCTURED = ["research"] as const;
+type StructuredTool = (typeof STRUCTURED)[number];
+
+function parseTool(value: unknown): StreamableTool | StructuredTool | null {
+  if (typeof value !== "string") return null;
+  if (value in STREAMABLE) return value as StreamableTool;
+  return (STRUCTURED as readonly string[]).includes(value) ? (value as StructuredTool) : null;
 }
 
 const encoder = new TextEncoder();
@@ -119,12 +133,14 @@ export async function POST(request: Request) {
     },
   });
 
-  const streaming = STREAMABLE[tool];
-  const result = await runTool(tool, () =>
-    streaming(text, typeof variant === "string" ? variant : "", (delta) => {
+  const result = await runTool<string | ResearchResult[]>(tool, () => {
+    if (tool === "research") {
+      return searchResearch(text.trim(), undefined, (phase) => push(frame({ phase })));
+    }
+    return STREAMABLE[tool](text, typeof variant === "string" ? variant : "", (delta) => {
       push(frame({ delta }));
-    }),
-  );
+    });
+  });
 
   if (result.ok) push(frame({ source: result.source, value: result.value }));
   else push(frame({ error: result.message }));

@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Toast, Undecided, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
-import { exportAiUsage } from "@/server/actions/ai";
+import { exportAiUsage, getTeamAiSummary } from "@/server/actions/ai";
+import type { TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { SampleNote } from "./ai-state-notes";
 
 /**
@@ -32,6 +33,21 @@ export function AiHubScreen({
   };
 
   const [exporting, setExporting] = useState(false);
+  const [summary, setSummary] = useState<TeamAiWeeklySummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!aiReady) return;
+    getTeamAiSummary()
+      .then((data) => {
+        setSummary(data);
+        setSummaryError(null);
+      })
+      .catch((cause: unknown) => {
+        console.error("[ai-hub] getTeamAiSummary failed:", cause);
+        setSummaryError("최근 AI 도구 상태 지표를 불러오지 못했습니다.");
+      });
+  }, [aiReady]);
 
   const downloadUsage = async () => {
     setExporting(true);
@@ -55,6 +71,16 @@ export function AiHubScreen({
       <AppBar title="AI 도구" sub="팀플에 필요한 만큼만" onBack={() => router.push("/home")} />
 
       <Body dense>
+        {summary && summary.warnings.length > 0 ? (
+          <Note tone="warn" icon="circle-alert" title="AI 도구 응답 안내" className="mb-3">
+            {summary.warnings.join(" ")}
+          </Note>
+        ) : null}
+        {summaryError ? (
+          <Note tone="warn" icon="circle-alert" title="지표 조회 불가" className="mb-3">
+            {summaryError}
+          </Note>
+        ) : null}
         <div className="mb-4 flex flex-col gap-[9px]">
           {tools.map((tool) => {
             const open = tool.ready && tool.href !== null;
@@ -119,21 +145,17 @@ export function AiHubScreen({
 
         <Note tone="info" icon="database" title="AI 이용·보관 정책" className="mt-2.5">
           입력한 글과 결과는 <b>저장하지 않습니다</b>. 남는 것은 누가 언제 어떤 도구를 썼는지뿐이고,
-          그 기록도 <b>{policy.retentionDays}일</b> 뒤 자동 삭제됩니다. 하루에 쓸 수 있는 횟수는 팀{" "}
-          {policy.perTeamPerDay}회 · 한 사람 {policy.perMemberPerDay}회입니다.
-          <Undecided>
-            한도 수치(팀 {policy.perTeamPerDay}회 · 1인 {policy.perMemberPerDay}회)는 기획안에 없어
-            임시로 정한 값 — 호출마다 비용이 들어 한도를 아예 두지 않을 수는 없어 넉넉한 쪽으로 잡았다.
-            수업에서 실제로 얼마나 쓰는지 보고 확정할 것.
-          </Undecided>
+          그 기록도 <b>{policy.retentionDays}일</b> 뒤 자동 삭제됩니다. <b>하루 사용량 한도는
+          없습니다</b> — 한 번도 닿지 않은 숫자를 한도처럼 보여 주던 것을 2026-09-28 에 지웠습니다.
+          대신 오늘 팀이 몇 번 썼는지 보여 줍니다.
           <span className="mt-2.5 block">
             <Btn size="sm" v="outline" icon="download" disabled={exporting} onClick={downloadUsage}>
               {exporting ? "내역 만드는 중…" : "AI 사용 내역 내려받기"}
             </Btn>
           </span>
           <Undecided>
-            내려받는 내역은 팀 전체 것이다(한도도 팀 단위로 센다). 수업에 기록을 내야 하는지, 한 사람
-            몫만 받아야 하는지는 기획안에 없다.
+            내려받는 내역은 팀 전체 것이다. 수업에 기록을 내야 하는지, 한 사람 몫만 받아야 하는지는
+            기획안에 없다.
           </Undecided>
         </Note>
       </Body>

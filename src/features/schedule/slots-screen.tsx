@@ -18,6 +18,8 @@ import { cn } from "@/lib/cn";
 import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
 import { whenText } from "./meeting-cell";
+import { downloadIcsFile, generateGoogleCalendarUrl, generateIcsContent } from "./calendar-export";
+import { MeetingNoteSheet } from "./meeting-note-sheet";
 import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
@@ -54,6 +56,10 @@ export function SlotsScreen({
 
   const { stage, slot: proposed } = proposal;
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [location, setLocation] = useState("");
+  const [agenda, setAgenda] = useState("");
+  const [viewingNote, setViewingNote] = useState(false);
   const { toast, busy, flash, run } = useAction();
   const requesting = busy.request === true;
 
@@ -98,7 +104,11 @@ export function SlotsScreen({
     await run(
       "propose",
       async () => {
-        await proposeMeeting(picked.id);
+        await proposeMeeting(picked.id, {
+          location: location.trim() || null,
+          agenda: agenda.trim() || null,
+          durationMinutes,
+        });
         router.refresh();
         return `팀원 ${week.total - 1}명에게 확인 요청을 보냈습니다`;
       },
@@ -143,11 +153,97 @@ export function SlotsScreen({
         ) : null}
 
         {stage === "confirmed" && proposed ? (
-          <ResultPanel
-            icon="calendar-check"
-            title={`${whenText(proposal.date, proposed.day, proposed.time)} · ${DEFAULT_MINUTES}분으로 확정`}
-            note="응답 마감까지 반대가 없어 동의로 자동 확정됐습니다"
-          />
+          <div className="mb-4">
+            <ResultPanel
+              icon="calendar-check"
+              title={`${whenText(proposal.date, proposed.day, proposed.time)} · ${proposal.durationMinutes ?? DEFAULT_MINUTES}분으로 확정`}
+              note="응답 마감까지 반대가 없어 동의로 자동 확정됐습니다"
+            />
+
+            {(proposal.location || proposal.agenda) ? (
+              <Panel s="card" pad={14} r={16} className="mb-3">
+                {proposal.location ? (
+                  <div className="mb-1.5 flex items-center gap-2 text-[13px] text-txt">
+                    <Icon name="map-pin" size={15} />
+                    <span className="font-semibold text-txt-muted">장소:</span>
+                    <span>{proposal.location}</span>
+                  </div>
+                ) : null}
+                {proposal.agenda ? (
+                  <div className="flex items-center gap-2 text-[13px] text-txt">
+                    <Icon name="file-text" size={15} />
+                    <span className="font-semibold text-txt-muted">안건:</span>
+                    <span>{proposal.agenda}</span>
+                  </div>
+                ) : null}
+              </Panel>
+            ) : null}
+
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <Btn
+                  size="sm"
+                  v="outline"
+                  icon="calendar"
+                  className="flex-1"
+                  onClick={() => {
+                    const ics = generateIcsContent({
+                      title: `${team.name} 정기 회의`,
+                      date: proposal.date ?? "2026-10-01",
+                      time: proposed.time,
+                      durationMinutes: proposal.durationMinutes ?? 60,
+                      location: proposal.location,
+                      agenda: proposal.agenda,
+                    });
+                    downloadIcsFile(`${team.name}_회의.ics`, ics);
+                    flash("회의 일정(.ics)을 다운로드했습니다");
+                  }}
+                >
+                  .ics 다운로드
+                </Btn>
+                <Btn
+                  size="sm"
+                  v="outline"
+                  icon="external-link"
+                  className="flex-1"
+                  onClick={() => {
+                    const url = generateGoogleCalendarUrl({
+                      title: `${team.name} 정기 회의`,
+                      date: proposal.date ?? "2026-10-01",
+                      time: proposed.time,
+                      durationMinutes: proposal.durationMinutes ?? 60,
+                      location: proposal.location,
+                      agenda: proposal.agenda,
+                    });
+                    window.open(url, "_blank");
+                  }}
+                >
+                  Google 캘린더
+                </Btn>
+              </div>
+
+              <div className="flex gap-2">
+                {proposal.hasNote ? (
+                  <Btn
+                    v="yellow"
+                    icon="file-text"
+                    className="flex-1"
+                    onClick={() => setViewingNote(true)}
+                  >
+                    회의록 보기
+                  </Btn>
+                ) : null}
+                <Btn
+                  v={proposal.hasNote ? "outline" : "yellow"}
+                  icon="book-open"
+                  className="flex-1"
+                  onClick={() => router.push(proposal.id ? `/tools/clerk?meetingId=${proposal.id}` : "/tools/clerk")}
+                >
+                  {proposal.hasNote ? "AI 서기 다시 작성" : "AI 서기로 회의록 작성하기"}
+                </Btn>
+              </div>
+            </div>
+          </div>
         ) : stage === "proposed" && proposed ? (
           <>
             <Panel s="card" pad={16} r={18} className="mb-3">
@@ -155,8 +251,20 @@ export function SlotsScreen({
                 {whenText(proposal.date, proposed.day, proposed.time)}
               </div>
               <div className="t-cap-strong mt-[3px] text-txt-muted">
-                {DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감 {proposal.respondBy}
+                {proposal.durationMinutes ?? DEFAULT_MINUTES}분 · 제안 대기 중 · 응답 마감 {proposal.respondBy}
               </div>
+              {proposal.location ? (
+                <div className="mt-2 flex items-center gap-1.5 text-[12px] text-txt-muted">
+                  <Icon name="map-pin" size={14} />
+                  <span>장소: {proposal.location}</span>
+                </div>
+              ) : null}
+              {proposal.agenda ? (
+                <div className="mt-1 flex items-center gap-1.5 text-[12px] text-txt-muted">
+                  <Icon name="file-text" size={14} />
+                  <span>안건: {proposal.agenda}</span>
+                </div>
+              ) : null}
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 <Chip tone="ok" icon="check">
                   동의 {proposal.agreed}명
@@ -307,8 +415,67 @@ export function SlotsScreen({
               ))}
             </div>
 
+            {picked ? (
+              <Panel s="card" pad={14} r={16} className="mt-3.5">
+                <div className="mb-2 font-bold text-[14px] text-txt-strong">
+                  회의 세부 정보 (선택사항)
+                </div>
+
+                <div className="mb-2.5">
+                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                    회의 소요 시간
+                  </label>
+                  <div className="flex gap-1.5">
+                    {[30, 60, 90, 120].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setDurationMinutes(mins)}
+                        className={cn(
+                          "flex-1 rounded-lg py-1 text-[12px] font-semibold transition-colors",
+                          durationMinutes === mins
+                            ? "bg-action text-on-action"
+                            : "border border-line bg-card text-txt-muted hover:bg-fill",
+                        )}
+                      >
+                        {mins === 60 ? "1시간" : mins === 90 ? "1.5시간" : mins === 120 ? "2시간" : `${mins}분`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mb-2.5">
+                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                    회의 장소 또는 접속 링크
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="예: 중앙도서관 세미나실 3호 / Zoom 링크"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    maxLength={100}
+                    className="box-border w-full rounded-xl border border-line bg-fill px-3 py-2 text-[13px] text-txt outline-none focus:border-action"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                    회의 안건 (목표)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="예: 중간보고서 초안 검토 및 파트 분배"
+                    value={agenda}
+                    onChange={(e) => setAgenda(e.target.value)}
+                    maxLength={200}
+                    className="box-border w-full rounded-xl border border-line bg-fill px-3 py-2 text-[13px] text-txt outline-none focus:border-action"
+                  />
+                </div>
+              </Panel>
+            ) : null}
+
             <Note tone="info" icon="list-ordered" className="mt-3.5">
-              정책: 기본 회의 길이는 <b>{DEFAULT_MINUTES}분</b>. 후보 중 하나를 제안하면{" "}
+              정책: 기본 회의 길이는 <b>{durationMinutes}분</b>. 후보 중 하나를 제안하면{" "}
               <b>응답 마감까지 반대가 없으면 자동 확정</b>되고, 반대가 있으면 확정되지 않습니다. 특정 한
               사람이 단독으로 확정하지 않습니다.
             </Note>
@@ -415,6 +582,13 @@ export function SlotsScreen({
           )}
         </Dock>
       ) : null}
+
+      <MeetingNoteSheet
+        open={viewingNote}
+        meetingId={proposal.id ?? null}
+        title={proposal.agenda || "정기 팀 회의록"}
+        onClose={() => setViewingNote(false)}
+      />
 
       <Toast msg={toast} />
     </>

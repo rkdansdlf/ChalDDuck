@@ -91,8 +91,14 @@ async function assertCanPropose(teamId: string): Promise<void> {
   );
 }
 
+export type ProposalDetails = {
+  location?: string | null;
+  agenda?: string | null;
+  durationMinutes?: number;
+};
+
 /** 후보 하나를 팀에 제안한다. 제안자는 그 자리에서 동의한 것으로 본다. */
-export async function proposeMeeting(slotId: string): Promise<void> {
+export async function proposeMeeting(slotId: string, details?: ProposalDetails): Promise<void> {
   const me = await requireSessionMember();
 
   // 화면이 보낸 후보가 정말 우리 팀 것인지 서버에서 확인한다.
@@ -103,7 +109,13 @@ export async function proposeMeeting(slotId: string): Promise<void> {
   // 7일 안에 각 요일은 딱 한 번이라 "수"가 어느 수요일인지 하나로 정해진다.
   // 시각은 `time`("13:00 – 14:00")에서 앞 숫자만 읽는다 — 이미 지나간 시간이면 거절한다.
   const startHour = Number.parseInt(slot.time, 10);
-  await startProposal(me, slot, candidateDateOf(slot.day)?.date ?? null, Number.isNaN(startHour) ? undefined : startHour);
+  await startProposal(
+    me,
+    slot,
+    candidateDateOf(slot.day)?.date ?? null,
+    Number.isNaN(startHour) ? undefined : startHour,
+    details,
+  );
 }
 
 /**
@@ -119,7 +131,12 @@ export async function proposeMeeting(slotId: string): Promise<void> {
  * 후보와 같이 **오늘부터 7일 안의 날**만 받는다. 제안은 요일("수")로만 남기 때문에,
  * 7일을 넘으면 어느 수요일인지 알 수 없다.
  */
-export async function proposeMeetingAt(week: string, day: number, hour: number): Promise<void> {
+export async function proposeMeetingAt(
+  week: string,
+  day: number,
+  hour: number,
+  details?: ProposalDetails,
+): Promise<void> {
   const me = await requireSessionMember();
 
   if (
@@ -160,14 +177,9 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
     (await db.meetingSlot.create({ data: { ...computed, teamId: me.teamId, weekKey: "this" } }));
 
   // **인덱스를 시각으로 바꾸어 넘긴다.** `hour` 는 시간표의 칸 번호(0 = 9시)이고
-  // `startProposal` 이 비교하는 것은 **시각**이다. 예전에는 `hour` 를 그대로 넘겼고, 그래서
-  // 오늘 10시가 되면 18시 칸이 `9 < 10` 이 되어 "이미 지나간 시간"으로 거절됐다(오전 9시에
-  // 9시 칸도 마찬가지로 거절). `computeMeetingSlots` 가 하는 것과 같은 변환이다.
-  //
-  // 여기서는 `SCHEDULE_HOURS[hour]` 대신 **그 칸의 후보 행에 적힌 시각**(`"13:00 – 14:00"`)을
-  // 읽는다 — `proposeMeeting` 과 같은 길이고, 칸 번호와 시각의 대응을 여기서 다시 알 필요가 없다.
+  // `startProposal` 이 비교하는 것은 **시각**이다.
   const startHour = Number.parseInt(computed.time, 10);
-  await startProposal(me, slot, date, Number.isNaN(startHour) ? undefined : startHour);
+  await startProposal(me, slot, date, Number.isNaN(startHour) ? undefined : startHour, details);
 }
 
 /**
@@ -178,11 +190,7 @@ export async function proposeMeetingAt(week: string, day: number, hour: number):
  * 아무 뜻이 없어진다. 이월(`carried`)은 결정을 미룬 것이라 대신할 수 있다.
  *
  * 방어선은 DB 다. `MeetingProposal.activeKey` 유일 인덱스가 진행 중인 결정 하나를 지킨다
- * (`IceRound.activeKey` 와 같은 방식). 여기서 먼저 확인하는 건 화면에 즉시 이해되는
- * 말을 주기 위해서이고, 실제로는 인덱스가 두 사람이 동시에 눌렀을 때를 막는다.
- *
- * `date` 를 함께 저장한다 — 후보 행에는 요일("수")로만 남으므로, 이때 붙여 두지 않으면
- * 확정이 한 달을 넘겨 살아 있어도 "언제인지"를 아무 화면에서도 말할 수 없다.
+ * (`IceRound.activeKey` 와 같은 방식).
  */
 async function startProposal(
   me: { id: string; name: string; teamId: string },
@@ -190,31 +198,28 @@ async function startProposal(
   date: string | null,
   /**
    * 제안 시간의 **실제 시각** (0–23). 칸 번호가 아니다.
-   *
-   * 두 caller 가 각각 자기 길의 값을 가져온다: `proposeMeeting` 은 후보 행의 `time`
-   * (`"13:00 – 14:00"`)에서 앞 숫자를, `proposeMeetingAt` 은 시간표 칸을 후보로 만든 뒤
-   * 같은 문자열에서 앞 숫자를 읽는다. **인덱스(0 = 9시)를 그대로 넘기면 아래 비교가 조용히
-   * 틀어진다** — 실제로 오늘 10시 이후의 시간이 전부 "지난 시간"으로 거절됐다.
-   * 알 수 없는 값은 `undefined` 로 보내고, 그때는 이 검사를 건너뛴다(아래 주석 참고).
    */
   startHour?: number,
+  details?: ProposalDetails,
 ): Promise<void> {
   const respondBy = new Date(Date.now() + RESPOND_WINDOW_HOURS * 60 * 60 * 1000);
 
+  const location = details?.location?.trim() ? details.location.trim().slice(0, 100) : null;
+  const agenda = details?.agenda?.trim() ? details.agenda.trim().slice(0, 200) : null;
+  const durationMinutes =
+    details?.durationMinutes && [30, 60, 90, 120].includes(details.durationMinutes)
+      ? details.durationMinutes
+      : 60;
+
   await assertCanPropose(me.teamId);
 
-  // **이미 지나간 시간으로는 제안을 받지 않는다.** 후보에서 빼는 것만으로는 부족하다 —
-  // 화면을 오래 열어둔 사이에 그 시간이 지나면 낡은 후보가 그대로 손에 남아 있다.
-  // 두 길(`proposeMeeting`·`proposeMeetingAt`)이 여기로 모이므로 한 곳에서 막으면 된다.
-  // 지금 10:00 이면 10시 회의는 아직 시작하지 않았으므로 남긴다 — 지나는 건 그보다 이른
-  // 시간이므로 `<` 이다.
   if (date === todayInSeoul() && startHour !== undefined && startHour < nowHourInSeoul()) {
     throw new Error("이미 지나간 시간입니다. 다른 시간을 골라 주세요.");
   }
 
   try {
     await db.$transaction(async (tx) => {
-      // 지난번에 이월해 둔 보류 행은 치운다 — 결정을 미루고 미루는 것만 쌓이면 된다.
+      // 지난번에 이월해 둔 보류 행은 치운다.
       await tx.meetingProposal.deleteMany({ where: { teamId: me.teamId, stage: "carried" } });
 
       const proposal = await tx.meetingProposal.create({
@@ -225,6 +230,9 @@ async function startProposal(
           date,
           respondBy,
           activeKey: me.teamId,
+          location,
+          agenda,
+          durationMinutes,
         },
       });
       await tx.meetingResponse.create({

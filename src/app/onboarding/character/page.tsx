@@ -49,7 +49,7 @@ export default function CharacterPage() {
               width={168}
               height={168}
               priority
-              className="size-full rounded-3xl object-contain animate-jelly transition-transform duration-200 hover:scale-105"
+              className="size-full rounded-3xl object-contain drop-shadow-sm select-none"
             />
           </div>
 

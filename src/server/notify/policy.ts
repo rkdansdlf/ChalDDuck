@@ -43,6 +43,8 @@ export type NotifyKind =
   | "icebreak"
   /** 누가 하지(29)에서 팀의 정한 하나가 바뀌었다. 아이스브레이킹과 알림함이 섞이지 않게 따로 둔다. */
   | "who-does-it"
+  /** 07 역할 추첨을 시작해도 된다고 팀이 응답해야 한다. */
+  | "role-consent"
   /** 팀원이 드라이브에 올리거나 복원했다. */
   | "drive";
 
@@ -88,6 +90,11 @@ export function pushPolicy(kind: NotifyKind, context: NotifyContext = {}): PushP
     // 회의 제안은 응답이 필요한 **제안**일 때만 부른다(위 `settled` 가 확정 쪽을 먼저 걷어 낸다).
     case "meeting":
     case "schedule-ask":
+      return "push";
+
+    // 07 추첨 동의도 응답이 필요한 **제안**이라 회의와 같은 자리에 둔다.
+    // 알림이 없으면 아무도 모르고 마감만 지나가므로 ** 기능이 동작하지 않는다.**
+    case "role-consent":
       return "push";
 
     // 3. 빈도가 무관하다. 드라이브 업로드는 하루에도 여러 번 온다.

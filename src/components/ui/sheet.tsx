@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { cn } from "@/lib/cn";
 
 /**
  * 하단에서 올라오는 모달.
@@ -9,6 +10,7 @@ import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
  * - Esc 로 닫힌다
  * - 열리는 동안 뒤 내용이 스크롤되지 않는다
  * - 열릴 때 포커스가 시트 안으로 들어간다
+ * - 닫힐 때도 뚝 끊기지 않고 아래로 스르륵 내려간다(퇴장 애니메이션)
  */
 export function Sheet({
   open,
@@ -28,6 +30,18 @@ export function Sheet({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [rendered, setRendered] = useState(open);
+  const [prevOpen, setPrevOpen] = useState(open);
+
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setRendered(true);
+    }
+  }
+
+  const closing = rendered && !open;
+
   // 부르는 쪽은 대개 `onClose` 를 매 렌더 새로 만든다. 그 값을 effect 의존성에 넣으면
   // 입력할 때마다 effect 가 다시 돌아 포커스가 시트 판으로 튀어 키보드가 꺼진다(43 커밋).
   // effect 이벤트는 늘 최신 `onClose` 를 부르면서도 effect 를 다시 돌리지 않는다.
@@ -43,12 +57,18 @@ export function Sheet({
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  if (!open) return null;
+  if (!rendered) return null;
 
   return (
     <div
       onClick={onClose}
-      className="animate-fade-in absolute inset-0 z-30 flex items-end"
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget && closing) setRendered(false);
+      }}
+      className={cn(
+        "absolute inset-0 z-30 flex items-end",
+        closing ? "animate-fade-out" : "animate-fade-in",
+      )}
       style={{ background: "rgba(36,28,20,.38)" }}
     >
       <div
@@ -58,7 +78,14 @@ export function Sheet({
         aria-label={title}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="animate-sheet-up max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none"
+        onAnimationEnd={(e) => {
+          e.stopPropagation();
+          if (closing) setRendered(false);
+        }}
+        className={cn(
+          "max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none",
+          closing ? "animate-sheet-down" : "animate-sheet-up",
+        )}
       >
         <div className="mx-auto mt-1.5 mb-3.5 h-1 w-[38px] rounded-sm bg-cr-300" />
         {title ? <h3 className="t-h2 keep-all m-0 mb-3 text-txt-strong">{title}</h3> : null}

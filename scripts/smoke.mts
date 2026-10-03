@@ -1,21 +1,35 @@
-import "../scripts/load-env.mjs";
-
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { stripComments } from "../scripts/strip-comments.mjs";
+import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
+
+/**
+ * 낮 투표의 **적용** 로직은 액션 밖 모듈에 있다(2026-09-30).
+ *
+ * 옮긴 이유는 **세션 없이 부를 수 있게** 하려고 했기 때문이다. `"use server"` 파일의 export 는 전부
+ * 서버 액션이라 트랜잭션 클라이언트를 넘길 수 없고, 그래서 "결선을 만들면 다리가 비워지는가" 를 실제
+ * DB 로 확인할 방법이 없었고 소스 정규식만 남았다 — 그 정규식이 **분기 하나의 누락을 통과시켰다.**
+ */
+const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
+import { stripComments } from "../scripts/strip-comments.mjs";
 import {
   AI_INPUT_LIMIT,
   aiInputOverrun,
 } from "../src/lib/ai-limit.js";
 import {
   NO_DRAW_POOL_TEXT,
+  awaitsMyConsent,
   canDrawIn,
+  canProposeIn,
+  consentViewOf,
   drawPoolOf,
   isRoleKey,
+  isUnresolvedClash,
   normalizeName,
+  rolesAwaitingMyConsent,
   roleViewOf,
+  unresolvedClashes,
   toRoleKey,
   voidedText,
 } from "../src/features/roles/roster-model.js";
@@ -84,12 +98,11 @@ import {
   fromKstInputValue,
   toKstInputValue,
 } from "../src/lib/when.js";
-import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
-import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
-import { consumeAiQuota, refundAiQuota } from "../src/server/ai/limit.js";
-import { fallbackModelFor, isTransient, modelFor } from "../src/server/ai/model.js";
+import { recordAiUsage, refundAiUsage, aiUsageToday } from "../src/server/ai/limit.js";
+import { fallbackModelFor, isTransient, modelFor, withFallback } from "../src/server/ai/model.js";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
+import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { flush, newLineSplitter, pushBytes } from "../src/lib/ai-stream-lines.js";
 import { projectTeamToolContext, renderTeamContext } from "../src/lib/team-tool-context.js";
 import { assigneeOrigin, matchAssigneeCandidates, matchAssigneeToMember, stripKoreanParticle } from "../src/lib/tool-assignee.js";
@@ -103,11 +116,10 @@ import {
   pokeTargets,
   suggestTools,
 } from "../src/features/home/briefing.js";
-import { aiCallStats, describeAiCalls, type AiCallStats } from "../src/server/ai/call-stats.js";
+import { aiCallStats, describeAiCalls, detectAiAnomalies, type AiCallStats } from "../src/server/ai/call-stats.js";
 import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
-import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
   markAside,
   markCell,
@@ -154,7 +166,7 @@ import {
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
 import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
-import type { ChatMessage, IcePhase, IceRole, MeetingProposal, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
+import type { ChatMessage, IcePhase, IceRole, Member, MeetingProposal, Role, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
   ICE_RESULT_CODES,
@@ -168,17 +180,13 @@ import {
   resolveLiarVote,
   voteBlockedText,
 } from "../src/server/ice/rules.js";
+import { applyMafiaDayVote } from "../src/server/ice/day-vote.js";
 import { icePhase, iceViewFor } from "../src/server/ice/view.js";
-import {
-  clientGate,
-  isJoinCapped,
-  JOIN_LIMIT,
-  teamGate,
-} from "../src/server/rate-limit/policy.js";
 import {
   contribByLabel,
   contribState,
   maxConfirmsNeeded,
+  refreshContribState,
 } from "../src/server/contrib/state.js";
 import {
   currentParticipations,
@@ -213,61 +221,9 @@ import {
  * **로컬 DB 에서만 돈다.** 시드와 같은 이유다.
  */
 
-/**
- * 소스를 읽되 **주석을 지운다** — 구조를 세는 검사는 전부 이쪽을 쓴다.
- *
- * ## 왜 하나뿐의 경로인가
- *
- * 이 파일은 화면을 실행할 수 없어 **소스 문자열에서 구조를 고정한다**(어떤 함수를 부르는가,
- * 몇 줄을 지나는가, 이 말을 쓰지 않는다). 그 대가로 두 가지가 씌어 있었고 둘 다 실제로
- * 잘못된 판정을 냈다.
- *
- * - **주석을 센다.** 2026-09-28: `actions/invite.ts` 의 액션 2개가 모두 팀장 검사를 하고
- *   있었는데 검사가 실패했다 — 16행 **주석**에 `requireLeader()` 라는 글자가 있어서 3개로
- *   센 것이었다.
- * - **조용히 다른 것을 검사한다.** 함수를 `indexOf` 로 찾으면 못 찾았을 때 `-1` 이 되고,
- *   그 뒤 슬라이스는 **다른 지점**이 된다. 컴파일은 통과하고 검사는 초록불이었다.
- *
- * 주석을 **공백으로 치환**하기 때문에 위치가 그대로다 — "A 가 B 보다 먼저 온다" 류의 순서
- * 검사가 의도대로 계속 동작한다. 자세한 내용은 [`scripts/strip-comments.mjs`](strip-comments.mjs).
- *
- * ⚠️ **`.ts`·`.tsx` 에만 쓴다.** 마크다운에 쓰면 URL 의 `//` 이 정규식으로 읽혀 글자가 지워진다.
- * 문서(`README.md`)는 `readFileSync` 를 그대로 쓴다.
- */
-function readCode(rel: string): string {
-  return stripComments(readFileSync(new URL(rel, import.meta.url), "utf8"));
-}
+/* ── 한자 글리프가 섞여 들어오지 않았는지: 주석과 문서 ──────────── */
 
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("DIRECT_URL 이 없습니다.");
-const host = new URL(connectionString).hostname;
-if (!["localhost", "127.0.0.1", "::1"].includes(host)) {
-  throw new Error(`불변식 확인은 로컬 DB 에서만 돕니다. 지금은 ${host} 를 가리킵니다.`);
-}
-const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
-
-let failed = 0;
-let passed = 0;
-
-function check(what: string, got: unknown, want: unknown) {
-  const a = JSON.stringify(got);
-  const b = JSON.stringify(want);
-  if (a === b) {
-    passed += 1;
-    console.log(`  ✓ ${what}`);
-  } else {
-    failed += 1;
-    console.log(`  ✗ ${what}\n      기대: ${b}\n      실제: ${a}`);
-  }
-}
-
-function truthy(what: string, got: boolean) {
-  check(what, got, true);
-}
-
-/* ── 주석에 한자가 섞여 들어오지 않았는지 ──────────────────── */
-
-console.log("\n주석 인코딩");
+console.log("\n한자 인코딩");
 {
 /**
    * 한국어 주석 한 칸에 **한자 글리프가 하나씩** 섞여 들어온다.
@@ -298,10 +254,10 @@ console.log("\n주석 인코딩");
    * 처럼 한글이 한자와 **이어진 문자열**이 있어 "한자 옆에 한글" 로 보는 검사는 오탐을 낸다.
    * 그래서 주석 줄로 한정한다.
    */
-  const HAN_IN_COMMENT = /[\u4e00-\u9fff]/;
+  const HAN = /[\u4e00-\u9fff]/;
   /** `// …` 또는 블록 주석의 `* …` 줄. 문자열 안의 `//` 는 걸리지 않는다(줄 첫 칸 기준). */
   const isCommentLine = (line: string) => /^\s*(\/\/|\*)/.test(line);
-  const hasHanInComment = (line: string) => isCommentLine(line) && HAN_IN_COMMENT.test(line);
+  const hasHanInComment = (line: string) => isCommentLine(line) && HAN.test(line);
 
   const roots = ["../src", "../scripts", "../prisma"];
   /** `generated` 는 Prisma 클라이언트라 한국어가 없고 양만 많다. */
@@ -309,24 +265,39 @@ console.log("\n주석 인코딩");
   const found: string[] = [];
   let scanned = 0;
 
-  const walkForHan = (dir: string) => {
-    for (const entry of readdirSync(join(dir, ""), { withFileTypes: true })) {
-      if (skip.has(entry.name)) continue;
+  /**
+   * 디렉터리를 훑으며 대상 파일마다 `onFile` 을 **한 번씩** 부른다.
+   *
+   * **파 단위로 세는 이유** — 아래 `scanned > 50` 은 "검사 대상이 줄이 아니라 파일로 모였는지"를
+   * 확인하는 값이다. 줄을 세도록 만들면 guard 의 뜻이 바뀌어 조용히 통과한다.
+   */
+  const walk = (
+    dir: string,
+    skipNames: ReadonlySet<string>,
+    isTarget: (name: string) => boolean,
+    onFile: (full: string) => void,
+  ) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skipNames.has(entry.name)) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        walkForHan(full);
+        walk(full, skipNames, isTarget, onFile);
         continue;
       }
-      if (!/\.(ts|tsx|mjs|mts)$/.test(entry.name)) continue;
+      if (isTarget(entry.name)) onFile(full);
+    }
+  };
+
+  const isCode = (name: string) => /\.(ts|tsx|mjs|mts)$/.test(name);
+  for (const root of roots)
+    walk(new URL(root, import.meta.url).pathname, skip, isCode, (full) => {
       scanned += 1;
       readFileSync(full, "utf8")
         .split("\n")
         .forEach((line, i) => {
           if (hasHanInComment(line)) found.push(`${full}:${i + 1}`);
         });
-    }
-  };
-  for (const root of roots) walkForHan(new URL(root, import.meta.url).pathname);
+    });
 
   // 14곳을 고쳤으니 0이어야 한다. 목록을 그대로 보여 주면 어디를 고쳤는지와 앞으로 어디가
   // 오염됐는지 한 번에 읽힌다 — 파일:줄 형태.
@@ -353,6 +324,82 @@ console.log("\n주석 인코딩");
     ],
   );
   check("주석 검사 대상이 실제로 있다", scanned > 50, true);
+
+  /* ── 문서: 주석 줄로 가리지 않는다 ──────────────────────── */
+
+  /**
+   * **문서도 본다.** 위 검사는 `src`/`scripts`/`prisma` 의 **주석 줄만** 본다. 그 밖의 한국어
+   * 글은 즉 사람이 읽는 자리인데 — `README.md`, `CLAUDE.md`, `docs/product-language.md`,
+   * `docs/handoff/HANDOFF.md`, 그리고 한국어 안내문인 `.env.example` — 아무도 보지 않았다.
+   * 문서에 오염이 있어도 이 검사는 조용히 통과했다.
+   *
+   * **문서가 더 위험한 이유** — 주석은 실행되지 않으니 오염이 눈에 띄지 않는다. 문서는 그
+   * 자체로 눈에 보이는 글이다. 게다가 `README.md` 는 거의 모든 커밋이 건드리는 파일이라
+   * 오염이 쌓일 자리가 가장 넓다.
+   *
+   * **줄을 가리지 않는 이유** — 마크다운에 주석 줄은 없다. 구분할 자리가 없으므로 문서에서는
+   * 글자가 나타난 위치가 곧 오염이다. 위의 문자열 안쪽 예외는 `src`/`scripts` 에만 있고
+   * `.md` 에는 없다.
+   */
+  /** 끝의 `/` 를 떼어야 아래 `slice` 에서 앞 글자가 잘리지 않는다 — `new URL("..", …)` 는 slash 로 끝난다. */
+  const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  /** 워크트리 안에는 같은 문서가 복사되어 있어 두 번 세고, `.env` 는 서crets 다 — 둘 다 읽지 않는다. */
+  const skipDocs = new Set([".git", ".next", ".vercel", "node_modules", ".claude", ".worktrees"]);
+  const docFound: string[] = [];
+  const docNames = new Set<string>();
+  const scanDoc = (full: string) => {
+    docNames.add(full.slice(repoRoot.length + 1));
+    readFileSync(full, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (HAN.test(line)) docFound.push(`${full}:${i + 1}`);
+      });
+  };
+  walk(repoRoot, skipDocs, (name) => /\.mdx?$/.test(name), scanDoc);
+  /** `.env.example` 는 **확장자로는 걸리지 않는다** — 이름이 `.example` 이기 때문이다. 한국어 안내문이라 문서로 센다. */
+  scanDoc(join(repoRoot, ".env.example"));
+
+  check("문서에 한자 글리프가 없다", docFound, []);
+
+  // 위와 같은 이유로 — 문서 검사가 고장 나면 0 은 아무 의미가 없어진다. 마크다운에는 `//` 도 `*` 도
+  // 없으므로 아예 줄 종류를 보지 않는다.
+  const docProbes = [
+    ["위아래로 흩어지면", false],
+    ["위上아래로 흩어지면", true],
+    ["`npm run verify` — db:check 를 돌린다", false],
+    ["- 대화를 시작한다\n", false],
+  ] as const;
+  check(
+    "문서 검사가 한자를 잡고 한글은 통과시킨다",
+    docProbes.map(([line, want]) => [HAN.test(line), want]),
+    [
+      [false, false],
+      [true, true],
+      [false, false],
+      [false, false],
+    ],
+  );
+
+  /**
+   * **기준 문서가 다 빠졌는지** 확인한다.
+   *
+   * 위의 0 은 "아무것도 안 찾았다" 와 "아무것도 안 봤다" 가 구분되지 않는다. 확장자 규칙을
+   * 고치거나 루트를 잘못 두면 대상이 0 개가 되어 조용히 통과한다 — 그래서 **이름을 직접 센다.**
+   * 새 문서가 늘어도 이 목록은 늘리지 않는다. 목록에 없으면 그새 빈틈이 생긴다는 뜻이다.
+   */
+  const baseline = [
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/product-language.md",
+    "docs/handoff/HANDOFF.md",
+    ".env.example",
+  ];
+  check(
+    "기준 문서가 검사 대상에 들어 있다",
+    baseline.filter((name) => !docNames.has(name)),
+    [],
+  );
 }
 
 /* ── 사용자 노출 용어: 기준에서 되돌아가지 않았는지 ─────────── */
@@ -379,6 +426,9 @@ const LEGACY_PRODUCT_COPY = [
   { legacy: "순화됨", canonical: "다듬어 읽음" },
   { legacy: "순화문", canonical: "다듬어 읽은 말" },
   { legacy: "순화 몫", canonical: "읽기 도움 몫" },
+  // `거절하기` 와 `반대하기` 는 둘 다 넣지 않는다 — 재입장 승인이 `거절`, 팀 동의가
+  // `반대` 로 **각각 맞는 용어**다. 전역 금지로 두면 다른 화면을 망가뜨리는 검사가 된다.
+  // 역할 쪽만 `안 받기` 로 바꿨고, 그 옆의 `수락하기` 만 금지한다.
 ] as const;
 
 /**
@@ -450,7 +500,7 @@ function checkProductLanguage() {
   }
 
   // `check` 의 집계만 빌리고 메시지는 직접 — "기대/실제" 로 이 일을 설명할 수 없다.
-  failed += found.length;
+  fail(found.length);
   for (const hit of found) {
     console.log(
       `  ✗ [product-language] ${hit.at}:${hit.line}\n` +
@@ -500,12 +550,13 @@ console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴
   const oneRejected = drawPoolOf(wanters, "research", new Set(["2"]));
   check("거절한 사람은 빠진다", oneRejected.pool.map((m) => m.name), ["김민준"]);
 
-  // Veto 는 다시 뽑아도 그대로지만, 거절은 후보가 비면 증발해 막히는 것보다 낫다.
+  // **전원이 거절하면 되돌리지 않는다.** 예전에는 거절 명단을 무시하고 Veto 가 아닌
+  // 사람 전체로 되돌렸다 — 이미 "안 받겠다"고 한 사람에게 같은 제안을 반복하게 되고,
+  // 거절이라는 신호가 사라진다. 역할은 미정으로 남는다.
   const allRejected = drawPoolOf(wanters, "research", new Set(["1", "2"]));
-  check("전원 거절이면 Veto 가 아닌 사람 전체로 되돌린다", allRejected.pool.map((m) => m.name), [
-    "김민준",
-    "최유나",
-  ]);
+  check("전원 거절이면 뽑지 않는다", allRejected.pool, []);
+  check("전원 거절이면 사유를 말해 준다", allRejected.noPool, "all-rejected");
+  truthy("그 사유에 문구가 있다", NO_DRAW_POOL_TEXT[allRejected.noPool!].length > 0);
   const allRejectedVetoed = drawPoolOf(
     [
       { id: "1", name: "박지호", veto: "manage" as const },
@@ -514,7 +565,9 @@ console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴
     "manage",
     new Set(["1", "2"]),
   );
-  check("되돌려도 Veto 는 빠지지 않는다", allRejectedVetoed.pool, []);
+  check("Veto 한 사람은 거절과 무관하게 빠진다", allRejectedVetoed.pool, []);
+  // Veto 가 사유를 먼저 말한다 — 이 역할은 애초에 뽑을 후보가 없었다.
+  check("Veto 가 사유를 먼저 말한다", allRejectedVetoed.noPool, "all-vetoed");
 }
 
 /* ── 역할 상태: 아무도 풀 수 없는 상태가 없어야 한다 ──────── */
@@ -567,20 +620,141 @@ console.log("\n역할 상태 (아무도 풀 수 없는 상태가 없는지)");
   check("확정된 뒤 나가도 확정은 남는다", roleViewOf(2, draw({ accepted: true, stale: true })).kind, "confirmed");
 
   // 사람이 0~4명, 추첨은 4가지(없음/대기/확정/무효)를 전부 돌려본다.
+  // **동의 제안 두 가지(대기·마감 지나)** 도 같이 돌린다 — 동의 대기는 답해야 하는 사람이
+  // 달라지므로(누가 뽑는가 → 누가 동의하느냐) 이 검사에서 빠지면 "동의 화면이 안 뜨는" 구멍이
+  // 그대로 통과한다.
+  const consentWaiting = {
+    kind: "waiting",
+    proposedBy: "김민준",
+    tool: "룰렛",
+    agreed: 2,
+    responded: 3,
+    totalMembers: 4,
+    iAgreed: false,
+    respondBy: "2999-01-01T00:00:00.000Z",
+  } as const;
   const noStrand: string[] = [];
   for (let wanters = 0; wanters <= 4; wanters += 1) {
     for (const d of [null, draw(), draw({ accepted: true }), draw({ stale: true })]) {
-      const view = roleViewOf(wanters, d);
-      // 추첨이 남아 있는데 아무도 수락할 수단이 없는 상태 = "수락 대기" 라 답이 있어야 한다.
-      const hasAnswer =
-        view.kind === "empty" ||
-        view.kind === "auto" ||
-        canDrawIn(view) ||
-        (d !== null && view.kind !== "voided");
-      if (!hasAnswer) noStrand.push(`희망자 ${wanters} · ${JSON.stringify(d?.accepted ?? null)}`);
+      for (const consent of [{ kind: "open" }, consentWaiting] as const) {
+        const view = roleViewOf(wanters, d, consent);
+        // 추첨이 남아 있는데 아무도 수락할 수단이 없는 상태 = "수락 대기" 라 답이 있어야 한다.
+        // 동의 대기에는 동의·반대 답이, 나머지 열림 상태에는 추첨(또는 이야기하기) 답이 있다.
+        const hasAnswer =
+          view.kind === "empty" ||
+          view.kind === "auto" ||
+          view.kind === "consent" ||
+          canDrawIn(view) ||
+          (d !== null && view.kind !== "voided");
+        if (!hasAnswer) {
+          noStrand.push(
+            `희망자 ${wanters} · ${JSON.stringify(d?.accepted ?? null)} · 동의 ${consent.kind}`,
+          );
+        }
+      }
     }
   }
   check("답이 닿는 상태로만 끝난다", noStrand, []);
+}
+
+/* ── 동의 제안: 추첨은 팀이 시작해도 된다고 동의해야 열린다 ── */
+
+console.log("\n추첨 동의 제안");
+{
+  const NOW = new Date("2026-10-01T09:00:00Z");
+  const live = (ms: number) =>
+    ({
+      tool: "룰렛",
+      proposedBy: "김민준",
+      agreed: 2,
+      responded: 3,
+      totalMembers: 4,
+      iAgreed: false,
+      respondBy: new Date(NOW.getTime() + ms).toISOString(),
+    }) as const;
+
+  // 제안이 없으면 **지금처럼 바로 뽑을 수 있다.** 동의는 강제가 아니다 — 막는 것은
+  // "제안이 있고 아직 마감 전" 뿐이다. 여기서 막으면 동의가 없는 팀은 영영 못 뽑는다.
+  check("제안이 없으면 열린다", consentViewOf(null, NOW), { kind: "open" });
+  check("제안이 없으면 바로 뽑을 수 있다", canDrawIn(roleViewOf(2, null, consentViewOf(null, NOW))), true);
+
+  const waiting = consentViewOf(live(60_000), NOW);
+  check("마감 전 제안은 대기다", waiting.kind, "waiting");
+
+  // **핵심.** 동의를 받기 전에는 뽑을 수 없다 — 동료 한 명이 자기 손으로 나머지를
+  // "받기 대기" 에 넣던 구조가 여기서 막힌다.
+  const locked = roleViewOf(2, null, waiting);
+  check("동의 대기 중에는 추첨이 잠긴다", locked.kind, "consent");
+  check("동의 대기 중에는 뽑을 수 없다", canDrawIn(locked), false);
+  check("동의 대기 중에는 또 제안하지도 못한다", canProposeIn(locked), false);
+
+  // 마감은 **읽을 때 계산한다.** 스케줄러가 늦게 돌아도 사용자는 이 값을 본다.
+  check("마감 지나면 열린다", consentViewOf(live(-1), NOW), { kind: "open" });
+  check("마감 지나면 다시 제안할 수 있다", canProposeIn(roleViewOf(2, null, consentViewOf(live(-1), NOW))), true);
+  // **경계는 열린 쪽이다.** 그 시각부터는 반대할 수 없다 — 이미 열린 추첨을 뒤집을
+  // 수는 없고, 반대만 못 받게 되면 팀이 답할 수 없게 된다.
+  check("마감 시각 그 순간부터 열린다", consentViewOf(live(0), NOW), { kind: "open" });
+
+  // **추첨 결과가 동의보다 먼저 보인다.** 결과가 묻히면 당첨자가 아무것도 볼 수 없고,
+  // 받거나 안 받을 수도 없다 — 07 화면에 이미 있었던 종류의 구멍이다.
+  const drawn = {
+    tool: "룰렛",
+    winner: "최유나",
+    winnerId: "m4",
+    accepted: false,
+    stale: false,
+  } as const;
+  check("결과가 있으면 동기를 덮지 않는다", roleViewOf(2, drawn, waiting).kind, "awaiting");
+  // 결과가 잡혔으니 동의 제안은 더는 필요 없다 — 답해야 하는 사람이 바뀐다.
+  check("확정된 뒤에도 결과가 보인다", roleViewOf(2, { ...drawn, accepted: true }, waiting).kind, "confirmed");
+
+  // 마감을 넘긴 제안이 **행으로는 남아 있어도** 열린 것으로 읽힌다 — 되돌아오면 제안할 수 있다.
+  const stale = consentViewOf(live(-60_000), NOW);
+  check("지난 제안은 열림으로 읽힌다", stale.kind, "open");
+}
+
+/* ── 동의 대기는 배지에서 겹침과 따로 센다 ────────────────────── */
+
+console.log("\n추첨 동의 · 배지");
+{
+  const NOW = new Date("2026-10-01T09:00:00Z");
+  const base = {
+    tool: "룰렛",
+    proposedBy: "김민준",
+    agreed: 1,
+    responded: 2,
+    totalMembers: 4,
+    respondBy: new Date(NOW.getTime() + 60_000).toISOString(),
+  } as const;
+  const mine = { ...base, iAgreed: false };
+  const already = { ...base, agreed: 2, iAgreed: true };
+
+  check("내가 안 했으면 내 몫이다", awaitsMyConsent(consentViewOf(mine, NOW)), true);
+  // **이미 동의한 사람의 제안은 내 할 일이 아니다.** 배지가 이걸 구분하지 않으면
+  // 아무 일도 하지 않은 사람이 배지에서 끌어당겨진다.
+  check("이미 동의하면 내 몫이 아니다", awaitsMyConsent(consentViewOf(already, NOW)), false);
+  check("마감 지난 제안은 내 몫이 아니다", awaitsMyConsent(consentViewOf({ ...mine, respondBy: new Date(NOW.getTime() - 1).toISOString() }, NOW)), false);
+
+  check("응답해야 하는 역할만 뽑는다", rolesAwaitingMyConsent({ research: mine, deck: already, present: { ...mine, respondBy: new Date(NOW.getTime() - 1).toISOString() } }, NOW), ["research"]);
+
+  // **이중 집계가 핵심이다.** 동의 대기가 걸린 역할은 겹침에서 빠져야 팀 배지에 한 번만
+  // 들어간다. 빠지지 않으면 배지가 "겹침 1건 + 동의 1건"으로 한 역할을 두 번 센다.
+  check("내 동의 대기 역할은 겹침에서 빠진다", isUnresolvedClash(2, false, true), false);
+  check("다른 사람의 제안은 겹침에 남는다", isUnresolvedClash(2, false, false), true);
+  check("동의 대기 여부를 몰라도 겹침은 그대로다", isUnresolvedClash(2, false), true);
+
+  // 홈 목록도 같은 조건이어야 한다 — 배지 0인데 홈 1건이면 어느 쪽을 믿어야 할지 모른다.
+  // `wantersOf` 는 `m.want === role` 로만 보므로 다른 칸은 비워도 된다.
+  const members = [
+    { id: "1", name: "김민준", want: "research", veto: null },
+    { id: "2", name: "최유나", want: "research", veto: null },
+    { id: "3", name: "박지호", want: "deck", veto: null },
+    { id: "4", name: "이서연", want: "deck", veto: null },
+  ] as unknown as Member[];
+  const roles = [{ key: "research" }, { key: "deck" }] as Role[];
+  const clashes = unresolvedClashes(roles, members, {}, { research: mine, deck: already }, NOW);
+  // research 는 내 동의 대기 → 빠지고, deck 은 이미 동의했으니 팀 몫으로 남는다.
+  check("내 동의 대기만 겹침 목록에서 빠진다", clashes.map((r) => r.key), ["deck"]);
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
@@ -1526,6 +1700,102 @@ console.log("\n기여도 의견 (DB)");
   }
 }
 
+/* ── 정정 결론은 겹쳐 눌러도 하나만 반영된다 ─────────────────── */
+
+console.log("\n정정 결론 (동시에 눌러도 하나만 반영된다)");
+{
+  /**
+   * ## 왜 **실제로 겹쳐서** 부르는가
+   *
+   * 소스를 읽는 검사만으로는 이 규칙이 증명되지 않는다. 조건을 적었다는 것과 두 사람이
+   * 동시에 눌렀을 때 하나만 반영된다는 것은 다른 말이다. 그래서 아래는 **같은 조건을 그대로
+   * 두 개의 커넥션에 겹쳐서 던진다.**
+   *
+   * 서버 액션은 세션 쿠키가 필요해 부를 수 없다 — 부르려고 쿠키를 만들면 "액션이 정상"이
+   * 아니라 **"액션을 우회했다"** 는 사실만 테스트하게 된다(위 섹션과 같은 이유). 그래서
+   * **`resolveContribDispute` 가 하는 일을 그대로 재현한다**: 조건부 갱신 → 0행이면 접고,
+   * 1행이면 **같은 트랜잭션에서** 상태를 다시 맞춘다.
+   *
+   * 이 순서가 전부다. **`state` 는 `resolution` 을 적을 때 바뀌지 않는다** — 위에서
+   * `refreshContribState` 가 뒤따르야 바뀐다. 그래서 그 한 줄을 빼면 조건이 항상 참이라
+   * **아무도 막지 못한다**(아래 "잠금을 얻지 못하면" 참조). 두 갱신을 트랜잭션 밖에서 그냥
+   * 던져 보면 둘 다 1행을 고치며, 겹침을 재현하지 못한 것이지 규칙이 없는 것이 아니다.
+   *
+   * Postgres 는 `UPDATE` 에서 행을 잠그고 **잠금 뒤에 조건을 다시 보기 때문에**, 둘째는
+   * 잠금을 얻은 시점에 이미 `state !== "disputed"` 이고 0행을 고친다. 이건 **갱신과 상태
+   * 재계산이 한 트랜잭션에 있을 때만** 성립한다.
+   */
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const record = await db.contribRecord.create({
+      data: { memberId: member.id, kind: "task", title: "정정 동시성 확인용", detail: "d", source: "self" },
+    });
+
+    /** 액션의 본문과 같은 모양. **순서까지 같아야** 재현이 된다. */
+    const resolveLike = async (resolution: string) =>
+      db.$transaction(async (tx) => {
+        const won = await tx.contribRecord.updateMany({
+          where: { id: record.id, state: "disputed" },
+          data: { resolution },
+        });
+        if (won.count === 0) return { won: false as const };
+        await refreshContribState(record.id, tx);
+        return { won: true as const };
+      });
+
+    // 두 사람이 답할 수 있는 상태 — `disputed` 이고 결론이 없다.
+    await db.contribDispute.create({ data: { recordId: record.id, byId: member.id, text: "정정 의견" } });
+    await db.contribRecord.update({
+      where: { id: record.id },
+      data: { dispute: "정정 의견", disputedById: member.id, resolution: null, state: "disputed" },
+    });
+
+    const ways = ["정정 동의 · 의견대로 수정", "공동 작업으로 나눔"] as const;
+    const raced = await Promise.all(ways.map((resolution) => resolveLike(resolution)));
+    check("겹친 두 결론 중 한 건만 반영된다", raced.filter((r) => r.won).length, 1);
+    check("반영되지 않은 쪽은 0행을 고친다", raced.filter((r) => !r.won).length, 1);
+
+    const after = await db.contribRecord.findUniqueOrThrow({
+      where: { id: record.id },
+      select: { resolution: true, state: true },
+    });
+    check("저장된 결론은 둘 중 하나다", ways.includes(after.resolution as (typeof ways)[number]), true);
+    check("정리되면 상태가 disputed 가 아니다", after.state === "disputed", false);
+
+    // **나중에 누른 결론은 이미 정리된 줄이므로 0행이어야 한다** — 조건이 `state` 이기 때문이다.
+    const late = await resolveLike("합의 없음 · 원문 유지");
+    check("나중에 누른 결론은 아무것도 고치지 못한다", late.won, false);
+    const kept = await db.contribRecord.findUniqueOrThrow({ where: { id: record.id }, select: { resolution: true } });
+    check("이미 고른 결론이 그대로 남는다", kept.resolution, after.resolution);
+
+    await db.contribDispute.deleteMany({ where: { recordId: record.id } });
+    await db.contribRecord.delete({ where: { id: record.id } });
+  }
+}
+
+console.log("\n정정 결론: 조건이 코드에 남아 있다");
+{
+  // 위 DB 검사는 **기다리는 문장**을 친 것이다. 액션이 그 문장을 **쓰는지**는 여기서 본다 —
+  // 두 검사가 따로야 어느 쪽이 놓였는지 알 수 있다.
+  const src = readCode("../src/server/actions/contrib.ts");
+  const from = src.indexOf("export async function resolveContribDispute");
+  const fn = src.slice(from, src.indexOf("\nexport async function", from + 10));
+
+  check("갱신은 조건부(updateMany)다", /contribRecord\.updateMany\(\{/.test(fn), true);
+  check("조건에 지금 상태가 들어간다", /where:\s*\{\s*id:\s*record\.id,\s*state:\s*"disputed"\s*\}/.test(fn), true);
+  // **`update({ where: { id } })` 로 쓰면 조건이 사라진다.** 그 모양이 다시 들어오면 이 규칙이
+  // 조용히 죽는다 — 그래서 명시적으로 걸어 둔다.
+  check("무조건 갱신(update)이 없다", /contribRecord\.update\(\{\s*where:\s*\{\s*id:\s*record\.id\s*\},\s*data:\s*\{\s*resolution/.test(fn), false);
+  check("읽기와 갱신이 한 트랜잭션이다", fn.indexOf("db.$transaction(async (tx)") > 0, true);
+  // **아무것도 못 고쳤으면 예외가 아니라 정상 상태다.** 예외로 던지면 화면이 "실패"로 말하고,
+  // 상대가 이미 고친 것이지 내가 못한 것이 아니다.
+  check("못 고치면 gone 으로 끝난다", /won\.count === 0[\s\S]{0,80}?gone/.test(fn), true);
+  check("지금은 상태도 같은 안에서 다시 맞춘다", fn.indexOf("refreshContribState(record.id, tx)") > fn.indexOf("won.count"), true);
+}
+
 /* ── 대화 순서 ────────────────────────────────────────────── */
 
 console.log("\n대화 순서");
@@ -2345,6 +2615,115 @@ console.log("\n푸시 구독 (DB)");
   }
 }
 
+console.log("\n푸시 구독 (기기는 따로)");
+{
+  /**
+   * ## 왜 이 구역이 있는가 — 두 사람이 동시에 중요하다
+   *
+   * 예전에는 끄기가 **`deleteMany({ where: { memberId } })`** 였다. 그건 **내 모든 기기**를
+   * 지운다. 노트북에서 끄면 **휴대폰 구독까지 사라져** 그 뒤로 알림이 오지 않는다 — 화면은
+   * "껐습니다"라고 말하는데 정작 가장 오래 남아 있던 기기가 꺼졌다. 되돌릴 수 없다.
+   *
+   * 반대 방향도 있었다. 설정 화면은 `server.subscribed || localBrowserSubscription` 으로
+   * 판단했는데, 서버 값은 "내 계정 어딘가"였다. 그래서 **휴대폰에만 켜진 PC** 가 "켜짐"으로
+   * 보였다.
+   *
+   * 규칙은 하나다. **"이 기기가 켜졌는가"는 이 기기만 답한다.** 서버는 "내 기기가 몇 개나
+   * 켜져 있는가"를 답할 뿐, 그 값을 이 기기의 상태로 쓰지 않는다.
+   */
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const members = team
+    ? await db.member.findMany({ where: { teamId: team.id, leftAt: null }, take: 2 })
+    : [];
+  if (members.length < 2) {
+    console.log("  · 팀원이 둘 이상이어야 이 항목을 돌립니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const [a, b] = members;
+    const stamp = Date.now();
+    // **두 기기의 주소를 일부러 다르게 만든다.** 같으면 한 기기로 세어지므로 이 검사가
+    // 아무것도 못 증명한다.
+    const phone = `https://push.example/phone-${stamp}`;
+    const laptop = `https://push.example/laptop-${stamp}`;
+    const ends = [phone, laptop];
+    const owned = a.id;
+
+    await db.pushSubscription.deleteMany({ where: { endpoint: { in: ends } } });
+    await db.pushSubscription.createMany({
+      data: [
+        { memberId: owned, endpoint: phone, p256dh: "p", auth: "a" },
+        { memberId: owned, endpoint: laptop, p256dh: "p", auth: "a" },
+      ],
+    });
+    check("한 사람의 두 기기가 두 줄이다", await db.pushSubscription.count({ where: { memberId: owned, endpoint: { in: ends } } }), 2);
+
+    // **핵심: 한 기기만 끈다.** 서버 액션과 같은 문장이다 — `memberId` **와** `endpoint` 를
+    // **둘 다** 조건에 넣는다.
+    const turnedOff = await db.pushSubscription.deleteMany({ where: { memberId: owned, endpoint: laptop } });
+    check("끈 기기의 줄만 지워진다", turnedOff.count, 1);
+    const left = await db.pushSubscription.findMany({
+      where: { memberId: owned, endpoint: { in: ends } },
+      select: { endpoint: true },
+      orderBy: { endpoint: "asc" },
+    });
+    check("다른 기기는 그대로 남는다", left.map((r) => r.endpoint), [phone]);
+
+    // **주소만 알면 남의 줄을 지울 수 없어야 한다.** `memberId` 조건이 빠지면 여기서 무너진다 —
+    // 주소는 브라우저 안에만 있으므로 이 조건이 곧 그 경계다.
+    const notMine = await db.pushSubscription.deleteMany({ where: { memberId: b.id, endpoint: phone } });
+    check("남의 기기 주소로 지우면 아무 일도 없다", notMine.count, 0);
+    check("남의 주소는 여전히 남아 있다", await db.pushSubscription.count({ where: { endpoint: phone } }), 1);
+
+    // **주인이 바뀐 기기** — 주소를 추측할 수 있어도 `memberId` 가 다르면 못 지운다.
+    const stolen = await db.pushSubscription.create({
+      data: { memberId: b.id, endpoint: `https://push.example/other-${stamp}`, p256dh: "p", auth: "a" },
+    });
+    const afterTheft = await db.pushSubscription.deleteMany({
+      where: { memberId: owned, endpoint: stolen.endpoint },
+    });
+    check("주인이 다른 줄은 건드리지 않는다", afterTheft.count, 0);
+    check("주인이 다른 줄은 남는다", await db.pushSubscription.count({ where: { endpoint: stolen.endpoint } }), 1);
+
+    // **같은 주소로 다시 켜면 주인이 옮겨 간다** — 기기를 넘겨 쓰는 경우. 위 DB 구역이
+    // 같은 주인의 줄 수를 셌으므로, 여기서는 **사람이 바뀌는 것**까지 함께 본다.
+    const handover = await db.pushSubscription.upsert({
+      where: { endpoint: phone },
+      create: { memberId: b.id, endpoint: phone, p256dh: "p2", auth: "a2" },
+      update: { memberId: b.id, p256dh: "p2", auth: "a2" },
+    });
+    check("같은 주소로 켜면 주인이 옮겨진다", handover.memberId, b.id);
+    check("옮겨 간 뒤 옛 사람에게 남지 않는다", await db.pushSubscription.count({ where: { memberId: owned, endpoint: { in: ends } } }), 0);
+
+    await db.pushSubscription.deleteMany({ where: { endpoint: { in: [...ends, stolen.endpoint] } } });
+  }
+}
+
+console.log("\n푸시 구독: 기기 규칙이 코드에 남아 있다");
+{
+  // 위 DB 검사는 **기다리는 문장**을 친 것이다. 액션과 클라이언트가 그 문장을 **쓰는가**를
+  // 여기서 본다 — 화면은 브라우저에서 돈다.
+  const server = readCode("../src/server/actions/push.ts");
+  const from = server.indexOf("export async function clearPushSubscription");
+  const fn = from >= 0 ? server.slice(from) : "";
+
+  truthy("끄기 함수가 있다", fn.length > 0);
+  // **전체 삭제로 돌아가면 이 규칙이 조용히 죽는다** — 기기 분리의 전부다.
+  check("memberId 만으로 지우지 않는다", /deleteMany\(\{\s*where:\s*\{ memberId: me\.id \}/.test(fn), false);
+  check("주소까지 조건에 든다", /where:\s*\{\s*memberId:\s*me\.id,\s*endpoint:\s*address\s*\}/.test(fn), true);
+  // 주소를 못 받았으면 **아무것도 지우지 않는다** — 모르는 것을 지우는 것이 예전 사고다.
+  check("주소가 없으면 지우지 않는다", fn.indexOf("if (!address)") > 0 && fn.indexOf("return { cleared: 0 }") > fn.indexOf("if (!address)"), true);
+
+  const client = readCode("../src/features/home/push-client.ts");
+  const off = client.slice(client.indexOf("export async function turnOffPush"));
+  // **주소를 먼저 챙기고 그다음에 끊는다** — 순서가 바뀌면 서버가 지울 곳을 모른다.
+  check("끊기 전에 주소를 챙긴다", off.indexOf("endpoint = sub?.endpoint") < off.indexOf("unsubscribe()"), true);
+  check("서버에는 그 주소만 보낸다", /clearPushSubscription\(endpoint\)/.test(off), true);
+
+  const read = client.slice(client.indexOf("export async function readPushState"));
+  // **서버 값을 이 기기의 판정에 섞지 않는다.** 섞이면 휴대폰에만 켜진 PC 가 켜짐으로 보인다.
+  check("서버 값을 이 기기의 판정에 쓰지 않는다", /subscribed:\s*local\b/.test(read), true);
+  check("판정은 브라우저의 구독을 본다", read.includes("getSubscription()"), true);
+}
+
 /* ── 발송 실패: 원인은 남기고 인증번호는 남기지 않는다 ──────── */
 
 console.log("\n이메일 발송 실패 (운영 로그에 인증번호가 남지 않는다)");
@@ -2382,7 +2761,7 @@ console.log("\n이메일 발송 실패 (운영 로그에 인증번호가 남지 
 
 /* ── AI 한도: 세는 것과 쓰는 것이 다르다 ──────────────────── */
 
-console.log("\nAI 한도");
+console.log("\nAI 사용량");
 {
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
@@ -2394,30 +2773,21 @@ console.log("\nAI 한도");
     const mine = { teamId: team.id, memberId: member.id, tool: "cushion", day };
     const before = await usage();
 
-    // **읽기는 한도를 깎지 않는다.** 화면이 진입할 때 부르는 조회가 이것이다.
-    const read = async () => ({
-      mineLeft: Math.max(0, AI_POLICY.perMemberPerDay - (await usage())),
-      teamLeft: Math.max(0, AI_POLICY.perTeamPerDay - (await usage())),
-      perDay: AI_POLICY.perMemberPerDay,
-    });
-    const first = await read();
-    const second = await read();
-    check("한도를 여러 번 읽어도 차감되지 않는다", [first.mineLeft, second.mineLeft], [first.mineLeft, first.mineLeft]);
+    // **읽기는 기록을 늘리지 않는다.**
+    const me = { id: member.id, teamId: team.id, name: member.name, isLeader: false };
+    const first = await aiUsageToday(me);
+    const second = await aiUsageToday(me);
+    check("여러 번 읽어도 사용량이 늘지 않는다", [first.mine, second.mine], [first.mine, first.mine]);
     check("읽기만으로는 기록이 늘지 않는다", await usage(), before);
 
     // **쓰는 쪽은 정확히 한 건만 남긴다.**
     await db.aiUsage.create({ data: mine });
     check("한 번 쓰면 기록이 정확히 1 늘어난다", await usage(), before + 1);
-    const after = await read();
-    check("쓴 만큼 남은 횟수가 줄어든다", after.mineLeft, first.mineLeft - 1);
+    const after = await aiUsageToday(me);
+    check("쓴 만큼 사용량이 늘어난다", after.mine, first.mine + 1);
 
-    // 예전에는 `deleteMany({ memberId, day })` 로 치웠다 — **이 검사가 만든 한 건이 아니라
-    // 그 사람 그날의 기록 전부였다.** 로컬 DB를 쓰는 개발자라면 눈치채기 어려운 손실이다.
-    // 같은 키가 이미 있으면 그 행을 건드리지 않고, 없을 때만 한 건을 만든다.
     const made = await db.aiUsage.findFirst({ where: mine, orderBy: { id: "desc" } });
     if (before > 0) {
-      // 이미 있던 기록 위에 얹은 거라, 내가 만든 행만 골라 지운다. (한도 쪽은 `FOR UPDATE`
-      // 로 직렬화되므로 유니크 제약이 없어도 정확하다 — `ai/limit.ts` 참고)
       console.log("  · 그날 기록이 이미 있어, 이 검사가 만든 행만 지웁니다");
     }
     if (made) await db.aiUsage.delete({ where: { id: made.id } });
@@ -2427,65 +2797,57 @@ console.log("\nAI 한도");
 
 /* ── AI 한도: 실패한 호출은 한도를 쓰지 않는다 ──────────────── */
 
-console.log("\nAI 한도: 실패하면 되돌아온다");
+console.log("\nAI 사용량: 실패하면 되돌아온다");
 {
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
-    /**
-     * 여기서는 `runTool` 을 부르지 않는다 — 세션 쿠키가 필요하고, 쿠키를 만들면
-     * "실패 경로가 한도를 되돌리는가" 가 아니라 "액션을 우회했다" 를 테스트하게 된다.
-     * 대신 **되돌림이 지켜야 할 값(행 id) 을 주고받는 두 함수**를 그대로 부른다.
-     */
     const me = { id: member.id, teamId: team.id, name: member.name, isLeader: false };
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
     const usage = () => db.aiUsage.count({ where: { memberId: me.id, day } });
     const before = await usage();
 
-    // 1) 실패할 호출이 한도를 깎는다 — 이건 그대로여야 한다(한도가 없으면 무제한이다).
-    const taken = await consumeAiQuota(me, "cushion");
+    // 1) 호출 시 기록을 남긴다
+    const taken = await recordAiUsage(me, "cushion");
     if (!taken.ok) {
-      console.log("  · 오늘 AI 한도가 이미 바닥이라, 이 항목은 오늘 다시 보지 않습니다");
+      console.log("  · 오늘 AI 기록이 막혀 있어, 이 항목은 오늘 다시 보지 않습니다");
     } else {
-      check("모델을 부르기 전에 한도를 깎는다", await usage(), before + 1);
-      check("깎은 줄이 무엇인지 알려 준다", typeof taken.usageId, "string");
+      check("모델을 부르기 전에 기록을 남긴다", await usage(), before + 1);
+      check("남긴 줄이 무엇인지 알려 준다", typeof taken.usageId, "string");
 
-      // 2) **남의 몫은 되돌릴 수 없다.** id 하나만 믿고 지우면 그 팀원의 그날 기록이 사라진다.
+      // 2) **남의 기록은 되돌릴 수 없다.**
       const other =
         (await db.member.findFirst({ where: { teamId: team.id, id: { not: member.id } } })) ?? null;
       if (other) {
         const othersBefore = await db.aiUsage.count({ where: { memberId: other.id, day } });
-        const stolen = await refundAiQuota({ ...me, id: other.id }, taken.usageId);
-        check("남의 몫은 되돌릴 수 없다", stolen, false);
+        const stolen = await refundAiUsage({ ...me, id: other.id }, taken.usageId);
+        check("남의 기록은 되돌릴 수 없다", stolen, false);
         check("남의 기록도 그대로다", await db.aiUsage.count({ where: { memberId: other.id, day } }), othersBefore);
       }
 
-      // 3) 자기 몫은 **그 한 건만** 돌아온다.
-      const refunded = await refundAiQuota(me, taken.usageId);
-      check("실패한 호출은 한도를 되돌려 받는다", refunded, true);
+      // 3) 자기 기록은 **그 한 건만** 돌아온다.
+      const refunded = await refundAiUsage(me, taken.usageId);
+      check("실패한 호출은 기록을 되돌려 받는다", refunded, true);
       check("되돌린 뒤 기록이 원래대로다", await usage(), before);
     }
   }
 }
 
-/**
- * 실패 경로가 **정말** 환불을 부르는지는 코드로 본다 — 위 검사는 되돌림 함수가 옳다는
- * 증명일 뿐, `runTool` 이 그 함수를 부르는지는 아무도 보지 않는다.
- *
- * `readCode` 는 주석을 지운다. 주석에 "환불" 이 적혀 있기만 하고 코드가 그대로여도
- * 통과하는 검사가 되어선 안 되므로, **함수 호출**과 **순서**를 본다.
- */
 {
   const run = readCode("../src/server/ai/run.ts");
-  check("실패한 호출은 한도를 되돌린다", /refundAiQuota\(\s*me\s*,\s*usageId\s*\)/.test(run), true);
-  check("되돌림은 실패 경로 안에서 일어난다", run.indexOf("catch") < run.indexOf("refundAiQuota("), true);
-  // **성공 경로에서 지우면** 그게 한도가 없는 도구가 된다. 성공은 usageId 를 그대로 두고
-  // 결과만 돌려주는 쪽이다 — `return { ok: true, value:` 이 환불보다 먼저 와야 한다.
-  check("성공한 호출은 한도를 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiQuota("), true);
-  // 키가 없으면 애초에 깎지 않았으므로, 되돌릴 것도 없다.
-  check("키가 없으면 한도를 깎지 않는다", /if \(live\) \{[\s\S]*?consumeAiQuota/.test(run), true);
+  check("실패한 호출은 기록을 되돌린다", /refundAiUsage\(\s*me\s*,\s*usageId\s*\)/.test(run), true);
+  check("되돌림은 실패 경로 안에서 일어난다", run.indexOf("catch") < run.indexOf("refundAiUsage("), true);
+  check("성공한 호출은 기록을 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiUsage("), true);
+  check("키가 없으면 기록을 남기지 않는다", /if \(live\) \{[\s\S]*?recordAiUsage/.test(run), true);
+
+  // 재생성(redo) vs 세션 복원(restore) 한도 계약 검증
+  const draftHook = readCode("../src/features/tools/use-ai-draft.ts");
+  check("redo는 서버 호출 함수를 강제 실행한다", /redo = useCallback\(\(\) => execute\(true\)/.test(draftHook), true);
+  const restoreFn = draftHook.slice(draftHook.indexOf("restore = useCallback("));
+  check("restore는 run() 또는 execute()를 부르지 않는다", !restoreFn.includes("run(") && !restoreFn.includes("execute("), true);
+  check("restore는 로컬 state만 갱신한다", restoreFn.includes("setResult(") && restoreFn.includes("setHistory("), true);
 }
 
 /* ── AI 모델: 도구마다 다른 모델을 쓴다 ──────────────────────── */
@@ -2575,6 +2937,46 @@ console.log("\nAI 재시도 정책");
   check("메시지에 429 가 있어도 그렇다", isTransient(new Error("429 Too Many Requests")), false);
   check("키가 없으면 다시 시도하지 않는다", isTransient(err(401, "AuthenticationError", "invalid api key")), false);
   check("잘못된 요청도 다시 시도하지 않는다", isTransient(err(400, "BadRequestError")), false);
+
+  // withFallback 계약 테스트 (1차 일시실패 → 정확히 1회 폴백 모델 호출 → 성공 또는 최종 실패)
+  {
+    const calls: string[] = [];
+    const res = await withFallback("clerk", "model-a", "model-b", async (m) => {
+      calls.push(m);
+      if (m === "model-a") throw new Error("빈 응답");
+      return "성공";
+    });
+    check("1차 일시 실패 시 폴백 모델로 1회 재시도하여 성공", res, "성공");
+    check("호출 순서는 [primary, fallback]", calls, ["model-a", "model-b"]);
+  }
+  {
+    const calls: string[] = [];
+    let caught: Error | null = null;
+    try {
+      await withFallback("clerk", "model-a", "model-b", async (m) => {
+        calls.push(m);
+        throw new Error("빈 응답");
+      });
+    } catch (e) {
+      caught = e as Error;
+    }
+    check("2차 폴백까지 실패하면 최종 예외 발생", caught?.message, "빈 응답");
+    check("더 이상 추가 재시도하지 않고 정확히 2회에서 멈춤", calls, ["model-a", "model-b"]);
+  }
+  {
+    const calls: string[] = [];
+    let caught: Error | null = null;
+    try {
+      await withFallback("clerk", "model-a", "model-b", async (m) => {
+        calls.push(m);
+        throw err(429, "RateLimitError", "429 Too Many Requests");
+      });
+    } catch (e) {
+      caught = e as Error;
+    }
+    check("429 같은 비일시적 오류는 폴백 없이 즉시 중단", calls, ["model-a"]);
+    check("429 예외 유지", caught?.message, "429 Too Many Requests");
+  }
 }
 
 /* ── AI 초안: 모델이 뭘 주든 화면에 오게 정리한다 ────────────── */
@@ -2609,6 +3011,34 @@ console.log("\nAI 초안 정리 (모델을 부르지 않고 확인한다)");
   // **응답이 아예 없을 때** — 빈 화면이 아니라 빈 결과여야 한다(화면이 "0건" 을 알 수 있게).
   check("응답이 없어도 죽지 않는다", shapeClerkDraft(null), { summary: "", candidates: [] });
   check("후보가 문자열이어도 죽지 않는다", shapeClerkDraft({ candidates: "x" as never }).candidates, []);
+
+  // 모델이 `tool_choice` 를 무시하고 본문에 JSON 을 쏟아도 **같은 답으로** 받는다(모양만 건진다).
+  check("순수 JSON", extractJsonObject('{"a":1}'), { a: 1 });
+  check("코드펜스 안의 JSON", extractJsonObject('설명입니다\n```json\n{"a":1}\n```\n끝'), { a: 1 });
+  check("앞뒤 설명이 붙은 JSON", extractJsonObject('결과는 {"a":"x"} 입니다.'), { a: "x" });
+  check("문자열 안의 중괄호는 세지 않는다", extractJsonObject('앞 {"a":"}{"} 뒤'), { a: "}{" });
+  check("배열 타입은 객체가 아니므로 거부", extractJsonObject("[1,2,3]"), null);
+  check("문자열 타입 거부", extractJsonObject('"hello"'), null);
+  check("숫자 타입 거부", extractJsonObject("12345"), null);
+  check("불리언 타입 거부", extractJsonObject("true"), null);
+  check("JSON 이 없으면 null", extractJsonObject("그냥 일반 텍스트 설명"), null);
+  check("빈 입력은 null", extractJsonObject(null), null);
+  check("공백만 있는 입력은 null", extractJsonObject("   \n\t  "), null);
+  check("깨진 JSON 은 null", extractJsonObject('{"a":'), null);
+  check("닫히지 않은 문자열", extractJsonObject('{"a":"broken}'), null);
+
+  // 필수 키 및 스키마 검사
+  check("필수 키가 다 있으면 빈 목록", missingRequired({ required: ["a", "b"] }, { a: 1, b: 2 }), []);
+  check("빠진 필수 키를 알려 준다", missingRequired({ required: ["a", "b"] }, { a: 1 }), ["b"]);
+  check("required 가 없으면 빈 목록", missingRequired({}, {}), []);
+  check("필수 키가 배열이 아니어도 에러 안 남", missingRequired({ required: "not-array" as never }, { a: 1 }), []);
+  check("깨진 인자는 재시도 대상이다", isTransient(new SyntaxError("Unexpected token")), true);
+
+  // 이상 징후 판정 단일 규칙 테스트
+  check("호출 5건 미만이면 이상 징후 없음", detectAiAnomalies({ totalCalls: 4, failureRate: 0.5, retryRate: 0.5, slowRate: 0.5 }).warnings.length, 0);
+  check("실패율 20% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0.25, retryRate: 0, slowRate: 0 }).hasFailureSpike, true);
+  check("재시도 30% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0, retryRate: 0.35, slowRate: 0 }).hasRetrySpike, true);
+  check("지연 30% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0, retryRate: 0, slowRate: 0.4 }).hasHighLatency, true);
 
   // 발표 지원 — **질문만** 담는다. 답이 섞이면 "발표자가 모르는 답"이 초안이 된다.
   const present = shapePresentDraft({ refined: "  다듬은 대본  ", questions: ["  왜?  ", "   ", null] });
@@ -3455,7 +3885,7 @@ console.log("\nDM 목록 조회 비용");
     // 를 본다. Prisma 의 쿼리 이벤트는 **플레이스홀더가 있는 SQL 과
     // 파라미터 값**을 준다. 둘을 합쳐야 비로소 실제로 나간 문장이 된다.
     const probe = new PrismaClient({
-      adapter: new PrismaPg({ connectionString }),
+      adapter: new PrismaPg({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL }),
       log: [{ emit: "event", level: "query" }],
     });
     const sent: string[] = [];
@@ -3666,246 +4096,6 @@ console.log("\n파일 보기 화면의 조회 범위");
   const page = readCode("../src/app/(tabs)/drive/[boxId]/[fileId]/page.tsx");
   check("13 화면은 컨텍스트를 한 번 읽는다", (page.match(/getFileViewContext/g) ?? []).length, 2); // import 1 + 호출 1
   check("13 화면이 따로 부르는 함수가 없다", /getSubmissionBox\(|getSubmittedFile\(/.test(page), false);
-}
-
-/* ── 가입 요청 제한: 순수 판정 ─────────────────────────────────── */
-
-console.log("\n가입 요청 제한 (화면·서버가 같은 순수 함수를 부른다)");
-{
-  // `clientGate` 의 비교는 `>` 다 — 막은 시도까지 이미 창에 찍혀 있으므로 `max` 번까지는
-  // 통과한다. `>=` 로 바뀌면 한 번 일찍 막히고, 이 테스트가 바로 그걸 잡는다.
-  check("10분 창은 5회까지 통과한다", clientGate(5, 0), "open");
-  check("10분 창은 6번째에 막는다", clientGate(6, 0), "client");
-  check("1시간 창은 15회까지 통과한다", clientGate(1, 15), "open");
-  check("1시간 창이 넘으면 짧은 창이 멀쩡해도 막는다", clientGate(1, 16), "client");
-
-  // 팀 예산은 쿠키를 지워도 남는 방어선이라 넉넉하다. 좁으면 정상 팀원이 못 들어온다.
-  check("팀 10분 창은 20회까지 통과한다", teamGate(20, 0, 0), "open");
-  check("팀 10분 창은 21번째에 막는다", teamGate(21, 0, 0), "team-budget");
-  check("팀 1시간 창은 50회까지 통과한다", teamGate(0, 50, 0), "open");
-  check("팀 1시간 창은 51번째에 막는다", teamGate(0, 51, 0), "team-budget");
-
-  // 시간 창을 한 번도 넘지 않고도 개수로 막힌다 — 느린 공격의 유일한 방어선.
-  check("시간은 넉넉해도 미해결 49건까지는 된다", teamGate(0, 0, 49), "open");
-  check("미해결 50건부터 막는다", teamGate(0, 0, JOIN_LIMIT.unresolvedPerTeam), "pending-cap");
-  check("배너는 상한 직전에는 안 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam - 1), false);
-  check("배너는 상한부터 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam), true);
-}
-
-/* ── 횟수표: 동시에 찍어도 새지 않는다 ────────────────────────── */
-
-console.log("\n횟수표 (동시에 찍어도 합이 정확하다)");
-{
-  const key = `smoke:window:${Date.now()}`;
-  const WINDOW_MS = 10 * 60 * 1000;
-
-  // **아무도 안 찍은 상태에서 50 개를 한꺼번에 넣는다.** 예전 구현(`findUnique` → 판단 →
-  // 쓰기) 은 여기서 대부분 을 잃었다 — 모두 0 을 읽고 모두 1 을 적으면 50 이 아니라 1 이 남는다.
-  // 우연히 스레드풀을 타면 통과하는 검사가 되므로, DB 한 문장으로 직렬화되는지(`ON CONFLICT`)
-  // 를 이 스모크가 실제로 눌러 본다.
-  const RACERS = 50;
-  const counts = await Promise.all(
-    Array.from({ length: RACERS }, () => hitWindow(key, WINDOW_MS)),
-  );
-
-  check("50 개를 동시에 찍어도 마지막 값이 50 이다", await readWindow(key), RACERS);
-  check("돌려준 값이 중복되지 않는다", new Set(counts).size, RACERS);
-  check("돌려준 값이 1..50 을 다 덮는다", counts.slice().sort((a, b) => a - b), Array.from({ length: RACERS }, (_, i) => i + 1));
-
-  // 창은 **첫 시도 때 정해지고 늘어나지 않는다.** 시도할 때마다 뒤로 밀면, 막힌 사람이 계속
-  // 눌러 보는 동안 영영 안 풀린다 — 그래서 뒤로 밀면 안 된다.
-  const row = await db.rejoinAttempt.findUnique({ where: { key } });
-  const firstUntil = row!.until.getTime();
-  await hitWindow(key, WINDOW_MS);
-  const again = await db.rejoinAttempt.findUnique({ where: { key } });
-  check("더 찍어도 창이 뒤로 밀리지 않는다", again!.until.getTime(), firstUntil);
-  check("더 찍으면 횟수만 오른다", again!.count, RACERS + 1);
-
-  // 맞히면 지워진다 — 다음에 한 번만 해도 곧바로 잠기지 않게.
-  await clearWindow(key);
-  check("지우면 0 으로 읽는다", await readWindow(key), 0);
-  check("지운 자리는 다음 한 번이 1 이다", await hitWindow(key, WINDOW_MS), 1);
-
-  await clearWindow(key);
-}
-
-/* ── 가입 요청: 토큰은 만들어진 뒤로 바뀌지 않는다 ────────────── */
-
-console.log("\n가입 요청 토큰 불변식 (다른 브라우저가 가로챌 수 없다)");
-{
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
-  const suffix = String(Date.now() % 1e7);
-  const name = `불변${suffix}`;
-
-  const first = await db.joinRequest.create({
-    data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" },
-  });
-  check("첫 신청이 그 토큰을 가진다", first.token, `A-${suffix}`);
-
-  // 같은 이름으로 두 번째 신청 = 다른 브라우저가 재신청한 것.
-  let code: string | undefined;
-  try {
-    await db.joinRequest.create({
-      data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" },
-    });
-  } catch (error) {
-    code = (error as { code?: string }).code;
-  }
-  check("같은 이름의 두 번째 신청은 DB 가 막는다", code, "P2002");
-
-  const kept = await db.joinRequest.findUniqueOrThrow({
-    where: { teamId_name: { teamId: team.id, name } },
-  });
-  check("토큰은 여전히 첫 번째 것", kept.token, `A-${suffix}`);
-  check("이름당 요청은 하나뿐이다", await db.joinRequest.count({ where: { teamId: team.id, name } }), 1);
-
-  await db.joinRequest.delete({ where: { id: first.id } });
-}
-
-console.log("\n가입 요청 토큰 불변식 (동시에 같은 이름으로 신청하면 한 명만 이긴다)");
-{
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
-  const suffix = String(Date.now() % 1e7);
-  const name = `경쟁${suffix}`;
-
-  const results = await Promise.allSettled([
-    db.joinRequest.create({ data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" } }),
-    db.joinRequest.create({ data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" } }),
-  ]);
-
-  const won = results.filter((r) => r.status === "fulfilled");
-  const lost = results.filter((r) => r.status === "rejected");
-  check("한쪽만 이긴다", won.length, 1);
-  check("진 쪽은 둘 다 P2002 다", lost.every((r) => (r as PromiseRejectedResult).reason?.code === "P2002"), true);
-
-  const row = await db.joinRequest.findUniqueOrThrow({
-    where: { teamId_name: { teamId: team.id, name } },
-  });
-  check("남은 행의 토큰은 승자의 그것이다", row.token, (won[0] as PromiseFulfilledResult<{ token: string }>).value.token);
-
-  await db.joinRequest.delete({ where: { id: row.id } });
-}
-
-console.log("\n초대 선택지 (서버가 다시 보는 값)");
-{
-  // **화면이 고른 값을 서버가 다시 본다.** 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수
-  // 있으므로, 여기서 확인하지 않으면 "9999명"이나 "3650일"이 그대로 들어간다 — 그건 1회용의
-  // 반대편이다(사실상 아무도 못 쓰는 초대, 혹은 사실상 영구 초대).
-  check("인원은 1·2·3·5·10 만 받는다", [...USE_CHOICES], [1, 2, 3, 5, 10]);
-  check("기한은 1·3·7·30 일만 받는다", [...EXPIRY_CHOICES], [1, 3, 7, 30]);
-  check("0명은 없다", USE_CHOICES.includes(0 as never), false);
-  check("음수는 없다", USE_CHOICES.includes(-1 as never), false);
-  check("무한대는 없다", USE_CHOICES.includes(Infinity as never), false);
-  // **0일 = "그 순간부터 닫힌다"** — 고를 수 있게 해서는 안 된다. 만료가 즉시라 실효상 폐기다.
-  check("0일은 없다 (만료 즉시 닫히는 초대가 된다)", EXPIRY_CHOICES.includes(0 as never), false);
-  // 액션이 이 규칙을 실제로 거르는지 — 상수만 맞아도 액션이 안 거르면 통과한다.
-  const action = readCode("../src/server/actions/invite.ts");
-  check("팀장 확인이 초대 발급보다 먼저 온다", action.indexOf("requireLeader()") < action.indexOf("createTeamInvite(leader.teamId"), true);
-  check("화면 값을 서버가 다시 거른다", /!isUseChoice\(maxUses\)/.test(action) && /!isExpiryChoice\(days\)/.test(action), true);
-  check("이름도 서버에서 자른다", /label\.length > INVITE_LABEL_MAX/.test(action), true);
-}
-
-console.log("\n초대가 지금 들어오는 길을 열어 주는가");
-{
-  // 순수 판정이라 서버 액션 없이도 부를 수 있다(`rules.ts` 머리말).
-  const now = 1_000_000_000;
-  const fresh = { maxUses: null, useCount: 0, expiresAt: null, revokedAt: null };
-  const at = (ms: number) => new Date(now + ms);
-
-  check("처음 발급된 초대", isInviteUsable(fresh, now), true);
-  check("되돌린 초대는 막는다", isInviteUsable({ ...fresh, revokedAt: at(-1) }, now), false);
-  check("지난 시각은 막는다", isInviteUsable({ ...fresh, expiresAt: at(-1) }, now), false);
-  check("아직 안 지난 시각은 열어 둔다", isInviteUsable({ ...fresh, expiresAt: at(1) }, now), true);
-  // **경계는 닫힌 쪽이다.** "그 시각까지 유효" 가 아니라 "그 시각부터 무효" — 정확히 그
-  // 순간에 도착한 사람이 행운에 따라 들어갈 수 없게 하지 않는다.
-  check("만료 시각과 같은 순간은 이미 막힌다", isInviteUsable({ ...fresh, expiresAt: at(0) }, now), false);
-  // 경계의 양옆 — 만료 1ms 뒤는 아직 열려 있고, 그 순간부터 닫힌다.
-  check("만료 1ms 뒤는 아직 열려 있다", isInviteUsable({ ...fresh, expiresAt: new Date(now + 1) }, now), true);
-  check("만료 1ms 전은 이미 닫혔다", isInviteUsable({ ...fresh, expiresAt: new Date(now - 1) }, now), false);
-
-  // **자리는 승인 횟수로 찬다.** 거절과 취소를 세지 않는다는 약속이 여기서 성립한다.
-  check("1회용에 아무도 안 왔으면 열려 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 0 }, now), true);
-  check("1회용의 자리를 썼으면 닫힌다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 1 }, now), false);
-  check("초과해서도 닫혀 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 2 }, now), false);
-  check("3회용은 두 명까지 열린다", isInviteUsable({ ...fresh, maxUses: 3, useCount: 2 }, now), true);
-  // 무제한은 숫자 제한을 두지 않는다 — 0 과 구분된다.
-  check("maxUses 가 null 이면 무제한이다", isInviteUsable({ ...fresh, maxUses: null, useCount: 999 }, now), true);
-  // 세 조건 중 하나만 있어도 막는다.
-  check("셋 중 하나만 있어도 막는다", isInviteUsable({ maxUses: 1, useCount: 1, expiresAt: at(1), revokedAt: null }, now), false);
-}
-
-console.log("\n입장 해석: 초대가 팀 정보를 지어내지 않는다");
-{
-  // 01 화면은 "초대받은 팀" 카드에서 사람 수와 마감일을 그대로 그린다. 초대가 그 값을
-  // 세어 오지 않으면, 팀이 비어 있지 않아도 **"0명"** 으로 보인다 — 코드 길과 같은 정보를
-  // 두 길이 다르게 보여 주는 셈이라 화면이 스스로를 모순한다.
-  const joinPage = readCode("../src/app/join/page.tsx");
-  check("초대 길이 사람 수를 지어내지 않는다", /memberCount: 0/.test(joinPage), false);
-  check("초대가 센 사람 수를 그대로 쓴다", /memberCount: fromLink\.memberCount/.test(joinPage), true);
-  check("마감일도 초대가 가져온 값을 쓴다", /dday: fromLink\.teamDday/.test(joinPage), true);
-
-  // `?t=` 는 **명시적인 권한 증명**이다. 실패했을 때 조용히 `Team.code` 길로 넘어가면
-  // 되돌린 초대가 그 사실조차 숨긴다(`resolve-target.ts` 머리말).
-  const target = readCode("../src/server/invite/resolve-target.ts");
-  const tokenBranch = target.slice(
-    target.indexOf("if (token)"),
-    target.indexOf("const code = input.code"),
-  );
-  check("토큰이 있으면 그 길로만 판정한다", tokenBranch.includes("return null"), true);
-  check("토큰 분기에 코드 길로 넘어가지 않는다", tokenBranch.includes("input.code"), false);
-  // 초대를 세는 쿼리는 **관여자** 기준이다 — 나간 사람의 행은 기록을 위해 남는다.
-  check("초대가 세는 것도 나간 사람을 뺀다", /members: \{ where: ACTIVE \}/.test(target), true);
-}
-
-console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 남아 있다");
-{
-  // 순수 함수를 부를 수 없는 지점(쿠키가 필요한 액션)은 **소스**로 고정한다. 이 저장소는
-  // 이미 화면·서버가 같은 계산을 쓰는 관례로 그랬다.
-  const src = readCode("../src/server/actions/onboarding.ts");
-  const from = src.indexOf("export async function joinTeam");
-  const fn = src.slice(from, src.indexOf("export async function checkJoinApproval", from));
-
-  // **`upsert` 는 토큰 회전의 유일한 경로였다.** update 에 `token` 이 들어가면 다른
-  // 브라우저가 그 토큰을 자기 쿠키로 옮겨 심는다. create 로만 만들어야 이게 불가능하다.
-  check("토큰을 갱신하는 upsert 가 없다", /joinRequest\.upsert/.test(fn), false);
-  check("새 요청은 create 로만 만든다", /joinRequest\.create/.test(fn), true);
-  check("경합에서 진 쪽은 덮어쓰지 않고 돌려보낸다", /P2002[\s\S]{0,160}status: "taken"/.test(fn), true);
-  // 제한은 **행도 알림도 만들어지기 전에** —— 알림 폭탄의 비용이 이미 발생한 뒤에 막으면 늦다.
-  check("이 브라우저 제한이 요청 생성보다 먼저 온다", fn.indexOf("takeClientAttempt") < fn.indexOf("joinRequest.create"), true);
-  // 소유자만 자기 요청을 고친다. 남의 희망 역할을 덮어쓰면 역할 추첨의 입력이 바뀐다.
-  check("소유자 확인이 새 요청보다 먼저 온다", fn.indexOf("store.get(JOIN_COOKIE)?.value;\n    const found") >= 0, true);
-  // **팀 예산은 새 행을 만들려는 시점에만 깎인다.** 위쪽에 두면 자기 요청을 다시 여는
-  // 정상 사용자가 팀 예산을 먹고, 그 숫자를 공격자가 고쳐 팀 전체의 신규 가입을 막는다.
-  // 팀 코드 하나만 알면 이 숫자를 조작할 수 있으므로 순서가 곧 방어다.
-  check(
-    "팀 예산은 소유자 확인 뒤에 온다",
-    fn.indexOf("takeTeamCreation") > fn.indexOf("const found = await db.joinRequest.findUnique"),
-    true,
-  );
-  check("팀 예산은 요청 생성보다 먼저 온다", fn.indexOf("takeTeamCreation") < fn.indexOf("joinRequest.create"), true);
-
-  // 푸시는 예산 안에서만, 앱 안 알림은 항상.
-  const notifySrc = readCode("../src/server/notify/create.ts");
-  // 여기서 고이는 **문구가 아니라 보장**이다. 예전은 `input.push === false` 라는 문자열을
-  // 찾았고, 구현이 `input.push ?? pushPolicy(...)` 로 다듬어지면서 **검사는 깨졌는데 아무
-  // 것도 고장나지 않았다**(2026-09-28). 그래서 말을 고정하지 않는다 —
-  //
-  // ① 호출부가 `push` 를 명시하면 그것이 되고, 아니라면 정책이 정한다.
-  // ② **앱 안 알림은 푸시 판정보다 먼저 쌓인다.** 순서가 바뀌면 푸시 예산이 모자란 날
-  //    알림함까지 비어 있게 된다 — 그게 이 자리의 존재 이유다.
-  check(
-    "notify 가 푸시만 끌 수 있다 (명시하면 따르고, 아니면 정책이 정한다)",
-    /input\.push\b/.test(notifySrc) && /pushPolicy\(/.test(notifySrc),
-    true,
-  );
-  check(
-    "앱 안 알림은 푸시 예산과 무관하게 남는다",
-    notifySrc.indexOf("notification.createMany") > -1 &&
-      notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("pushPolicy("),
-    true,
-  );
 }
 
 /* ── 문서가 숫자를 담지 않는 자리 ──────────────────────────────── */
@@ -4459,7 +4649,7 @@ console.log("\n마피아 게임: 밤과 낮");
   truthy("밤을 마치는 길이 있다", /export async function closeIceNight/.test(iceActions));
   truthy("밤에는 한 명만 적는다", /nightAlreadyStruck\(/.test(iceActions));
   // 투표 마감이 끝나면 다음 밤 번호가 올라간다 — 밤이 늘지 않으면 타임라인이 거짓말한다.
-  truthy("투표 뒤 밤 번호가 오른다", /day:\s*fresh\.day \+ 1/.test(iceActions));
+  truthy("투표 뒤 밤 번호가 오른다", /day:\s*input\.day \+ 1/.test(DAY_VOTE));
   // 동점은 승부가 아니다 — 같은 표로 처형하지 않는다.
   truthy("동점이면 낮으로 돌아간다", /phase: "discussion", phaseStartedAt: new Date\(\)/.test(iceActions));
 }
@@ -4505,7 +4695,10 @@ console.log("\n마피아 게임: 밤을 두 번 처리하지 않는다");
       ],
     });
 
-    // 사회자가 "직접 적기" 를 눌렀다 — 이 밤에 최수빈이 빠졌다.
+    // ⚠️ **양쪽이 다른 게 아니라 같은 줄이다.** main 쪽에는 장식 글리프와 일본 한자가 남아 있어
+    // **제품 언어 게이트가 깨지는 상태**였다. HEAD 쪽이 그 수정이다. 병합에서 대충 한쪽을
+    // 고르면 게이트가 다시 깨진다. (여기에 한자를 그대로 적었다가 **이 검사에게 잡혔다** —
+    // 게이트가 실제로 작동한다는 뜻이라 고치지 않고 남긴다.)
     await db.iceSeat.update({
       where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } },
       data: { outAt: new Date(nightStart.getTime() + 60_000), outHow: "night", outDay: 1 },
@@ -4604,24 +4797,303 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   // ㊻ 투표는 **기록**된다 — 자리 한 칸에 있는 "지금 고른 사람" 이 아니다. 마감하면 표가 사라져
   //   "누가 누구에게 표를 던졌는가" 가 남지 않았고, 결선을 판정할 대상도 사라졌다.
   const iceActions = readCode("../src/server/actions/ice.ts");
+  const seatModel = readCode("../prisma/schema.prisma");
   truthy("투표는 기록된다", /iceBallot\.upsert\(/.test(iceActions));
-  truthy("동점이라고 표를 지우지 않는다", !/iceSeat\.updateMany\([^)]*voteForId/.test(iceActions));
-  truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(iceActions));
+  // ⚠️ 동점에서 **표 기록**(`IceBallot`)을 지우지 않는다. 자리의 다리 칸(`voteForId`)을 비우는
+  //   것은 다르다 — 구버전이 그 판을 마감할 수 있는 동안에만 필요한 조치다(2026-09-30).
+  truthy("동점이라고 표 기록을 지우지 않는다", !/iceBallot\.deleteMany\(/.test(iceActions));
+  truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(DAY_VOTE));
   truthy("투표를 열 때 회차가 올라간다", /voteSeq: round\.voteSeq \+ 1/.test(iceActions));
-  truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: fresh\.day \+ 1, eligibleTargets: \[\]/.test(iceActions));
+  truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: input\.day \+ 1, eligibleTargets: \[\]/.test(DAY_VOTE));
   // ⚠️ 결선도 **새 회차**여야 한다. 같은 회차로 두면 결선 앞의 표가 결선 표에 덮어써져
   //   "누가 누구에게 표를 던졌는가" 가 그 낮의 표만 남는다.
-  truthy("결선도 새 회차를 연다", /voteSeq: fresh\.voteSeq \+ 1/.test(iceActions));
-  truthy("결선 횟수를 센다", /runoffCount: fresh\.runoffCount \+ 1/.test(iceActions));
+  truthy("결선도 새 회차를 연다", /voteSeq: input\.voteSeq \+ 1/.test(DAY_VOTE));
+  truthy("결선 횟수를 센다", /runoffCount: input\.runoffCount \+ 1/.test(DAY_VOTE));
   // ⚠️ 한도는 회차가 아니라 **이번 투표의 결선 횟수**로 잰다. 회차로 재면 밤이 지날 때도 올라가
   //   하루에 세 번 결선한 판이 다음 날 아침 첫 투표에서 한도가 차 버린다.
   truthy("투표를 열 때 결선 횟수가 0 이 된다", /runoffCount: 0/.test(iceActions));
-  truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /create: \{[^}]*runoff \}/.test(iceActions));
+  truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /runoff/.test(DAY_VOTE));
 
-  // ㊼ 자리에 있던 표 칸이 사라졌는지 — 두 벌이 있으면 어느 쪽이 진짜인지 알 수 없다.
-  const seatModel = readCode("../prisma/schema.prisma");
-  truthy("자리에는 현재 표가 없다", !/model IceSeat \{[\s\S]*?voteForId/.test(seatModel));
+  // ㊼ 표의 **유일한 자리**는 `IceBallot` 이다. 자리의 칸은 구버전용 다리일 뿐이고 읽지 않는다.
   truthy("표는 자기 키를 가진다", /@@id\(\[roundId, seq, memberId\]\)/.test(seatModel));
+  // ⚠️ 다리 칸을 **읽으면** 표가 두 벌이 된다. 새 판정은 전부 `IceBallot` 에서 읽어야 한다.
+  const viewSource = readCode("../src/server/ice/view.ts");
+  truthy("조회는 표 기록에서만 읽는다", /iceBallot\.findMany\(\s*\{\s*where: \{ roundId: round\.id, seq: round\.voteSeq \}/.test(viewSource));
+  // `IceView.me.voteForId` 라는 **필드 이름**은 그대로 남는다(화면이 쓰는 이름). 그 값이 **자리에서
+  // 오는지** 표에서 오는지가 문제다 — 자리의 다리 칸을 읽으면 표가 두 벌이 된다.
+  truthy("view.ts 의 표는 표 기록에서 온다", /voteForId: myBallot\?\.targetId \?\? null/.test(viewSource));
+  truthy("view.ts 가 자리의 다리 칸을 읽지 않는다", !/\b[a-z]\.voteForId\b/.test(viewSource));
+
+  // ㊾ 다리는 **구버전 인스턴스가 트래픽을 받는 동안만** 산다.
+  //
+  // `vercel.json` 이 `prisma migrate deploy` 를 빌드 맨 앞에서 돌기 때문에, 배포 순간엔 구버전이
+  // 아직 이 판을 마감할 수 있다. 그 구버전은 표를 `IceSeat.voteForId` 에서만 본다 — 거기에 없으면
+  // 표가 0장으로 보이면서 마감되고 아무도 탈락하지 않는다.
+  truthy("투표는 다리 칸에도 같이 쓴다", /data: bridge/.test(iceActions));
+  truthy("다리를 비우는 길이 있다", /async function clearBridgeVotes/.test(DAY_VOTE));
+  // ⚠️ 결선 분기가 다리를 비우는지는 **DB 위에서** 본다(`applyMafiaDayVote`). 여기서 확인하는 것은
+  //    적용 로직이 **액션 밖**에 있다는 것뿐이다 — 소스 정규식은 분기 하나의 누락을 놓쳤었다.
+  truthy("낮 투표 적용이 액션 밖에서 부러진다", /export async function applyMafiaDayVote/.test(DAY_VOTE));
+  truthy("액션은 그 적용을 부른다", /applyMafiaDayVote\(tx,/.test(iceActions));
+  truthy("새 투표 회차를 열 때 다리를 비운다", /clearBridgeVotes\(db, round\.id\)/.test(iceActions));
+  truthy("밤 처형이 그 밤의 표를 비운다", /clearBridgeVotes\(tx, fresh\.id, (resolution\.outId|memberId)\)/.test(iceActions));
+  // 다리를 **읽는** 곳이 새로 생기면 그것이 두 벌이 되는 지점이다.
+  truthy("액션은 다리 값을 읽지 않는다(쓰기만)", !/voteForId: (mine|current)\./.test(iceActions));
+  // ⚠️ 다리 마이그레이션의 **SQL 내용**은 여기서 검사하지 않는다.
+  //
+  // 예전엔 `/FROM "IceBallot"/` 로 "표가 된다" 고 했다. 그 SQL 은 실제로는 **조용히 아무것도 하지
+  // 않았다**(키가 `(roundId, memberId)` 라 모든 행이 충돌 → `DO NOTHING`). 주석이 표를 "읽는다" 고
+  // 적었기 때문에 정규식은 통과했고, 문제는 프로덕션까지 갔다.
+  //
+  // 그래서 SQL 은 **실제 DB 로** 확인한다 — `npm run db:check:paths`
+  // (`scripts/check-migration-paths.mjs`). 여기서는 파일이 존재하고 그 도구를 가리키는지만 본다.
+  truthy("다리 마이그레이션이 있다", readCode("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql").length > 0);
+  truthy("다리 정정 마이그레이션이 있다", readCode("../prisma/migrations/20260930223000_ice_bridge_restore/migration.sql").length > 0);
+  const pathCheck = readCode("../scripts/check-migration-paths.mjs");
+  truthy("경로를 실제로 돌리는 도구가 있다", /ice_bridge_restore/.test(pathCheck) && /UPDATE "IceSeat"/.test(pathCheck));
+  // "언제 지운다" 를 못 박아 두지 않으면 다리가 영구화된다 — 표의 자리가 두 벌이 된다.
+  const bridge = readCode("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql");
+  truthy("다리가 언제 지워지는지 Says 한다", /다음 배포에서 이 컬럼을 (다시 )?지우/.test(bridge));
+}
+
+console.log("\n마피아 게임: 결선이 다리를 비우는가 (실제 DB 위에서)");
+{
+  /**
+   * 짚어진 결함 2: **결선을 만들었을 때 다리 표를 비우지 않았다.**
+   *
+   * 예전 검사는 `clearBridgeVotes(db, round.id)` 가 파일 어딘가에 있는지만 봤다 — 그래서
+   * `startIceVote()` 한 곳에 있어도 통과했고, 결선 분기에서 빠진 채 남았다. 그 결과 다리 칸에는
+   * 직전 일반투표의 표가 남고, 구버전이 마감하면 **지난 표를 결선 표로 세어** 결선 밖의 사람이
+   * 탈락했다.
+   *
+   * 여기서는 **세션도 액션도 아닌** 적용 로직(`server/ice/day-vote.ts`)을 트랜잭션째로 부른다.
+   * 정규식이 아니라 DB 의 상태로 확인한다.
+   */
+  const team = await db.team.create({
+    data: { name: "결선 다리 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+
+    const mk = (phase: string, seq: number) =>
+      db.iceRound.create({
+        data: {
+          teamId: team.id,
+          activeKey: team.id,
+          game: "mafia",
+          phase,
+          day: 1,
+          voteSeq: seq,
+          hostId: seats[0].id,
+          seats: { create: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? "mafia" : "citizen" })) },
+        },
+      });
+
+    const read = async () => {
+      const r = await db.iceRound.findFirstOrThrow({ where: { activeKey: team.id } });
+      const rows = await db.iceSeat.findMany({ where: { roundId: r.id }, select: { voteForId: true } });
+      const ballots = await db.iceBallot.findMany({ where: { roundId: r.id, seq: r.voteSeq } });
+      return { round: r, legacy: rows.map((x) => x.voteForId).filter((x) => x !== null).length, ballots: ballots.length };
+    };
+
+    // ㊿ 동점인 일반투표: 이서연 2표, 박지호 2표 → 결선이 된다.
+    const round = await mk("voting", 1);
+    await db.iceBallot.createMany({
+      data: [
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[0].id, targetId: seats[1].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[2].id, targetId: seats[1].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[1].id, targetId: seats[2].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[3].id, targetId: seats[2].id, runoff: false },
+      ],
+    });
+    // 다리 칸에도 같은 표가 남아 있다(신버전이 같이 쓴다).
+    await db.iceSeat.updateMany({ where: { roundId: round.id }, data: { voteForId: null } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[2].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[2].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } }, data: { voteForId: seats[2].id } });
+    check("결선을 만들기 전 다리에도 표가 있다", (await read()).legacy, 4);
+
+    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    const message = await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: ballots0,
+        legacy: rows0,
+      }),
+    );
+
+    // ① 회차가 올랐다 — 결선은 새 투표다.
+    const after = await read();
+    check("결선은 회차를 열었다", after.round.voteSeq, 2);
+    check("결선 후보는 동점자 둘이다", after.round.eligibleTargets, [seats[1].id, seats[2].id]);
+    check("결선 횟수를 셌다", after.round.runoffCount, 1);
+    // ② ⚠️ 다리가 **비워졌다** — 안 비우면 구버전이 마감할 때 지난 표를 결선 표로 센다.
+    check("다리 표가 전부 지워졌다", after.legacy, 0);
+    check("아직 아무도 탈락하지 않았다", (await db.iceSeat.findMany({ where: { roundId: round.id, outAt: null } })).length, 4);
+    check("사회자에게 동점임을 말한다", message?.includes("동점"), true);
+    // ③ 신 회차에는 표가 없다 — 지난 표와 섞이지 않는다.
+    check("새 회차에는 표가 없다", after.ballots, 0);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+
+    // ㋑ 결선이 아니라 **처형**이면 다리도 비워진다(옛 코드가 비우던 자리와 같은 조건).
+    const second = await mk("voting", 1);
+    await db.iceBallot.createMany({
+      data: [
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[0].id, targetId: seats[1].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[1].id, targetId: seats[2].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[2].id, targetId: seats[3].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[3].id, targetId: seats[2].id, runoff: false },
+      ],
+    });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: second.id, memberId: seats[3].id } }, data: { voteForId: seats[2].id } });
+
+    const rows1 = (await db.iceSeat.findMany({ where: { roundId: second.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots1 = await db.iceBallot.findMany({ where: { roundId: second.id, seq: 1 } });
+    await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: second.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        // ⚠️ 마피아가 0명이면 **판이 끝난다**(시민 승리) — 밤으로 가는 것을 보려면 마피아가 있어야 한다.
+        alive: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? ("mafia" as const) : ("citizen" as const) })),
+        ballots: ballots1,
+        legacy: rows1,
+      }),
+    );
+    const afterElim = await read();
+    check("처형된 사람은 빠졌다", (await db.iceSeat.findMany({ where: { roundId: second.id, outAt: null } })).length, 3);
+    check("처형 뒤에도 다리는 비워진다", afterElim.legacy, 0);
+    // 판이 끝나지 않았으면 밤이 온다 — 밤 번호가 하나 올라간다.
+    check("처형 뒤 밤이 왔다", [afterElim.round.phase, afterElim.round.day], ["night", 2]);
+
+    await db.iceRound.delete({ where: { id: second.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
+}
+
+console.log("\n마피아 게임: 구버전이 던진 표를 신버전이 센다");
+{
+  /**
+   * 짚어진 결함 3: 다리는 **신버전 → 구버전** 방향으로만 통한다.
+   *
+   * ```
+   * 구버전 투표 → voteForId 에만 있음 → 신버전은 IceBallot 만 읽음 → 그 표가 사라진 것처럼 보인다
+   * ```
+   *
+   * 배포가 끝나기 전 1~2분 동안 실제로 이 일이 일어난다. 그래서 마감할 때 **다리 칸에 홀로 있는 표를
+   * 표 기록으로 접는다.** 여기서는 그것이 실제 DB 에서 **정확히 1표**로 계산되는지 본다.
+   */
+  const team = await db.team.create({
+    data: { name: "수렴 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "mafia",
+        phase: "voting",
+        day: 1,
+        voteSeq: 1,
+        hostId: seats[0].id,
+        seats: { create: seats.map((s) => ({ memberId: s.id, role: "citizen" })) },
+      },
+    });
+
+    // 구버전 인스턴스만 표를 던진 상태: 다리 칸에만 있다.
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[1].id } });
+    check("신버전 기록에는 아직 표가 없다", await db.iceBallot.count({ where: { roundId: round.id } }), 0);
+
+    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    const rows2 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const message = await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: [],
+        legacy: rows2,
+      }),
+    );
+
+    // ㋒ 흡수된 표는 **기록에도 남는다** — 결과 화면의 "누가 누구에게 표를 던졌는지" 때문이다.
+    const stored = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    check("구버전 표가 표 기록으로 접혔다", stored.length, 2);
+    check("누가 누구에게 던졌는지 남는다", stored.map((b) => `${b.memberId === seats[0].id ? "김민준" : "이서연"}→${b.targetId === seats[1].id ? "이서연" : "박지호"}`), [
+      "김민준→이서연",
+      "이서연→이서연",
+    ]);
+    // 이서연이 2표를 받아 처형된다 — 세지 않았다면 동점/무표가 되어 아무도 빠지지 않는다.
+    const out = await db.iceSeat.findMany({ where: { roundId: round.id, outAt: { not: null } } });
+    check("구버전이 던진 표로 이서연이 빠졌다", out.map((s) => s.memberId), [seats[1].id]);
+    check("박지호는 빠지지 않았다", (await db.iceSeat.findMany({ where: { roundId: round.id, memberId: seats[2].id, outAt: null } })).length, 1);
+    check("처형이었다면 말을 남기지 않는다", message, undefined);
+
+    // ㋓ **표 기록이 이긴다** — 양쪽에 있으면 더 최신인 기록을 덮어쓰지 않는다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "voting", voteSeq: 2 } });
+    await db.iceBallot.create({ data: { roundId: round.id, seq: 2, day: 1, memberId: seats[0].id, targetId: seats[2].id, runoff: false } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    const rows3 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots3 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 2 } });
+    await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 2,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: ballots3,
+        legacy: rows3,
+      }),
+    );
+    check("표 기록은 다리에 덮이지 않는다", await db.iceBallot.count({ where: { roundId: round.id, seq: 2 } }), 1);
+    check("박지호가 빠졌다(기록이 이긴 결과)", (await db.iceSeat.findMany({ where: { roundId: round.id, memberId: seats[2].id, outAt: { not: null } } })).length, 1);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
 }
 
 console.log("\n마피아 게임: 결과 타임라인");
@@ -4697,7 +5169,8 @@ console.log("\n마피아 게임: 결과 타임라인");
   // 자리를 빠질 때 **몇 번째 밤인지도** 함께 적는다 — 시각만으로는 밤을 구분할 수 없다(자정 넘김).
   const iceActions = readCode("../src/server/actions/ice.ts");
   truthy("밤 처형이 밤 번호를 적는다", /outHow: "night", outDay: fresh\.day/.test(iceActions));
-  truthy("투표 처형이 낮 번호를 적는다", /outHow: "vote", outDay: fresh\.day/.test(iceActions));
+  // 처형 로직도 액션 밖으로 옮겨갔다 — 낮 번호를 남기는 코드까지 그쪽에 있다.
+  truthy("투표 처형이 낮 번호를 적는다", /outHow: "vote", outDay: input\.day/.test(DAY_VOTE));
 }
 
 console.log("\n마피아 게임: 실제로 만든 판에서 투표가 기록으로 남는다");
@@ -5261,7 +5734,37 @@ console.log("\n배정 알림 (맡은 사람은 그 사실을 알아야 한다)")
   check("순수 판정을 거친다", actions.includes("shouldNotifyAssignee("), true);
 }
 
-await db.$disconnect();
+/* ── 상태 변경도 넣은 사람 + 팀장 ──────────────────────────── */
 
-console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);
-if (failed > 0) process.exit(1);
+console.log("\n남의 업무 상태를 남이 바꿀 수 없다");
+{
+  // **어제 발견한 실제 허점이다.** 담당자 지정은 그날 닫았는데 이 자리는 그대로였고,
+  // 그 목록에 한 줄도 없었다 — 아무도 보지 않았으므로. 2026-09-28 에 닫았다.
+  //
+  // 닫는 방식은 제목·담당자·기한과 **똑같은 규칙**(`canEditTask`)이다. 한 가지만 열고
+  // 나머지를 열어 둔 규칙은 외우지 못하고, 외울 수 없는 규칙은 규칙이 아니다.
+  const actions = readCode("../src/server/actions/tasks.ts");
+  const from = actions.indexOf("export async function cycleTaskStatus");
+  const fn = actions.slice(from, actions.indexOf("\nexport async function", from + 10));
+
+  // 서버가 막는다 — 화면이 버튼을 숨겼다고 안전하지 않으므로(서버 액션은 POST 로 바로
+  // 부를 수 있다).
+  check("순수 판정을 부른다", fn.includes("taskEditBlock("), true);
+  const guard = fn.indexOf("taskEditBlock(");
+  const write = fn.indexOf("data: { status: next }");
+  truthy("쓰기 전에 판정한다", guard > 0 && write > guard);
+  // 넣기 전에 있던 업무(작성자 없음)는 팀장에게만 연다 — 제목과 같은 규칙.
+  check("막힌 이유를 말한다", fn.includes("넣기 전에 있던 업무") && fn.includes("남이 넣은 업무"), true);
+
+  // **같은 판정**이어야 한다 — 두 곳에서 따로 만들면 어느 한쪽이 조용히 어긋난다.
+  const perm = readCode("../src/lib/task-permission.ts");
+  check("넣은 사람 + 팀장 규칙이 실제로 있다", /createdById === me.id \|\| me.isLeader/.test(perm), true);
+  check("작성자가 없으면 팀장에게만 연다", /createdById === null\) return me.isLeader/.test(perm), true);
+
+  // 화면은 **서버가 계산해 보낸 값**만 본다 — 같은 판정을 또 짜지 않는다.
+  const screen = readCode("../src/features/tasks/tasks-screen.tsx");
+  check("화면이 같은 판정을 다시 짜지 않는다", /canEditTask/.test(screen), false);
+  check("조용히 아무 일도 일어나지 않게 않는다", screen.includes("남이 넣은 업무라 상태를 바꿀 수 없습니다"), true);
+}
+
+await finish();

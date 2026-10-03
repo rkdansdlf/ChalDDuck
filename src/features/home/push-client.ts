@@ -1,5 +1,5 @@
 import { pushSubscriptionFrom, type PushState } from "./push-model";
-import { savePushSubscription, clearPushSubscriptions } from "@/server/actions/push";
+import { savePushSubscription, clearPushSubscription } from "@/server/actions/push";
 
 /**
  * 브라우저 쪽 푸시 작업. 화면에는 **결과 코드만** 돌려준다 — 문구는 화면이 정한다.
@@ -33,10 +33,26 @@ function isStandalone(): boolean {
   return (navigator as Navigator & { standalone?: boolean }).standalone === true;
 }
 
-/** 서버가 아는 값 위에 이 브라우저가 아는 값을 얹는다. */
+/**
+ * 서버가 아는 값 위에 이 브라우저가 아는 값을 얹는다.
+ *
+ * ## `subscribed` 는 **이 브라우저의 값만** 본다
+ *
+ * 예전에는 `server.subscribed || localBrowserSubscription` 이었다. 그래서 **어느 기기에서든
+ * 하나만 켜져 있으면 모든 기기가 "켜짐"이라고 보였다** — 휴대폰에만 켜진 상태에서 PC 로
+ * 설정 화면을 열면 PC 도 켜진 것처럼 보였다. 끄러 들어가면 PC 의 주소가 없는데도 지워질 것만
+ * 같았다.
+ *
+ * 서버 값은 "내 계정 어딘가에 켜진 기기가 있는가"라는 **다른 질문**이다. 이 기기가 켜졌는지는
+ * **`pushManager.getSubscription()` 이 정확히 안다** — 그 주소는 브라우저 안에만 있다. 그래서
+ * 질문 자체를 바꿔 이쪽만 쓴다.
+ *
+ * 모르면 `false` 다. **확인 못 하고 켜졌다고 말하는 것보다 나쁘다** — 실제로 알림이 오지 않으니까.
+ * 대신 화면은 "다른 기기에서 받고 있어요" 안내로 그 상황을 설명한다(`countSubscriptions`).
+ */
 export async function readPushState(server: {
   configured: boolean;
-  subscribed: boolean
+  subscribed: boolean;
 }): Promise<PushState> {
   const supported =
     typeof window !== "undefined" &&
@@ -44,15 +60,22 @@ export async function readPushState(server: {
     "PushManager" in window &&
     "Notification" in window;
   if (!supported) {
-    return { supported: false, permission: "default", standalone: false, ios: false, ...server };
+    return {
+      supported: false,
+      permission: "default",
+      standalone: false,
+      ios: false,
+      configured: server.configured,
+      subscribed: false,
+    };
   }
 
-  let subscribed = server.subscribed;
+  let local = false;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
-    subscribed = subscribed || Boolean(await reg?.pushManager.getSubscription());
+    local = Boolean(await reg?.pushManager.getSubscription());
   } catch {
-    // 못 물어봐도 서버가 알려 준 값을 그대로 쓴다.
+    // 못 물어보면 **모르는 것**이라고 한다. 서버 값으로 메우지 않는다.
   }
 
   return {
@@ -61,7 +84,7 @@ export async function readPushState(server: {
     standalone: isStandalone(),
     ios: isIosDevice(),
     configured: server.configured,
-    subscribed,
+    subscribed: local,
   };
 }
 
@@ -110,15 +133,24 @@ export async function turnOnPush(): Promise<PushTurnOn> {
 
 /** 이 브라우저의 구독을 끈다. 브라우저 쪽 구독도 함께 지운다 — 그래야 재시도할 수 있다. */
 export async function turnOffPush(): Promise<"off" | "failed"> {
+  /**
+   * ** 구독을 끊기 전에 주소를 꺼둔다.** 서버는 이제 **이 기기 하나만** 지운다 — 예전처럼
+   * `memberId` 로 지우면 휴대폰에서 꺼도 이 노트북의 구독까지 함께 사라진다. 주소를 먼저
+   * 확보해야 그 기기를 정확히 가리킬 수 있다.
+   */
+  let endpoint: string | null = null;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = await reg?.pushManager.getSubscription();
+    endpoint = sub?.endpoint ?? null;
     await sub?.unsubscribe();
   } catch {
-    // 브라우저 쪽을 못 지워도 서버 쪽을 지운다 — 화면이 "꺼짐"이라고 말할 상태는 되어야 한다.
+    // 브라우저 쪽을 못 지워도 서버 쪽은 지운다 — 화면이 "꺼짐"이라고 말할 상태는 되어야 한다.
   }
   try {
-    await clearPushSubscriptions();
+    // 주소를 못 얻었다면 **아무것도 안 지운다**(서버가 그렇게 막아 둔다). 모르는 걸 지우는
+    // 것은 예전 사고의 모양이다 — 남의 기기까지 꺼진다고 말하면 되돌릴 수 없다.
+    await clearPushSubscription(endpoint);
     return "off";
   } catch {
     return "failed";

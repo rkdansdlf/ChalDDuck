@@ -33,6 +33,8 @@ const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; lab
   "rejoin-request": { icon: "user-search", surface: "bg-coral-100 text-coral-700", label: "재입장 요청" },
   icebreak: { icon: "drama", surface: "bg-fill text-txt-muted", label: "아이스브레이킹" },
   "who-does-it": { icon: "disc-3", surface: "bg-yellow-200 text-yellow-700", label: "누가 하지" },
+  /** 추첨 동의는 **응답해야** 다음이 열린다 — 회의 제안과 같은 자리다. */
+  "role-consent": { icon: "users-round", surface: "bg-yellow-200 text-yellow-700", label: "추첨 동의" },
   drive: { icon: "folder-open", surface: "bg-yellow-200 text-yellow-700", label: "드라이브" },
 };
 

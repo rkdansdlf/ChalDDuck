@@ -38,6 +38,8 @@ export type NavBadges = {
    */
   parts: {
     clashes: number;
+    /** 내가 동의할지 반대할지 정해야 하는 추첨 제안. 겹침에서 빼서 세므로 **겹치지 않는다.** */
+    consent: number;
     /** 내가 넣었는데 아직 팀원 확인을 못 받은 기록. 홈 목록에는 없는 몫이다. */
     contribMine: number;
     /** 내가 확인해 줘야 하는 팀원 기록. */
@@ -47,8 +49,9 @@ export type NavBadges = {
 };
 
 export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
-  const [clashes, contrib, approvals, cal, chat, drive, notifications] = await Promise.all([
-    countRoleClashes(me.teamId),
+  const [clashes, consent, contrib, approvals, cal, chat, drive, notifications] = await Promise.all([
+    countRoleClashes(me.teamId, me.id),
+    countRoleConsents(me.teamId, me.id),
     countContribPending(me),
     countApprovalsWaiting(me),
     countMeetingWaiting(me),
@@ -58,13 +61,14 @@ export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
   ]);
 
   return {
-    team: clashes + contrib.mine + contrib.awaitingMe + approvals,
+    team: clashes + consent + contrib.mine + contrib.awaitingMe + approvals,
     cal,
     chat,
     drive,
     notifications,
     parts: {
       clashes,
+      consent,
       contribMine: contrib.mine,
       contribAwaitingMe: contrib.awaitingMe,
       approvals,
@@ -73,26 +77,53 @@ export async function readNavBadges(me: SessionMember): Promise<NavBadges> {
 }
 
 /**
+ * 내가 응답해야 하는 **추첨 동의 제안** 수.
+ *
+ * `respondBy > now` 로만 센다 — `consentViewOf` 의 경계와 같은 조건이어야 배지와 07
+ * 화면이 다른 답을 내지 않는다. 마감 지난 제안은 저절로 통과했으므로 내 몫이 아니다.
+ *
+ * **이미 동의한 제안은 세지 않는다.** 서버 상태로 직접 판한다(클라이언트의 `iAgreed` 대신).
+ */
+async function countRoleConsents(teamId: string, meId: string): Promise<number> {
+  const rows = await db.roleDrawConsent.findMany({
+    where: { teamId, respondBy: { gt: new Date() } },
+    select: { id: true, responses: { where: { memberId: meId, agree: true }, select: { id: true } } },
+  });
+  return rows.filter((c) => c.responses.length === 0).length;
+}
+
+/**
  * 희망이 겹쳐 아직 정해지지 않은 역할 수.
  *
  * 명단을 받아 오지 않고 역할별 희망자 수만 센다. 겹쳤는지 판단하는 규칙은
  * `isUnresolvedClash` 한 곳에 있다 — 07 화면과 이 배지가 같은 답을 내야 한다.
+ *
+ * **내가 응답할 동의 대기가 걸린 역할은 여기서 뺀다.** 그 몫은 `parts.consent` 가 세고,
+ * 여기서도 세면 팀 배지에 한 역할이 두 번 들어간다. 이미 동의한 사람의 제안은 여기 남는다 —
+ * 팀 몫이지 내 할 일이 아니기 때문이다.
  */
-async function countRoleClashes(teamId: string): Promise<number> {
-  const [wanters, accepted] = await Promise.all([
+async function countRoleClashes(teamId: string, meId: string): Promise<number> {
+  const [wanters, accepted, consents] = await Promise.all([
     db.member.groupBy({
       by: ["wantRole"],
       where: { teamId, leftAt: null, wantRole: { not: null } },
       _count: { _all: true },
     }),
     db.roleDraw.findMany({ where: { teamId, accepted: true }, select: { role: true } }),
+    db.roleDrawConsent.findMany({
+      where: { teamId, respondBy: { gt: new Date() } },
+      select: { role: true, responses: { where: { memberId: meId, agree: true }, select: { id: true } } },
+    }),
   ]);
 
   const acceptedRoles = new Set(accepted.map((d) => d.role));
   const countOf = new Map(wanters.map((w) => [w.wantRole as RoleKey, w._count._all]));
+  const mine = new Set(
+    consents.filter((c) => c.responses.length === 0).map((c) => c.role as RoleKey),
+  );
 
   return ROLES.filter((role) =>
-    isUnresolvedClash(countOf.get(role.key) ?? 0, acceptedRoles.has(role.key)),
+    isUnresolvedClash(countOf.get(role.key) ?? 0, acceptedRoles.has(role.key), mine.has(role.key)),
   ).length;
 }
 

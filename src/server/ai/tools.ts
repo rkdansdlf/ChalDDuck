@@ -344,9 +344,19 @@ export async function summarizeMeeting(
  * 왜 비었는지가 아무 데도 없었다 — 아무것도 못 찾은 것과 화면이 고장난 것이 구분되지 않는
  * 상태였다. 이제 그 말을 첫 번째 결과로 돌려준다.
  */
-export async function searchResearch(query: string, model?: string): Promise<ResearchResult[]> {
+export async function searchResearch(
+  query: string,
+  model?: string,
+  /**
+   * 어느 단계에 들어갔는지 알린다. 리서처는 **실제로 두 번 부른다**(검색 → 카드 정리) — 한 번에
+   * 15~60초가 걸리는 도구라 화면이 \"찾는 중\" 한 줄로 서 있으면 멈춘 것처럼 보인다. 예시를 돌려줄
+   * 때는 부르지 않는다(모델이 한 일이 아니므로 단계도 없다).
+   */
+  onPhase?: (phase: "searching" | "shaping") => void,
+): Promise<ResearchResult[]> {
   if (!isAiConfigured()) return RESEARCH_SAMPLE_RESULTS;
 
+  onPhase?.("searching");
   const answer = await askWithSearch({
     tool: "research",
     ...(model ? { model } : {}),
@@ -371,6 +381,7 @@ export async function searchResearch(query: string, model?: string): Promise<Res
 
   const allowed = new Map(answer.citations.map((c) => [c.url, c]));
 
+  onPhase?.("shaping");
   const shaped = await askShape<{
     results: Array<{ title: string; source: string; snippet: string; url: string }>;
   }>({

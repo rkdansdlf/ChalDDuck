@@ -1,0 +1,39 @@
+name: ai-bench
+
+# 모델을 부르는 벤치는 `npm test` / `npm run verify` 에 넣지 않는다(돈과 시간, 무료 한도).
+# 주 1회 + 수동으로만 돈다. 목적: 프롬프트·모델 회귀와 "썩은 슬러그"를 사용자보다 먼저 발견.
+on:
+  schedule:
+    - cron: "0 0 * * 1" # 월요일 09:00 KST
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Skip when no key
+        if: env.OPENROUTER_KEY == ''
+        run: echo "OPENROUTER_KEY secret 이 없어 벤치를 건너뜁니다." && exit 0
+
+      # 슬러그가 카탈로그에서 사라졌는지.
+      - name: Check configured slugs
+        if: env.OPENROUTER_KEY != ''
+        run: npm run tool:bench -- --check-env
+
+      # 계약(담당자 추측·수치 지어냄·지어낸 주소·없는 약속)은 --strict 로 최악 회차 기준 판정.
+      - name: Bench tools
+        if: env.OPENROUTER_KEY != ''
+        run: |
+          for tool in clerk present research cushion sentence; do
+            npm run tool:bench -- --tool "$tool" --models openrouter/free --repeat 3 --strict --no-save || echo "::warning::$tool 계약 위반"
+          done

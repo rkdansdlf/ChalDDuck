@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { sweepAttempts } from "@/server/auth/attempts";
 import { describePurification, purificationStats } from "@/server/ai/purify-stats";
-import { aiCallStats, describeAiCalls, sweepAiCalls } from "@/server/ai/call-stats";
+import { aiCallStats, describeAiCalls, detectAiAnomalies, sweepAiCalls } from "@/server/ai/call-stats";
 import { db } from "@/server/db";
 import { sweepAiUsage } from "@/server/ai/limit";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
@@ -88,9 +88,18 @@ export async function GET(request: Request) {
       purifications.push({ team: team.name, ...stats });
     }
     const callStats = await aiCallStats(team.id);
-    // **아무 호출도 없으면 조용히 넘어간다.** 0 을 0 으로 찍는 로그는 사람이 읽지 않는다.
     if (callStats.calls > 0) {
-      console.log(`[${team.name}] ${describeAiCalls(callStats)}`);
+      const line = describeAiCalls(callStats);
+      console.log(`[${team.name}] ${line}`);
+      const anomalies = detectAiAnomalies({
+        totalCalls: callStats.calls,
+        failureRate: callStats.outcomes.failed / callStats.calls,
+        retryRate: callStats.retried / callStats.calls,
+        slowRate: callStats.slow,
+      });
+      for (const warning of anomalies.warnings) {
+        console.warn(`[${team.name}] ⚠️ ${warning}`);
+      }
       calls.push({ team: team.name, ...callStats });
     }
   }

@@ -3,7 +3,7 @@ import "server-only";
 import type { AiResult } from "@/lib/types";
 import { withAiCaller } from "@/server/ai/call-context";
 import { isAiConfigured } from "@/server/ai/model";
-import { consumeAiQuota, refundAiQuota, type AiToolKey } from "@/server/ai/limit";
+import { recordAiUsage, refundAiUsage, type AiToolKey } from "@/server/ai/limit";
 import { requireSessionMember } from "@/server/session";
 
 /**
@@ -27,7 +27,7 @@ import { requireSessionMember } from "@/server/session";
 export async function runTool<T>(tool: AiToolKey, call: () => Promise<T>): Promise<AiResult<T>> {
   const me = await requireSessionMember();
 
-  // 키가 없으면 예시를 돌려주는 길이다 — 부르지 않은 호출을 한도에서 깎지 않는다.
+  // 키가 없으면 예시를 돌려주는 길이다 — 부르지 않은 호출을 기록하지 않는다.
   const live = isAiConfigured();
 
   /**
@@ -38,7 +38,7 @@ export async function runTool<T>(tool: AiToolKey, call: () => Promise<T>): Promi
   let usageId: string | undefined;
 
   if (live) {
-    const quota = await consumeAiQuota(me, tool);
+    const quota = await recordAiUsage(me, tool);
     if (!quota.ok) return quota;
     usageId = quota.usageId;
   }
@@ -64,7 +64,7 @@ export async function runTool<T>(tool: AiToolKey, call: () => Promise<T>): Promi
      * 거절(`throw` 가 아니라 돌려준 답)은 이 자리에 오지 않으므로, 안전 필터 거절이
      * 공짜로 반복되는 길은 열리지 않는다.
      */
-    if (usageId) await refundAiQuota(me, usageId);
+    if (usageId) await refundAiUsage(me, usageId);
 
     const detail =
       process.env.NODE_ENV !== "production" && cause instanceof Error ? ` (${cause.message})` : "";

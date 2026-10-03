@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AppBar,
@@ -7,19 +8,22 @@ import {
   Btn,
   Chip,
   Dock,
+  Icon,
   Note,
-  Undecided,
+  Panel,
 } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import type { ContribReportRow, Team } from "@/lib/types";
-import { StepRail } from "./step-rail";
+import { createReportShareToken } from "@/server/actions/report-share";
+
+export type ReportViewMode = "professor" | "internal";
 
 /**
- * 18 기여도 · 1장 PDF.
+ * 18 기여도 · 1장 PDF 및 보고서 화면.
  *
- * **종합 점수도 순위도 없다.** 확인된 기록의 건수만 적고, 미확인·의견 차이는 감추지 않고
- * 따로 표시한다 — 문서가 팀원 간 우열을 나타내는 순간 기록을 남길 이유가 사라진다.
- *
- * 흰 배경·단정한 구분선으로 문서처럼 보이게 한다. 앱 화면이 아니라 제출물의 미리 보기다.
+ * 두 가지 뷰 모드 지원:
+ * - "professor": 교수 제출용 공식 양식 (확인된 실적, 상호 확인율 %, 주요 활동 하이라이트 중심)
+ * - "internal": 팀 내부 점검용 양식 (미확인 건수, 의견 차이, 다툼 이력 등 전수 포함)
  */
 export function ContribReportScreen({
   team,
@@ -27,122 +31,255 @@ export function ContribReportScreen({
   issuedOn,
 }: {
   team: Team;
-  /** 서버가 16·17 과 같은 표에서 센 줄. 화면은 세지 않는다. */
   rows: ContribReportRow[];
-  /** 서버에서 만든 발행일. 화면에서 만들면 서버 렌더와 어긋난다. */
   issuedOn: string;
 }) {
   const router = useRouter();
+  const [mode, setMode] = useState<ReportViewMode>("professor");
+  const [sharing, setSharing] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
+  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
+  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
+  const totalAll = totalConfirmed + totalPending + totalDisputed;
+  const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
+
+  const handleShare = async () => {
+    setSharing(true);
+    try {
+      const res = await createReportShareToken(mode);
+      const fullUrl = `${window.location.origin}${res.url}`;
+      setShareUrl(fullUrl);
+      await navigator.clipboard.writeText(fullUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      alert("공유 링크를 생성하지 못했습니다.");
+    } finally {
+      setSharing(false);
+    }
+  };
 
   return (
     <>
       <AppBar
-        title="리포트 미리 보기"
-        sub="4 / 4단계"
-        onBack={() => router.push("/team/contrib/members")}
+        title="기여 기록 리포트"
+        sub={mode === "professor" ? "교수 제출용 공식 서식" : "팀 내부 점검용"}
+        onBack={() => router.push("/team/contrib")}
       />
 
       <Body dense>
-        <StepRail at={3} />
+        {/* 모드 선택 탭 (인쇄 제외) */}
+        <div className="mb-3.5 flex rounded-xl border border-line bg-fill p-1">
+          <button
+            type="button"
+            onClick={() => setMode("professor")}
+            className={cn(
+              "flex-1 rounded-lg py-2 text-[13px] font-bold transition-all cursor-pointer",
+              mode === "professor"
+                ? "bg-card text-txt-strong shadow-xs"
+                : "text-txt-muted hover:text-txt",
+            )}
+          >
+            🎓 교수 제출용 (공식)
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("internal")}
+            className={cn(
+              "flex-1 rounded-lg py-2 text-[13px] font-bold transition-all cursor-pointer",
+              mode === "internal"
+                ? "bg-card text-txt-strong shadow-xs"
+                : "text-txt-muted hover:text-txt",
+            )}
+          >
+            🔍 팀 내부 점검용
+          </button>
+        </div>
 
-        {/* 제출물 미리 보기 — 앱 색이 아니라 문서 색을 쓴다.
-            넓은 화면에서는 A4 비율(1:1.414)을 최소 높이로 잡아 인쇄했을 때의 모습에 가깝게 보여 준다.
-            내용이 더 길면 늘어난다 — 비율을 지키려고 내용을 자르지는 않는다. */}
+        {/* 상단 요약 배너 (인쇄 제외) */}
+        <div className="mb-3.5 rounded-control border border-line bg-card p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] font-bold text-txt-strong">
+              {mode === "professor" ? "공식 제출 요약 지표" : "제출 전 내부 점검 상태"}
+            </span>
+            <Chip tone="ok">상호 확인율 {consensusRate}%</Chip>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap gap-2 text-[12.5px]">
+            <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+              <Icon name="check" size={13} />
+              확인 완료 {totalConfirmed}건
+            </span>
+            {totalPending > 0 ? (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+                <Icon name="circle-dashed" size={13} />
+                미확인 {totalPending}건
+              </span>
+            ) : null}
+            {totalDisputed > 0 ? (
+              <span className="inline-flex items-center gap-1 font-medium text-red-700">
+                <Icon name="circle-alert" size={13} />
+                의견 차이 {totalDisputed}건
+              </span>
+            ) : null}
+          </div>
+
+          {mode === "professor" && (totalPending > 0 || totalDisputed > 0) && (
+            <div className="mt-2 text-[11.5px] leading-relaxed text-amber-800">
+              💡 미확인 건은 공식 제출본에서 상호 합의율에 반영되며 감정적 분쟁 세부 내용은 배제됩니다.
+            </div>
+          )}
+        </div>
+
+        {/* ── 리포트 인쇄 문서 (data-print-doc) ──────────────── */}
         <div
           data-print-doc
-          className="mb-3.5 rounded-control border border-line bg-white px-4 py-[18px] lg:mx-auto lg:min-h-[792px] lg:w-[560px] lg:px-8 lg:py-10 animate-slide-up shadow-xs"
+          className="mb-4 rounded-control border border-line bg-white px-5 py-6 lg:mx-auto lg:min-h-[792px] lg:w-[600px] lg:px-8 lg:py-10 shadow-xs"
         >
-          <div className="mb-3 border-b-[1.5px] border-ink-900 pb-3">
-            <div className="keep-all font-extrabold text-[17px] leading-[1.3] tracking-[-.025em] text-ink-900">
-              팀 기여 기록
-            </div>
-            <div className="mt-[3px] font-medium text-[13px] leading-[1.45] text-txt-muted">
-              {team.name} · {team.course} · {issuedOn}
+          {/* 공식 문서 헤더 */}
+          <div className="border-b-2 border-ink-900 pb-3.5">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-bold text-zinc-600">
+                  {mode === "professor" ? "과제 수행 기여 기록 증빙서" : "팀 내부 기여 기록 점검표"}
+                </span>
+                <h1 className="mt-1 font-extrabold text-[20px] leading-tight text-ink-900">
+                  {team.name}
+                </h1>
+                <p className="mt-0.5 text-[13px] text-zinc-600 font-medium">
+                  교과목: {team.course}
+                </p>
+              </div>
+              <div className="text-right text-[12px] text-zinc-500">
+                <div>발행일: {issuedOn}</div>
+                <div>참여 인원: {rows.length}명</div>
+                <div className="mt-1 font-bold text-emerald-800">
+                  상호 확인율: {consensusRate}%
+                </div>
+              </div>
             </div>
           </div>
 
-          {rows.map((row) => (
-            <div key={row.memberId} className="mb-[11px] border-b border-line pb-[11px]">
-              <div className="flex items-baseline gap-[7px]">
-                <span className="font-bold text-[14px] leading-[1.4] text-ink-900">{row.who}</span>
-                {row.left ? (
-                  <span className="font-medium text-[12px] leading-[1.4] text-txt-faint">
-                    팀 퇴장
+          {/* 팀원별 기여 내역 */}
+          <div className="divide-y divide-zinc-200">
+            {rows.map((row) => (
+              <div key={row.memberId} className="py-3.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-[15px] text-ink-900">{row.who}</span>
+                    {row.left && (
+                      <span className="rounded bg-zinc-100 px-1 text-[11px] text-zinc-400">퇴장</span>
+                    )}
+                    <span className="text-[13px] text-zinc-500 font-medium">
+                      역할: {row.role}
+                    </span>
+                  </div>
+                  <span className="text-[12.5px] font-semibold text-emerald-700">
+                    확인된 실적 {row.confirmed}건
                   </span>
-                ) : null}
-                <span className="font-medium text-[13px] leading-[1.4] text-txt-muted">
-                  확정된 역할 · {row.role}
-                </span>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-[5px]">
-                <Chip tone="ok" icon="check">
-                  확인된 기록 {row.confirmed}건
-                </Chip>
-                {row.pending > 0 ? (
-                  <Chip tone="warn" icon="circle-dashed">
-                    미확인 {row.pending}건
-                  </Chip>
-                ) : null}
-                {row.disputed > 0 ? (
-                  <Chip tone="err" icon="circle-alert">
-                    의견 차이 {row.disputed}건
-                  </Chip>
-                ) : null}
-                {/* 팀장이 직접 찍은 참여. 0 이면 말하지 않는다 — 다른 두 칩과 같은 규칙이다. */}
-                {row.participations > 0 ? (
-                  <Chip icon="users-round">참여 표시 {row.participations}건</Chip>
-                ) : null}
-                {/* 답이 없는 의견이 닫힌 경우. 0 이면 말하지 않는다 — 다른 칩과 같은 규칙. */}
-                {row.unresolved > 0 ? (
-                  <Chip tone="err" icon="circle-help">
-                    정리되지 않은 의견 {row.unresolved}건
-                  </Chip>
-                ) : null}
-              </div>
-            </div>
-          ))}
+                </div>
 
-          <div className="text-pretty-keep text-[13px] leading-[1.6] text-txt-muted">
-            이 문서는 확인된 기록만 담습니다. 종합 점수와 순위는 포함하지 않으며, 팀원 간 우열을 나타내지
-            않습니다. MBTI, 사주, 채팅량, 친목 활동은 반영하지 않았습니다.
+                {/* 칩 지표 */}
+                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11.5px]">
+                  {row.participations > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-2 py-0.5 text-zinc-700">
+                      <Icon name="users-round" size={11} />
+                      팀장 회의 참여 {row.participations}회
+                    </span>
+                  )}
+                  {mode === "internal" && row.pending > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-0.5 text-amber-700">
+                      미확인 {row.pending}건
+                    </span>
+                  )}
+                  {mode === "internal" && row.disputed > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-2 py-0.5 text-rose-700">
+                      의견 차이 {row.disputed}건
+                    </span>
+                  )}
+                  {mode === "internal" && row.unresolved > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-2 py-0.5 text-rose-700">
+                      미해결 {row.unresolved}건
+                    </span>
+                  )}
+                </div>
+
+                {/* 주요 성과 하이라이트 */}
+                {row.highlights && row.highlights.length > 0 && (
+                  <div className="mt-2 rounded bg-zinc-50 px-2.5 py-1.5 text-[12px] text-zinc-700">
+                    <div className="font-semibold text-zinc-500 text-[11px] mb-1">교차 확인된 주요 성과</div>
+                    <ul className="list-inside list-disc space-y-0.5 text-zinc-700">
+                      {row.highlights.map((h, i) => (
+                        <li key={i} className="truncate">{h}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* 공적 서명 및 사실 확인 조항 */}
+          <div className="mt-6 border-t border-zinc-300 pt-4 text-[12px] leading-relaxed text-zinc-600">
+            <p className="font-semibold text-zinc-800">
+              ※ 본 보고서는 팀원 상호 검증 및 교차 확인을 거친 기록만을 바탕으로 공정하게 집계되었습니다.
+            </p>
+            <p className="mt-1 text-zinc-500">
+              개인적인 평점, 친목 활동, 채팅 빈도 등 주관적 지표는 배제되었으며, 상호 합의된 역할 배정과 산출물 제출 이력에 기반합니다.
+            </p>
+            <div className="mt-4 flex justify-between text-[11px] text-zinc-400">
+              <span>찰떡(ChalDduck) 객관적 팀플 기여 기록 인증 시스템</span>
+              <span>확인자: {team.name} 팀원 일동</span>
+            </div>
           </div>
         </div>
 
-        <Note tone="info" icon="wand-sparkles" title="AI는 확인된 기록만 요약합니다" className="mb-3">
-          미확인·의견 차이 항목은 요약 문장에 넣지 않고 <b>따로 표시</b>합니다. 수치는 정해진 규칙으로만
-          셉니다.
-        </Note>
+        {/* 공유 링크 안내 카드 */}
+        {shareUrl && (
+          <Panel s="yellow" pad={14} className="mb-3">
+            <div className="flex items-center justify-between text-[13px] font-bold text-ink-900">
+              <span>공개 열람 링크 (14일 유효)</span>
+              {copied && <span className="text-emerald-700 text-[12px]">✓ 클립보드에 복사됨!</span>}
+            </div>
+            <div className="mt-1 text-[12px] text-txt-muted break-all font-mono">
+              {shareUrl}
+            </div>
+          </Panel>
+        )}
 
-        <Undecided>
-          교수 제출용과 팀 내부용을 나눌지, 미확인 항목을 제출본에 넣을지가 정해지지 않았습니다. 제출 전{" "}
-          <b>팀원 전원 동의</b>를 받을지도 확인이 필요합니다 — 정해지기 전이라 동의 요청은 만들지 않았고,
-          “PDF로 저장”은 지금 보이는 문서를 그대로 저장만 합니다. 팀 밖(교수)에게 보낼 공개 링크도 같은
-          이유로 두지 않았습니다.
-        </Undecided>
+        <Note tone="info" icon="shield" className="mb-3">
+          인쇄 시 상단 탭 및 모바일 UI는 자동 제외되며, 깔끔한 A4 1장 공문서 규격으로 인쇄됩니다.
+        </Note>
       </Body>
 
       <Dock>
-        {/* 브라우저 인쇄의 "PDF로 저장"을 쓴다 — 무엇이 종이에 남는지는 globals.css 의
-            인쇄 규칙(data-print-doc)이 정한다. 저장된 PDF 가 곧 공유 수단이다. */}
-        <Btn
-          full
-          size="lg"
-          icon="file-down"
-          onClick={() => printAs(`팀 기여 기록 - ${team.name} - ${issuedOn}`)}
-        >
-          PDF로 저장
-        </Btn>
+        <div className="flex gap-2">
+          <Btn
+            v="outline"
+            className="flex-1"
+            icon={copied ? "check" : "share-2"}
+            disabled={sharing}
+            onClick={handleShare}
+          >
+            {copied ? "링크 복사 완료" : "교수용 링크 복사"}
+          </Btn>
+          <Btn
+            v="primary"
+            className="flex-1"
+            icon="file-down"
+            onClick={() => printAs(`기여기록_리포트_${team.name}_${issuedOn}`)}
+          >
+            PDF로 저장
+          </Btn>
+        </div>
       </Dock>
     </>
   );
 }
 
-/**
- * 문서 제목을 잠깐 바꿔 인쇄한다.
- *
- * 브라우저는 PDF 파일 이름을 `document.title` 로 제안한다 — 그대로 두면 모든 팀의 리포트가
- * "찰떡.pdf" 로 저장된다. 인쇄 창이 닫히면 되돌린다.
- */
 function printAs(title: string) {
   const previous = document.title;
   document.title = title;

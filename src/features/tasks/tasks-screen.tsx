@@ -137,7 +137,7 @@ export function TasksScreen({
           담당자에게 진행상황 묻기
         </Btn>
 
-        <Rows>
+        <Rows key={filter} className="animate-fade-in">
           {shown.map((task) => {
             // **표에 없는 상태는 처음 상태로 되돌린다.** `Task.status` 는 DB 에서
             // `String` 이고(값을 제한할 수 없어서) `api.ts` 는 그대로 형을 바꿔 붙인다.
@@ -148,23 +148,49 @@ export function TasksScreen({
             const kind = kindOf(task.kind);
             const done = task.status === "done";
             return (
-              <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-colors duration-150">
+              <div
+                key={task.id}
+                className={cn(
+                  "flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-all duration-200",
+                  done && "bg-ok-bg/30 rounded-xl"
+                )}
+              >
                 <button
                   type="button"
-                  disabled={busy.cycle}
+                  disabled={busy.cycle || !task.canEdit}
                   onClick={() =>
-                    void run("cycle", async () => {
-                      await cycleTaskStatus(task.id);
-                      router.refresh();
-                    }, "상태를 바꾸지 못했습니다. 다시 눌러 주세요.")
+                    void run(
+                      "cycle",
+                      async () => {
+                        await cycleTaskStatus(task.id);
+                        router.refresh();
+                      },
+                      // **조용히 아무 일도 일어나지 않게 하지 않는다.** 상태는 곧 "다 했다" 이고
+                      // 그건 담당자의 것이지 옆에서 지켜보던 사람의 것이 아니다. 막힌 이유를
+                      // 그대로 말한다(`editBlockedBecause` 는 서버가 계산해 보낸 값이다).
+                      task.editBlockedBecause === "leader-only"
+                        ? "넣기 전에 있던 업무라 팀장만 상태를 바꿀 수 있습니다."
+                        : "남이 넣은 업무라 상태를 바꿀 수 없습니다.",
+                    )
                   }
-                  aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
+                  // 막힌 사람은 **누를 수 없다** — 그런데 화면 낭독문에는 이유를 남긴다.
+                  // 화면을 못 누르는 것과 왜 못 누르는지 아는 것을 같게 만들면, 눈으로 볼 수 없는 규칙이 되어 버린다.
+                  aria-disabled={!task.canEdit}
+                  aria-label={
+                    task.canEdit
+                      ? `${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`
+                      : `${task.title} — ${
+                          task.editBlockedBecause === "leader-only"
+                            ? "넣기 전에 있던 업무라 팀장만 바꿀 수 있습니다"
+                            : "남이 넣은 업무라 바꿀 수 없습니다"
+                        }`
+                  }
                   className={cn(
-                    "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-75",
+                    "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-90",
                     done ? "text-ok" : "text-txt-muted hover:text-txt-strong",
                   )}
                 >
-                  <span className={cn("inline-flex", done && "animate-pop")}>
+                  <span className={cn("inline-flex transition-transform duration-200", done ? "animate-check-bounce" : "hover:scale-110")}>
                     <Icon name={status.icon} size={22} />
                   </span>
                 </button>
@@ -177,8 +203,8 @@ export function TasksScreen({
                   >
                     <div
                       className={cn(
-                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5] transition-all duration-200",
-                        done ? "text-txt-faint line-through opacity-70" : "text-txt-strong",
+                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5] transition-all duration-300",
+                        done ? "text-txt-faint line-through opacity-65 translate-x-0.5" : "text-txt-strong",
                       )}
                     >
                       {task.title}

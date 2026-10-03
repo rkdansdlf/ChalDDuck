@@ -1,0 +1,40 @@
+{
+  "tool": "clerk",
+  "at": "2026-10-03T14:40:49.015Z",
+  "repeat": 1,
+  "corpus": 11,
+  "models": [
+    {
+      "model": "openrouter/free",
+      "passesPerRun": [
+        9
+      ],
+      "total": 11,
+      "rate": 0.8181818181818182,
+      "worst": 0.8181818181818182,
+      "avgSeconds": 14.325727272727272,
+      "byKind": {
+        "normal": {
+          "passed": 7,
+          "total": 8
+        },
+        "ambiguous": {
+          "passed": 1,
+          "total": 1
+        },
+        "adversarial": {
+          "passed": 0,
+          "total": 1
+        },
+        "edge": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "failures": {
+        "not-a-meeting": 1,
+        "injection-1": 1
+      }
+    }
+  ]
+}

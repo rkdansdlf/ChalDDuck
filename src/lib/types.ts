@@ -135,6 +135,7 @@ export type MeetingSlot = {
  * `idle` 은 제안이 아직 없는 상태다.
  */
 export type MeetingProposal = {
+  id?: string;
   stage: "idle" | "proposed" | "confirmed" | "carried";
   slot: MeetingSlot | null;
   /**
@@ -152,6 +153,14 @@ export type MeetingProposal = {
   respondBy: string | null;
   /** 내가 이미 응답했는지 — 같은 사람이 두 번 누르지 않게 한다. */
   myResponse: "agree" | "against" | null;
+  /** 회의 장소 (오프라인 회의실 또는 온라인 URL). */
+  location?: string | null;
+  /** 회의 안건. */
+  agenda?: string | null;
+  /** 회의 소요 시간(분). 기본 60분. */
+  durationMinutes?: number;
+  /** 회의록 작성 여부. */
+  hasNote?: boolean;
 };
 
 /** 한 주의 회의 시간 후보와 그 주의 상황. */
@@ -197,7 +206,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "drive";
+  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "drive";
   title: string;
   body: string;
   href: string | null;
@@ -229,21 +238,27 @@ export type AiTool = {
 export type AiPolicy = {
   /** 사용 기록(횟수)을 남겨 두는 기간. 입력한 글과 결과는 애초에 저장하지 않는다. */
   retentionDays: number;
-  /** 한 팀이 하루에 부를 수 있는 횟수. */
-  perTeamPerDay: number;
-  /** 한 사람이 하루에 부를 수 있는 횟수. 한 사람이 팀 몫을 다 쓰지 못하게 한다. */
-  perMemberPerDay: number;
   /**
-   * **읽기 순화만 쓰는** 한도(하루). 위 두 값과 **따로** 센다.
+   * **읽기 순화 폭주 차단(하루·팀).** 사용자에게 보이는 한도가 아니라 **안전장치**다.
    *
-   * 왜 따로 세는가: 순화는 누가 누를 때만 일어나는 것이 아니라 **대화방을 열면 알아서** 돈다.
-   * 같은 장부를 쓴다면 한 사람이 대화방을 많이 여는 것만으로 팀의 쿠션 번역기·리서처 몫이
-   * 바닥나고, 그때 화면이 말하는 것은 "한도를 다 썼습니다" 다 — 실제로는 순화가 썼다는 사실이
-   * 그 자리에 없다. 그래서 **몫을 나눠 각각 세운다.** 어느 쪽이 얼마를 썼는지는 여전히
-   * 한 `AiUsage` 표에 함께 남는다(스키마는 그대로).
+   * ## 왜 이것만 남았는가 (2026-09-28)
+   *
+   * 도구 한도(팀 200 · 1인 60)는 **삭제했다.** 지워도 되는 근거가 측정으로 나왔다 —
+   *
+   * - 운영 14일 기록의 최고 하루 **18회**(도구 팀 한도 200 의 9%), 거절은 **0건**이었고,
+   *   한도에 닿은 날이 **한 번도 없었다.**
+   * - 라우터가 **속도 한도로** 막은 적도 없다. 기록에 남은 실패는 `MODEL_REFUSAL` 2건(안전
+   *   필터가 내용을 거절)과 60초 타임아웃 1건이었다 — **한도와 무관한 실패**다.
+   *
+   * 즉 그 숫자는 14일간 아무 일도 하지 않았다. 사용자에게 "하루 200회" 로 보이도록 찍혀 있던
+   * 것은 **한도가 아니라 거짓이었다.**
+   *
+   * 남긴 것은 **하나**다. 순화는 사람이 누르는 것이 아니라 **메시지마다 자동으로** 도는
+   * 유일한 기능이라, 여기만 무제한이 가능한 형태의 사고다. 재시도 폭주는 이미
+   * `MAX_ATTEMPTS`·`FAILURE_BACKOFF_MS` 로 묶여 있으니 순환은 구속된다 — 이건 그 위에 있는
+   * 마지막 방어선이고, 사람 눈에는 보이지 않는다(사용자에게 한도로 말하지 않는다).
    */
-  readCushionPerTeamPerDay: number;
-  readCushionPerMemberPerDay: number;
+  cushionRunawayCapPerTeamPerDay: number;
 };
 
 /**
@@ -400,6 +415,19 @@ export type SubmissionBox = {
   dueAt: string | null;
   /** 마감을 지나 올라온 파일이 있는지. */
   hasLate: boolean;
+  /** 현재 로그인한 사용자가 마감을 변경할 수 있는지 (담당자 또는 팀장). */
+  canEditDeadline?: boolean;
+};
+
+/** 제출함 마감 변경 이력 항목 */
+export type DeadlineHistoryItem = {
+  id: string;
+  boxId: string;
+  changedBy: string;
+  previousDue: string;
+  newDue: string;
+  reason: string | null;
+  createdAt: string;
 };
 
 /** 실제로 열리는 형식과 안내만 하는 형식을 구분하기 위한 종류. */
@@ -448,6 +476,8 @@ export type FileVersion = {
   previewUrl: string | null;
   /** 마감을 지나 올라왔는지. 복원으로 생긴 버전은 세지 않는다. */
   isLate: boolean;
+  /** 현재 로그인한 사용자가 이 버전으로 복원할 수 있는지 (작성자 또는 팀장). */
+  canRestore?: boolean;
 };
 
 /* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
@@ -646,6 +676,16 @@ export type TeamCheckRecord = {
   id: string;
   who: string;
   title: string;
+  /** task | file | meet | help | due */
+  kind: string;
+  /** auto = 자동 수집 / self = 직접 추가 */
+  source: string;
+  /** 상세 내용/설명 */
+  detail: string;
+  /** 작성자가 적은 기간/일시 라벨 */
+  whenLabel: string | null;
+  /** 생성 시각 ISO */
+  createdAt: string;
   state: "ok" | "pending" | "disputed";
   /** 내 기록인지. 자기 기록은 확인하거나 정정을 적을 수 없다. */
   isMine: boolean;
@@ -747,6 +787,22 @@ export type ContribReportRow = {
    * 읽히는 문서가 되므로 센다.
    */
   unresolved: number;
+  /** 확인된 주요 활동 항목 요약 (최대 3건) */
+  highlights?: string[];
+};
+
+/** 외부 공개용 기여도 리포트 묶음 데이터 */
+export type PublicReportData = {
+  teamName: string;
+  course: string;
+  issuedOn: string;
+  scope: "professor" | "internal";
+  memberCount: number;
+  totalConfirmed: number;
+  totalPending: number;
+  totalDisputed: number;
+  consensusRate: number; // 합의 완료율 (0 ~ 100 %)
+  rows: ContribReportRow[];
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */
@@ -990,4 +1046,80 @@ export type RoleNegotiation = {
   draws: Partial<Record<RoleKey, RoleDrawResult>>;
   /** 역할별로 거절해서 다음 추첨에서 빠지는 사람들. */
   rejected: Partial<Record<RoleKey, string[]>>;
+  /**
+   * 역할별로 **팀에 제안된 동의**. 없으면 아직 아무도 제안하지 않았다.
+   *
+   * 마감을 지났는지는 여기서 판하지 않는다 — 화면과 서버가 함께 쓰는
+   * `consentViewOf`(roster-model)가 `respondBy` 와 **now** 를 보고 정한다.
+   */
+  consents: Partial<Record<RoleKey, RoleDrawConsentView>>;
 };
+
+/** 07 추첨 동의 제안 — 팀 화면이 읽는 모양. */
+export type RoleDrawConsentView = {
+  /** 제안에 고정된 도구. */
+  tool: string;
+  proposedBy: string;
+  proposedById: string;
+  /** 지금 동의한 사람 수. */
+  agreed: number;
+  /** 지금 응답한 사람 수. 반대는 제안을 지우므로 남지 않는다. */
+  responded: number;
+  /** 팀 전체 인원. 동의 n명 / 몇 명이 되돌려 줘야 하는지 를 말한다. */
+  totalMembers: number;
+  /** 사람이 읽는 마감 시각. **서버에서 포맷해 내려온다** — 클라이언트가 다시 계산하지 않는다. */
+  respondBy: string;
+  /** 내가 이미 동의했는지. 화면에서 버튼을 숨기는 데 쓴다. */
+  iAgreed: boolean;
+};
+
+/* ── 통합 캘린더 · 일정 ─────────────────────────────────────── */
+
+export type CalendarEventType = "meeting" | "task" | "box";
+
+export type CalendarEvent = {
+  id: string;
+  type: CalendarEventType;
+  title: string;
+  /** 한국 날짜 ("YYYY-MM-DD"). */
+  date: string;
+  /** "16:00 – 18:00" 또는 "23:59" 등 시간 표시. */
+  time: string | null;
+  /** 회의 상태("confirmed") / 할 일 상태("todo"|"doing"|"done") 등. */
+  status?: string;
+  /** D-Day 숫자: 0 = 오늘, >0 = 남은 일수(D-3이면 3), <0 = 지난 일수(-1이면 1일 지남). */
+  dday: number;
+  /** "D-Day", "D-3", "D+1" */
+  ddayText: string;
+  /** 담당자 또는 대상자 이름. */
+  assignee?: string | null;
+  /** 역할 이름 ("자료조사", "발표" 등). */
+  roleName?: string | null;
+  /** 회의 장소 (오프라인 회의실 또는 온라인 URL). */
+  location?: string | null;
+  /** 회의 안건. */
+  agenda?: string | null;
+  /** 회의 식별자(회의 타입일 때). */
+  meetingId?: string;
+  /** 회의록 작성 여부. */
+  hasNote?: boolean;
+  /** 클릭 시 이동할 링크. */
+  href?: string;
+};
+
+/* ── 회의록 아카이브 ─────────────────────────────────────────── */
+
+export type MeetingNote = {
+  id: string;
+  teamId: string;
+  meetingId: string | null;
+  title: string;
+  rawText: string;
+  summary: string;
+  taskCount: number;
+  createdById: string | null;
+  createdByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
