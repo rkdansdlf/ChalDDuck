@@ -8,6 +8,7 @@ import {
   contribState,
   maxConfirmsNeeded,
   refreshContribState,
+  type Tx,
 } from "@/server/contrib/state";
 import { teamCheckRecords } from "@/server/contrib/team-check";
 import { db } from "@/server/db";
@@ -33,8 +34,16 @@ const MAX_TITLE = 120;
 const MAX_DISPUTE = 300;
 
 /** 우리 팀 기록인지 확인하고 가져온다. */
-async function teamRecord(recordId: string, teamId: string) {
-  return db.contribRecord.findFirst({
+/**
+ * 기록 하나를 팀 안에서만 찾는다.
+ *
+ * **클라이언트를 받는 이유** — `resolveContribDispute` 는 이 읽기와 뒤따르는 갱신을 **한
+ * 트랜잭션** 안에서 한다. 여기까지 늘려받지 않으면 갱신만 트랜잭션 밖에서 돌아, 조건을 다시
+ * 보는 순간이 사라진다. 읽는 쪽과 갱신하는 쪽이 같은 클라이언트를 받아야 그 사이에 아무도
+ * 끼어들지 않는다.
+ */
+async function teamRecord(recordId: string, teamId: string, client: Tx = db) {
+  return client.contribRecord.findFirst({
     where: { id: recordId, member: { teamId } },
   });
 }
@@ -275,19 +284,53 @@ export async function resolveContribDispute(
   // 읽어야 했다. 키만 받고 문구는 여기서 만든다.
   if (!isResolutionWay(way)) throw new Error("정결할 수 없는 말입니다.");
 
-  // 우리 팀 기록인지 서버에서 확인한다.
-  const record = await teamRecord(recordId, me.teamId);
-  if (!record) throw new Error("기록을 찾을 수 없습니다.");
-  if (record.state !== "disputed") return "gone";
-  if (!canResolveContrib({ memberId: record.memberId, disputedById: record.disputedById, meId: me.id })) {
-    return "notYours";
-  }
+  /**
+   * **첫 번째 결론만 반영한다 — 읽고 판단하고 쓰는 세 단계를 한 문장에 넣는다.**
+   *
+   * ## 왜 이게 구멍이었나
+   *
+   * 예전에는 순서가 이랬다.
+   *
+   * ```
+   * 기록을 읽는다 → disputed 인지 본다 → 권한을 확인한다 → resolution 을 update 한다
+   * ```
+   *
+   * **조건에 `state` 가 없었다.** 그래서 기록 주인과 반대한 사람이 거의 동시에 각자 다른 결론을
+   * 누르면 **둘 다 권한 검사를 통과하고, 마지막 update 가 앞선 결론을 덮어쓴다.** 두 사람이
+   * 동시에 고쳤는데 결론은 하나만 남고, 남은 쪽은 아무 설명 없이 사라진다 — 되돌릴 수 없다.
+   *
+   * ## 어떻게 막는가
+   *
+   * `updateMany` 에 `state: "disputed"` 를 조건으로 넣는다. Postgres 는 `UPDATE` 에서 행을
+   * 잠그고 **잠금 뒤에 조건을 다시 본다**(EvalPlanQual). 그래서 둘이 겹치면 **먼저 온 쪽이 1행을
+   * 고치고, 뒤는 조건이 맞지 않아 0행**을 고친다 — 어느 쪽이 이겼는지는 갱신한 행의 개수가
+   * 말해 준다.
+   *
+   * 읽기와 판단은 같은 트랜잭션 안에서 하되, **승자는 갱신 결과로 정한다.** 그래서 앞선
+   * 결론을 덮어쓰려면 조건을 빼야 하는데, 그건 이 갱신 한 줄을 고치는 일이다.
+   */
+  const outcome = await db.$transaction(async (tx) => {
+    // 우리 팀 기록인지 서버에서 확인한다.
+    const record = await teamRecord(recordId, me.teamId, tx);
+    if (!record) throw new Error("기록을 찾을 수 없습니다.");
+    if (record.state !== "disputed") return { status: "gone" as const };
+    if (!canResolveContrib({ memberId: record.memberId, disputedById: record.disputedById, meId: me.id })) {
+      return { status: "notYours" as const };
+    }
 
-  await db.contribRecord.update({
-    where: { id: record.id },
-    data: { resolution: RESOLUTION_WAYS[way] },
+    const won = await tx.contribRecord.updateMany({
+      where: { id: record.id, state: "disputed" },
+      data: { resolution: RESOLUTION_WAYS[way] },
+    });
+    // **아무것도 못 고쳤다면 그사이 상대가 먼저 고른 것이다.** 예외가 아니라 정상 상태다 —
+    // 이 결론은 이미 나온 뒤다. 그래서 `"gone"` 이고, 새 결론을 얹지 않는다.
+    if (won.count === 0) return { status: "gone" as const };
+
+    await refreshContribState(record.id, tx);
+    return { status: "ok" as const, memberId: record.memberId };
   });
-  await refreshContribState(record.id);
+
+  if (outcome.status !== "ok") return outcome.status;
 
   revalidatePath("/team", "layout");
   revalidatePath("/home");

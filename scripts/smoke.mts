@@ -168,6 +168,7 @@ import {
   contribByLabel,
   contribState,
   maxConfirmsNeeded,
+  refreshContribState,
 } from "../src/server/contrib/state.js";
 import {
   currentParticipations,
@@ -516,6 +517,8 @@ console.log("\n역할 상태 (아무도 풀 수 없는 상태가 없는지)");
     tool: "룰렛",
     agreed: 2,
     responded: 3,
+    totalMembers: 4,
+    iAgreed: false,
     respondBy: "2999-01-01T00:00:00.000Z",
   } as const;
   const noStrand: string[] = [];
@@ -553,6 +556,8 @@ console.log("\n추첨 동의 제안");
       proposedBy: "김민준",
       agreed: 2,
       responded: 3,
+      totalMembers: 4,
+      iAgreed: false,
       respondBy: new Date(NOW.getTime() + ms).toISOString(),
     }) as const;
 
@@ -1537,6 +1542,102 @@ console.log("\n기여도 의견 (DB)");
     await db.contribRecord.delete({ where: { id: record.id } });
     check("확인용 기록을 지우면 이력도 함께 간다", await db.contribDispute.count({ where: { recordId: record.id } }), 0);
   }
+}
+
+/* ── 정정 결론은 겹쳐 눌러도 하나만 반영된다 ─────────────────── */
+
+console.log("\n정정 결론 (동시에 눌러도 하나만 반영된다)");
+{
+  /**
+   * ## 왜 **실제로 겹쳐서** 부르는가
+   *
+   * 소스를 읽는 검사만으로는 이 규칙이 증명되지 않는다. 조건을 적었다는 것과 두 사람이
+   * 동시에 눌렀을 때 하나만 반영된다는 것은 다른 말이다. 그래서 아래는 **같은 조건을 그대로
+   * 두 개의 커넥션에 겹쳐서 던진다.**
+   *
+   * 서버 액션은 세션 쿠키가 필요해 부를 수 없다 — 부르려고 쿠키를 만들면 "액션이 정상"이
+   * 아니라 **"액션을 우회했다"** 는 사실만 테스트하게 된다(위 섹션과 같은 이유). 그래서
+   * **`resolveContribDispute` 가 하는 일을 그대로 재현한다**: 조건부 갱신 → 0행이면 접고,
+   * 1행이면 **같은 트랜잭션에서** 상태를 다시 맞춘다.
+   *
+   * 이 순서가 전부다. **`state` 는 `resolution` 을 적을 때 바뀌지 않는다** — 위에서
+   * `refreshContribState` 가 뒤따르야 바뀐다. 그래서 그 한 줄을 빼면 조건이 항상 참이라
+   * **아무도 막지 못한다**(아래 "잠금을 얻지 못하면" 참조). 두 갱신을 트랜잭션 밖에서 그냥
+   * 던져 보면 둘 다 1행을 고치며, 겹침을 재현하지 못한 것이지 규칙이 없는 것이 아니다.
+   *
+   * Postgres 는 `UPDATE` 에서 행을 잠그고 **잠금 뒤에 조건을 다시 보기 때문에**, 둘째는
+   * 잠금을 얻은 시점에 이미 `state !== "disputed"` 이고 0행을 고친다. 이건 **갱신과 상태
+   * 재계산이 한 트랜잭션에 있을 때만** 성립한다.
+   */
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const record = await db.contribRecord.create({
+      data: { memberId: member.id, kind: "task", title: "정정 동시성 확인용", detail: "d", source: "self" },
+    });
+
+    /** 액션의 본문과 같은 모양. **순서까지 같아야** 재현이 된다. */
+    const resolveLike = async (resolution: string) =>
+      db.$transaction(async (tx) => {
+        const won = await tx.contribRecord.updateMany({
+          where: { id: record.id, state: "disputed" },
+          data: { resolution },
+        });
+        if (won.count === 0) return { won: false as const };
+        await refreshContribState(record.id, tx);
+        return { won: true as const };
+      });
+
+    // 두 사람이 답할 수 있는 상태 — `disputed` 이고 결론이 없다.
+    await db.contribDispute.create({ data: { recordId: record.id, byId: member.id, text: "정정 의견" } });
+    await db.contribRecord.update({
+      where: { id: record.id },
+      data: { dispute: "정정 의견", disputedById: member.id, resolution: null, state: "disputed" },
+    });
+
+    const ways = ["정정 동의 · 의견대로 수정", "공동 작업으로 나눔"] as const;
+    const raced = await Promise.all(ways.map((resolution) => resolveLike(resolution)));
+    check("겹친 두 결론 중 한 건만 반영된다", raced.filter((r) => r.won).length, 1);
+    check("반영되지 않은 쪽은 0행을 고친다", raced.filter((r) => !r.won).length, 1);
+
+    const after = await db.contribRecord.findUniqueOrThrow({
+      where: { id: record.id },
+      select: { resolution: true, state: true },
+    });
+    check("저장된 결론은 둘 중 하나다", ways.includes(after.resolution as (typeof ways)[number]), true);
+    check("정리되면 상태가 disputed 가 아니다", after.state === "disputed", false);
+
+    // **나중에 누른 결론은 이미 정리된 줄이므로 0행이어야 한다** — 조건이 `state` 이기 때문이다.
+    const late = await resolveLike("합의 없음 · 원문 유지");
+    check("나중에 누른 결론은 아무것도 고치지 못한다", late.won, false);
+    const kept = await db.contribRecord.findUniqueOrThrow({ where: { id: record.id }, select: { resolution: true } });
+    check("이미 고른 결론이 그대로 남는다", kept.resolution, after.resolution);
+
+    await db.contribDispute.deleteMany({ where: { recordId: record.id } });
+    await db.contribRecord.delete({ where: { id: record.id } });
+  }
+}
+
+console.log("\n정정 결론: 조건이 코드에 남아 있다");
+{
+  // 위 DB 검사는 **기다리는 문장**을 친 것이다. 액션이 그 문장을 **쓰는지**는 여기서 본다 —
+  // 두 검사가 따로야 어느 쪽이 놓였는지 알 수 있다.
+  const src = readCode("../src/server/actions/contrib.ts");
+  const from = src.indexOf("export async function resolveContribDispute");
+  const fn = src.slice(from, src.indexOf("\nexport async function", from + 10));
+
+  check("갱신은 조건부(updateMany)다", /contribRecord\.updateMany\(\{/.test(fn), true);
+  check("조건에 지금 상태가 들어간다", /where:\s*\{\s*id:\s*record\.id,\s*state:\s*"disputed"\s*\}/.test(fn), true);
+  // **`update({ where: { id } })` 로 쓰면 조건이 사라진다.** 그 모양이 다시 들어오면 이 규칙이
+  // 조용히 죽는다 — 그래서 명시적으로 걸어 둔다.
+  check("무조건 갱신(update)이 없다", /contribRecord\.update\(\{\s*where:\s*\{\s*id:\s*record\.id\s*\},\s*data:\s*\{\s*resolution/.test(fn), false);
+  check("읽기와 갱신이 한 트랜잭션이다", fn.indexOf("db.$transaction(async (tx)") > 0, true);
+  // **아무것도 못 고쳤으면 예외가 아니라 정상 상태다.** 예외로 던지면 화면이 "실패"로 말하고,
+  // 상대가 이미 고친 것이지 내가 못한 것이 아니다.
+  check("못 고치면 gone 으로 끝난다", /won\.count === 0[\s\S]{0,80}?gone/.test(fn), true);
+  check("지금은 상태도 같은 안에서 다시 맞춘다", fn.indexOf("refreshContribState(record.id, tx)") > fn.indexOf("won.count"), true);
 }
 
 /* ── 대화 순서 ────────────────────────────────────────────── */
