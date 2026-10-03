@@ -4096,7 +4096,7 @@ console.log("\n마피아 게임: 밤을 두 번 처리하지 않는다");
       ],
     });
 
-    // ㊿ 社会자가 "직접 적기" 를 눌렀다 — 이 밤에 최수빈이 빠졌다.
+    // ㊿ 사회자가 "직접 적기" 를 눌렀다 — 이 밤에 최수빈이 빠졌다.
     await db.iceSeat.update({
       where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } },
       data: { outAt: new Date(nightStart.getTime() + 60_000), outHow: "night", outDay: 1 },
