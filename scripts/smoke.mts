@@ -1,10 +1,9 @@
-import "../scripts/load-env.mjs";
-
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { stripComments } from "../scripts/strip-comments.mjs";
+import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
+import { stripComments } from "../scripts/strip-comments.mjs";
 import {
   AI_INPUT_LIMIT,
   aiInputOverrun,
@@ -12,6 +11,8 @@ import {
 import {
   NO_DRAW_POOL_TEXT,
   canDrawIn,
+  canProposeIn,
+  consentViewOf,
   drawPoolOf,
   isRoleKey,
   normalizeName,
@@ -84,12 +85,11 @@ import {
   fromKstInputValue,
   toKstInputValue,
 } from "../src/lib/when.js";
-import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
-import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
 import { consumeAiQuota, refundAiQuota } from "../src/server/ai/limit.js";
 import { fallbackModelFor, isTransient, modelFor } from "../src/server/ai/model.js";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
+import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { flush, newLineSplitter, pushBytes } from "../src/lib/ai-stream-lines.js";
 import {
   boxesDueSoon,
@@ -103,7 +103,6 @@ import { aiCallStats, describeAiCalls, type AiCallStats } from "../src/server/ai
 import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
-import { isInviteUsable } from "../src/server/invite/rules.js";
 import {
   markAside,
   markCell,
@@ -166,12 +165,6 @@ import {
 } from "../src/server/ice/rules.js";
 import { icePhase, iceViewFor } from "../src/server/ice/view.js";
 import {
-  clientGate,
-  isJoinCapped,
-  JOIN_LIMIT,
-  teamGate,
-} from "../src/server/rate-limit/policy.js";
-import {
   contribByLabel,
   contribState,
   maxConfirmsNeeded,
@@ -208,58 +201,6 @@ import {
  *
  * **로컬 DB 에서만 돈다.** 시드와 같은 이유다.
  */
-
-/**
- * 소스를 읽되 **주석을 지운다** — 구조를 세는 검사는 전부 이쪽을 쓴다.
- *
- * ## 왜 하나뿐의 경로인가
- *
- * 이 파일은 화면을 실행할 수 없어 **소스 문자열에서 구조를 고정한다**(어떤 함수를 부르는가,
- * 몇 줄을 지나는가, 이 말을 쓰지 않는다). 그 대가로 두 가지가 씌어 있었고 둘 다 실제로
- * 잘못된 판정을 냈다.
- *
- * - **주석을 센다.** 2026-09-28: `actions/invite.ts` 의 액션 2개가 모두 팀장 검사를 하고
- *   있었는데 검사가 실패했다 — 16행 **주석**에 `requireLeader()` 라는 글자가 있어서 3개로
- *   센 것이었다.
- * - **조용히 다른 것을 검사한다.** 함수를 `indexOf` 로 찾으면 못 찾았을 때 `-1` 이 되고,
- *   그 뒤 슬라이스는 **다른 지점**이 된다. 컴파일은 통과하고 검사는 초록불이었다.
- *
- * 주석을 **공백으로 치환**하기 때문에 위치가 그대로다 — "A 가 B 보다 먼저 온다" 류의 순서
- * 검사가 의도대로 계속 동작한다. 자세한 내용은 [`scripts/strip-comments.mjs`](strip-comments.mjs).
- *
- * ⚠️ **`.ts`·`.tsx` 에만 쓴다.** 마크다운에 쓰면 URL 의 `//` 이 정규식으로 읽혀 글자가 지워진다.
- * 문서(`README.md`)는 `readFileSync` 를 그대로 쓴다.
- */
-function readCode(rel: string): string {
-  return stripComments(readFileSync(new URL(rel, import.meta.url), "utf8"));
-}
-
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("DIRECT_URL 이 없습니다.");
-const host = new URL(connectionString).hostname;
-if (!["localhost", "127.0.0.1", "::1"].includes(host)) {
-  throw new Error(`불변식 확인은 로컬 DB 에서만 돕니다. 지금은 ${host} 를 가리킵니다.`);
-}
-const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
-
-let failed = 0;
-let passed = 0;
-
-function check(what: string, got: unknown, want: unknown) {
-  const a = JSON.stringify(got);
-  const b = JSON.stringify(want);
-  if (a === b) {
-    passed += 1;
-    console.log(`  ✓ ${what}`);
-  } else {
-    failed += 1;
-    console.log(`  ✗ ${what}\n      기대: ${b}\n      실제: ${a}`);
-  }
-}
-
-function truthy(what: string, got: boolean) {
-  check(what, got, true);
-}
 
 /* ── 주석에 한자가 섞여 들어오지 않았는지 ──────────────────── */
 
@@ -446,7 +387,7 @@ function checkProductLanguage() {
   }
 
   // `check` 의 집계만 빌리고 메시지는 직접 — "기대/실제" 로 이 일을 설명할 수 없다.
-  failed += found.length;
+  fail(found.length);
   for (const hit of found) {
     console.log(
       `  ✗ [product-language] ${hit.at}:${hit.line}\n` +
@@ -496,12 +437,13 @@ console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴
   const oneRejected = drawPoolOf(wanters, "research", new Set(["2"]));
   check("거절한 사람은 빠진다", oneRejected.pool.map((m) => m.name), ["김민준"]);
 
-  // Veto 는 다시 뽑아도 그대로지만, 거절은 후보가 비면 증발해 막히는 것보다 낫다.
+  // **전원이 거절하면 되돌리지 않는다.** 예전에는 거절 명단을 무시하고 Veto 가 아닌
+  // 사람 전체로 되돌렸다 — 이미 "안 받겠다"고 한 사람에게 같은 제안을 반복하게 되고,
+  // 거절이라는 신호가 사라진다. 역할은 미정으로 남는다.
   const allRejected = drawPoolOf(wanters, "research", new Set(["1", "2"]));
-  check("전원 거절이면 Veto 가 아닌 사람 전체로 되돌린다", allRejected.pool.map((m) => m.name), [
-    "김민준",
-    "최유나",
-  ]);
+  check("전원 거절이면 뽑지 않는다", allRejected.pool, []);
+  check("전원 거절이면 사유를 말해 준다", allRejected.noPool, "all-rejected");
+  truthy("그 사유에 문구가 있다", NO_DRAW_POOL_TEXT[allRejected.noPool!].length > 0);
   const allRejectedVetoed = drawPoolOf(
     [
       { id: "1", name: "박지호", veto: "manage" as const },
@@ -510,7 +452,9 @@ console.log("\n역할 추첨 후보 (07 화면과 서버가 같은 함수를 쓴
     "manage",
     new Set(["1", "2"]),
   );
-  check("되돌려도 Veto 는 빠지지 않는다", allRejectedVetoed.pool, []);
+  check("Veto 한 사람은 거절과 무관하게 빠진다", allRejectedVetoed.pool, []);
+  // Veto 가 사유를 먼저 말한다 — 이 역할은 애초에 뽑을 후보가 없었다.
+  check("Veto 가 사유를 먼저 말한다", allRejectedVetoed.noPool, "all-vetoed");
 }
 
 /* ── 역할 상태: 아무도 풀 수 없는 상태가 없어야 한다 ──────── */
@@ -563,20 +507,94 @@ console.log("\n역할 상태 (아무도 풀 수 없는 상태가 없는지)");
   check("확정된 뒤 나가도 확정은 남는다", roleViewOf(2, draw({ accepted: true, stale: true })).kind, "confirmed");
 
   // 사람이 0~4명, 추첨은 4가지(없음/대기/확정/무효)를 전부 돌려본다.
+  // **동의 제안 두 가지(대기·마감 지나)** 도 같이 돌린다 — 동의 대기는 답해야 하는 사람이
+  // 달라지므로(누가 뽑는가 → 누가 동의하느냐) 이 검사에서 빠지면 "동의 화면이 안 뜨는" 구멍이
+  // 그대로 통과한다.
+  const consentWaiting = {
+    kind: "waiting",
+    proposedBy: "김민준",
+    tool: "룰렛",
+    agreed: 2,
+    responded: 3,
+    respondBy: "2999-01-01T00:00:00.000Z",
+  } as const;
   const noStrand: string[] = [];
   for (let wanters = 0; wanters <= 4; wanters += 1) {
     for (const d of [null, draw(), draw({ accepted: true }), draw({ stale: true })]) {
-      const view = roleViewOf(wanters, d);
-      // 추첨이 남아 있는데 아무도 수락할 수단이 없는 상태 = "수락 대기" 라 답이 있어야 한다.
-      const hasAnswer =
-        view.kind === "empty" ||
-        view.kind === "auto" ||
-        canDrawIn(view) ||
-        (d !== null && view.kind !== "voided");
-      if (!hasAnswer) noStrand.push(`희망자 ${wanters} · ${JSON.stringify(d?.accepted ?? null)}`);
+      for (const consent of [{ kind: "open" }, consentWaiting] as const) {
+        const view = roleViewOf(wanters, d, consent);
+        // 추첨이 남아 있는데 아무도 수락할 수단이 없는 상태 = "수락 대기" 라 답이 있어야 한다.
+        // 동의 대기에는 동의·반대 답이, 나머지 열림 상태에는 추첨(또는 이야기하기) 답이 있다.
+        const hasAnswer =
+          view.kind === "empty" ||
+          view.kind === "auto" ||
+          view.kind === "consent" ||
+          canDrawIn(view) ||
+          (d !== null && view.kind !== "voided");
+        if (!hasAnswer) {
+          noStrand.push(
+            `희망자 ${wanters} · ${JSON.stringify(d?.accepted ?? null)} · 동의 ${consent.kind}`,
+          );
+        }
+      }
     }
   }
   check("답이 닿는 상태로만 끝난다", noStrand, []);
+}
+
+/* ── 동의 제안: 추첨은 팀이 시작해도 된다고 동의해야 열린다 ── */
+
+console.log("\n추첨 동의 제안");
+{
+  const NOW = new Date("2026-10-01T09:00:00Z");
+  const live = (ms: number) =>
+    ({
+      role: "research",
+      tool: "룰렛",
+      proposedBy: "김민준",
+      agreed: 2,
+      responded: 3,
+      respondBy: new Date(NOW.getTime() + ms).toISOString(),
+    }) as const;
+
+  // 제안이 없으면 **지금처럼 바로 뽑을 수 있다.** 동의는 강제가 아니다 — 막는 것은
+  // "제안이 있고 아직 마감 전" 뿐이다. 여기서 막으면 동의가 없는 팀은 영영 못 뽑는다.
+  check("제안이 없으면 열린다", consentViewOf(null, NOW), { kind: "open" });
+  check("제안이 없으면 바로 뽑을 수 있다", canDrawIn(roleViewOf(2, null, consentViewOf(null, NOW))), true);
+
+  const waiting = consentViewOf(live(60_000), NOW);
+  check("마감 전 제안은 대기다", waiting.kind, "waiting");
+
+  // **핵심.** 동의를 받기 전에는 뽑을 수 없다 — 동료 한 명이 자기 손으로 나머지를
+  // "받기 대기" 에 넣던 구조가 여기서 막힌다.
+  const locked = roleViewOf(2, null, waiting);
+  check("동의 대기 중에는 추첨이 잠긴다", locked.kind, "consent");
+  check("동의 대기 중에는 뽑을 수 없다", canDrawIn(locked), false);
+  check("동의 대기 중에는 또 제안하지도 못한다", canProposeIn(locked), false);
+
+  // 마감은 **읽을 때 계산한다.** 스케줄러가 늦게 돌아도 사용자는 이 값을 본다.
+  check("마감 지나면 열린다", consentViewOf(live(-1), NOW), { kind: "open" });
+  check("마감 지나면 다시 제안할 수 있다", canProposeIn(roleViewOf(2, null, consentViewOf(live(-1), NOW))), true);
+  // **경계는 열린 쪽이다.** 그 시각부터는 반대할 수 없다 — 이미 열린 추첨을 뒤집을
+  // 수는 없고, 반대만 못 받게 되면 팀이 답할 수 없게 된다.
+  check("마감 시각 그 순간부터 열린다", consentViewOf(live(0), NOW), { kind: "open" });
+
+  // **추첨 결과가 동의보다 먼저 보인다.** 결과가 묻히면 당첨자가 아무것도 볼 수 없고,
+  // 받거나 안 받을 수도 없다 — 07 화면에 이미 있었던 종류의 구멍이다.
+  const drawn = {
+    tool: "룰렛",
+    winner: "최유나",
+    winnerId: "m4",
+    accepted: false,
+    stale: false,
+  } as const;
+  check("결과가 있으면 동기를 덮지 않는다", roleViewOf(2, drawn, waiting).kind, "awaiting");
+  // 결과가 잡혔으니 동의 제안은 더는 필요 없다 — 답해야 하는 사람이 바뀐다.
+  check("확정된 뒤에도 결과가 보인다", roleViewOf(2, { ...drawn, accepted: true }, waiting).kind, "confirmed");
+
+  // 마감을 넘긴 제안이 **행으로는 남아 있어도** 열린 것으로 읽힌다 — 되돌아오면 제안할 수 있다.
+  const stale = consentViewOf(live(-60_000), NOW);
+  check("지난 제안은 열림으로 읽힌다", stale.kind, "open");
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
@@ -2606,6 +2624,20 @@ console.log("\nAI 초안 정리 (모델을 부르지 않고 확인한다)");
   check("응답이 없어도 죽지 않는다", shapeClerkDraft(null), { summary: "", candidates: [] });
   check("후보가 문자열이어도 죽지 않는다", shapeClerkDraft({ candidates: "x" as never }).candidates, []);
 
+  // 모델이 `tool_choice` 를 무시하고 본문에 JSON 을 쏟아도 **같은 답으로** 받는다(모양만 건진다).
+  check("순수 JSON", extractJsonObject('{"a":1}'), { a: 1 });
+  check("코드펜스 안의 JSON", extractJsonObject('설명입니다\n```json\n{"a":1}\n```\n끝'), { a: 1 });
+  check("앞뒤 설명이 붙은 JSON", extractJsonObject('결과는 {"a":"x"} 입니다.'), { a: "x" });
+  check("문자열 안의 중괄호는 세지 않는다", extractJsonObject('앞 {"a":"}{"} 뒤'), { a: "}{" });
+  check("객체가 아니면 받지 않는다", extractJsonObject("[1,2]"), null);
+  check("JSON 이 없으면 null", extractJsonObject("그냥 글"), null);
+  check("빈 입력은 null", extractJsonObject(null), null);
+  check("깨진 JSON 은 null", extractJsonObject('{"a":'), null);
+  check("필수 키가 다 있으면 빈 목록", missingRequired({ required: ["a", "b"] }, { a: 1, b: 2 }), []);
+  check("빠진 필수 키를 알려 준다", missingRequired({ required: ["a", "b"] }, { a: 1 }), ["b"]);
+  check("required 가 없으면 빈 목록", missingRequired({}, {}), []);
+  check("깨진 인자는 재시도 대상이다", isTransient(new SyntaxError("Unexpected token")), true);
+
   // 발표 지원 — **질문만** 담는다. 답이 섞이면 "발표자가 모르는 답"이 초안이 된다.
   const present = shapePresentDraft({ refined: "  다듬은 대본  ", questions: ["  왜?  ", "   ", null] });
   check("대본은 다듬는다", present.refined, "다듬은 대본");
@@ -3046,7 +3078,7 @@ console.log("\nDM 목록 조회 비용");
     // 를 본다. Prisma 의 쿼리 이벤트는 **플레이스홀더가 있는 SQL 과
     // 파라미터 값**을 준다. 둘을 합쳐야 비로소 실제로 나간 문장이 된다.
     const probe = new PrismaClient({
-      adapter: new PrismaPg({ connectionString }),
+      adapter: new PrismaPg({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL }),
       log: [{ emit: "event", level: "query" }],
     });
     const sent: string[] = [];
@@ -3257,246 +3289,6 @@ console.log("\n파일 보기 화면의 조회 범위");
   const page = readCode("../src/app/(tabs)/drive/[boxId]/[fileId]/page.tsx");
   check("13 화면은 컨텍스트를 한 번 읽는다", (page.match(/getFileViewContext/g) ?? []).length, 2); // import 1 + 호출 1
   check("13 화면이 따로 부르는 함수가 없다", /getSubmissionBox\(|getSubmittedFile\(/.test(page), false);
-}
-
-/* ── 가입 요청 제한: 순수 판정 ─────────────────────────────────── */
-
-console.log("\n가입 요청 제한 (화면·서버가 같은 순수 함수를 부른다)");
-{
-  // `clientGate` 의 비교는 `>` 다 — 막은 시도까지 이미 창에 찍혀 있으므로 `max` 번까지는
-  // 통과한다. `>=` 로 바뀌면 한 번 일찍 막히고, 이 테스트가 바로 그걸 잡는다.
-  check("10분 창은 5회까지 통과한다", clientGate(5, 0), "open");
-  check("10분 창은 6번째에 막는다", clientGate(6, 0), "client");
-  check("1시간 창은 15회까지 통과한다", clientGate(1, 15), "open");
-  check("1시간 창이 넘으면 짧은 창이 멀쩡해도 막는다", clientGate(1, 16), "client");
-
-  // 팀 예산은 쿠키를 지워도 남는 방어선이라 넉넉하다. 좁으면 정상 팀원이 못 들어온다.
-  check("팀 10분 창은 20회까지 통과한다", teamGate(20, 0, 0), "open");
-  check("팀 10분 창은 21번째에 막는다", teamGate(21, 0, 0), "team-budget");
-  check("팀 1시간 창은 50회까지 통과한다", teamGate(0, 50, 0), "open");
-  check("팀 1시간 창은 51번째에 막는다", teamGate(0, 51, 0), "team-budget");
-
-  // 시간 창을 한 번도 넘지 않고도 개수로 막힌다 — 느린 공격의 유일한 방어선.
-  check("시간은 넉넉해도 미해결 49건까지는 된다", teamGate(0, 0, 49), "open");
-  check("미해결 50건부터 막는다", teamGate(0, 0, JOIN_LIMIT.unresolvedPerTeam), "pending-cap");
-  check("배너는 상한 직전에는 안 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam - 1), false);
-  check("배너는 상한부터 뜬다", isJoinCapped(JOIN_LIMIT.unresolvedPerTeam), true);
-}
-
-/* ── 횟수표: 동시에 찍어도 새지 않는다 ────────────────────────── */
-
-console.log("\n횟수표 (동시에 찍어도 합이 정확하다)");
-{
-  const key = `smoke:window:${Date.now()}`;
-  const WINDOW_MS = 10 * 60 * 1000;
-
-  // **아무도 안 찍은 상태에서 50 개를 한꺼번에 넣는다.** 예전 구현(`findUnique` → 판단 →
-  // 쓰기) 은 여기서 대부분 을 잃었다 — 모두 0 을 읽고 모두 1 을 적으면 50 이 아니라 1 이 남는다.
-  // 우연히 스레드풀을 타면 통과하는 검사가 되므로, DB 한 문장으로 직렬화되는지(`ON CONFLICT`)
-  // 를 이 스모크가 실제로 눌러 본다.
-  const RACERS = 50;
-  const counts = await Promise.all(
-    Array.from({ length: RACERS }, () => hitWindow(key, WINDOW_MS)),
-  );
-
-  check("50 개를 동시에 찍어도 마지막 값이 50 이다", await readWindow(key), RACERS);
-  check("돌려준 값이 중복되지 않는다", new Set(counts).size, RACERS);
-  check("돌려준 값이 1..50 을 다 덮는다", counts.slice().sort((a, b) => a - b), Array.from({ length: RACERS }, (_, i) => i + 1));
-
-  // 창은 **첫 시도 때 정해지고 늘어나지 않는다.** 시도할 때마다 뒤로 밀면, 막힌 사람이 계속
-  // 눌러 보는 동안 영영 안 풀린다 — 그래서 뒤로 밀면 안 된다.
-  const row = await db.rejoinAttempt.findUnique({ where: { key } });
-  const firstUntil = row!.until.getTime();
-  await hitWindow(key, WINDOW_MS);
-  const again = await db.rejoinAttempt.findUnique({ where: { key } });
-  check("더 찍어도 창이 뒤로 밀리지 않는다", again!.until.getTime(), firstUntil);
-  check("더 찍으면 횟수만 오른다", again!.count, RACERS + 1);
-
-  // 맞히면 지워진다 — 다음에 한 번만 해도 곧바로 잠기지 않게.
-  await clearWindow(key);
-  check("지우면 0 으로 읽는다", await readWindow(key), 0);
-  check("지운 자리는 다음 한 번이 1 이다", await hitWindow(key, WINDOW_MS), 1);
-
-  await clearWindow(key);
-}
-
-/* ── 가입 요청: 토큰은 만들어진 뒤로 바뀌지 않는다 ────────────── */
-
-console.log("\n가입 요청 토큰 불변식 (다른 브라우저가 가로챌 수 없다)");
-{
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
-  const suffix = String(Date.now() % 1e7);
-  const name = `불변${suffix}`;
-
-  const first = await db.joinRequest.create({
-    data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" },
-  });
-  check("첫 신청이 그 토큰을 가진다", first.token, `A-${suffix}`);
-
-  // 같은 이름으로 두 번째 신청 = 다른 브라우저가 재신청한 것.
-  let code: string | undefined;
-  try {
-    await db.joinRequest.create({
-      data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" },
-    });
-  } catch (error) {
-    code = (error as { code?: string }).code;
-  }
-  check("같은 이름의 두 번째 신청은 DB 가 막는다", code, "P2002");
-
-  const kept = await db.joinRequest.findUniqueOrThrow({
-    where: { teamId_name: { teamId: team.id, name } },
-  });
-  check("토큰은 여전히 첫 번째 것", kept.token, `A-${suffix}`);
-  check("이름당 요청은 하나뿐이다", await db.joinRequest.count({ where: { teamId: team.id, name } }), 1);
-
-  await db.joinRequest.delete({ where: { id: first.id } });
-}
-
-console.log("\n가입 요청 토큰 불변식 (동시에 같은 이름으로 신청하면 한 명만 이긴다)");
-{
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
-  const suffix = String(Date.now() % 1e7);
-  const name = `경쟁${suffix}`;
-
-  const results = await Promise.allSettled([
-    db.joinRequest.create({ data: { teamId: team.id, name, token: `A-${suffix}`, status: "pending" } }),
-    db.joinRequest.create({ data: { teamId: team.id, name, token: `B-${suffix}`, status: "pending" } }),
-  ]);
-
-  const won = results.filter((r) => r.status === "fulfilled");
-  const lost = results.filter((r) => r.status === "rejected");
-  check("한쪽만 이긴다", won.length, 1);
-  check("진 쪽은 둘 다 P2002 다", lost.every((r) => (r as PromiseRejectedResult).reason?.code === "P2002"), true);
-
-  const row = await db.joinRequest.findUniqueOrThrow({
-    where: { teamId_name: { teamId: team.id, name } },
-  });
-  check("남은 행의 토큰은 승자의 그것이다", row.token, (won[0] as PromiseFulfilledResult<{ token: string }>).value.token);
-
-  await db.joinRequest.delete({ where: { id: row.id } });
-}
-
-console.log("\n초대 선택지 (서버가 다시 보는 값)");
-{
-  // **화면이 고른 값을 서버가 다시 본다.** 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수
-  // 있으므로, 여기서 확인하지 않으면 "9999명"이나 "3650일"이 그대로 들어간다 — 그건 1회용의
-  // 반대편이다(사실상 아무도 못 쓰는 초대, 혹은 사실상 영구 초대).
-  check("인원은 1·2·3·5·10 만 받는다", [...USE_CHOICES], [1, 2, 3, 5, 10]);
-  check("기한은 1·3·7·30 일만 받는다", [...EXPIRY_CHOICES], [1, 3, 7, 30]);
-  check("0명은 없다", USE_CHOICES.includes(0 as never), false);
-  check("음수는 없다", USE_CHOICES.includes(-1 as never), false);
-  check("무한대는 없다", USE_CHOICES.includes(Infinity as never), false);
-  // **0일 = "그 순간부터 닫힌다"** — 고를 수 있게 해서는 안 된다. 만료가 즉시라 실효상 폐기다.
-  check("0일은 없다 (만료 즉시 닫히는 초대가 된다)", EXPIRY_CHOICES.includes(0 as never), false);
-  // 액션이 이 규칙을 실제로 거르는지 — 상수만 맞아도 액션이 안 거르면 통과한다.
-  const action = readCode("../src/server/actions/invite.ts");
-  check("팀장 확인이 초대 발급보다 먼저 온다", action.indexOf("requireLeader()") < action.indexOf("createTeamInvite(leader.teamId"), true);
-  check("화면 값을 서버가 다시 거른다", /!isUseChoice\(maxUses\)/.test(action) && /!isExpiryChoice\(days\)/.test(action), true);
-  check("이름도 서버에서 자른다", /label\.length > INVITE_LABEL_MAX/.test(action), true);
-}
-
-console.log("\n초대가 지금 들어오는 길을 열어 주는가");
-{
-  // 순수 판정이라 서버 액션 없이도 부를 수 있다(`rules.ts` 머리말).
-  const now = 1_000_000_000;
-  const fresh = { maxUses: null, useCount: 0, expiresAt: null, revokedAt: null };
-  const at = (ms: number) => new Date(now + ms);
-
-  check("처음 발급된 초대", isInviteUsable(fresh, now), true);
-  check("되돌린 초대는 막는다", isInviteUsable({ ...fresh, revokedAt: at(-1) }, now), false);
-  check("지난 시각은 막는다", isInviteUsable({ ...fresh, expiresAt: at(-1) }, now), false);
-  check("아직 안 지난 시각은 열어 둔다", isInviteUsable({ ...fresh, expiresAt: at(1) }, now), true);
-  // **경계는 닫힌 쪽이다.** "그 시각까지 유효" 가 아니라 "그 시각부터 무효" — 정확히 그
-  // 순간에 도착한 사람이 행운에 따라 들어갈 수 없게 하지 않는다.
-  check("만료 시각과 같은 순간은 이미 막힌다", isInviteUsable({ ...fresh, expiresAt: at(0) }, now), false);
-  // 경계의 양옆 — 만료 1ms 뒤는 아직 열려 있고, 그 순간부터 닫힌다.
-  check("만료 1ms 뒤는 아직 열려 있다", isInviteUsable({ ...fresh, expiresAt: new Date(now + 1) }, now), true);
-  check("만료 1ms 전은 이미 닫혔다", isInviteUsable({ ...fresh, expiresAt: new Date(now - 1) }, now), false);
-
-  // **자리는 승인 횟수로 찬다.** 거절과 취소를 세지 않는다는 약속이 여기서 성립한다.
-  check("1회용에 아무도 안 왔으면 열려 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 0 }, now), true);
-  check("1회용의 자리를 썼으면 닫힌다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 1 }, now), false);
-  check("초과해서도 닫혀 있다", isInviteUsable({ ...fresh, maxUses: 1, useCount: 2 }, now), false);
-  check("3회용은 두 명까지 열린다", isInviteUsable({ ...fresh, maxUses: 3, useCount: 2 }, now), true);
-  // 무제한은 숫자 제한을 두지 않는다 — 0 과 구분된다.
-  check("maxUses 가 null 이면 무제한이다", isInviteUsable({ ...fresh, maxUses: null, useCount: 999 }, now), true);
-  // 세 조건 중 하나만 있어도 막는다.
-  check("셋 중 하나만 있어도 막는다", isInviteUsable({ maxUses: 1, useCount: 1, expiresAt: at(1), revokedAt: null }, now), false);
-}
-
-console.log("\n입장 해석: 초대가 팀 정보를 지어내지 않는다");
-{
-  // 01 화면은 "초대받은 팀" 카드에서 사람 수와 마감일을 그대로 그린다. 초대가 그 값을
-  // 세어 오지 않으면, 팀이 비어 있지 않아도 **"0명"** 으로 보인다 — 코드 길과 같은 정보를
-  // 두 길이 다르게 보여 주는 셈이라 화면이 스스로를 모순한다.
-  const joinPage = readCode("../src/app/join/page.tsx");
-  check("초대 길이 사람 수를 지어내지 않는다", /memberCount: 0/.test(joinPage), false);
-  check("초대가 센 사람 수를 그대로 쓴다", /memberCount: fromLink\.memberCount/.test(joinPage), true);
-  check("마감일도 초대가 가져온 값을 쓴다", /dday: fromLink\.teamDday/.test(joinPage), true);
-
-  // `?t=` 는 **명시적인 권한 증명**이다. 실패했을 때 조용히 `Team.code` 길로 넘어가면
-  // 되돌린 초대가 그 사실조차 숨긴다(`resolve-target.ts` 머리말).
-  const target = readCode("../src/server/invite/resolve-target.ts");
-  const tokenBranch = target.slice(
-    target.indexOf("if (token)"),
-    target.indexOf("const code = input.code"),
-  );
-  check("토큰이 있으면 그 길로만 판정한다", tokenBranch.includes("return null"), true);
-  check("토큰 분기에 코드 길로 넘어가지 않는다", tokenBranch.includes("input.code"), false);
-  // 초대를 세는 쿼리는 **관여자** 기준이다 — 나간 사람의 행은 기록을 위해 남는다.
-  check("초대가 세는 것도 나간 사람을 뺀다", /members: \{ where: ACTIVE \}/.test(target), true);
-}
-
-console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 남아 있다");
-{
-  // 순수 함수를 부를 수 없는 지점(쿠키가 필요한 액션)은 **소스**로 고정한다. 이 저장소는
-  // 이미 화면·서버가 같은 계산을 쓰는 관례로 그랬다.
-  const src = readCode("../src/server/actions/onboarding.ts");
-  const from = src.indexOf("export async function joinTeam");
-  const fn = src.slice(from, src.indexOf("export async function checkJoinApproval", from));
-
-  // **`upsert` 는 토큰 회전의 유일한 경로였다.** update 에 `token` 이 들어가면 다른
-  // 브라우저가 그 토큰을 자기 쿠키로 옮겨 심는다. create 로만 만들어야 이게 불가능하다.
-  check("토큰을 갱신하는 upsert 가 없다", /joinRequest\.upsert/.test(fn), false);
-  check("새 요청은 create 로만 만든다", /joinRequest\.create/.test(fn), true);
-  check("경합에서 진 쪽은 덮어쓰지 않고 돌려보낸다", /P2002[\s\S]{0,160}status: "taken"/.test(fn), true);
-  // 제한은 **행도 알림도 만들어지기 전에** —— 알림 폭탄의 비용이 이미 발생한 뒤에 막으면 늦다.
-  check("이 브라우저 제한이 요청 생성보다 먼저 온다", fn.indexOf("takeClientAttempt") < fn.indexOf("joinRequest.create"), true);
-  // 소유자만 자기 요청을 고친다. 남의 희망 역할을 덮어쓰면 역할 추첨의 입력이 바뀐다.
-  check("소유자 확인이 새 요청보다 먼저 온다", fn.indexOf("store.get(JOIN_COOKIE)?.value;\n    const found") >= 0, true);
-  // **팀 예산은 새 행을 만들려는 시점에만 깎인다.** 위쪽에 두면 자기 요청을 다시 여는
-  // 정상 사용자가 팀 예산을 먹고, 그 숫자를 공격자가 고쳐 팀 전체의 신규 가입을 막는다.
-  // 팀 코드 하나만 알면 이 숫자를 조작할 수 있으므로 순서가 곧 방어다.
-  check(
-    "팀 예산은 소유자 확인 뒤에 온다",
-    fn.indexOf("takeTeamCreation") > fn.indexOf("const found = await db.joinRequest.findUnique"),
-    true,
-  );
-  check("팀 예산은 요청 생성보다 먼저 온다", fn.indexOf("takeTeamCreation") < fn.indexOf("joinRequest.create"), true);
-
-  // 푸시는 예산 안에서만, 앱 안 알림은 항상.
-  const notifySrc = readCode("../src/server/notify/create.ts");
-  // 여기서 고이는 **문구가 아니라 보장**이다. 예전은 `input.push === false` 라는 문자열을
-  // 찾았고, 구현이 `input.push ?? pushPolicy(...)` 로 다듬어지면서 **검사는 깨졌는데 아무
-  // 것도 고장나지 않았다**(2026-09-28). 그래서 말을 고정하지 않는다 —
-  //
-  // ① 호출부가 `push` 를 명시하면 그것이 되고, 아니라면 정책이 정한다.
-  // ② **앱 안 알림은 푸시 판정보다 먼저 쌓인다.** 순서가 바뀌면 푸시 예산이 모자란 날
-  //    알림함까지 비어 있게 된다 — 그게 이 자리의 존재 이유다.
-  check(
-    "notify 가 푸시만 끌 수 있다 (명시하면 따르고, 아니면 정책이 정한다)",
-    /input\.push\b/.test(notifySrc) && /pushPolicy\(/.test(notifySrc),
-    true,
-  );
-  check(
-    "앱 안 알림은 푸시 예산과 무관하게 남는다",
-    notifySrc.indexOf("notification.createMany") > -1 &&
-      notifySrc.indexOf("notification.createMany") < notifySrc.indexOf("pushPolicy("),
-    true,
-  );
 }
 
 /* ── 문서가 숫자를 담지 않는 자리 ──────────────────────────────── */
@@ -4195,8 +3987,11 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   // ㊻ 투표는 **기록**된다 — 자리 한 칸에 있는 "지금 고른 사람" 이 아니다. 마감하면 표가 사라져
   //   "누가 누구에게 표를 던졌는가" 가 남지 않았고, 결선을 판정할 대상도 사라졌다.
   const iceActions = readCode("../src/server/actions/ice.ts");
+  const seatModel = readCode("../prisma/schema.prisma");
   truthy("투표는 기록된다", /iceBallot\.upsert\(/.test(iceActions));
-  truthy("동점이라고 표를 지우지 않는다", !/iceSeat\.updateMany\([^)]*voteForId/.test(iceActions));
+  // ⚠️ 동점에서 **표 기록**(`IceBallot`)을 지우지 않는다. 자리의 다리 칸(`voteForId`)을 비우는
+  //   것은 다르다 — 구버전이 그 판을 마감할 수 있는 동안에만 필요한 조치다(2026-09-30).
+  truthy("동점이라고 표 기록을 지우지 않는다", !/iceBallot\.deleteMany\(/.test(iceActions));
   truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(iceActions));
   truthy("투표를 열 때 회차가 올라간다", /voteSeq: round\.voteSeq \+ 1/.test(iceActions));
   truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: fresh\.day \+ 1, eligibleTargets: \[\]/.test(iceActions));
@@ -4209,10 +4004,33 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   truthy("투표를 열 때 결선 횟수가 0 이 된다", /runoffCount: 0/.test(iceActions));
   truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /create: \{[^}]*runoff \}/.test(iceActions));
 
-  // ㊼ 자리에 있던 표 칸이 사라졌는지 — 두 벌이 있으면 어느 쪽이 진짜인지 알 수 없다.
-  const seatModel = readCode("../prisma/schema.prisma");
-  truthy("자리에는 현재 표가 없다", !/model IceSeat \{[\s\S]*?voteForId/.test(seatModel));
+  // ㊼ 표의 **유일한 자리**는 `IceBallot` 이다. 자리의 칸은 구버전용 다리일 뿐이고 읽지 않는다.
   truthy("표는 자기 키를 가진다", /@@id\(\[roundId, seq, memberId\]\)/.test(seatModel));
+  // ⚠️ 다리 칸을 **읽으면** 표가 두 벌이 된다. 새 판정은 전부 `IceBallot` 에서 읽어야 한다.
+  const viewSource = readCode("../src/server/ice/view.ts");
+  truthy("조회는 표 기록에서만 읽는다", /iceBallot\.findMany\(\s*\{\s*where: \{ roundId: round\.id, seq: round\.voteSeq \}/.test(viewSource));
+  // `IceView.me.voteForId` 라는 **필드 이름**은 그대로 남는다(화면이 쓰는 이름). 그 값이 **자리에서
+  // 오는지** 표에서 오는지가 문제다 — 자리의 다리 칸을 읽으면 표가 두 벌이 된다.
+  truthy("view.ts 의 표는 표 기록에서 온다", /voteForId: myBallot\?\.targetId \?\? null/.test(viewSource));
+  truthy("view.ts 가 자리의 다리 칸을 읽지 않는다", !/\b[a-z]\.voteForId\b/.test(viewSource));
+
+  // ㊾ 다리는 **구버전 인스턴스가 트래픽을 받는 동안만** 산다.
+  //
+  // `vercel.json` 이 `prisma migrate deploy` 를 빌드 맨 앞에서 돌기 때문에, 배포 순간엔 구버전이
+  // 아직 이 판을 마감할 수 있다. 그 구버전은 표를 `IceSeat.voteForId` 에서만 본다 — 거기에 없으면
+  // 표가 0장으로 보이면서 마감되고 아무도 탈락하지 않는다.
+  truthy("투표는 다리 칸에도 같이 쓴다", /data: bridge/.test(iceActions));
+  truthy("다리를 비우는 길이 있다", /async function clearBridgeVotes/.test(iceActions));
+  truthy("새 투표 회차를 열 때 다리를 비운다", /clearBridgeVotes\(db, round\.id\)/.test(iceActions));
+  truthy("밤 처형이 그 밤의 표를 비운다", /clearBridgeVotes\(tx, fresh\.id, (resolution\.outId|memberId)\)/.test(iceActions));
+  // 다리를 **읽는** 곳이 새로 생기면 그것이 두 벌이 되는 지점이다.
+  truthy("액션은 다리 값을 읽지 않는다(쓰기만)", !/voteForId: (mine|current)\./.test(iceActions));
+  // 다리 마이그레이션이 되살리고, 드롭은 다음 배포로 미룬 것을 못 박는다.
+  const bridge = readFileSync(new URL("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql", import.meta.url), "utf8");
+  truthy("다리 마이그레이션이 컬럼을 되살린다", /ADD COLUMN IF NOT EXISTS "voteForId"/.test(bridge));
+  truthy("다리 마이그레이션이 표를 되돌린다", /FROM "IceBallot"/.test(bridge));
+  // "언제 지운다" 를 못 박아 두지 않으면 다리가 영구화된다 — 표의 자리가 두 벌이 된다.
+  truthy("다리가 언제 지워지는지 Says 한다", /다음 배포에서 이 컬럼을 (다시 )?지우/.test(bridge));
 }
 
 console.log("\n마피아 게임: 결과 타임라인");
@@ -4852,7 +4670,4 @@ console.log("\n배정 알림 (맡은 사람은 그 사실을 알아야 한다)")
   check("순수 판정을 거친다", actions.includes("shouldNotifyAssignee("), true);
 }
 
-await db.$disconnect();
-
-console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);
-if (failed > 0) process.exit(1);
+await finish();

@@ -3,6 +3,7 @@
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
 import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
 import { aiQuotaFor, aiUsageCsv, type AiQuota } from "@/server/ai/limit";
+import { teamAiWeeklySummary, type TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { runTool } from "@/server/ai/run";
 import * as ai from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
@@ -74,4 +75,10 @@ export async function getAiQuota(): Promise<AiQuota> {
 export async function getSentenceSample(mode: string): Promise<string> {
   await requireSessionMember();
   return SENTENCE_SAMPLE_INPUT[mode] ?? "";
+}
+
+/** 팀 단위 최근 7일 AI 도구 운영 상태 요약. 개인별 호출 내용은 노출하지 않는다. */
+export async function getTeamAiSummary(): Promise<TeamAiWeeklySummary> {
+  const me = await requireSessionMember();
+  return teamAiWeeklySummary(me.teamId, 7);
 }

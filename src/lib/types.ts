@@ -203,7 +203,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "drive";
+  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "drive";
   title: string;
   body: string;
   href: string | null;

@@ -12,9 +12,8 @@ import {
   SecTitle,
   Undecided,
 } from "@/components/ui";
-import { searchResearch } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
-import { readAi } from "./ai-result";
+import { runAiResearch } from "./ai-stream-client";
 import { DraftSourceChip } from "./draft-source-chip";
 import type { AiAnswerSource, ResearchResult } from "@/lib/types";
 
@@ -41,19 +40,26 @@ export function ResearcherScreen({
   const [source, setSource] = useState<AiAnswerSource>("sample");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 지금 어느 단계인가. 서버가 알려 준 것만 보여 준다 — 화면이 시간으로 짐작하지 않는다. */
+  const [phase, setPhase] = useState<"searching" | "shaping" | null>(null);
 
   const search = async () => {
     if (!query.trim() || working) return;
     setWorking(true);
     setError(null);
+    setPhase(null);
     try {
-      const { value, source: made_by } = readAi(await searchResearch(query.trim()));
+      const { value, source: made_by } = await runAiResearch({
+        query: query.trim(),
+        onPhase: setPhase,
+      });
       setResults(value);
       setSource(made_by);
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "AI 응답을 받지 못했습니다.");
     } finally {
       setWorking(false);
+      setPhase(null);
     }
   };
 
@@ -94,6 +100,14 @@ export function ResearcherScreen({
             {working ? "찾는 중" : "찾기"}
           </Btn>
         </form>
+
+        {/* 한 번에 수십 초가 걸린다 — 멈춘 것이 아니라 어느 단계인지를 알린다. 첫 단계 알림이
+            오기 전에는 말하지 않는다(모르는 것을 지어내지 않는다). */}
+        {working && phase ? (
+          <div role="status" aria-live="polite" className="t-cap mb-3 text-txt-muted">
+            {phase === "searching" ? "웹에서 자료를 찾는 중…" : "찾은 자료를 카드로 정리하는 중…"}
+          </div>
+        ) : null}
 
         <div className="mb-1 flex items-center gap-2">
           <SecTitle note="출처가 없는 결과는 보여주지 않습니다" className="m-0 flex-1">

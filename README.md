@@ -194,6 +194,39 @@ cp scripts/pre-push.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 있습니다.** 위 줄은 그 파일을 부르는 것만 합니다. 빼고 싶으면 `--no-verify` 로 부르되, 그
 뒤 Vercel 이 빨개질 수 있다는 것을 알고 하세요.
 
+### 드라이브 통합 검사
+
+```bash
+npm run test:drive
+```
+
+드라이브의 약속은 계약이다 — **2GB · 같은 이름이면 새 버전 · 복원은 덮어쓰기가 아니라 추가 ·
+거절된 올리기는 아무것도 남기지 않는다.** 그런데 이 계약은 손으로 두 번 확인하고 두 번
+버렸다(임시 스크립트). 손으로 확인한 것은 남지 않는다.
+
+이 검사는 **실제 저장소(개발 버킷)와 실제 서버 액션**을 통과한다. 가짜는 요청 컨텍스트
+하나뿐이고(쿠키 항아리·`revalidatePath`), 앱 코드는 한 줄도 건드리지 않았다 — 그래서
+**액션이 스스로 막는지**를 본다(화면이 버튼을 숨겼다고 안전하지 않으므로).
+
+2GB 를 실제로 올릴 수는 없다. 그래서 **큰 버전을 DB 에 심는다** — 팀 사용량은 저장소가 아니라
+`FileVersion.bytes` 의 합이라 심은 만큼이 실제로 한도 직전·직후가 된다. 올리는 대상은 진짜
+저장소 객체다(몇 KB).
+
+⚠️ **로컬 DB 와 개발 버킷에서만 돕다.** 팀을 만들고 저장소에 올렸다가 지우기 때문에,
+운영 DB 나 운영 버킷(`submissions`) 을 가리키는 채로 한 번 돌면 팀이 남는다. 진입점이 두
+가지를 확인하고 멈춘다(`scripts/harness/drive.mts`).
+
+**이 검사가 실제로 버그를 하나 잡았다(2026-09-28).** 팀이 꽉 찬 뒤에 화면이 같은 응답을 다시
+보내면 `over-quota` 로 돌아갔고, 거절된 올리기의 정리(`storage().remove`)가 **이미 기록된
+객체를 지웠다.** 업로드는 성공했는데 파일이 사라지고 버전 행만 남았다. 원인은 잠금 안에서
+**중복 응답 검사가 용량 검사 뒤에 있었던 순서**였고, 순서를 바로잡았다(`server/actions/drive.ts`).
+
+하네스 자체가 서 있는지 따로 본다 — 세션 없는 호출이 실제로 막히는가:
+
+```bash
+npm run test:drive:probe
+```
+
 ### 저장소 자가진단
 
 ```bash
@@ -650,7 +683,8 @@ npm run check:migrations
 ### 2-2. 파일 저장소
 
 파일은 Supabase Storage 의 **비공개 버킷**(`submissions`)에 들어갑니다. 버킷은
-`npm run db:storage` 로 한 번 만듭니다.
+`npm run db:storage` 로 한 번 만듭니다. 계약(2GB·버전·복원·멱등)은
+[`npm run test:drive`](#드라이브-통합-검사) 가 지킨다.
 
 이 앱은 **Supabase Auth 를 쓰지 않습니다.** 가입·로그인이 없는 제품이라 판단할 사용자가 없고,
 Supabase 는 여기서 **파일 저장소 전용**입니다. 저장소 RLS 가 판단할 사용자를 만들지 않으므로
@@ -838,7 +872,8 @@ npm run cushion:bench -- --models openrouter/free --level STRONG --strict
 ```bash
 npm run tool:bench -- --list                 # 도구별 코퍼스 크기
 npm run tool:bench -- --list-models          # 지금 쓸 수 있는 무료 모델 · 함수 호출 지원 여부
-npm run tool:bench -- --tool clerk   --models openrouter/free,inclusionai/ling-3.0-flash-sante:free
+npm run tool:bench -- --check-env            # .env 의 모델 슬러그가 카탈로그에 여전히 존재하는지
+npm run tool:bench -- --tool clerk   --models openrouter/free --repeat 3 --compare
 npm run tool:bench -- --tool research --models openrouter/free --strict
 ```
 

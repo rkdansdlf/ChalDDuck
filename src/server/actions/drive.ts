@@ -266,19 +266,30 @@ export async function finishUpload(
   // 잠금 안에서는 두 가지를 함께 한다: 용량 판정과 버전 이름 고르기. 후자는 원래
   // 제출함 잠그기로 지켰던 그것이다(같은 이름의 새 버전이 둘 생기지 않게).
   const result = await withTeamBoxLock(me.teamId, box.id, async (tx): Promise<FinishUploadResult> => {
-    // 아직 안 쓰인 객체다(`already` 검사 아래) — 여기서 세는 값이 곧 늘어난다.
-    if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) {
-      return { status: "over-quota" };
-    }
-
+    // **먼저** 이 경로가 이미 기록돼 있는지 본다. 순서가 규칙이다(2026-09-28 수정).
+    //
     // 응답이 늦어 화면이 한 번 더 보냈을 때 같은 버전이 둘 생기지 않게. 잠금 안에서 봐야
     // 두 요청이 동시에 "아직 없다"고 보지 않는다.
+    //
+    // 예전에는 이 검사가 **용량 검사 뒤** 에 있었다. 그래서 팀이 꽉 찬 뒤에 화면이 같은
+    // 응답을 다시 보내면 '저장 용량이 가득 찼습니다' 로 돌아갔고, 더 나쁜 일이 이어졌다 —
+    // 실패한 올리기 뒤의 정리(`storage().remove`)가 **이미 기록된 객체를 지웠다.**
+    // 업로드는 성공했는데 파일이 사라지고, 버전 행만 남은 채 미리보기가 404 가 된다
+    // (드라이브 통합 검사가 이 순서를 뒤집기 전까지 이 상태였다).
+    //
+    // 중복 응답은 **이미 일어난 일이므로** 용량과 무관하다. 용량은 아직 쓰이지 않은 객체에
+    // 대해서만 의미가 있다.
     const already = await tx.fileVersion.findFirst({
       where: { storagePath: upload.path },
       include: { file: { select: { id: true, name: true } } },
     });
     if (already) {
       return { status: "ok", fileId: already.file.id, fileName: already.file.name, label: already.label, isNewFile: false };
+    }
+
+    // 아직 안 쓰인 객체다(위의 `already` 검사 아래) — 여기서 세는 값이 곧 늘어난다.
+    if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) {
+      return { status: "over-quota" };
     }
 
     const target = fileId

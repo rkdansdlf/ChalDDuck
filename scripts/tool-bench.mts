@@ -1,5 +1,8 @@
 import "./load-env.mjs";
 
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { refineScript, rewriteWithCushion, searchResearch, summarizeMeeting, convertSentence } from "../src/server/ai/tools.js";
 import {
   CLERK_CORPUS,
@@ -22,7 +25,18 @@ import {
  * npm run tool:bench -- --tool clerk    --models openrouter/free,qwen/qwen3.8-27b:free
  * npm run tool:bench -- --tool present  --models openrouter/free --strict
  * npm run tool:bench -- --tool research --models openrouter/free
+ * npm run tool:bench -- --tool clerk    --models openrouter/free --repeat 3 --compare
+ * npm run tool:bench -- --check-env      # .env 의 슬러그가 카탈로그에 있는지
  * ```
+ *
+ * ## 반복 · 저장 · 비교
+ *
+ * 무료 라우터는 요청마다 다른 모델을 잡으므로 **한 번의 통과/실패는 표본이 아니다.**
+ * - `--repeat N` — 케이스마다 N 번 돌려 통과율과 **최악 회차**(가장 낮은 회차 통과 수)를 낸다.
+ * - 결과는 `scripts/bench-results/<날짜>-<도구>.json` 에 저장된다(`--no-save` 로 끈다).
+ *   모델 출력이 아니라 **판정 요약만** 담는다.
+ * - `--compare` — 같은 도구의 **직전 저장 결과**와 모델별 통과율 차이를 보여 준다.
+ * - 유형(`kind`)별 통과율도 낸다 — 적대적 입력에서만 무너지는 모델을 가려낸다.
  *
  * ## 왜 이게 필요한가
  *
@@ -63,7 +77,7 @@ type ToolKey = "clerk" | "present" | "research" | "cushion" | "sentence";
 
 const TOOLS: ToolKey[] = ["clerk", "present", "research", "cushion", "sentence"];
 
-function readArgs(): { tool: ToolKey; models: string[]; strict: boolean } {
+function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; repeat: number; compare: boolean; save: boolean } {
   const argv = process.argv.slice(2);
   const pick = (flag: string) => {
     const at = argv.indexOf(flag);
@@ -78,7 +92,8 @@ function readArgs(): { tool: ToolKey; models: string[]; strict: boolean } {
     throw new Error(`--tool 은 ${TOOLS.join(" · ")} 중 하나여야 합니다. 받은 값: ${tool}`);
   }
   const models = (pick("--models") ?? "openrouter/free").split(",").map((m) => m.trim()).filter(Boolean);
-  return { tool, models, strict: argv.includes("--strict") };
+  const repeat = Math.max(1, Math.floor(Number(pick("--repeat") ?? 1)) || 1);
+  return { tool, models, strict: argv.includes("--strict"), repeat, compare: argv.includes("--compare"), save: !argv.includes("--no-save") };
 }
 
 /**
@@ -128,6 +143,38 @@ async function listFreeModels() {
       "**그래서 기본값은 벤치가 정한다:** `npm run tool:bench -- --tool <도구> --models <슬러그>`",
     ].join("\n"),
   );
+}
+
+/**
+ * `--check-env` — `.env` 에 적힌 모델 슬러그가 **지금 카탈로그에 있는지** 본다.
+ *
+ * 슬러그는 썩는다(사라지면 404). 그걸 사용자가 먼저 알게 되면 늦다 — 주기 실행(CI)이 먼저
+ * 알도록 한다. `openrouter/free` 는 라우터라 카탈로그 항목이 아니므로 검사하지 않는다.
+ * 없는 슬러그가 하나라도 있으면 종료 코드 1.
+ */
+async function checkEnvSlugs() {
+  const key = process.env.OPENROUTER_KEY;
+  if (!key) throw new Error("OPENROUTER_KEY 가 없어 슬러그를 확인할 수 없습니다.");
+  const res = await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  const body = (await res.json()) as { data: Array<{ id: string }> };
+  const known = new Set(body.data.map((m) => m.id));
+
+  const configured = Object.entries(process.env).filter(
+    ([name, value]) => /^OPENROUTER_(MODEL|FALLBACK_MODEL)(_|$)/.test(name) && value?.trim(),
+  );
+  let missing = 0;
+  for (const [name, value] of configured) {
+    const slug = value!.trim();
+    if (slug === "openrouter/free") continue;
+    const ok = known.has(slug);
+    if (!ok) missing += 1;
+    console.log(`  ${ok ? "✓" : "✗"} ${name.padEnd(32)} ${slug}${ok ? "" : "  ← 카탈로그에 없음"}`);
+  }
+  if (configured.length === 0) console.log("  지정된 슬러그가 없습니다(전부 무료 라우터).");
+  if (missing > 0) {
+    console.error(`\n✗ 카탈로그에 없는 슬러그 ${missing}개 — .env 를 고치세요.`);
+    process.exit(1);
+  }
 }
 
 /** 서기 한 건의 판정. `ok` 이 false 면 아래 `why` 를 사람이 읽는다. */
@@ -278,7 +325,7 @@ function caseAt(tool: ToolKey, index: number) {
   return SENTENCE_CORPUS[index];
 }
 
-type Row = { id: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
+type Row = { id: string; kind: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
 
 async function runOne(tool: ToolKey, model: string, index: number): Promise<Row> {
   const started = Date.now();
@@ -289,6 +336,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
       const v = judgeClerk(item, draft);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -301,6 +349,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
       const v = judgePresent(item, draft);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -313,6 +362,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
       const v = judgeResearch(item, results);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -325,6 +375,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
       const v = judgeCushion(item, out);
       return {
         id: item.id,
+        kind: item.kind ?? "normal",
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
@@ -336,6 +387,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
     const v = judgeSentence(item, out);
     return {
       id: item.id,
+      kind: item.kind ?? "normal",
       ok: v.ok,
       why: v.why,
       seconds: (Date.now() - started) / 1000,
@@ -346,6 +398,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
     // "내 코드가 못 돌렸다" 가 같은 0 으로 보인다.
     return {
       id: caseAt(tool, index).id,
+      kind: caseAt(tool, index).kind ?? "normal",
       ok: false,
       why: `호출 실패: ${(error as Error).message}`,
       seconds: (Date.now() - started) / 1000,
@@ -354,46 +407,148 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
   }
 }
 
-const { tool, models, strict } = readArgs();
+const { tool, models, strict, repeat, compare, save } = readArgs();
 
 if (process.argv.includes("--list-models")) {
   await listFreeModels();
   process.exit(0);
 }
 
+if (process.argv.includes("--check-env")) {
+  await checkEnvSlugs();
+  process.exit(0);
+}
+
 const total = CORPUS_LENGTH[tool];
 
-console.log(`도구 벤치 · ${tool} · 입력 ${total}개\n`);
+/** 저장되는 한 모델의 요약. 모델 출력은 담지 않는다. */
+type ModelSummary = {
+  model: string;
+  /** 회차별 통과 수. */
+  passesPerRun: number[];
+  total: number;
+  /** 전체 통과율(0~1). */
+  rate: number;
+  /** 가장 나빴던 회차의 통과율(0~1). */
+  worst: number;
+  avgSeconds: number;
+  byKind: Record<string, { passed: number; total: number }>;
+  /** 한 번이라도 실패한 케이스 id → 실패 횟수. */
+  failures: Record<string, number>;
+};
 
-const table: Array<{ model: string; passed: number; total: number; seconds: number }> = [];
+type SavedRun = { tool: ToolKey; at: string; repeat: number; corpus: number; models: ModelSummary[] };
+
+const RESULTS_DIR = path.join(import.meta.dirname, "bench-results");
+
+/** 같은 도구의 가장 최근 저장 결과. 이번 실행을 저장하기 **전에** 읽어야 직전 것이 된다. */
+function previousRun(): SavedRun | null {
+  try {
+    const files = readdirSync(RESULTS_DIR)
+      .filter((f) => f.endsWith(`-${tool}.json`))
+      .sort();
+    const last = files.at(-1);
+    return last ? (JSON.parse(readFileSync(path.join(RESULTS_DIR, last), "utf8")) as SavedRun) : null;
+  } catch {
+    return null;
+  }
+}
+
+const previous = compare ? previousRun() : null;
+
+console.log(`도구 벤치 · ${tool} · 입력 ${total}개 × ${repeat}회\n`);
+
+const summaries: ModelSummary[] = [];
 for (const model of models) {
   console.log(`— ${model} 부르는 중…`);
-  const rows: Row[] = [];
-  // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
-  // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
-  for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i));
+  const passesPerRun: number[] = [];
+  const byKind: ModelSummary["byKind"] = {};
+  const failures: Record<string, number> = {};
+  let seconds = 0;
+  let calls = 0;
 
-  for (const row of rows) {
-    const mark = row.ok ? "✓" : "✗";
-    const cells = Object.entries(row.cells).map(([k, v]) => `${k} ${v}`).join(" · ");
-    console.log(`    ${mark} ${row.id} (${row.seconds.toFixed(1)}초) ${cells}${row.why ? `\n        ${row.why}` : ""}`);
+  for (let run = 0; run < repeat; run += 1) {
+    if (repeat > 1) console.log(`  회차 ${run + 1}/${repeat}`);
+    const rows: Row[] = [];
+    // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
+    // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
+    for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i));
+
+    for (const row of rows) {
+      const mark = row.ok ? "✓" : "✗";
+      const cells = Object.entries(row.cells).map(([k, v]) => `${k} ${v}`).join(" · ");
+      console.log(`    ${mark} ${row.id} (${row.seconds.toFixed(1)}초) ${cells}${row.why ? `\n        ${row.why}` : ""}`);
+      const bucket = (byKind[row.kind] ??= { passed: 0, total: 0 });
+      bucket.total += 1;
+      if (row.ok) bucket.passed += 1;
+      else failures[row.id] = (failures[row.id] ?? 0) + 1;
+      seconds += row.seconds;
+      calls += 1;
+    }
+    passesPerRun.push(rows.filter((r) => r.ok).length);
   }
-  table.push({
+
+  const passedAll = passesPerRun.reduce((a, b) => a + b, 0);
+  summaries.push({
     model,
-    passed: rows.filter((r) => r.ok).length,
-    total: rows.length,
-    seconds: rows.reduce((acc, r) => acc + r.seconds, 0) / (rows.length || 1),
+    passesPerRun,
+    total,
+    rate: passedAll / (total * repeat),
+    worst: Math.min(...passesPerRun) / total,
+    avgSeconds: seconds / (calls || 1),
+    byKind,
+    failures,
   });
 }
 
-console.log(`\n${"모델".padEnd(30)}${"통과".padStart(8)}${"평균초".padStart(9)}`);
-for (const row of table) {
-  console.log([row.model.slice(0, 29).padEnd(30), `${row.passed}/${row.total}`.padStart(8), row.seconds.toFixed(1).padStart(9)].join(""));
+const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
+
+console.log(`\n${"모델".padEnd(30)}${"통과율".padStart(8)}${"최악".padStart(8)}${"평균초".padStart(9)}`);
+for (const row of summaries) {
+  console.log([row.model.slice(0, 29).padEnd(30), pct(row.rate).padStart(8), pct(row.worst).padStart(8), row.avgSeconds.toFixed(1).padStart(9)].join(""));
 }
+
+console.log("\n유형별 통과율");
+for (const row of summaries) {
+  const parts = Object.entries(row.byKind).map(([k, v]) => `${k} ${v.passed}/${v.total}`);
+  console.log(`  ${row.model.slice(0, 29).padEnd(30)}${parts.join(" · ")}`);
+}
+
+if (compare) {
+  console.log("\n직전 결과와 비교");
+  if (!previous) {
+    console.log("  저장된 직전 결과가 없습니다(이번이 첫 기록).");
+  } else {
+    console.log(`  직전: ${previous.at} (코퍼스 ${previous.corpus}개 × ${previous.repeat}회)`);
+    for (const row of summaries) {
+      const before = previous.models.find((m) => m.model === row.model);
+      if (!before) {
+        console.log(`  ${row.model.slice(0, 29).padEnd(30)}직전 기록 없음`);
+        continue;
+      }
+      const delta = (row.rate - before.rate) * 100;
+      const sign = delta > 0 ? "+" : "";
+      // 코퍼스가 달라졌으면 숫자를 그대로 비교하면 안 된다 — 같은 시험이 아니다.
+      const note = previous.corpus !== total ? " (코퍼스 크기가 달라 참고용)" : "";
+      console.log(`  ${row.model.slice(0, 29).padEnd(30)}${pct(before.rate)} → ${pct(row.rate)} (${sign}${delta.toFixed(0)}%p)${note}`);
+    }
+  }
+}
+
 console.log(`\n**0 이어야 하는 열(담당자 추측 · 수치 지어냄 · 지어낸 주소)이 0 이 아닌 모델은 다른 수치를 믿으면 안 된다.**`);
 
+if (save) {
+  mkdirSync(RESULTS_DIR, { recursive: true });
+  const at = new Date().toISOString();
+  const file = path.join(RESULTS_DIR, `${at.replace(/[:.]/g, "-")}-${tool}.json`);
+  const record: SavedRun = { tool, at, repeat, corpus: total, models: summaries };
+  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+  console.log(`저장: ${path.relative(process.cwd(), file)}`);
+}
+
 if (strict) {
-  const broken = table.filter((row) => row.passed < row.total);
+  // 한 회차라도 실패가 있으면 계약을 어긴 것이다 — 평균이 아니라 **최악 회차**로 판정한다.
+  const broken = summaries.filter((row) => row.worst < 1);
   if (broken.length > 0) {
     console.error(`\n✗ ${broken.length}개 모델이 계약을 어겼다.`);
     process.exit(1);

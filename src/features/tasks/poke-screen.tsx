@@ -102,12 +102,16 @@ export function PokeScreen({
                   disabled={already}
                   onClick={() => setSelected(task.id)}
                   className={cn(
-                    "box-border flex w-full items-center gap-[11px] rounded-2xl px-[15px] py-[13px] text-left select-none transition-all duration-150",
-                    on ? "border-[1.5px] border-yellow-500 bg-yellow-100 shadow-xs scale-[1.01]" : "border-[1.5px] border-line bg-card hover:bg-cr-50",
+                    "box-border flex w-full items-center gap-[11px] rounded-2xl px-[15px] py-[13px] text-left select-none transition-all duration-200",
+                    on
+                      ? "border-[1.5px] border-yellow-500 bg-yellow-100 shadow-xs scale-[1.01] ring-2 ring-yellow-400/30"
+                      : "border-[1.5px] border-line bg-card hover:bg-cr-50",
                     already ? "cursor-default opacity-55" : "cursor-pointer active:scale-[0.98]",
                   )}
                 >
-                  <Avatar name={task.assignee ?? ""} mbti={task.mbti} size={32} />
+                  <div className={cn("flex-none transition-transform duration-200", on && "animate-poke")}>
+                    <Avatar name={task.assignee ?? ""} mbti={task.mbti} size={34} />
+                  </div>
                   <span className="min-w-0 flex-1">
                     <span className="keep-all block font-semibold text-[14.5px] leading-[1.4] text-txt-strong">
                       {task.title}

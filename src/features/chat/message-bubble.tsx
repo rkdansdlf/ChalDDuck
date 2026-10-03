@@ -96,10 +96,12 @@ export const MessageBubble = memo(function MessageBubble({
         {/* 파일만 보낸 말은 글이 비어 있다 — 빈 말풍선을 그리지 않는다. */}
         {displayText ? (
           <div
+            key={showOriginal ? "orig" : "purified"}
             className={cn(
-              "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong shadow-2xs transition-all duration-150",
+              "animate-fade-in text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong shadow-2xs transition-all duration-200",
               mine ? "bg-yellow-300" : "border border-line bg-card",
               (message.attachment || message.driveFile) && "mt-1",
+              showOriginal && !mine && "border-yellow-400 bg-yellow-50/60",
             )}
           >
             {displayText}
@@ -119,7 +121,7 @@ export const MessageBubble = memo(function MessageBubble({
               type="button"
               onClick={() => setShowOriginal((prev) => !prev)}
               aria-pressed={showOriginal}
-              className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line bg-card/90 px-2 py-0.5 text-[11px] font-medium text-txt-muted shadow-2xs transition-colors hover:bg-fill active:scale-95"
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line bg-card/90 px-2 py-0.5 text-[11px] font-medium text-txt-muted shadow-2xs transition-all hover:bg-fill active:scale-90 select-none"
             >
               <Icon
                 name={showOriginal ? "eye" : kind === "FALLBACK" ? "shield" : "wand-sparkles"}

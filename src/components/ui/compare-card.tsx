@@ -70,8 +70,10 @@ export function CompareCard({
             </Chip>
           ) : null}
         </div>
-        <Panel s="coral" pad={14} r={16}>
-          <div className="text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29]">{result}</div>
+        <Panel s="coral" pad={14} r={16} className="transition-all duration-300">
+          <div className="text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29] animate-slide-up">
+            {result}
+          </div>
         </Panel>
       </div>
     </div>

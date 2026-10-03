@@ -148,7 +148,13 @@ export function TasksScreen({
             const kind = kindOf(task.kind);
             const done = task.status === "done";
             return (
-              <div key={task.id} className="flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-colors duration-150">
+              <div
+                key={task.id}
+                className={cn(
+                  "flex min-h-[56px] items-start gap-3 px-[15px] py-[13px] transition-all duration-200",
+                  done && "bg-ok-bg/30 rounded-xl"
+                )}
+              >
                 <button
                   type="button"
                   disabled={busy.cycle}
@@ -160,11 +166,11 @@ export function TasksScreen({
                   }
                   aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
                   className={cn(
-                    "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-75",
+                    "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-90",
                     done ? "text-ok" : "text-txt-muted hover:text-txt-strong",
                   )}
                 >
-                  <span className={cn("inline-flex", done && "animate-pop")}>
+                  <span className={cn("inline-flex transition-transform duration-200", done ? "animate-check-bounce" : "hover:scale-110")}>
                     <Icon name={status.icon} size={22} />
                   </span>
                 </button>
@@ -177,8 +183,8 @@ export function TasksScreen({
                   >
                     <div
                       className={cn(
-                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5] transition-all duration-200",
-                        done ? "text-txt-faint line-through opacity-70" : "text-txt-strong",
+                        "text-pretty-keep font-semibold text-[14.5px] leading-[1.5] transition-all duration-300",
+                        done ? "text-txt-faint line-through opacity-65 translate-x-0.5" : "text-txt-strong",
                       )}
                     >
                       {task.title}

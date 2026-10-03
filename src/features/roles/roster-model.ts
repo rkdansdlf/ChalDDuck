@@ -76,7 +76,7 @@ export function wantersOf(members: Member[], role: RoleKey): Member[] {
 }
 
 /** 추첨 후보가 비었을 때의 이유. 화면은 이걸 보고 왜 안 되는지 보여 준다. */
-export type NoDrawPool = "no-wanters" | "all-vetoed";
+export type NoDrawPool = "no-wanters" | "all-vetoed" | "all-rejected";
 
 /**
  * 추첨 후보를 고르는 **규칙.** 서버(`actions/roles`)와 화면(07)이 같은 함수를 쓴다.
@@ -86,9 +86,10 @@ export type NoDrawPool = "no-wanters" | "all-vetoed";
  * 그 역할을 뽑히면 "Veto 로 고른 사람은 추첨 대상에서 뺍니다" 라는 화면 문구가
  * 거짓말이 되므로, 후보에서 실제로 빼야 한다.
  *
- * **Veto 는 빠지면 안 되고, 거절은 후보가 비면 무시한다.** Veto 는 지금도 싫다는
- * 뜻이라 다시 뽑아도 마찬가지지만, 거절은 그 한 번의 결과라 남은 사람이 없을 때
- * 증발해 막히는 것보다 되돌려 주는 편이 낫다.
+ * **Veto 는 빠지고, 거절은 되돌리지 않는다.** 전원이 거절하면 예전에는 거절 명단을
+ * 무시하고 Veto 가 아닌 사람 전체로 되돌렸다 — 그러면 이미 "안 받겠다"고 한 사람에게
+ * 같은 제안을 반복하게 되고, 거절이라는 신호 자체가 사라진다. 아무도 더 뽑히지 않으므로
+ * 역할은 미정으로 남고, 길은 이야기해서 정하거나 희망 역할을 바꾸는 것으로 남는다.
  */
 export function drawPoolOf<T extends { id: string; name: string; veto: RoleKey | null }>(
   wanters: T[],
@@ -100,13 +101,17 @@ export function drawPoolOf<T extends { id: string; name: string; veto: RoleKey |
     return { pool: [], noPool: wanters.length === 0 ? "no-wanters" : "all-vetoed" };
   }
   const remaining = wanted.filter((m) => !rejectedIds.has(m.id));
-  return { pool: remaining.length > 0 ? remaining : wanted, noPool: null };
+  return remaining.length > 0
+    ? { pool: remaining, noPool: null }
+    : { pool: [], noPool: "all-rejected" };
 }
 
 /** 후보가 비었을 때 화면에 보여 줄 문구. */
 export const NO_DRAW_POOL_TEXT: Record<NoDrawPool, string> = {
   "no-wanters": "이 역할을 1순위로 고른 팀원이 없습니다",
   "all-vetoed": "이 역할을 1순위로 고른 사람이 모두 피할 일로 골랐습니다 — 추첨할 수 없습니다",
+  "all-rejected":
+    "이 역할을 1순위로 고른 사람이 모두 추첨을 안 받았습니다 — 역할이 미정으로 남습니다",
 };
 
 /** 화면(`roster-screen`)이 그리는 데 필요한 추첨 정보는 `RoleDrawResult` 다 — 하나만 쓴다. */
@@ -134,6 +139,8 @@ export type RoleView =
   | { kind: "auto" }
   /** 희망자 2명 이상, 아직 추첨 전 — 이야기하거나 뽑아야 한다. */
   | { kind: "negotiating" }
+  /** 팀이 아직 응답 중이다 — **추첨이 잠겨 있다.** */
+  | { kind: "consent"; consent: ConsentView & { kind: "waiting" } }
   /** 추첨 결과가 났고 아직 받기 전. */
   | { kind: "awaiting"; winner: string }
   /** 확정. */
@@ -141,8 +148,60 @@ export type RoleView =
   /** 당첨자가 팀을 나갔다 — 무효. 다시 뽑을 수 있다. */
   | { kind: "voided"; winner: string };
 
-export function roleViewOf(wanterCount: number, draw: RoleDrawResult | null): RoleView {
-  // **추첨 결과가 있으면 희망자 수보다 먼저 본다.** 결과가 남아 있는데 화면이 "미정"
+/** 진행 중인 동의 제안 — 있으면 그 역할의 추첨이 잠긴다. */
+export type DrawConsent = {
+  role: RoleKey;
+  /** 제안에 고정된 도구. 추첨할 때 이 값이 쓰인다(클라이언트에서 받지 않는다). */
+  tool: string;
+  proposedBy: string;
+  /** 지금까지 동의한 사람 수. */
+  agreed: number;
+  /** 응답한 사람 수(반대는 제안을 지우므로 남지 않는다). */
+  responded: number;
+  respondBy: string;
+};
+
+/**
+ * 추첨을 시작해도 되는지 — **읽을 때마다 시각으로 계산한다.**
+ *
+ * ## 왜 저장된 상태가 없는가
+ *
+ * 회의 제안은 마감 뒤 **예약 작업이 확정**해야 한다(`confirmDueMeetings`) — 리포트가 그 값을
+ * 읽기 때문이다. 추첨은 그렇지 않다. **추첨은 사람이 누르는 순간** 일어나야 하고, 예약
+ * 작업이 대신 뽑을 수는 없다. 그래서 통과 여부를 저장하지 않고 `respondBy` 와 지금을
+ * 비교한다. 스케줄러가 늦게 돌아도 사용자는 잘못된 상태를 보지 않는다.
+ *
+ * **동의는 강제가 아니다** — 제안이 없으면 곧바로 뽑을 수 있다. 막는 것은 "제안이 있고 아직
+ * 마감 전" 뿐이다.
+ */
+export type ConsentView =
+  /** 제안이 없거나 마감을 지나 저절로 통과했다 — 추첨할 수 있다. */
+  | { kind: "open" }
+  /** 팀이 아직 응답 중이다. */
+  | { kind: "waiting"; proposedBy: string; tool: string; agreed: number; responded: number; respondBy: string };
+
+export function consentViewOf(
+  consent: DrawConsent | null | undefined,
+  now: Date = new Date(),
+): ConsentView {
+  if (!consent) return { kind: "open" };
+  if (new Date(consent.respondBy).getTime() <= now.getTime()) return { kind: "open" };
+  return {
+    kind: "waiting",
+    proposedBy: consent.proposedBy,
+    tool: consent.tool,
+    agreed: consent.agreed,
+    responded: consent.responded,
+    respondBy: consent.respondBy,
+  };
+}
+
+export function roleViewOf(
+  wanterCount: number,
+  draw: RoleDrawResult | null,
+  consent: ConsentView = { kind: "open" },
+): RoleView {
+  // **추첨 결과가 있으면 희망자 수와 동의보다 먼저 본다.** 결과가 남아 있는데 화면이 "미정"
   // 이나 "확정 예정" 으로 덮으면, 그 결과는 보이지도 풀 수도 없다 — 당첨자가 자기
   // 1순위를 바꾼 뒤 남아 있는 추첨이 정확히 그렇다. 희망자 수는 **추적이 없을 때만**
   // 기준이 된다.
@@ -155,6 +214,10 @@ export function roleViewOf(wanterCount: number, draw: RoleDrawResult | null): Ro
     return { kind: "awaiting", winner: draw.winner };
   }
 
+  // 동의 제안은 **희망자 수보다 뒤**다. 한 명만 희망한 역할에는 제안이 생길 수 없고,
+  // 생겼다면 이미 이 사람이 누른 것이다.
+  if (consent.kind === "waiting") return { kind: "consent", consent };
+
   if (wanterCount === 0) return { kind: "empty" };
   return wanterCount > 1 ? { kind: "negotiating" } : { kind: "auto" };
 }
@@ -164,9 +227,26 @@ export function roleViewOf(wanterCount: number, draw: RoleDrawResult | null): Ro
  *
  * `voided` 가 여기에 핵심이다 — 무효 추첨은 **자리를 차지하고 있으므로** 다시 뽑는 길이
  * 있어야 한다. 예전에는 `negotiating` 일 때만 보여서, 갇힌 추첨을 꺼낼 수단이 없었다.
+ *
+ * `consent` 는 **없다** — 동의를 받기 전에는 뽑을 수 없다.
  */
 export function canDrawIn(view: RoleView): boolean {
   return view.kind === "negotiating" || view.kind === "voided";
+}
+
+/**
+ * 이 상태에서 **동의 제안** 버튼을 띄워야 하는가.
+ *
+ * 동의는 선택이라 마감을 지나면 다시 제안할 수 있다. `voided` 는 이미 뽑힌 결과가 있고
+ * 다시 뽑으면 되므로 제안하지 않는다 — 같은 역할에 두 길이 겹치면 어느 쪽인지 모른다.
+ */
+export function canProposeIn(view: RoleView): boolean {
+  return view.kind === "negotiating";
+}
+
+/** 동의 대기가 배지와 카운트에서 "확인 요청"과 구분되어야 하는 이유를 한 문장으로. */
+export function isConsentAwaiting(view: RoleView): boolean {
+  return view.kind === "consent";
 }
 
 /** 무효가 된 이유를 화면에 말해 준다. */

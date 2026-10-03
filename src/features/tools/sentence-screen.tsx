@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AppBar, Body, Btn, CompareCard, Note, Textarea, Undecided } from "@/components/ui";
 import { getSentenceSample } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
+import { DraftActions } from "./draft-actions";
 import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
 import { useAiQuota } from "./use-ai-quota";
@@ -79,7 +80,20 @@ export function SentenceScreen({
       runAiStream({ tool: "sentence", text: value, variant: key, onDelta }),
     [],
   );
-  const { result, partial, working, error, source, canRun, stale, run: generate } = useAiDraft({
+  const {
+    result,
+    partial,
+    working,
+    error,
+    source,
+    canRun,
+    stale,
+    run: generate,
+    redo,
+    canRedo,
+    history,
+    restore,
+  } = useAiDraft({
     text,
     variant: mode,
     initial: { text: initialInput, variant: initialMode, result: initialOutput },
@@ -159,6 +173,18 @@ export function SentenceScreen({
           result={working ? partial || "바꾸는 중…" : result || "—"}
           resultSource={source === "none" ? null : source}
         />
+
+        {aiReady ? (
+          <DraftActions
+            className="mt-3 mb-3"
+            canRedo={canRedo}
+            onRedo={redo}
+            history={history}
+            onRestore={restore}
+            left={left}
+            limited={perDay > 0}
+          />
+        ) : null}
 
         {sampleError ? (
           <Note tone="err" icon="circle-alert" className="mb-3">

@@ -155,7 +155,7 @@ export function AppBar({
             // 탭바 배지와 같은 규격을 쓴다 — 같은 뜻의 표시가 화면마다 달라 보이면 안 된다.
             <span
               aria-hidden
-              className="animate-pop absolute top-1.5 right-1.5 box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs"
+              className="animate-pulse-glow absolute top-1.5 right-1.5 box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs"
             >
               {actionBadge > 9 ? "9+" : actionBadge}
             </span>

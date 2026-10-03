@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Toast, Undecided, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
-import { exportAiUsage } from "@/server/actions/ai";
+import { exportAiUsage, getTeamAiSummary } from "@/server/actions/ai";
+import type { TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { SampleNote } from "./ai-state-notes";
 
 /**
@@ -32,6 +33,12 @@ export function AiHubScreen({
   };
 
   const [exporting, setExporting] = useState(false);
+  const [summary, setSummary] = useState<TeamAiWeeklySummary | null>(null);
+
+  useEffect(() => {
+    if (!aiReady) return;
+    getTeamAiSummary().then(setSummary).catch(() => {});
+  }, [aiReady]);
 
   const downloadUsage = async () => {
     setExporting(true);
@@ -55,6 +62,11 @@ export function AiHubScreen({
       <AppBar title="AI 도구" sub="팀플에 필요한 만큼만" onBack={() => router.push("/home")} />
 
       <Body dense>
+        {summary && summary.warnings.length > 0 ? (
+          <Note tone="warn" icon="circle-alert" title="AI 도구 응답 안내" className="mb-3">
+            {summary.warnings.join(" ")}
+          </Note>
+        ) : null}
         <div className="mb-4 flex flex-col gap-[9px]">
           {tools.map((tool) => {
             const open = tool.ready && tool.href !== null;

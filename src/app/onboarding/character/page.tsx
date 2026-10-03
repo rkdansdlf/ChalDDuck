@@ -42,18 +42,41 @@ export default function CharacterPage() {
             내 찰떡 캐릭터
           </div>
 
-          <div className="animate-pop mx-auto my-2 size-[168px] relative">
-            <Image
-              src={characterImage(effectiveMbti)}
-              alt={`${effectiveMbti} 캐릭터`}
-              width={168}
-              height={168}
-              priority
-              className="size-full rounded-3xl object-contain animate-jelly transition-transform duration-200 hover:scale-105"
+          <div className="relative mx-auto my-3 size-[180px] grid place-items-center">
+            {/* 은은한 찰떡 후광 */}
+            <div
+              aria-hidden="true"
+              className="absolute inset-2 rounded-full bg-yellow-300/40 blur-2xl animate-pulse-subtle scale-105 pointer-events-none"
             />
+            {/* 좌우 반짝이 장식 */}
+            <span
+              aria-hidden="true"
+              className="absolute -top-1 -right-1 text-yellow-500 animate-sparkle pointer-events-none"
+            >
+              <Icon name="sparkles" size={24} />
+            </span>
+            <span
+              aria-hidden="true"
+              className="absolute -bottom-1 -left-1 text-coral-400 animate-sparkle pointer-events-none delay-150"
+            >
+              <Icon name="sparkles" size={18} />
+            </span>
+
+            <div className="animate-bounce-in size-[168px] relative z-10">
+              <div className="animate-float size-full">
+                <Image
+                  src={characterImage(effectiveMbti)}
+                  alt={`${effectiveMbti} 캐릭터`}
+                  width={168}
+                  height={168}
+                  priority
+                  className="size-full rounded-3xl object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105 active:scale-90 active:animate-squish cursor-pointer select-none"
+                />
+              </div>
+            </div>
           </div>
 
-          <h1 className="keep-all m-0 mt-3 font-extrabold text-[24px] leading-[1.3] tracking-[-.035em] text-ink-900">
+          <h1 className="animate-slide-up keep-all m-0 mt-2 font-extrabold text-[24px] leading-[1.3] tracking-[-.035em] text-ink-900">
             {meta?.characterName ?? "내 캐릭터"}
           </h1>
 

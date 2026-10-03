@@ -88,9 +88,19 @@ export async function GET(request: Request) {
       purifications.push({ team: team.name, ...stats });
     }
     const callStats = await aiCallStats(team.id);
-    // **아무 호출도 없으면 조용히 넘어간다.** 0 을 0 으로 찍는 로그는 사람이 읽지 않는다.
     if (callStats.calls > 0) {
-      console.log(`[${team.name}] ${describeAiCalls(callStats)}`);
+      const line = describeAiCalls(callStats);
+      console.log(`[${team.name}] ${line}`);
+      if (callStats.calls >= 5) {
+        const failRatio = callStats.outcomes.failed / callStats.calls;
+        const fallbackRatio = callStats.retried / callStats.calls;
+        if (failRatio >= 0.2) {
+          console.warn(`[${team.name}] ⚠️ AI 호출 실패율 경고: ${(failRatio * 100).toFixed(0)}%`);
+        }
+        if (fallbackRatio >= 0.3) {
+          console.warn(`[${team.name}] ⚠️ AI 호출 폴백 급증 경고: ${(fallbackRatio * 100).toFixed(0)}%`);
+        }
+      }
       calls.push({ team: team.name, ...callStats });
     }
   }

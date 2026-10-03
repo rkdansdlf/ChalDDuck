@@ -25,6 +25,7 @@ import { TonePicker } from "./tone-picker";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
+import { DraftActions } from "./draft-actions";
 import { DraftSourceChip } from "./draft-source-chip";
 import { useAiQuota } from "./use-ai-quota";
 import { cn } from "@/lib/cn";
@@ -88,7 +89,20 @@ export function CushionScreen({
       runAiStream({ tool: "cushion", text: value, variant: key, onDelta }),
     [],
   );
-  const { result, partial, working, error, source, canRun, stale, run: generate } = useAiDraft({
+  const {
+    result,
+    partial,
+    working,
+    error,
+    source,
+    canRun,
+    stale,
+    run: generate,
+    redo,
+    canRedo,
+    history,
+    restore,
+  } = useAiDraft({
     text,
     variant: tone,
     initial: { text: sample, variant: initialTone, result: initialResult },
@@ -169,11 +183,19 @@ export function CushionScreen({
           {/* 배지 글자를 여기서 정하지 않는다 — 서버가 값과 함께 보낸 출처를 그대로 그린다. */}
           <DraftSourceChip source={source === "none" ? null : source} working={working} />
         </div>
-        <Panel s="coral" pad={14} r={16} className="mb-3 transition-all duration-300">
+        <Panel
+          s="coral"
+          pad={14}
+          r={16}
+          className={cn(
+            "mb-3 transition-all duration-300 relative",
+            working && "border border-coral-400 shadow-xs animate-pulse-glow",
+          )}
+        >
           <div
             className={cn(
               "text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29] transition-all duration-200",
-              working && "animate-pulse-subtle opacity-70",
+              working && partial && "after:content-['▍'] after:animate-pulse after:ml-0.5 after:text-coral-600",
               !working && result && "animate-slide-up",
             )}
           >
@@ -183,9 +205,9 @@ export function CushionScreen({
                 // "다듬은 말" 이 한 화면에 두 개 있어, 아직 반도 안 된 글이 결과인 것처럼 보인다.
                 partial
               ) : (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="animate-spin text-coral-600">🪄</span>
-                  쿠션어로 다듬는 중…
+                <span className="inline-flex items-center gap-1.5 text-coral-800">
+                  <span className="animate-wiggle text-base">🪄</span>
+                  <span>쿠션어로 다듬는 중…</span>
                 </span>
               )
             ) : (
@@ -193,6 +215,18 @@ export function CushionScreen({
             )}
           </div>
         </Panel>
+
+        {aiReady ? (
+          <DraftActions
+            className="mb-3"
+            canRedo={canRedo}
+            onRedo={redo}
+            history={history}
+            onRestore={restore}
+            left={left}
+            limited={perDay > 0}
+          />
+        ) : null}
 
         <Note tone="info" icon="equal" className="mb-3">
           요구하는 내용(마감·필요한 것)은 그대로 둡니다. <b>말투만</b> 바뀝니다. 부탁을 없애거나 마감을
