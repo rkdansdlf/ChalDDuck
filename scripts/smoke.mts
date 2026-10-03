@@ -1,6 +1,15 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
+
+/**
+ * 낮 투표의 **적용** 로직은 액션 밖 모듈에 있다(2026-09-30).
+ *
+ * 옮긴 이유는 **세션 없이 부를 수 있게** 하려고 했기 때문이다. `"use server"` 파일의 export 는 전부
+ * 서버 액션이라 트랜잭션 클라이언트를 넘길 수 없고, 그래서 "결선을 만들면 다리가 비워지는가" 를 실제
+ * DB 로 확인할 방법이 없었고 소스 정규식만 남았다 — 그 정규식이 **분기 하나의 누락을 통과시켰다.**
+ */
+const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { stripComments } from "../scripts/strip-comments.mjs";
@@ -10,13 +19,17 @@ import {
 } from "../src/lib/ai-limit.js";
 import {
   NO_DRAW_POOL_TEXT,
+  awaitsMyConsent,
   canDrawIn,
   canProposeIn,
   consentViewOf,
   drawPoolOf,
   isRoleKey,
+  isUnresolvedClash,
   normalizeName,
+  rolesAwaitingMyConsent,
   roleViewOf,
+  unresolvedClashes,
   toRoleKey,
   voidedText,
 } from "../src/features/roles/roster-model.js";
@@ -149,7 +162,7 @@ import {
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
 import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
-import type { ChatMessage, IcePhase, IceRole, MeetingProposal, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
+import type { ChatMessage, IcePhase, IceRole, MeetingProposal, Role, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
   ICE_RESULT_CODES,
@@ -691,6 +704,49 @@ console.log("\n추첨 동의 제안");
   // 마감을 넘긴 제안이 **행으로는 남아 있어도** 열린 것으로 읽힌다 — 되돌아오면 제안할 수 있다.
   const stale = consentViewOf(live(-60_000), NOW);
   check("지난 제안은 열림으로 읽힌다", stale.kind, "open");
+}
+
+/* ── 동의 대기는 배지에서 겹침과 따로 센다 ────────────────────── */
+
+console.log("\n추첨 동의 · 배지");
+{
+  const NOW = new Date("2026-10-01T09:00:00Z");
+  const base = {
+    tool: "룰렛",
+    proposedBy: "김민준",
+    agreed: 1,
+    responded: 2,
+    totalMembers: 4,
+    respondBy: new Date(NOW.getTime() + 60_000).toISOString(),
+  } as const;
+  const mine = { ...base, iAgreed: false };
+  const already = { ...base, agreed: 2, iAgreed: true };
+
+  check("내가 안 했으면 내 몫이다", awaitsMyConsent(consentViewOf(mine, NOW)), true);
+  // **이미 동의한 사람의 제안은 내 할 일이 아니다.** 배지가 이걸 구분하지 않으면
+  // 아무 일도 하지 않은 사람이 배지에서 끌어당겨진다.
+  check("이미 동의하면 내 몫이 아니다", awaitsMyConsent(consentViewOf(already, NOW)), false);
+  check("마감 지난 제안은 내 몫이 아니다", awaitsMyConsent(consentViewOf({ ...mine, respondBy: new Date(NOW.getTime() - 1).toISOString() }, NOW)), false);
+
+  check("응답해야 하는 역할만 뽑는다", rolesAwaitingMyConsent({ research: mine, deck: already, present: { ...mine, respondBy: new Date(NOW.getTime() - 1).toISOString() } }, NOW), ["research"]);
+
+  // **이중 집계가 핵심이다.** 동의 대기가 걸린 역할은 겹침에서 빠져야 팀 배지에 한 번만
+  // 들어간다. 빠지지 않으면 배지가 "겹침 1건 + 동의 1건"으로 한 역할을 두 번 센다.
+  check("내 동의 대기 역할은 겹침에서 빠진다", isUnresolvedClash(2, false, true), false);
+  check("다른 사람의 제안은 겹침에 남는다", isUnresolvedClash(2, false, false), true);
+  check("동의 대기 여부를 몰라도 겹침은 그대로다", isUnresolvedClash(2, false), true);
+
+  // 홈 목록도 같은 조건이어야 한다 — 배지 0인데 홈 1건이면 어느 쪽을 믿어야 할지 모른다.
+  const members = [
+    { id: "1", name: "김민준", want: "research", veto: null },
+    { id: "2", name: "최유나", want: "research", veto: null },
+    { id: "3", name: "박지호", want: "deck", veto: null },
+    { id: "4", name: "이서연", want: "deck", veto: null },
+  ] as const;
+  const roles = [{ key: "research" }, { key: "deck" }] as Role[];
+  const clashes = unresolvedClashes(roles, members, {}, { research: mine, deck: already }, NOW);
+  // research 는 내 동의 대기 → 빠지고, deck 은 이미 동의했으니 팀 몫으로 남는다.
+  check("내 동의 대기만 겹침 목록에서 빠진다", clashes.map((r) => r.key), ["deck"]);
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
@@ -4206,7 +4262,7 @@ console.log("\n마피아 게임: 밤과 낮");
   truthy("밤을 마치는 길이 있다", /export async function closeIceNight/.test(iceActions));
   truthy("밤에는 한 명만 적는다", /nightAlreadyStruck\(/.test(iceActions));
   // 투표 마감이 끝나면 다음 밤 번호가 올라간다 — 밤이 늘지 않으면 타임라인이 거짓말한다.
-  truthy("투표 뒤 밤 번호가 오른다", /day:\s*fresh\.day \+ 1/.test(iceActions));
+  truthy("투표 뒤 밤 번호가 오른다", /day:\s*input\.day \+ 1/.test(DAY_VOTE));
   // 동점은 승부가 아니다 — 같은 표로 처형하지 않는다.
   truthy("동점이면 낮으로 돌아간다", /phase: "discussion", phaseStartedAt: new Date\(\)/.test(iceActions));
 }
@@ -4356,17 +4412,17 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   // ⚠️ 동점에서 **표 기록**(`IceBallot`)을 지우지 않는다. 자리의 다리 칸(`voteForId`)을 비우는
   //   것은 다르다 — 구버전이 그 판을 마감할 수 있는 동안에만 필요한 조치다(2026-09-30).
   truthy("동점이라고 표 기록을 지우지 않는다", !/iceBallot\.deleteMany\(/.test(iceActions));
-  truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(iceActions));
+  truthy("결선은 후보를 좁히면서 새 회차를 연다", /eligibleTargets: vote\.candidates/.test(DAY_VOTE));
   truthy("투표를 열 때 회차가 올라간다", /voteSeq: round\.voteSeq \+ 1/.test(iceActions));
-  truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: fresh\.day \+ 1, eligibleTargets: \[\]/.test(iceActions));
+  truthy("밤으로 갈 때 후보가 다시 넓어진다", /phase: "night", day: input\.day \+ 1, eligibleTargets: \[\]/.test(DAY_VOTE));
   // ⚠️ 결선도 **새 회차**여야 한다. 같은 회차로 두면 결선 앞의 표가 결선 표에 덮어써져
   //   "누가 누구에게 표를 던졌는가" 가 그 낮의 표만 남는다.
-  truthy("결선도 새 회차를 연다", /voteSeq: fresh\.voteSeq \+ 1/.test(iceActions));
-  truthy("결선 횟수를 센다", /runoffCount: fresh\.runoffCount \+ 1/.test(iceActions));
+  truthy("결선도 새 회차를 연다", /voteSeq: input\.voteSeq \+ 1/.test(DAY_VOTE));
+  truthy("결선 횟수를 센다", /runoffCount: input\.runoffCount \+ 1/.test(DAY_VOTE));
   // ⚠️ 한도는 회차가 아니라 **이번 투표의 결선 횟수**로 잰다. 회차로 재면 밤이 지날 때도 올라가
   //   하루에 세 번 결선한 판이 다음 날 아침 첫 투표에서 한도가 차 버린다.
   truthy("투표를 열 때 결선 횟수가 0 이 된다", /runoffCount: 0/.test(iceActions));
-  truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /create: \{[^}]*runoff \}/.test(iceActions));
+  truthy("표에 결선 여부가 남는다", /const runoff = fresh\.runoffCount > 0/.test(iceActions) && /runoff/.test(DAY_VOTE));
 
   // ㊼ 표의 **유일한 자리**는 `IceBallot` 이다. 자리의 칸은 구버전용 다리일 뿐이고 읽지 않는다.
   truthy("표는 자기 키를 가진다", /@@id\(\[roundId, seq, memberId\]\)/.test(seatModel));
@@ -4384,16 +4440,29 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   // 아직 이 판을 마감할 수 있다. 그 구버전은 표를 `IceSeat.voteForId` 에서만 본다 — 거기에 없으면
   // 표가 0장으로 보이면서 마감되고 아무도 탈락하지 않는다.
   truthy("투표는 다리 칸에도 같이 쓴다", /data: bridge/.test(iceActions));
-  truthy("다리를 비우는 길이 있다", /async function clearBridgeVotes/.test(iceActions));
+  truthy("다리를 비우는 길이 있다", /async function clearBridgeVotes/.test(DAY_VOTE));
+  // ⚠️ 결선 분기가 다리를 비우는지는 **DB 위에서** 본다(`applyMafiaDayVote`). 여기서 확인하는 것은
+  //    적용 로직이 **액션 밖**에 있다는 것뿐이다 — 소스 정규식은 분기 하나의 누락을 놓쳤었다.
+  truthy("낮 투표 적용이 액션 밖에서 부러진다", /export async function applyMafiaDayVote/.test(DAY_VOTE));
+  truthy("액션은 그 적용을 부른다", /applyMafiaDayVote\(tx,/.test(iceActions));
   truthy("새 투표 회차를 열 때 다리를 비운다", /clearBridgeVotes\(db, round\.id\)/.test(iceActions));
   truthy("밤 처형이 그 밤의 표를 비운다", /clearBridgeVotes\(tx, fresh\.id, (resolution\.outId|memberId)\)/.test(iceActions));
   // 다리를 **읽는** 곳이 새로 생기면 그것이 두 벌이 되는 지점이다.
   truthy("액션은 다리 값을 읽지 않는다(쓰기만)", !/voteForId: (mine|current)\./.test(iceActions));
-  // 다리 마이그레이션이 되살리고, 드롭은 다음 배포로 미룬 것을 못 박는다.
-  const bridge = readFileSync(new URL("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql", import.meta.url), "utf8");
-  truthy("다리 마이그레이션이 컬럼을 되살린다", /ADD COLUMN IF NOT EXISTS "voteForId"/.test(bridge));
-  truthy("다리 마이그레이션이 표를 되돌린다", /FROM "IceBallot"/.test(bridge));
+  // ⚠️ 다리 마이그레이션의 **SQL 내용**은 여기서 검사하지 않는다.
+  //
+  // 예전엔 `/FROM "IceBallot"/` 로 "표가 된다" 고 했다. 그 SQL 은 실제로는 **조용히 아무것도 하지
+  // 않았다**(키가 `(roundId, memberId)` 라 모든 행이 충돌 → `DO NOTHING`). 주석이 표를 "읽는다" 고
+  // 적었기 때문에 정규식은 통과했고, 문제는 프로덕션까지 갔다.
+  //
+  // 그래서 SQL 은 **실제 DB 로** 확인한다 — `npm run db:check:paths`
+  // (`scripts/check-migration-paths.mjs`). 여기서는 파일이 존재하고 그 도구를 가리키는지만 본다.
+  truthy("다리 마이그레이션이 있다", readCode("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql").length > 0);
+  truthy("다리 정정 마이그레이션이 있다", readCode("../prisma/migrations/20260930223000_ice_bridge_restore/migration.sql").length > 0);
+  const pathCheck = readCode("../scripts/check-migration-paths.mjs");
+  truthy("경로를 실제로 돌리는 도구가 있다", /ice_bridge_restore/.test(pathCheck) && /UPDATE "IceSeat"/.test(pathCheck));
   // "언제 지운다" 를 못 박아 두지 않으면 다리가 영구화된다 — 표의 자리가 두 벌이 된다.
+  const bridge = readCode("../prisma/migrations/20260930210000_ice_legacy_vote_bridge/migration.sql");
   truthy("다리가 언제 지워지는지 Says 한다", /다음 배포에서 이 컬럼을 (다시 )?지우/.test(bridge));
 }
 
@@ -4710,7 +4779,8 @@ console.log("\n마피아 게임: 결과 타임라인");
   // 자리를 빠질 때 **몇 번째 밤인지도** 함께 적는다 — 시각만으로는 밤을 구분할 수 없다(자정 넘김).
   const iceActions = readCode("../src/server/actions/ice.ts");
   truthy("밤 처형이 밤 번호를 적는다", /outHow: "night", outDay: fresh\.day/.test(iceActions));
-  truthy("투표 처형이 낮 번호를 적는다", /outHow: "vote", outDay: fresh\.day/.test(iceActions));
+  // 처형 로직도 액션 밖으로 옮겨갔다 — 낮 번호를 남기는 코드까지 그쪽에 있다.
+  truthy("투표 처형이 낮 번호를 적는다", /outHow: "vote", outDay: input\.day/.test(DAY_VOTE));
 }
 
 console.log("\n마피아 게임: 실제로 만든 판에서 투표가 기록으로 남는다");

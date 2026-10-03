@@ -7,7 +7,6 @@ import {
   mayTargetAtNight,
   nightAlreadyStruck,
   nightRoleOf,
-  resolveDayVote,
   resolveNight,
 } from "@/lib/mafia-rules";
 import type { IceGameKey, IceRole, IceView, NightActionKind } from "@/lib/types";
