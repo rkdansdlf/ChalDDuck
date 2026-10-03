@@ -99,7 +99,7 @@ import {
   toKstInputValue,
 } from "../src/lib/when.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
-import { consumeAiQuota, refundAiQuota } from "../src/server/ai/limit.js";
+import { recordAiUsage, refundAiUsage, aiUsageToday } from "../src/server/ai/limit.js";
 import { fallbackModelFor, isTransient, modelFor, withFallback } from "../src/server/ai/model.js";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
@@ -162,7 +162,7 @@ import {
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
 import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
-import type { ChatMessage, IcePhase, IceRole, MeetingProposal, Role, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
+import type { ChatMessage, IcePhase, IceRole, Member, MeetingProposal, Role, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
   ICE_RESULT_CODES,
@@ -422,6 +422,9 @@ const LEGACY_PRODUCT_COPY = [
   { legacy: "순화됨", canonical: "다듬어 읽음" },
   { legacy: "순화문", canonical: "다듬어 읽은 말" },
   { legacy: "순화 몫", canonical: "읽기 도움 몫" },
+  // `거절하기` 와 `반대하기` 는 둘 다 넣지 않는다 — 재입장 승인이 `거절`, 팀 동의가
+  // `반대` 로 **각각 맞는 용어**다. 전역 금지로 두면 다른 화면을 망가뜨리는 검사가 된다.
+  // 역할 쪽만 `안 받기` 로 바꿨고, 그 옆의 `수락하기` 만 금지한다.
 ] as const;
 
 /**
@@ -737,12 +740,13 @@ console.log("\n추첨 동의 · 배지");
   check("동의 대기 여부를 몰라도 겹침은 그대로다", isUnresolvedClash(2, false), true);
 
   // 홈 목록도 같은 조건이어야 한다 — 배지 0인데 홈 1건이면 어느 쪽을 믿어야 할지 모른다.
+  // `wantersOf` 는 `m.want === role` 로만 보므로 다른 칸은 비워도 된다.
   const members = [
     { id: "1", name: "김민준", want: "research", veto: null },
     { id: "2", name: "최유나", want: "research", veto: null },
     { id: "3", name: "박지호", want: "deck", veto: null },
     { id: "4", name: "이서연", want: "deck", veto: null },
-  ] as const;
+  ] as unknown as Member[];
   const roles = [{ key: "research" }, { key: "deck" }] as Role[];
   const clashes = unresolvedClashes(roles, members, {}, { research: mine, deck: already }, NOW);
   // research 는 내 동의 대기 → 빠지고, deck 은 이미 동의했으니 팀 몫으로 남는다.
@@ -2753,7 +2757,7 @@ console.log("\n이메일 발송 실패 (운영 로그에 인증번호가 남지 
 
 /* ── AI 한도: 세는 것과 쓰는 것이 다르다 ──────────────────── */
 
-console.log("\nAI 한도");
+console.log("\nAI 사용량");
 {
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
@@ -2765,30 +2769,21 @@ console.log("\nAI 한도");
     const mine = { teamId: team.id, memberId: member.id, tool: "cushion", day };
     const before = await usage();
 
-    // **읽기는 한도를 깎지 않는다.** 화면이 진입할 때 부르는 조회가 이것이다.
-    const read = async () => ({
-      mineLeft: Math.max(0, AI_POLICY.perMemberPerDay - (await usage())),
-      teamLeft: Math.max(0, AI_POLICY.perTeamPerDay - (await usage())),
-      perDay: AI_POLICY.perMemberPerDay,
-    });
-    const first = await read();
-    const second = await read();
-    check("한도를 여러 번 읽어도 차감되지 않는다", [first.mineLeft, second.mineLeft], [first.mineLeft, first.mineLeft]);
+    // **읽기는 기록을 늘리지 않는다.**
+    const me = { id: member.id, teamId: team.id, name: member.name, isLeader: false };
+    const first = await aiUsageToday(me);
+    const second = await aiUsageToday(me);
+    check("여러 번 읽어도 사용량이 늘지 않는다", [first.mine, second.mine], [first.mine, first.mine]);
     check("읽기만으로는 기록이 늘지 않는다", await usage(), before);
 
     // **쓰는 쪽은 정확히 한 건만 남긴다.**
     await db.aiUsage.create({ data: mine });
     check("한 번 쓰면 기록이 정확히 1 늘어난다", await usage(), before + 1);
-    const after = await read();
-    check("쓴 만큼 남은 횟수가 줄어든다", after.mineLeft, first.mineLeft - 1);
+    const after = await aiUsageToday(me);
+    check("쓴 만큼 사용량이 늘어난다", after.mine, first.mine + 1);
 
-    // 예전에는 `deleteMany({ memberId, day })` 로 치웠다 — **이 검사가 만든 한 건이 아니라
-    // 그 사람 그날의 기록 전부였다.** 로컬 DB를 쓰는 개발자라면 눈치채기 어려운 손실이다.
-    // 같은 키가 이미 있으면 그 행을 건드리지 않고, 없을 때만 한 건을 만든다.
     const made = await db.aiUsage.findFirst({ where: mine, orderBy: { id: "desc" } });
     if (before > 0) {
-      // 이미 있던 기록 위에 얹은 거라, 내가 만든 행만 골라 지운다. (한도 쪽은 `FOR UPDATE`
-      // 로 직렬화되므로 유니크 제약이 없어도 정확하다 — `ai/limit.ts` 참고)
       console.log("  · 그날 기록이 이미 있어, 이 검사가 만든 행만 지웁니다");
     }
     if (made) await db.aiUsage.delete({ where: { id: made.id } });
@@ -2798,71 +2793,54 @@ console.log("\nAI 한도");
 
 /* ── AI 한도: 실패한 호출은 한도를 쓰지 않는다 ──────────────── */
 
-console.log("\nAI 한도: 실패하면 되돌아온다");
+console.log("\nAI 사용량: 실패하면 되돌아온다");
 {
   const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
-    /**
-     * 여기서는 `runTool` 을 부르지 않는다 — 세션 쿠키가 필요하고, 쿠키를 만들면
-     * "실패 경로가 한도를 되돌리는가" 가 아니라 "액션을 우회했다" 를 테스트하게 된다.
-     * 대신 **되돌림이 지켜야 할 값(행 id) 을 주고받는 두 함수**를 그대로 부른다.
-     */
     const me = { id: member.id, teamId: team.id, name: member.name, isLeader: false };
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
     const usage = () => db.aiUsage.count({ where: { memberId: me.id, day } });
     const before = await usage();
 
-    // 1) 실패할 호출이 한도를 깎는다 — 이건 그대로여야 한다(한도가 없으면 무제한이다).
-    const taken = await consumeAiQuota(me, "cushion");
+    // 1) 호출 시 기록을 남긴다
+    const taken = await recordAiUsage(me, "cushion");
     if (!taken.ok) {
-      console.log("  · 오늘 AI 한도가 이미 바닥이라, 이 항목은 오늘 다시 보지 않습니다");
+      console.log("  · 오늘 AI 기록이 막혀 있어, 이 항목은 오늘 다시 보지 않습니다");
     } else {
-      check("모델을 부르기 전에 한도를 깎는다", await usage(), before + 1);
-      check("깎은 줄이 무엇인지 알려 준다", typeof taken.usageId, "string");
+      check("모델을 부르기 전에 기록을 남긴다", await usage(), before + 1);
+      check("남긴 줄이 무엇인지 알려 준다", typeof taken.usageId, "string");
 
-      // 2) **남의 몫은 되돌릴 수 없다.** id 하나만 믿고 지우면 그 팀원의 그날 기록이 사라진다.
+      // 2) **남의 기록은 되돌릴 수 없다.**
       const other =
         (await db.member.findFirst({ where: { teamId: team.id, id: { not: member.id } } })) ?? null;
       if (other) {
         const othersBefore = await db.aiUsage.count({ where: { memberId: other.id, day } });
-        const stolen = await refundAiQuota({ ...me, id: other.id }, taken.usageId);
-        check("남의 몫은 되돌릴 수 없다", stolen, false);
+        const stolen = await refundAiUsage({ ...me, id: other.id }, taken.usageId);
+        check("남의 기록은 되돌릴 수 없다", stolen, false);
         check("남의 기록도 그대로다", await db.aiUsage.count({ where: { memberId: other.id, day } }), othersBefore);
       }
 
-      // 3) 자기 몫은 **그 한 건만** 돌아온다.
-      const refunded = await refundAiQuota(me, taken.usageId);
-      check("실패한 호출은 한도를 되돌려 받는다", refunded, true);
+      // 3) 자기 기록은 **그 한 건만** 돌아온다.
+      const refunded = await refundAiUsage(me, taken.usageId);
+      check("실패한 호출은 기록을 되돌려 받는다", refunded, true);
       check("되돌린 뒤 기록이 원래대로다", await usage(), before);
     }
   }
 }
 
-/**
- * 실패 경로가 **정말** 환불을 부르는지는 코드로 본다 — 위 검사는 되돌림 함수가 옳다는
- * 증명일 뿐, `runTool` 이 그 함수를 부르는지는 아무도 보지 않는다.
- *
- * `readCode` 는 주석을 지운다. 주석에 "환불" 이 적혀 있기만 하고 코드가 그대로여도
- * 통과하는 검사가 되어선 안 되므로, **함수 호출**과 **순서**를 본다.
- */
 {
   const run = readCode("../src/server/ai/run.ts");
-  check("실패한 호출은 한도를 되돌린다", /refundAiQuota\(\s*me\s*,\s*usageId\s*\)/.test(run), true);
-  check("되돌림은 실패 경로 안에서 일어난다", run.indexOf("catch") < run.indexOf("refundAiQuota("), true);
-  // **성공 경로에서 지우면** 그게 한도가 없는 도구가 된다. 성공은 usageId 를 그대로 두고
-  // 결과만 돌려주는 쪽이다 — `return { ok: true, value:` 이 환불보다 먼저 와야 한다.
-  check("성공한 호출은 한도를 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiQuota("), true);
-  // 키가 없으면 애초에 깎지 않았으므로, 되돌릴 것도 없다.
-  check("키가 없으면 한도를 깎지 않는다", /if \(live\) \{[\s\S]*?consumeAiQuota/.test(run), true);
+  check("실패한 호출은 기록을 되돌린다", /refundAiUsage\(\s*me\s*,\s*usageId\s*\)/.test(run), true);
+  check("되돌림은 실패 경로 안에서 일어난다", run.indexOf("catch") < run.indexOf("refundAiUsage("), true);
+  check("성공한 호출은 기록을 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiUsage("), true);
+  check("키가 없으면 기록을 남기지 않는다", /if \(live\) \{[\s\S]*?recordAiUsage/.test(run), true);
 
   // 재생성(redo) vs 세션 복원(restore) 한도 계약 검증
   const draftHook = readCode("../src/features/tools/use-ai-draft.ts");
-  // redo는 force: true로 execute를 실행하여 run() (서버 호출 -> 한도 1회 차감)을 수행한다.
   check("redo는 서버 호출 함수를 강제 실행한다", /redo = useCallback\(\(\) => execute\(true\)/.test(draftHook), true);
-  // restore는 오직 로컬 history 상태만 조작하고 execute나 run을 절대 호출하지 않는다 (한도 0회 차감)
   const restoreFn = draftHook.slice(draftHook.indexOf("restore = useCallback("));
   check("restore는 run() 또는 execute()를 부르지 않는다", !restoreFn.includes("run(") && !restoreFn.includes("execute("), true);
   check("restore는 로컬 state만 갱신한다", restoreFn.includes("setResult(") && restoreFn.includes("setHistory("), true);

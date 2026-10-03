@@ -60,6 +60,7 @@ model Team {
   messages        Message[]
   tasks           Task[]
   meetingNotes    MeetingNote[]
+  reportShareTokens ReportShareToken[]
   aiUsage         AiUsage[]
   aiCalls         AiCall[]
   iceRounds       IceRound[]
@@ -159,6 +160,7 @@ model Member {
   approvedJoins         JoinRequest[]          @relation("JoinApprover")
   busyBlocks            BusyBlock[]
   ownedBoxes            SubmissionBox[]
+  deadlineChanges       DeadlineChange[]
   fileVersions          FileVersion[]
   messages              Message[]
   reactions             MessageReaction[]
@@ -183,6 +185,7 @@ model Member {
   proposalsMade         MeetingProposal[]
   meetingResponses      MeetingResponse[]
   meetingNotes          MeetingNote[]
+  reportShareTokens     ReportShareToken[]
   roleDraws             RoleDraw[]
   roleRejections        RoleRejection[]
   drawConsentsProposed  RoleDrawConsent[]      @relation("ConsentProposer")
@@ -467,6 +470,29 @@ model MeetingNote {
   @@index([meetingId])
 }
 
+/// 기여도 리포트 공개 공유 토큰.
+/// 로그인 없이 교수나 외부 평가자가 성적 증빙 리포트를 안전하게 열람/인쇄할 수 있다.
+model ReportShareToken {
+  id          String    @id @default(cuid())
+  teamId      String
+  /// 암호학적으로 안전한 32바이트 랜덤 토큰.
+  token       String    @unique
+  /// professor = 교수 제출용 공식 양식 / internal = 팀 내부 점검용 양식
+  scope       String    @default("professor")
+  /// 만료 시각 (기본 14일).
+  expiresAt   DateTime
+  /// 취소/폐기 시각.
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String?
+
+  team      Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy Member? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+  @@index([token])
+}
+
 model MeetingResponse {
   id         String   @id @default(cuid())
   proposalId String
@@ -591,11 +617,31 @@ model SubmissionBox {
   /// 예전 표시 문자열("9/15", "미정"). `dueAt` 이 없을 때만 화면에 보인다.
   due     String
 
-  team  Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  owner Member?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
-  files SubmittedFile[]
+  team            Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  owner           Member?          @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  files           SubmittedFile[]
+  deadlineChanges DeadlineChange[]
 
   @@index([teamId])
+}
+
+/// 제출함 마감 변경 이력.
+///
+/// 마감은 담당자 또는 팀장이 변경하며, 언제 누가 어떤 사유로 변경했는지 추적 기록을 남긴다.
+model DeadlineChange {
+  id            String    @id @default(cuid())
+  boxId         String
+  changedById   String
+  previousDueAt DateTime?
+  newDueAt      DateTime?
+  reason        String?
+  createdAt     DateTime  @default(now())
+
+  box       SubmissionBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  changedBy Member        @relation(fields: [changedById], references: [id], onDelete: Cascade)
+
+  @@index([boxId])
+  @@index([changedById])
 }
 
 /// 제출함에 올라온 파일 하나.

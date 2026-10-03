@@ -8,7 +8,7 @@ import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { DraftActions } from "./draft-actions";
 import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
-import { useAiQuota } from "./use-ai-quota";
+import { useAiUsageToday } from "./use-ai-usage";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
 import type { SentenceMode } from "@/lib/types";
@@ -37,7 +37,7 @@ export function SentenceScreen({
   const [mode, setMode] = useState(initialMode);
   const [text, setText] = useState(initialInput);
   const [sampleError, setSampleError] = useState<string | null>(null);
-  const { left, perDay } = useAiQuota(aiReady);
+  const { used, readable } = useAiUsageToday(aiReady);
 
   /**
    * 모드를 바꾸면 그 모드의 예시 문장으로 갈아 끼운다 — 두 모드는 다루는 글이 아예 다르다.
@@ -118,12 +118,9 @@ export function SentenceScreen({
             <Btn full size="lg" icon="wand-sparkles" disabled={!canRun} onClick={generate}>
               {working ? "바꾸는 중…" : stale ? "고친 글 다시 바꾸기" : "이 상황으로 바꾸기"}
             </Btn>
-            {/* 한도를 미리 보여 준다 — 막혀서야 알게 하지 않는다. */}
-            {perDay > 0 ? (
-              <span className="t-cap w-full text-txt-muted">
-                오늘 내 몫 {left}회 남음
-                {left === 0 ? " — 다 썼습니다" : ""}
-              </span>
+            {/* 한도가 없으므로 "남음" 을 말할 수 없다 — **쓴 횟수**를 말한다. */}
+            {readable ? (
+              <span className="t-cap w-full text-txt-muted">오늘 내가 {used}번 바꿨어요</span>
             ) : null}
           </div>
         ) : null}
@@ -181,8 +178,7 @@ export function SentenceScreen({
             onRedo={redo}
             history={history}
             onRestore={restore}
-            left={left}
-            limited={perDay > 0}
+            used={used}
           />
         ) : null}
 

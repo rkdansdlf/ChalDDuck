@@ -17,40 +17,35 @@ export function DraftActions({
   onRedo,
   history,
   onRestore,
-  left,
-  limited,
+  used,
   className,
 }: {
   canRedo: boolean;
   onRedo: () => void;
   history: DraftHistoryEntry[];
   onRestore: (index: number) => void;
-  /** 오늘 남은 내 몫. `limited` 가 아니면 보여 주지 않는다. */
-  left: number;
-  /** 한도를 읽었는가(`perDay > 0`). 못 읽었으면 몫을 말하지 않는다. */
-  limited: boolean;
+  /** 오늘 내가 이 도구를 쓴 횟수. 한도가 없어도 **볼 수는 있어야** 하므로 개수는 그대로 준다. */
+  used: number;
   className?: string;
 }) {
-  const noQuota = limited && left === 0;
   if (!canRedo && history.length === 0) return null;
 
   return (
     <div className={className}>
       {canRedo ? (
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Btn size="sm" v="outline" icon="rotate-ccw" disabled={noQuota} onClick={onRedo}>
+          <Btn size="sm" v="outline" icon="rotate-ccw" onClick={onRedo}>
             마음에 안 들면 다시 만들기
           </Btn>
-          <span className="t-cap text-txt-muted">
-            {noQuota ? "오늘 몫을 다 썼습니다" : "한도 1회를 씁니다"}
-          </span>
+          {/* 한도가 없으므로 "몫" 을 말하지 않는다 — 오늘 쓴 횟수만 말한다. */}
+          <span className="t-cap text-txt-muted">오늘 {used}번 썼어요</span>
         </div>
       ) : null}
 
       {history.length > 0 ? (
         <div>
           <div className="t-cap-strong mb-1 font-bold text-txt-muted">
-            이전 결과 · 되돌려도 한도는 쓰지 않습니다
+            이전 결과 · 되돌려도 횟수는 늘지 않습니다
           </div>
           <ul className="flex flex-col gap-1.5">
             {history.map((entry, index) => (

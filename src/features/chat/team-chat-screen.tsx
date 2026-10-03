@@ -18,7 +18,7 @@ import { pollNavBadges } from "@/server/actions/nav";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
 import { ReadCushionSheet } from "./read-cushion-bar";
-import { useCushionQuota } from "@/features/tools/use-ai-quota";
+import { useCushionUsageToday } from "@/features/tools/use-ai-usage";
 import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-chat-thread";
 
 /**
@@ -103,7 +103,7 @@ export function TeamChatScreen({
    * 순화가 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
    * 그럼에도 부르면 필요 없는 왕복이 늘어난다.
    */
-  const cushionQuota = useCushionQuota(cushion.enabled);
+  const cushionUsage = useCushionUsageToday(cushion.enabled);
 
   const { messages, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
     useChatThread(TEAM_THREAD_ID, fromServer, initialCursor, me, cushion, lostFileRef);
@@ -367,7 +367,7 @@ export function TeamChatScreen({
         setting={cushion}
         tones={tones}
         levels={levels}
-        quota={cushionQuota}
+        usage={cushionUsage}
         notice={purifyNotice}
         onEnabled={(next) => void changeCushion({ enabled: next })}
         onLevel={(key) => void changeCushion({ mode: key })}

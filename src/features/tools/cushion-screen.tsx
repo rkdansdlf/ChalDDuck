@@ -27,7 +27,7 @@ import { runAiStream } from "./ai-stream-client";
 import { useAiDraft } from "./use-ai-draft";
 import { DraftActions } from "./draft-actions";
 import { DraftSourceChip } from "./draft-source-chip";
-import { useAiQuota } from "./use-ai-quota";
+import { useAiUsageToday } from "./use-ai-usage";
 import { cn } from "@/lib/cn";
 import type { CushionTone } from "@/lib/types";
 
@@ -109,7 +109,7 @@ export function CushionScreen({
     run,
     stream: true,
   });
-  const { left, perDay } = useAiQuota(aiReady);
+  const { used, readable } = useAiUsageToday(aiReady);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -168,12 +168,9 @@ export function CushionScreen({
             >
               {working ? "다듬는 중…" : stale ? "고친 말 다시 다듬기" : "쿠션어로 다듬기"}
             </Btn>
-            {/* 한도를 미리 보여 준다 — 막혀서야 알게 하지 않는다. */}
-            {perDay > 0 ? (
-              <span className="t-cap w-full text-txt-muted">
-                오늘 내 몫 {left}회 남음
-                {left === 0 ? " — 다 썼습니다" : ""}
-              </span>
+            {/* 한도가 없으므로 "남음" 을 말할 수 없다 — **쓴 횟수**를 말한다. */}
+            {readable ? (
+              <span className="t-cap w-full text-txt-muted">오늘 내가 {used}번 다듬었어요</span>
             ) : null}
           </div>
         ) : null}
@@ -183,15 +180,7 @@ export function CushionScreen({
           {/* 배지 글자를 여기서 정하지 않는다 — 서버가 값과 함께 보낸 출처를 그대로 그린다. */}
           <DraftSourceChip source={source === "none" ? null : source} working={working} />
         </div>
-        <Panel
-          s="coral"
-          pad={14}
-          r={16}
-          className={cn(
-            "mb-3 transition-all duration-300 relative",
-            working && "border border-coral-400 shadow-xs animate-pulse-glow",
-          )}
-        >
+        <Panel s="coral" pad={14} r={16} className="mb-3 transition-all duration-300">
           <div
             className={cn(
               "text-pretty-keep text-[15px] leading-[1.65] text-[#8A3B29] transition-all duration-200",
@@ -223,8 +212,7 @@ export function CushionScreen({
             onRedo={redo}
             history={history}
             onRestore={restore}
-            left={left}
-            limited={perDay > 0}
+            used={used}
           />
         ) : null}
 

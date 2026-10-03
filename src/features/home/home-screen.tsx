@@ -14,7 +14,12 @@ import {
 import { cn } from "@/lib/cn";
 import { useNavBadges } from "@/components/nav-badges-store";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
-import { applyMyChoices, unresolvedClashes, wantersOf } from "@/features/roles/roster-model";
+import {
+  applyMyChoices,
+  rolesAwaitingMyConsent,
+  unresolvedClashes,
+  wantersOf,
+} from "@/features/roles/roster-model";
 import { buildBriefing, suggestTools, type BriefingLine, type ToolSuggestion } from "./briefing";
 import type {
   AiTool,
@@ -57,6 +62,7 @@ export function HomeScreen({
   aiTools,
   tasks,
   negotiation,
+  now: nowIso,
   meeting,
   boxDeadlines,
   today,
@@ -71,6 +77,13 @@ export function HomeScreen({
   aiTools: AiTool[];
   tasks: Task[];
   negotiation: RoleNegotiation;
+  /**
+   * 서버가 이 화면을 그릴 때의 시각(ISO).
+   *
+   * 동의 대기는 `respondBy` 와 "지금"을 비교해 정한다. 클라이언트가 다시 재면 서버가 그린
+   * 것과 다른 그림이 그려진다(하이드레이션 불일치) — 시각은 읽는 곳에서 한 번만 정한다.
+   */
+  now: string;
   meeting: MeetingProposal;
   /**
    * 제출함의 역할과 마감 시각만(파일·버전 없음). **마감 임박 추천에 쓴다.**
@@ -96,28 +109,6 @@ export function HomeScreen({
   const polled = useNavBadges();
   const unread = polled?.notifications ?? unreadNotifications;
 
-  useRefreshWhenStale(
-    // 이 화면이 그려질 때의 몫. **서버가 준 값으로만** 센다 — 온보딩 중 로컬에 남은
-    // 선택을 얹은 `members` 로 세면 서버의 몫과 영영 맞지 않을 수 있다.
-    homeFingerprint({
-      clashes: unresolvedClashes(roles, roster, negotiation.draws).length,
-      cal: meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0,
-      contribAwaitingMe: awaitingMyConfirm,
-      approvals: rejoinRequests,
-    }),
-    polled
-      ? homeFingerprint({
-          clashes: polled.parts.clashes,
-          cal: polled.cal,
-          contribAwaitingMe: polled.parts.contribAwaitingMe,
-          approvals: polled.parts.approvals,
-        })
-      : null,
-  );
-
-  /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
-  const remainingTasks = tasks.filter((t) => t.status !== "done").length;
-
   const members = useMemo(
     () =>
       applyMyChoices(roster, {
@@ -129,11 +120,44 @@ export function HomeScreen({
     [roster, onboarding.name, onboarding.effectiveMbti, onboarding.want, onboarding.veto],
   );
 
+  const now = useMemo(() => new Date(nowIso), [nowIso]);
+
   // 07 화면·탭 배지와 같은 함수로 센다 — 어느 쪽을 먼저 열어도 같은 값이어야 한다.
   const clashes = useMemo(
-    () => unresolvedClashes(roles, members, negotiation.draws),
-    [roles, members, negotiation.draws],
+    () => unresolvedClashes(roles, members, negotiation.draws, negotiation.consents, now),
+    [roles, members, negotiation.draws, negotiation.consents, now],
   );
+
+  /** 내가 응답해야 하는 추첨 동의 — 배지의 `parts.consent` 와 같은 조건이어야 한다. */
+  const myConsents = useMemo(
+    () => rolesAwaitingMyConsent(negotiation.consents, now),
+    [negotiation.consents, now],
+  );
+
+
+  useRefreshWhenStale(
+    // 이 화면이 그려질 때의 몫. **서버가 준 값으로만** 센다 — 온보딩 중 로컬에 남은
+    // 선택을 얹은 `members` 로 세면 서버의 몫과 영영 맞지 않을 수 있다.
+    homeFingerprint({
+      clashes: unresolvedClashes(roles, roster, negotiation.draws, negotiation.consents, now).length,
+      consent: myConsents.length,
+      cal: meeting.stage === "proposed" && meeting.myResponse === null ? 1 : 0,
+      contribAwaitingMe: awaitingMyConfirm,
+      approvals: rejoinRequests,
+    }),
+    polled
+      ? homeFingerprint({
+          clashes: polled.parts.clashes,
+          consent: polled.parts.consent,
+          cal: polled.cal,
+          contribAwaitingMe: polled.parts.contribAwaitingMe,
+          approvals: polled.parts.approvals,
+        })
+      : null,
+  );
+
+  /** "3건 남음" 같은 문구는 실제 목록에서 센다 — 고정값이면 금방 사실과 어긋난다. */
+  const remainingTasks = tasks.filter((t) => t.status !== "done").length;
 
   const todos = useMemo<Todo[]>(() => {
     const list: Todo[] = [];
@@ -149,6 +173,25 @@ export function HomeScreen({
           clashes.length === 1
             ? `${first.name} · ${wantersOf(members, first.key).length}명 겹침`
             : `${first.name} 외 ${clashes.length - 1}건 겹침`,
+        href: "/team",
+      });
+    }
+
+    // **동의 대기를 "역할 제안 확인" 에 몰아 넣지 않는다.** 거기서 할 일은 이야기지 동의가
+    // 아니다 — 다음 행동을 잘못 안내하면 팀원이 엉뚱한 자리에서 답을 찾는다. 배지의
+    // `parts.consent` 와 같은 조건이라야 배지와 목록이 어긋나지 않는다.
+    if (myConsents.length > 0) {
+      const [firstKey] = myConsents;
+      const firstConsent = negotiation.consents[firstKey];
+      list.push({
+        key: "consent",
+        icon: "users-round",
+        surface: "bg-yellow-200 text-yellow-700",
+        title: "추첨 제안에 응답",
+        note:
+          myConsents.length === 1
+            ? `${roles.find((r) => r.key === firstKey)?.name ?? "역할"} · ${firstConsent?.tool ?? "추첨"} · 응답 마감 ${firstConsent?.respondBy ?? ""}`
+            : `${roles.find((r) => r.key === firstKey)?.name ?? "역할"} 외 ${myConsents.length - 1}건 응답 대기`,
         href: "/team",
       });
     }
@@ -193,7 +236,19 @@ export function HomeScreen({
     }
 
     return list;
-  }, [clashes, members, stage, slot, meeting.respondBy, meeting.myResponse, rejoinRequests, awaitingMyConfirm]);
+  }, [
+    clashes,
+    members,
+    roles,
+    myConsents,
+    negotiation.consents,
+    stage,
+    slot,
+    meeting.respondBy,
+    meeting.myResponse,
+    rejoinRequests,
+    awaitingMyConfirm,
+  ]);
 
   /**
    * "오늘의 브리핑" — **있던 숫자로 만든다.** 계산과 세는 기준은 `briefing.ts` 다.
@@ -462,11 +517,14 @@ function SuggestionChip({ suggestion, onOpen }: { suggestion: ToolSuggestion; on
  */
 function homeFingerprint(parts: {
   clashes: number;
+  consent: number;
   cal: number;
   contribAwaitingMe: number;
   approvals: number;
 }): string {
-  return `${parts.clashes}:${parts.cal}:${parts.contribAwaitingMe}:${parts.approvals}`;
+  // **`consent` 를 빼면 목록이 따라오지 않는다.** 동의는 알림으로 오고 배지도 오르지만,
+  // 지문이 같으면 새로 안 받으므로 목록에 "추첨 제안에 응답"이 뜨지 않는다.
+  return `${parts.clashes}:${parts.consent}:${parts.cal}:${parts.contribAwaitingMe}:${parts.approvals}`;
 }
 
 /**

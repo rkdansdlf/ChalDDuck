@@ -76,7 +76,12 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       },
     });
     teamIds.push(team.id);
-    const leader = await db.member.create({ data: { teamId: team.id, name: `김민준${suffix}` } });
+    // ⚠️ **`isLeader` 를 반드시 켠다.** 2026-09-28 에 이걸 빠뜨려서 "팀장은 복원된다" 가
+    // 실패했다 — 팀장이 팀장이 아니어서였다. 판정이 `me.isLeader` 를 읽는데 픽스처가 그 값을
+    // 만들어 주지 않았다. 다른 규칙이 이 값을 읽지 않아서 그전까지는 드러나지 않았다.
+    const leader = await db.member.create({
+      data: { teamId: team.id, name: `김민준${suffix}`, isLeader: true },
+    });
     const mate = await db.member.create({ data: { teamId: team.id, name: `이서연${suffix}` } });
     // 제출함에는 `role` 이 필수다 — 잘 알려진 셋 중에서 하나를 쓴다.
     const box = await db.submissionBox.create({ data: { teamId: team.id, role: "deck", name: "최종본", due: "10/1" } });
@@ -90,11 +95,17 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     };
     return {
       id: team.id,
+      team,
       box,
       box2,
       leader,
       asLeader: await token(leader.id),
       asMate: await token(mate.id),
+      /** 아무도 안 올린 새 팀원을 하나 더 만든다 — "나 neither 올린 사람도 팀장도 아닌 사람" 이 필요해. */
+      async addThird() {
+        const m = await db.member.create({ data: { teamId: team.id, name: `박서준${suffix}` } });
+        return { id: m.id, token: await token(m.id) };
+      },
     };
   }
 
@@ -250,7 +261,8 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ⑤⑥ 복원 + 이력 보존 */
     console.log("\n옛 버전으로 돌아가도 그 버전은 지워지지 않는다");
     const usedBeforeRestore = await teamUsedBytes(A.id);
-    const restoredLabel = await as(A.asMate, () => actions.restoreFileVersion(fileId, v1.id));
+    // **올린 사람이** 복원한다 — v1 을 올린 사람이 누구인지는 곧 규칙이다(아래 ⑧).
+    const restoredLabel = await as(A.asLeader, () => actions.restoreFileVersion(fileId, v1.id));
     check("복원이 새 버전 이름으로 돌아온다", restoredLabel, "v3");
     const afterRestore = await versionsOf(fileId);
     check("버전 이력이 늘었다 (덮어쓰기가 아니다)", afterRestore.length, 3);
@@ -272,15 +284,50 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     }
     check("다른 팀의 복원이 막힌다", crossRestore.includes("파일을 찾을 수 없습니다"), true);
 
-    /* ⑧ 팀 안에서의 복원 — 지금 계약(결정 대기 중) */
-    console.log("\n팀 안의 복원 — 지금은 누구나 (결정 대기 중)");
-    // ⚠️ **지금의 계약**을 고정한다. "팀 안이면 누구나" 는 2026-09-28 기준 사실이고 좁힐지
-    // 말지는 아직 결정되지 않았다(`list-open-decisions.mjs` 2번). 결정을 내리면 **이 줄만**
-    // 바꾸면 된다 — 규칙이 바뀌었다는 사실이 여기서 드러난다.
-    const beforeMate = (await versionsOf(fileId)).length;
-    const mateRestore = await as(A.asMate, () => actions.restoreFileVersion(fileId, v2.id));
-    check("팀 안에서는 누구나 복원된다 (결정이 바뀌면 이 줄이 바뀐다)", typeof mateRestore, "string");
-    check("복원이 버전으로 남는다", (await versionsOf(fileId)).length, beforeMate + 1);
+    /* ⑧ 복원은 올린 사람 또는 팀장 ──────────────────────── */
+    console.log("\n복원은 올린 사람과 팀장만");
+    // 2026-09-28 에 닫았다. 예전에는 팀 안이면 **누구나** 복원했다 — 실수 방지가 아니라 사고가
+    // 난 뒤에야 보이는 상태였고, 목록에도 미결로 적혀 있었다.
+    //
+    // **판정은 그 버전을 올린 사람이 한다.** 팀이 함께 고친 파일일 수 있으므로 팀장에게도 열어
+    // 둔다 — 팀장이 아니면 아무도 못 고치는 파일이 생기면 안 된다.
+    //
+    // 세 경우를 **한 팀**에서 확인한다: 올린 사람 · 팀장 · 그 둘 다 아닌 팀원.
+    const R = await makeTeam("복원권한");
+    const theirs = await upload(R.asMate, R.box.id, "이서연의 파일.png");
+    check("팀원이 올렸다", theirs.finished?.status, "ok");
+    const fileR = okFinish(theirs).fileId;
+    const vR = (await versionsOf(fileR))[0]!;
+
+    // ① 올린 사람 — 된다.
+    const asUploader = await as(R.asMate, () =>
+      actions.restoreFileVersion(fileR, vR.id).then(
+        () => "ok",
+        (e: Error) => e.message,
+      ),
+    );
+    check("올린 사람은 복원된다", asUploader, "ok");
+
+    // ② 팀장 — 올리지 않았어도 된다.
+    const asLeader = await as(R.asLeader, () =>
+      actions.restoreFileVersion(fileR, vR.id).then(
+        () => "ok",
+        (e: Error) => e.message,
+      ),
+    );
+    check("팀장은 남의 파일도 복원된다", asLeader, "ok");
+
+    // ③ 그 둘 다 아닌 팀원 — **막힌다.** 이것이 이 규칙의 핵심이다.
+    const beforeBlocked = (await versionsOf(fileR)).length;
+    const third = await R.addThird();
+    const thirdTry = await as(third.token, () =>
+      actions.restoreFileVersion(fileR, vR.id).then(
+        () => "(막지 않음)",
+        (e: Error) => e.message,
+      ),
+    );
+    check("올린 것도 팀장도 아니면 막힌다", String(thirdTry).includes("본인이 올린 버전"), true);
+    check("막힌 것은 버전으로 남지 않는다", (await versionsOf(fileR)).length, beforeBlocked);
 
     /* ⑨ 한도 직전은 허용 */
     console.log("\n한도 직전은 허용한다");
@@ -305,7 +352,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const D = await makeTeam("D");
     // 자리에 **딱 하나**를 남겨 둔다. 그래서 2단계는 들어가야 하는데 — 1단계와 2단계의
     // 용량 판정은 같은 식이다. 두 단계를 가르는 것은 **브라우저가 말한 크기와 실제로 들어온
-    // 크기의 차이** 뿐이다. 서명 주소로는 무엇이든 올릴 수 있으므로 이것이 규칙의 핵���이다.
+    // 크기의 차이** 뿐이다. 서명 주소로는 무엇이든 올릴 수 있으므로 이것이 규칙의 핵심이다.
     await seedBytes(D.id, D.box.id, TEAM_CAP_BYTES - size, "자리는 하나");
     const prepared = await as(D.asLeader, () =>
       actions.prepareUpload(D.box2.id, { name: "남는 자리.png", size, type: PNG }),

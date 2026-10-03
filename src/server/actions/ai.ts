@@ -2,7 +2,7 @@
 
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
 import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
-import { aiQuotaFor, aiUsageCsv, type AiQuota } from "@/server/ai/limit";
+import { aiUsageCsv, aiUsageToday, type AiUsageToday } from "@/server/ai/limit";
 import { teamAiWeeklySummary, type TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { runTool } from "@/server/ai/run";
 import * as ai from "@/server/ai/tools";
@@ -66,9 +66,9 @@ export async function exportAiUsage(): Promise<{ filename: string; csv: string }
  *
  * 읽기는 차감이 없으므로 화면 진입 시에 부를 수 있다. 모델도 부르지 않는다.
  */
-export async function getAiQuota(): Promise<AiQuota> {
+export async function getAiUsageToday(): Promise<AiUsageToday> {
   const me = await requireSessionMember();
-  return aiQuotaFor(me);
+  return aiUsageToday(me);
 }
 
 /** 모델을 부르지 않는다 — 미리 적어 둔 예시 문장이라 한도와 무관하다. */

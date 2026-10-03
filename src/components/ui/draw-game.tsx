@@ -153,13 +153,11 @@ function WinnerCard({ candidate }: { candidate: DrawCandidate }) {
     <div
       className={cn(
         "relative flex flex-col items-center gap-2 transition-all duration-300 ease-out",
-        shown ? "scale-100 opacity-100 animate-bounce-in" : "scale-75 opacity-0",
+        shown ? "scale-100 opacity-100 animate-pop" : "scale-75 opacity-0",
       )}
     >
       {shown ? <ConfettiBurst /> : null}
-      <div className="animate-jelly">
-        <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
-      </div>
+      <Avatar name={candidate.name} mbti={candidate.mbti} size={56} />
       <span className="t-h2 keep-all text-txt-strong">{candidate.name}</span>
       <Chip tone="ok" icon="check" iconClassName="animate-pop">
         당첨

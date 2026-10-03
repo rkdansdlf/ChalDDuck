@@ -23,14 +23,8 @@ export function SideNav({ pending = {} }: { pending?: TabPending }) {
       aria-label="주요 메뉴"
       className="hidden w-[232px] flex-none flex-col border-r border-line bg-card px-3 py-5 lg:flex"
     >
-      <Link href="/home" className="mb-5 flex items-center gap-2.5 px-2 group">
-        <Image
-          src="/assets/logo-mochi.png"
-          alt=""
-          width={32}
-          height={32}
-          className="size-8 transition-transform duration-200 group-hover:scale-110 group-hover:animate-jelly"
-        />
+      <Link href="/home" className="mb-5 flex items-center gap-2.5 px-2">
+        <Image src="/assets/logo-mochi.png" alt="" width={32} height={32} className="size-8" />
         <span className="font-extrabold text-[18px] leading-none tracking-[-.03em] text-ink-900">
           찰떡
         </span>
@@ -50,15 +44,10 @@ export function SideNav({ pending = {} }: { pending?: TabPending }) {
                   active ? "bg-fill text-txt-strong" : "text-txt-muted hover:bg-cr-50 hover:text-txt-strong",
                 )}
               >
-                <Icon
-                  name={tab.icon}
-                  size={19}
-                  strokeWidth={active ? 2.4 : 1.9}
-                  className={cn(active && "animate-tab-pop")}
-                />
+                <Icon name={tab.icon} size={19} strokeWidth={active ? 2.4 : 1.9} />
                 <span className="flex-1">{tab.label}</span>
                 {badge ? (
-                  <span className="animate-pulse-glow box-border h-5 min-w-5 rounded-full bg-coral-400 px-[5px] text-center font-bold text-[12px] leading-5 text-ink-900 shadow-xs">
+                  <span className="animate-pop box-border h-5 min-w-5 rounded-full bg-coral-400 px-[5px] text-center font-bold text-[12px] leading-5 text-ink-900 shadow-xs">
                     {badge}
                     <span className="sr-only">건 확인 필요</span>
                   </span>

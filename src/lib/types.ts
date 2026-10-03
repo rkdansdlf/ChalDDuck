@@ -238,21 +238,27 @@ export type AiTool = {
 export type AiPolicy = {
   /** 사용 기록(횟수)을 남겨 두는 기간. 입력한 글과 결과는 애초에 저장하지 않는다. */
   retentionDays: number;
-  /** 한 팀이 하루에 부를 수 있는 횟수. */
-  perTeamPerDay: number;
-  /** 한 사람이 하루에 부를 수 있는 횟수. 한 사람이 팀 몫을 다 쓰지 못하게 한다. */
-  perMemberPerDay: number;
   /**
-   * **읽기 순화만 쓰는** 한도(하루). 위 두 값과 **따로** 센다.
+   * **읽기 순화 폭주 차단(하루·팀).** 사용자에게 보이는 한도가 아니라 **안전장치**다.
    *
-   * 왜 따로 세는가: 순화는 누가 누를 때만 일어나는 것이 아니라 **대화방을 열면 알아서** 돈다.
-   * 같은 장부를 쓴다면 한 사람이 대화방을 많이 여는 것만으로 팀의 쿠션 번역기·리서처 몫이
-   * 바닥나고, 그때 화면이 말하는 것은 "한도를 다 썼습니다" 다 — 실제로는 순화가 썼다는 사실이
-   * 그 자리에 없다. 그래서 **몫을 나눠 각각 세운다.** 어느 쪽이 얼마를 썼는지는 여전히
-   * 한 `AiUsage` 표에 함께 남는다(스키마는 그대로).
+   * ## 왜 이것만 남았는가 (2026-09-28)
+   *
+   * 도구 한도(팀 200 · 1인 60)는 **삭제했다.** 지워도 되는 근거가 측정으로 나왔다 —
+   *
+   * - 운영 14일 기록의 최고 하루 **18회**(도구 팀 한도 200 의 9%), 거절은 **0건**이었고,
+   *   한도에 닿은 날이 **한 번도 없었다.**
+   * - 라우터가 **속도 한도로** 막은 적도 없다. 기록에 남은 실패는 `MODEL_REFUSAL` 2건(안전
+   *   필터가 내용을 거절)과 60초 타임아웃 1건이었다 — **한도와 무관한 실패**다.
+   *
+   * 즉 그 숫자는 14일간 아무 일도 하지 않았다. 사용자에게 "하루 200회" 로 보이도록 찍혀 있던
+   * 것은 **한도가 아니라 거짓이었다.**
+   *
+   * 남긴 것은 **하나**다. 순화는 사람이 누르는 것이 아니라 **메시지마다 자동으로** 도는
+   * 유일한 기능이라, 여기만 무제한이 가능한 형태의 사고다. 재시도 폭주는 이미
+   * `MAX_ATTEMPTS`·`FAILURE_BACKOFF_MS` 로 묶여 있으니 순환은 구속된다 — 이건 그 위에 있는
+   * 마지막 방어선이고, 사람 눈에는 보이지 않는다(사용자에게 한도로 말하지 않는다).
    */
-  readCushionPerTeamPerDay: number;
-  readCushionPerMemberPerDay: number;
+  cushionRunawayCapPerTeamPerDay: number;
 };
 
 /**
@@ -394,6 +400,19 @@ export type SubmissionBox = {
   dueAt: string | null;
   /** 마감을 지나 올라온 파일이 있는지. */
   hasLate: boolean;
+  /** 현재 로그인한 사용자가 마감을 변경할 수 있는지 (담당자 또는 팀장). */
+  canEditDeadline?: boolean;
+};
+
+/** 제출함 마감 변경 이력 항목 */
+export type DeadlineHistoryItem = {
+  id: string;
+  boxId: string;
+  changedBy: string;
+  previousDue: string;
+  newDue: string;
+  reason: string | null;
+  createdAt: string;
 };
 
 /** 실제로 열리는 형식과 안내만 하는 형식을 구분하기 위한 종류. */
@@ -442,6 +461,8 @@ export type FileVersion = {
   previewUrl: string | null;
   /** 마감을 지나 올라왔는지. 복원으로 생긴 버전은 세지 않는다. */
   isLate: boolean;
+  /** 현재 로그인한 사용자가 이 버전으로 복원할 수 있는지 (작성자 또는 팀장). */
+  canRestore?: boolean;
 };
 
 /* ── 19 / 30 / 31 / 32 채팅 ─────────────────────────────────── */
@@ -753,6 +774,20 @@ export type ContribReportRow = {
   unresolved: number;
   /** 확인된 주요 활동 항목 요약 (최대 3건) */
   highlights?: string[];
+};
+
+/** 외부 공개용 기여도 리포트 묶음 데이터 */
+export type PublicReportData = {
+  teamName: string;
+  course: string;
+  issuedOn: string;
+  scope: "professor" | "internal";
+  memberCount: number;
+  totalConfirmed: number;
+  totalPending: number;
+  totalDisputed: number;
+  consensusRate: number; // 합의 완료율 (0 ~ 100 %)
+  rows: ContribReportRow[];
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */

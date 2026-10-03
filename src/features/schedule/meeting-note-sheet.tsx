@@ -16,25 +16,28 @@ export function MeetingNoteSheet({
   title?: string;
   onClose: () => void;
 }) {
-  const [note, setNote] = useState<MeetingNote | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
+  const [loaded, setLoaded] = useState<{ id: string | null; note: MeetingNote | null }>({
+    id: null,
+    note: null,
+  });
+  const [rawMeetingId, setRawMeetingId] = useState<string | null>(null);
+
+  const loading = Boolean(open && meetingId && loaded.id !== meetingId);
+  const note = open && meetingId && loaded.id === meetingId ? loaded.note : null;
+  const showRaw = Boolean(meetingId && rawMeetingId === meetingId);
 
   useEffect(() => {
     if (!open || !meetingId) {
-      setNote(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setShowRaw(false);
 
     getMeetingNoteByProposalAction(meetingId)
       .then((res) => {
-        if (!cancelled) setNote(res);
+        if (!cancelled) setLoaded({ id: meetingId, note: res });
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+      .catch(() => {
+        if (!cancelled) setLoaded({ id: meetingId, note: null });
       });
 
     return () => {
@@ -81,7 +84,7 @@ export function MeetingNoteSheet({
             </div>
             <button
               type="button"
-              onClick={() => setShowRaw(!showRaw)}
+              onClick={() => setRawMeetingId(showRaw ? null : meetingId)}
               className="text-[12px] font-semibold text-action underline cursor-pointer"
             >
               {showRaw ? "요약본 보기" : "원문 메모 보기"}

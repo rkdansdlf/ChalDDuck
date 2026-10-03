@@ -104,6 +104,11 @@ export async function restoreFileVersion(fileId: string, versionId: string): Pro
     const source = versions.find((v) => v.id === versionId);
     if (!source) throw new Error("복원할 버전을 찾을 수 없습니다.");
 
+    // 권한 검사: 본인이 올린 버전이거나 팀장만 이전 버전으로 복원할 수 있다.
+    if (source.authorId !== me.id && !me.isLeader) {
+      throw new Error("본인이 올린 버전이거나 팀장만 이전 버전으로 복원할 수 있습니다.");
+    }
+
     const label = nextVersionLabel(versions);
     await tx.fileVersion.create({
       data: {
@@ -552,29 +557,116 @@ export async function saveChatAttachmentToDrive(
 /**
  * 제출함 마감을 정하거나 바꾼다. `null` 이면 마감을 없앤다.
  *
- * 마감을 옮기면 "마감 후 제출" 라벨도 따라 바뀐다 — 라벨을 저장하지 않고 이 값으로
- * 계산하기 때문이다. 마감이 지나도 제출함은 잠기지 않는다.
+ * 권한: 제출함 담당자(ownerId === me.id) 또는 팀장(me.isLeader)만 변경할 수 있다.
+ * 마감 변경 시 `DeadlineChange` 이력을 기록하고 팀원들에게 알림을 발송한다.
  *
  * @param value `<input type="datetime-local">` 값("2026-09-15T23:59"). 한국 시간으로 읽는다.
+ * @param reason 마감 변경 사유 (옵션)
  */
-export async function setBoxDeadline(boxId: string, value: string | null): Promise<{ ok: boolean }> {
+export async function setBoxDeadline(
+  boxId: string,
+  value: string | null,
+  reason?: string,
+): Promise<{ ok: boolean }> {
   const me = await requireSessionMember();
 
   const box = await db.submissionBox.findFirst({ where: { id: boxId, teamId: me.teamId } });
   if (!box) throw new Error("제출함을 찾을 수 없습니다.");
 
+  // 권한 검사: 제출함 담당자 또는 팀장만 변경할 수 있다.
+  const isOwner = box.ownerId === me.id;
+  if (!isOwner && !me.isLeader) {
+    throw new Error("제출함 담당자 또는 팀장만 마감을 변경할 수 있습니다.");
+  }
+
   const dueAt = value === null ? null : fromKstInputValue(value);
   if (value !== null && !dueAt) return { ok: false };
 
-  await db.submissionBox.update({
-    where: { id: box.id },
-    // 예전 표시 문자열도 맞춰 둔다 — 마감을 없애면 "미정"으로 보여야 한다.
-    data: { dueAt, ...(dueAt === null ? { due: "미정" } : {}) },
-  });
+  // 마감 시간이 실제로 변경되었는지 확인
+  const isChanged =
+    (box.dueAt === null && dueAt !== null) ||
+    (box.dueAt !== null && dueAt === null) ||
+    (box.dueAt !== null && dueAt !== null && box.dueAt.getTime() !== dueAt.getTime());
+
+  if (isChanged) {
+    await db.$transaction(async (tx) => {
+      await tx.submissionBox.update({
+        where: { id: box.id },
+        // 예전 표시 문자열도 맞춰 둔다 — 마감을 없애면 "미정"으로 보여야 한다.
+        data: { dueAt, ...(dueAt === null ? { due: "미정" } : {}) },
+      });
+
+      await tx.deadlineChange.create({
+        data: {
+          boxId: box.id,
+          changedById: me.id,
+          previousDueAt: box.dueAt,
+          newDueAt: dueAt,
+          reason: reason?.trim() ? reason.trim() : null,
+        },
+      });
+    });
+
+    const newDueLabel = dueAt
+      ? `${dueAt.getMonth() + 1}/${dueAt.getDate()} ${String(dueAt.getHours()).padStart(2, "0")}:${String(dueAt.getMinutes()).padStart(2, "0")}`
+      : "마감 없음";
+    const reasonText = reason?.trim() ? ` (사유: ${reason.trim()})` : "";
+
+    await notify({
+      to: await teamMemberIds(me.teamId),
+      actorId: me.id,
+      kind: "drive",
+      title: `${me.name}님이 ${box.name} 마감을 변경했습니다`,
+      body: `변경 후: ${newDueLabel}${reasonText}`,
+      href: `/drive/${box.id}`,
+    });
+  }
 
   revalidatePath("/drive", "layout");
   revalidatePath("/home");
   return { ok: true };
+}
+
+/**
+ * 제출함 마감 변경 이력을 조회한다.
+ * 최신 변경 내역이 맨 위에 오도록 정렬한다.
+ */
+export async function getDeadlineHistory(boxId: string): Promise<Array<{
+  id: string;
+  boxId: string;
+  changedBy: string;
+  previousDue: string;
+  newDue: string;
+  reason: string | null;
+  createdAt: string;
+}>> {
+  const me = await requireSessionMember();
+
+  const box = await db.submissionBox.findFirst({
+    where: { id: boxId, teamId: me.teamId },
+    select: { id: true },
+  });
+  if (!box) throw new Error("제출함을 찾을 수 없습니다.");
+
+  const changes = await db.deadlineChange.findMany({
+    where: { boxId },
+    include: { changedBy: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return changes.map((c) => ({
+    id: c.id,
+    boxId: c.boxId,
+    changedBy: c.changedBy.name,
+    previousDue: c.previousDueAt
+      ? `${c.previousDueAt.getMonth() + 1}/${c.previousDueAt.getDate()} ${String(c.previousDueAt.getHours()).padStart(2, "0")}:${String(c.previousDueAt.getMinutes()).padStart(2, "0")}`
+      : "미정",
+    newDue: c.newDueAt
+      ? `${c.newDueAt.getMonth() + 1}/${c.newDueAt.getDate()} ${String(c.newDueAt.getHours()).padStart(2, "0")}:${String(c.newDueAt.getMinutes()).padStart(2, "0")}`
+      : "마감 없음",
+    reason: c.reason,
+    createdAt: c.createdAt.toISOString(),
+  }));
 }
 
 /**

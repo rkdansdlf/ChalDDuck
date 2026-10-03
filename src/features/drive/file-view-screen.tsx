@@ -14,7 +14,6 @@ import {
   Sheet,
   StatusBadge,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import type { FileVersion, SubmissionBox, SubmittedFile } from "@/lib/types";
 import { shareVersionToChat } from "@/server/actions/chat";
@@ -82,6 +81,7 @@ export function FileViewScreen({
   // 열 수 있는 형식인데 주소가 없으면 형식 탓이 아니라 파일이 없는 것이다(시드 데이터·저장소 미연결).
   const noFile = !canPreview && canOpenInApp(current.kind);
   const nextLabel = nextVersionLabel(versions);
+  const canRestore = current.canRestore !== false;
 
   const restore = async () => {
     // 이름은 서버가 붙인다 — 두 사람이 동시에 복원해도 같은 이름이 두 번 생기지 않아야 한다.
@@ -91,9 +91,13 @@ export function FileViewScreen({
       setConfirming(false);
       setRestoredAs(label);
       router.refresh();
-    } catch {
+    } catch (err: unknown) {
       setConfirming(false);
-      flash("복원하지 못했습니다. 잠시 후 다시 시도해 주세요");
+      if (err instanceof Error) {
+        flash(err.message);
+      } else {
+        flash("복원하지 못했습니다. 잠시 후 다시 시도해 주세요");
+      }
     } finally {
       setRestoring(false);
     }
@@ -234,9 +238,17 @@ export function FileViewScreen({
 
             {/* 채운 버튼은 복원 하나뿐이다. 내려받기·새 탭은 옛 버전에서도 보조 동작으로 둔다. */}
             {!isLatest ? (
-              <Btn full size="lg" icon="rotate-ccw" onClick={() => setConfirming(true)}>
-                이 버전으로 복원하기
-              </Btn>
+              canRestore ? (
+                <Btn full size="lg" icon="rotate-ccw" onClick={() => setConfirming(true)}>
+                  이 버전으로 복원하기
+                </Btn>
+              ) : (
+                <div title="작성자 또는 팀장만 이전 버전으로 복원할 수 있습니다">
+                  <Btn full size="lg" icon="rotate-ccw" disabled>
+                    이 버전으로 복원하기 (작성자 또는 팀장 전용)
+                  </Btn>
+                </div>
+              )
             ) : null}
             <div className={`flex gap-2 ${isLatest ? "" : "mt-2"}`}>
               <Btn full size={isLatest ? "lg" : "md"} v="outline" icon="download" onClick={download}>
@@ -253,10 +265,6 @@ export function FileViewScreen({
             <Btn full className="mt-2" v="outline" icon="share-2" disabled={sharing} onClick={share}>
               {sharing ? "보내는 중" : "단톡방에 보내기"}
             </Btn>
-
-            <Undecided>
-              복원 권한이 올린 사람에게만 있는지가 기획안에 없어 누구나 할 수 있게 열어뒀습니다.
-            </Undecided>
           </>
         )}
       </Body>

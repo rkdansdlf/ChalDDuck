@@ -60,13 +60,13 @@ export function TabBar({ pending = {} }: { pending?: TabPending }) {
               >
                 <span
                   className={cn(
-                    "relative inline-flex transition-transform duration-200",
-                    active ? "scale-110 animate-tab-pop" : "hover:scale-105",
+                    "relative inline-flex transition-transform duration-150",
+                    active && "scale-105",
                   )}
                 >
-                  <Icon name={tab.icon} size={21} strokeWidth={active ? 2.5 : 1.9} />
+                  <Icon name={tab.icon} size={21} strokeWidth={active ? 2.4 : 1.9} />
                   {badge ? (
-                    <span className="animate-pulse-glow absolute -top-1 -right-[7px] box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs">
+                    <span className="animate-pop absolute -top-1 -right-[7px] box-border h-[17px] min-w-[17px] rounded-full bg-coral-400 px-1 text-center font-bold text-[11px] leading-[17px] text-ink-900 shadow-xs">
                       {badge}
                       <span className="sr-only">건 확인 필요</span>
                     </span>
@@ -74,14 +74,14 @@ export function TabBar({ pending = {} }: { pending?: TabPending }) {
                 </span>
                 <span
                   className={cn(
-                    "whitespace-nowrap transition-all duration-150",
-                    active ? "t-tab-on scale-105 text-ink-900" : "t-tab",
+                    "whitespace-nowrap transition-colors duration-150",
+                    active ? "t-tab-on text-txt-strong" : "t-tab",
                   )}
                 >
                   {tab.label}
                 </span>
                 {active ? (
-                  <span className="animate-bounce-in absolute top-0 h-[3.5px] w-[24px] rounded-full bg-yellow-400 shadow-2xs" />
+                  <span className="animate-fade-in absolute top-0 h-[3px] w-[22px] rounded-full bg-yellow-400" />
                 ) : null}
               </Link>
             </li>

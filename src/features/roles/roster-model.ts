@@ -269,13 +269,44 @@ export function voidedText(winner: string): string {
 }
 
 /**
+ * 동의 대기가 **나를** 기다리는가.
+ *
+ * 이미 동의했으면 그 몫은 내 것이 아니다 — 팀 몫이지 내 할 일이 아니다. 배지가 이걸
+ * 구분하지 않으면 두 가지가 어긋난다: 동의한 사람은 아무 일도 하지 않았는데 배지가
+ * 끌어당기고, 동의하지 않은 사람은 자기 차례인 목록에서 빠져 있다.
+ *
+ * **나의 몫으로 세는 곳은 배지·홈이고, 팀 몫으로는 세지 않는다.** 고치지 않으면 한 역할이
+ * 겹침과 동의에 **두 번** 세어진다.
+ */
+export function awaitsMyConsent(view: ConsentView): boolean {
+  return view.kind === "waiting" && !view.iAgreed;
+}
+
+/** 내가 응답해야 하는 동의 대기가 걸린 역할들 — 순서는 `Object.keys` 를 따른다. */
+export function rolesAwaitingMyConsent(
+  consents: Partial<Record<RoleKey, DrawConsent>>,
+  now: Date = new Date(),
+): RoleKey[] {
+  return (Object.keys(consents) as RoleKey[]).filter((role) =>
+    awaitsMyConsent(consentViewOf(consents[role], now)),
+  );
+}
+
+/**
  * 겹쳤다고 볼지 정하는 **한 가지 규칙.**
  *
  * 명단을 들고 있는 화면(07)과 숫자만 세는 곳(탭 배지)이 같은 판단을 해야 한다 —
  * 한쪽이 "겹침 2건"인데 다른 쪽이 1건이면 어느 쪽을 믿어야 할지 알 수 없다.
+ *
+ * `awaitingMyConsent` 은 **겹침에서 빼는 쪽**이다. 동의 대기는 겹침의 한 단계가 아니라
+ * 그 다음이고 — 어디서 세더라도 두 번 세어지지 않게 하려면 한쪽에서만 세어야 한다.
  */
-export function isUnresolvedClash(wanterCount: number, accepted: boolean): boolean {
-  return wanterCount > 1 && !accepted;
+export function isUnresolvedClash(
+  wanterCount: number,
+  accepted: boolean,
+  awaitingMyConsent = false,
+): boolean {
+  return wanterCount > 1 && !accepted && !awaitingMyConsent;
 }
 
 /**
@@ -287,8 +318,14 @@ export function unresolvedClashes(
   roles: Role[],
   members: Member[],
   draws: Partial<Record<RoleKey, RoleDrawResult>>,
+  consents: Partial<Record<RoleKey, DrawConsent>> = {},
+  now: Date = new Date(),
 ): Role[] {
   return roles.filter((role) =>
-    isUnresolvedClash(wantersOf(members, role.key).length, draws[role.key]?.accepted ?? false),
+    isUnresolvedClash(
+      wantersOf(members, role.key).length,
+      draws[role.key]?.accepted ?? false,
+      awaitsMyConsent(consentViewOf(consents[role.key], now)),
+    ),
   );
 }

@@ -137,7 +137,7 @@ export function TasksScreen({
           담당자에게 진행상황 묻기
         </Btn>
 
-        <Rows>
+        <Rows key={filter} className="animate-fade-in">
           {shown.map((task) => {
             // **표에 없는 상태는 처음 상태로 되돌린다.** `Task.status` 는 DB 에서
             // `String` 이고(값을 제한할 수 없어서) `api.ts` 는 그대로 형을 바꿔 붙인다.

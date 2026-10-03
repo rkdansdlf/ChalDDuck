@@ -40,6 +40,7 @@ import type {
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
+  PublicReportData,
   RandomTool,
   RecentItem,
   ResearchResult,
@@ -834,12 +835,18 @@ function toSubmissionBox(
     id: string;
     role: string;
     name: string;
+    ownerId?: string | null;
     due: string;
     dueAt: Date | null;
     owner: { name: string } | null;
     files: Array<{ versions: Array<{ createdAt: Date; restoredFromId: string | null }> }>;
   },
+  session?: { id: string; isLeader: boolean } | null,
 ): SubmissionBox {
+  const canEditDeadline = session
+    ? (b.ownerId !== undefined ? b.ownerId === session.id : false) || session.isLeader
+    : undefined;
+
   return {
     id: b.id,
     role: b.role as RoleKey,
@@ -851,10 +858,12 @@ function toSubmissionBox(
     due: b.dueAt ? formatDue(b.dueAt) : b.due,
     dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
     hasLate: b.files.some((f) => f.versions.some((v) => isLateVersion(v, b.dueAt))),
+    canEditDeadline,
   };
 }
 
 export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[]> {
+  const session = await getSessionMember();
   const boxes = await db.submissionBox.findMany({
     where: { teamId },
     include: {
@@ -864,7 +873,7 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
     orderBy: { id: "asc" },
   });
 
-  return boxes.map(toSubmissionBox);
+  return boxes.map((box) => toSubmissionBox(box, session));
 }
 
 /**
@@ -937,6 +946,7 @@ export async function getSubmissionBox(
   teamId: string,
   boxId: string,
 ): Promise<SubmissionBox | null> {
+  const session = await getSessionMember();
   const box = await db.submissionBox.findFirst({
     where: { id: boxId, teamId },
     include: {
@@ -945,11 +955,12 @@ export async function getSubmissionBox(
     },
   });
 
-  return box ? toSubmissionBox(box) : null;
+  return box ? toSubmissionBox(box, session) : null;
 }
 
 /** 버전 기록. **맨 앞이 최신**이다. */
 export async function getFileVersions(teamId: string, fileId: string): Promise<FileVersion[]> {
+  const session = await getSessionMember();
   const versions = await db.fileVersion.findMany({
     where: { fileId, file: { box: { teamId } } },
     include: { author: { select: { name: true } }, file: { select: { box: { select: { dueAt: true } } } } },
@@ -967,6 +978,7 @@ export async function getFileVersions(teamId: string, fileId: string): Promise<F
     kind: v.kind as FileVersion["kind"],
     previewUrl: v.previewUrl,
     isLate: isLateVersion(v, v.file.box.dueAt),
+    canRestore: session ? v.authorId === session.id || session.isLeader : undefined,
   }));
 }
 
@@ -1276,6 +1288,7 @@ export async function getFileViewContext(
   boxId: string,
   fileId: string,
 ): Promise<FileViewContext | null> {
+  const session = await getSessionMember();
   const row = await db.submittedFile.findFirst({
     // 어느 팀의 것인지, **그리고 어느 제출함의 것인지** 를 한 번에 확인한다. 예전에는 팀만
     // 확인한 뒤 제출함을 따로 찾아, 팀의 다른 제출함에 있는 파일을 받아올 수도 있었다.
@@ -1296,6 +1309,9 @@ export async function getFileViewContext(
   if (!row) return null;
 
   const late = row.versions.some((v) => isLateVersion(v, row.box.dueAt));
+  const canEditDeadline = session
+    ? row.box.ownerId === session.id || session.isLeader
+    : undefined;
   const box: SubmissionBox = {
     id: row.box.id,
     role: row.box.role as RoleKey,
@@ -1306,6 +1322,7 @@ export async function getFileViewContext(
     due: row.box.dueAt ? formatDue(row.box.dueAt) : row.box.due,
     dueAt: row.box.dueAt ? toKstInputValue(row.box.dueAt) : null,
     hasLate: late,
+    canEditDeadline,
   };
 
   const latest = row.versions[0];
@@ -1797,4 +1814,55 @@ export async function getMeetingNoteByProposal(meetingId: string): Promise<Meeti
     updatedAt: note.updatedAt.toISOString(),
   };
 }
+
+/* ── 공개 기여도 리포트 ─────────────────────────────────────────── */
+
+/**
+ * 로그인 없는 외부 열람자(교수님 등)를 위한 리포트 조회.
+ * 유효한 토큰일 때만 성적 증빙 데이터를 반환한다.
+ */
+export async function getPublicReport(token: string): Promise<PublicReportData | null> {
+  const record = await db.reportShareToken.findFirst({
+    where: {
+      token,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    include: {
+      team: { select: { id: true, name: true, course: true } },
+    },
+  });
+
+  if (!record) return null;
+
+  const rows = await getContribReport(record.teamId);
+  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
+  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
+  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
+  const totalAll = totalConfirmed + totalPending + totalDisputed;
+  const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
+
+  const issuedOn = new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Seoul",
+  })
+    .format(record.createdAt)
+    .replace(/\.$/, "");
+
+  return {
+    teamName: record.team.name,
+    course: record.team.course,
+    issuedOn,
+    scope: (record.scope as "professor" | "internal") ?? "professor",
+    memberCount: rows.length,
+    totalConfirmed,
+    totalPending,
+    totalDisputed,
+    consensusRate,
+    rows,
+  };
+}
+
 
