@@ -203,9 +203,9 @@ import {
  * **로컬 DB 에서만 돈다.** 시드와 같은 이유다.
  */
 
-/* ── 주석에 한자가 섞여 들어오지 않았는지 ──────────────────── */
+/* ── 한자 글리프가 섞여 들어오지 않았는지: 주석과 문서 ──────────── */
 
-console.log("\n주석 인코딩");
+console.log("\n한자 인코딩");
 {
 /**
    * 한국어 주석 한 칸에 **한자 글리프가 하나씩** 섞여 들어온다.
@@ -236,10 +236,10 @@ console.log("\n주석 인코딩");
    * 처럼 한글이 한자와 **이어진 문자열**이 있어 "한자 옆에 한글" 로 보는 검사는 오탐을 낸다.
    * 그래서 주석 줄로 한정한다.
    */
-  const HAN_IN_COMMENT = /[\u4e00-\u9fff]/;
+  const HAN = /[\u4e00-\u9fff]/;
   /** `// …` 또는 블록 주석의 `* …` 줄. 문자열 안의 `//` 는 걸리지 않는다(줄 첫 칸 기준). */
   const isCommentLine = (line: string) => /^\s*(\/\/|\*)/.test(line);
-  const hasHanInComment = (line: string) => isCommentLine(line) && HAN_IN_COMMENT.test(line);
+  const hasHanInComment = (line: string) => isCommentLine(line) && HAN.test(line);
 
   const roots = ["../src", "../scripts", "../prisma"];
   /** `generated` 는 Prisma 클라이언트라 한국어가 없고 양만 많다. */
@@ -247,24 +247,39 @@ console.log("\n주석 인코딩");
   const found: string[] = [];
   let scanned = 0;
 
-  const walkForHan = (dir: string) => {
-    for (const entry of readdirSync(join(dir, ""), { withFileTypes: true })) {
-      if (skip.has(entry.name)) continue;
+  /**
+   * 디렉터리를 훑으며 대상 파일마다 `onFile` 을 **한 번씩** 부른다.
+   *
+   * **파 단위로 세는 이유** — 아래 `scanned > 50` 은 "검사 대상이 줄이 아니라 파일로 모였는지"를
+   * 확인하는 값이다. 줄을 세도록 만들면 guard 의 뜻이 바뀌어 조용히 통과한다.
+   */
+  const walk = (
+    dir: string,
+    skipNames: ReadonlySet<string>,
+    isTarget: (name: string) => boolean,
+    onFile: (full: string) => void,
+  ) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skipNames.has(entry.name)) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        walkForHan(full);
+        walk(full, skipNames, isTarget, onFile);
         continue;
       }
-      if (!/\.(ts|tsx|mjs|mts)$/.test(entry.name)) continue;
+      if (isTarget(entry.name)) onFile(full);
+    }
+  };
+
+  const isCode = (name: string) => /\.(ts|tsx|mjs|mts)$/.test(name);
+  for (const root of roots)
+    walk(new URL(root, import.meta.url).pathname, skip, isCode, (full) => {
       scanned += 1;
       readFileSync(full, "utf8")
         .split("\n")
         .forEach((line, i) => {
           if (hasHanInComment(line)) found.push(`${full}:${i + 1}`);
         });
-    }
-  };
-  for (const root of roots) walkForHan(new URL(root, import.meta.url).pathname);
+    });
 
   // 14곳을 고쳤으니 0이어야 한다. 목록을 그대로 보여 주면 어디를 고쳤는지와 앞으로 어디가
   // 오염됐는지 한 번에 읽힌다 — 파일:줄 형태.
@@ -291,6 +306,82 @@ console.log("\n주석 인코딩");
     ],
   );
   check("주석 검사 대상이 실제로 있다", scanned > 50, true);
+
+  /* ── 문서: 주석 줄로 가리지 않는다 ──────────────────────── */
+
+  /**
+   * **문서도 본다.** 위 검사는 `src`/`scripts`/`prisma` 의 **주석 줄만** 본다. 그 밖의 한국어
+   * 글은 즉 사람이 읽는 자리인데 — `README.md`, `CLAUDE.md`, `docs/product-language.md`,
+   * `docs/handoff/HANDOFF.md`, 그리고 한국어 안내문인 `.env.example` — 아무도 보지 않았다.
+   * 문서에 오염이 있어도 이 검사는 조용히 통과했다.
+   *
+   * **문서가 더 위험한 이유** — 주석은 실행되지 않으니 오염이 눈에 띄지 않는다. 문서는 그
+   * 자체로 눈에 보이는 글이다. 게다가 `README.md` 는 거의 모든 커밋이 건드리는 파일이라
+   * 오염이 쌓일 자리가 가장 넓다.
+   *
+   * **줄을 가리지 않는 이유** — 마크다운에 주석 줄은 없다. 구분할 자리가 없으므로 문서에서는
+   * 글자가 나타난 위치가 곧 오염이다. 위의 문자열 안쪽 예외는 `src`/`scripts` 에만 있고
+   * `.md` 에는 없다.
+   */
+  /** 끝의 `/` 를 떼어야 아래 `slice` 에서 앞 글자가 잘리지 않는다 — `new URL("..", …)` 는 slash 로 끝난다. */
+  const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  /** 워크트리 안에는 같은 문서가 복사되어 있어 두 번 세고, `.env` 는 서crets 다 — 둘 다 읽지 않는다. */
+  const skipDocs = new Set([".git", ".next", ".vercel", "node_modules", ".claude", ".worktrees"]);
+  const docFound: string[] = [];
+  const docNames = new Set<string>();
+  const scanDoc = (full: string) => {
+    docNames.add(full.slice(repoRoot.length + 1));
+    readFileSync(full, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (HAN.test(line)) docFound.push(`${full}:${i + 1}`);
+      });
+  };
+  walk(repoRoot, skipDocs, (name) => /\.mdx?$/.test(name), scanDoc);
+  /** `.env.example` 는 **확장자로는 걸리지 않는다** — 이름이 `.example` 이기 때문이다. 한국어 안내문이라 문서로 센다. */
+  scanDoc(join(repoRoot, ".env.example"));
+
+  check("문서에 한자 글리프가 없다", docFound, []);
+
+  // 위와 같은 이유로 — 문서 검사가 고장 나면 0 은 아무 의미가 없어진다. 마크다운에는 `//` 도 `*` 도
+  // 없으므로 아예 줄 종류를 보지 않는다.
+  const docProbes = [
+    ["위아래로 흩어지면", false],
+    ["위上아래로 흩어지면", true],
+    ["`npm run verify` — db:check 를 돌린다", false],
+    ["- 대화를 시작한다\n", false],
+  ] as const;
+  check(
+    "문서 검사가 한자를 잡고 한글은 통과시킨다",
+    docProbes.map(([line, want]) => [HAN.test(line), want]),
+    [
+      [false, false],
+      [true, true],
+      [false, false],
+      [false, false],
+    ],
+  );
+
+  /**
+   * **기준 문서가 다 빠졌는지** 확인한다.
+   *
+   * 위의 0 은 "아무것도 안 찾았다" 와 "아무것도 안 봤다" 가 구분되지 않는다. 확장자 규칙을
+   * 고치거나 루트를 잘못 두면 대상이 0 개가 되어 조용히 통과한다 — 그래서 **이름을 직접 센다.**
+   * 새 문서가 늘어도 이 목록은 늘리지 않는다. 목록에 없으면 그새 빈틈이 생긴다는 뜻이다.
+   */
+  const baseline = [
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/product-language.md",
+    "docs/handoff/HANDOFF.md",
+    ".env.example",
+  ];
+  check(
+    "기준 문서가 검사 대상에 들어 있다",
+    baseline.filter((name) => !docNames.has(name)),
+    [],
+  );
 }
 
 /* ── 사용자 노출 용어: 기준에서 되돌아가지 않았는지 ─────────── */
@@ -2457,6 +2548,115 @@ console.log("\n푸시 구독 (DB)");
 
     await db.pushSubscription.deleteMany({ where: { endpoint } });
   }
+}
+
+console.log("\n푸시 구독 (기기는 따로)");
+{
+  /**
+   * ## 왜 이 구역이 있는가 — 두 사람이 동시에 중요하다
+   *
+   * 예전에는 끄기가 **`deleteMany({ where: { memberId } })`** 였다. 그건 **내 모든 기기**를
+   * 지운다. 노트북에서 끄면 **휴대폰 구독까지 사라져** 그 뒤로 알림이 오지 않는다 — 화면은
+   * "껐습니다"라고 말하는데 정작 가장 오래 남아 있던 기기가 꺼졌다. 되돌릴 수 없다.
+   *
+   * 반대 방향도 있었다. 설정 화면은 `server.subscribed || localBrowserSubscription` 으로
+   * 판단했는데, 서버 값은 "내 계정 어딘가"였다. 그래서 **휴대폰에만 켜진 PC** 가 "켜짐"으로
+   * 보였다.
+   *
+   * 규칙은 하나다. **"이 기기가 켜졌는가"는 이 기기만 답한다.** 서버는 "내 기기가 몇 개나
+   * 켜져 있는가"를 답할 뿐, 그 값을 이 기기의 상태로 쓰지 않는다.
+   */
+  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const members = team
+    ? await db.member.findMany({ where: { teamId: team.id, leftAt: null }, take: 2 })
+    : [];
+  if (members.length < 2) {
+    console.log("  · 팀원이 둘 이상이어야 이 항목을 돌립니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const [a, b] = members;
+    const stamp = Date.now();
+    // **두 기기의 주소를 일부러 다르게 만든다.** 같으면 한 기기로 세어지므로 이 검사가
+    // 아무것도 못 증명한다.
+    const phone = `https://push.example/phone-${stamp}`;
+    const laptop = `https://push.example/laptop-${stamp}`;
+    const ends = [phone, laptop];
+    const owned = a.id;
+
+    await db.pushSubscription.deleteMany({ where: { endpoint: { in: ends } } });
+    await db.pushSubscription.createMany({
+      data: [
+        { memberId: owned, endpoint: phone, p256dh: "p", auth: "a" },
+        { memberId: owned, endpoint: laptop, p256dh: "p", auth: "a" },
+      ],
+    });
+    check("한 사람의 두 기기가 두 줄이다", await db.pushSubscription.count({ where: { memberId: owned, endpoint: { in: ends } } }), 2);
+
+    // **핵심: 한 기기만 끈다.** 서버 액션과 같은 문장이다 — `memberId` **와** `endpoint` 를
+    // **둘 다** 조건에 넣는다.
+    const turnedOff = await db.pushSubscription.deleteMany({ where: { memberId: owned, endpoint: laptop } });
+    check("끈 기기의 줄만 지워진다", turnedOff.count, 1);
+    const left = await db.pushSubscription.findMany({
+      where: { memberId: owned, endpoint: { in: ends } },
+      select: { endpoint: true },
+      orderBy: { endpoint: "asc" },
+    });
+    check("다른 기기는 그대로 남는다", left.map((r) => r.endpoint), [phone]);
+
+    // **주소만 알면 남의 줄을 지울 수 없어야 한다.** `memberId` 조건이 빠지면 여기서 무너진다 —
+    // 주소는 브라우저 안에만 있으므로 이 조건이 곧 그 경계다.
+    const notMine = await db.pushSubscription.deleteMany({ where: { memberId: b.id, endpoint: phone } });
+    check("남의 기기 주소로 지우면 아무 일도 없다", notMine.count, 0);
+    check("남의 주소는 여전히 남아 있다", await db.pushSubscription.count({ where: { endpoint: phone } }), 1);
+
+    // **주인이 바뀐 기기** — 주소를 추측할 수 있어도 `memberId` 가 다르면 못 지운다.
+    const stolen = await db.pushSubscription.create({
+      data: { memberId: b.id, endpoint: `https://push.example/other-${stamp}`, p256dh: "p", auth: "a" },
+    });
+    const afterTheft = await db.pushSubscription.deleteMany({
+      where: { memberId: owned, endpoint: stolen.endpoint },
+    });
+    check("주인이 다른 줄은 건드리지 않는다", afterTheft.count, 0);
+    check("주인이 다른 줄은 남는다", await db.pushSubscription.count({ where: { endpoint: stolen.endpoint } }), 1);
+
+    // **같은 주소로 다시 켜면 주인이 옮겨 간다** — 기기를 넘겨 쓰는 경우. 위 DB 구역이
+    // 같은 주인의 줄 수를 셌으므로, 여기서는 **사람이 바뀌는 것**까지 함께 본다.
+    const handover = await db.pushSubscription.upsert({
+      where: { endpoint: phone },
+      create: { memberId: b.id, endpoint: phone, p256dh: "p2", auth: "a2" },
+      update: { memberId: b.id, p256dh: "p2", auth: "a2" },
+    });
+    check("같은 주소로 켜면 주인이 옮겨진다", handover.memberId, b.id);
+    check("옮겨 간 뒤 옛 사람에게 남지 않는다", await db.pushSubscription.count({ where: { memberId: owned, endpoint: { in: ends } } }), 0);
+
+    await db.pushSubscription.deleteMany({ where: { endpoint: { in: [...ends, stolen.endpoint] } } });
+  }
+}
+
+console.log("\n푸시 구독: 기기 규칙이 코드에 남아 있다");
+{
+  // 위 DB 검사는 **기다리는 문장**을 친 것이다. 액션과 클라이언트가 그 문장을 **쓰는가**를
+  // 여기서 본다 — 화면은 브라우저에서 돈다.
+  const server = readCode("../src/server/actions/push.ts");
+  const from = server.indexOf("export async function clearPushSubscription");
+  const fn = from >= 0 ? server.slice(from) : "";
+
+  truthy("끄기 함수가 있다", fn.length > 0);
+  // **전체 삭제로 돌아가면 이 규칙이 조용히 죽는다** — 기기 분리의 전부다.
+  check("memberId 만으로 지우지 않는다", /deleteMany\(\{\s*where:\s*\{ memberId: me\.id \}/.test(fn), false);
+  check("주소까지 조건에 든다", /where:\s*\{\s*memberId:\s*me\.id,\s*endpoint:\s*address\s*\}/.test(fn), true);
+  // 주소를 못 받았으면 **아무것도 지우지 않는다** — 모르는 것을 지우는 것이 예전 사고다.
+  check("주소가 없으면 지우지 않는다", fn.indexOf("if (!address)") > 0 && fn.indexOf("return { cleared: 0 }") > fn.indexOf("if (!address)"), true);
+
+  const client = readCode("../src/features/home/push-client.ts");
+  const off = client.slice(client.indexOf("export async function turnOffPush"));
+  // **주소를 먼저 챙기고 그다음에 끊는다** — 순서가 바뀌면 서버가 지울 곳을 모른다.
+  check("끊기 전에 주소를 챙긴다", off.indexOf("endpoint = sub?.endpoint") < off.indexOf("unsubscribe()"), true);
+  check("서버에는 그 주소만 보낸다", /clearPushSubscription\(endpoint\)/.test(off), true);
+
+  const read = client.slice(client.indexOf("export async function readPushState"));
+  // **서버 값을 이 기기의 판정에 섞지 않는다.** 섞이면 휴대폰에만 켜진 PC 가 켜짐으로 보인다.
+  check("서버 값을 이 기기의 판정에 쓰지 않는다", /subscribed:\s*local\b/.test(read), true);
+  check("판정은 브라우저의 구독을 본다", read.includes("getSubscription()"), true);
 }
 
 /* ── 발송 실패: 원인은 남기고 인증번호는 남기지 않는다 ──────── */

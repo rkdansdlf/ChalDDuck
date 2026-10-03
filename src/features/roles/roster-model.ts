@@ -157,6 +157,10 @@ export type DrawConsent = {
   agreed: number;
   /** 응답한 사람 수(반대는 제안을 지우므로 남지 않는다). */
   responded: number;
+  /** 팀 전체 인원 — "몇 명이 아직 남았는가" 를 말하는 데 필요하다. */
+  totalMembers: number;
+  /** 내가 이미 동의했는지. 화면이 자기 응답 버튼을 숨긴다. */
+  iAgreed: boolean;
   respondBy: string;
 };
 
@@ -177,7 +181,16 @@ export type ConsentView =
   /** 제안이 없거나 마감을 지나 저절로 통과했다 — 추첨할 수 있다. */
   | { kind: "open" }
   /** 팀이 아직 응답 중이다. */
-  | { kind: "waiting"; proposedBy: string; tool: string; agreed: number; responded: number; respondBy: string };
+  | {
+      kind: "waiting";
+      proposedBy: string;
+      tool: string;
+      agreed: number;
+      responded: number;
+      totalMembers: number;
+      iAgreed: boolean;
+      respondBy: string;
+    };
 
 export function consentViewOf(
   consent: DrawConsent | null | undefined,
@@ -191,6 +204,8 @@ export function consentViewOf(
     tool: consent.tool,
     agreed: consent.agreed,
     responded: consent.responded,
+    totalMembers: consent.totalMembers,
+    iAgreed: consent.iAgreed,
     respondBy: consent.respondBy,
   };
 }

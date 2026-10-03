@@ -29,12 +29,14 @@ import { acceptRoleDraw, claimSoleRole, drawForRole, proposeRoleDraw, rejectRole
 import {
   NO_DRAW_POOL_TEXT,
   applyMyChoices,
+  canDrawIn,
   canProposeIn,
   consentViewOf,
   drawPoolOf,
   roleViewOf,
   wantersOf,
   type ConsentView,
+  type RoleView,
 } from "./roster-model";
 
 /**
@@ -168,6 +170,17 @@ export function RosterScreen({
   /** 지금 화면에 그릴 동의 상태. 서버가 준 시각으로만 판한다(하이드레이션 불일치 방지). */
   const now = useMemo(() => new Date(nowIso), [nowIso]);
   const consentFor = (role: RoleKey): ConsentView => consentViewOf(consents[role] ?? null, now);
+  /** 시트가 열려 있는 역할의 동의 상태 — 있으면 시트 첫 화면이 도구 고르기가 아니다. */
+  const sheetConsent: ConsentView | null = drawingFor ? consentFor(drawingFor) : null;
+  /**
+   * 시트가 그리는 역할의 상태. **두 버튼의 가능 여부를 이 한 판정에서 나온다.**
+   *
+   * 동의 대기가 아닐 때는 `open` 이므로 `canDrawIn`/`canProposeIn` 어느 쪽이든 정상적으로
+   * 열린다 — 시트 첫 화면이 이미 `ConsentPanel` 이라 여기까지 오지 않기 때문이다.
+   */
+  const sheetView: RoleView = drawingFor
+    ? roleViewOf(wantersOf(members, drawingFor).length, draws[drawingFor] ?? null, sheetConsent ?? { kind: "open" })
+    : { kind: "empty" };
 
   /** 서버의 `drawPoolOf` 와 같은 규칙으로 연출에 쓸 후보를 고른다. */
   const candidatePoolFor = (role: RoleKey): DrawCandidate[] =>
@@ -401,7 +414,9 @@ export function RosterScreen({
             const vetoers = members.filter((m) => m.veto === role.key);
             const result = draws[role.key];
             const excluded = rejected[role.key] ?? [];
-            const view = roleViewOf(wanters.length, result ?? null);
+            // **동의를 넘겨야 목록이 잠긴 것을 안다.** 안 넘기면 이 역할은 "협의 중" 으로
+            // 보이는데 추첨 시트는 동의 대기로 열려 있다 — 같은 역할이 두 상태로 보인다.
+            const view = roleViewOf(wanters.length, result ?? null, consentFor(role.key));
             const iAmWinner = result !== undefined && myId !== null && result.winnerId === myId;
 
             return (
@@ -413,6 +428,14 @@ export function RosterScreen({
                     <span className="inline-flex items-center gap-1 rounded-full bg-ok-bg px-2.5 py-0.5 text-[12px] font-bold text-want">
                       <Icon name="check" size={12} strokeWidth={2.5} />
                       확정 · {view.winner}
+                    </span>
+                  ) : view.kind === "consent" ? (
+                    // **동의 대기는 "겹침" 과 다른 상태다.** 겹침은 우리가 정할 수 있지만,
+                    // 동의 대기는 누군가 이미 올렸고 그 응답을 기다리는 중이다 — 말구분이
+                    // 같으면 팀원이 왜 아무것도 못 하는지 알 수 없다.
+                    <span className="inline-flex items-center gap-1 rounded-full bg-yellow-200 px-2.5 py-0.5 text-[12px] font-bold text-yellow-800">
+                      <Icon name="users-round" size={12} />
+                      동의 대기 · {view.consent.tool}
                     </span>
                   ) : wanters.length > 1 ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2.5 py-0.5 text-[12px] font-bold text-yellow-800">
@@ -541,6 +564,18 @@ export function RosterScreen({
                     ) : null}
                   </div>
                 ) : null}
+
+                {/* 동의 대기 — 목록에서도 바로 답한다. */}
+                {view.kind === "consent" ? (
+                  <ConsentPanel
+                    consent={view.consent}
+                    roleLabel={role.name}
+                    busy={Boolean(busy.consent)}
+                    onAgree={() => void handleConsentAnswer(role.key, true, role.name)}
+                    onObject={() => void handleConsentAnswer(role.key, false, role.name)}
+                    compact
+                  />
+                ) : null}
               </div>
             );
           })}
@@ -617,10 +652,19 @@ export function RosterScreen({
 
       <Sheet
         open={drawingFor !== null}
-        title={rollingTool || drawResult ? undefined : "추첨 방식 고르기"}
+        title={
+          rollingTool || drawResult
+            ? undefined
+            : // 동의 대기는 도구를 고르는 화면이 아니다 — 제목을 그대로 두면 무엇을 고르는지
+              // 모른다. 역할 이름까지 넣어야 "무엇에 대한 응답인지"가 한 줄로 읽힌다.
+              sheetConsent?.kind === "waiting" && drawingFor
+              ? `${roles.find((r) => r.key === drawingFor)?.name ?? "역할"} 추첨 동의`
+              : "추첨 방식 고르기"
+        }
         onClose={() => {
           // 연출이 도는 동안은 결과를 끝까지 보게 한다 — 도중에 닫아도 서버 결과는 이미 저장돼 있다.
           if (rollingTool || drawResult) return;
+          setPickedTool(null);
           setDrawingFor(null);
         }}
       >
@@ -639,6 +683,14 @@ export function RosterScreen({
             </span>
             <p className="t-note text-txt-muted">{rollingTool.name} 준비 중…</p>
           </div>
+        ) : sheetConsent && drawingFor && sheetConsent.kind === "waiting" ? (
+          <ConsentPanel
+            consent={sheetConsent}
+            roleLabel={roles.find((r) => r.key === drawingFor)?.name ?? "역할"}
+            busy={Boolean(busy.consent)}
+            onAgree={() => void handleConsentAnswer(drawingFor, true, roles.find((r) => r.key === drawingFor)?.name ?? "역할")}
+            onObject={() => void handleConsentAnswer(drawingFor, false, roles.find((r) => r.key === drawingFor)?.name ?? "역할")}
+          />
         ) : (
           <>
             <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
@@ -646,18 +698,63 @@ export function RosterScreen({
               고른 사람은 추첨 대상에서 뺍니다.
             </p>
             <div className="grid grid-cols-2 gap-[9px]">
-              {tools.map((tool) => (
-                <button
-                  key={tool.key}
-                  type="button"
-                  onClick={() => handleDraw(tool)}
-                  className="flex min-h-[84px] cursor-pointer flex-col items-center justify-center gap-[7px] rounded-2xl border border-line bg-card text-txt-strong"
-                >
-                  <Icon name={tool.icon as IconName} size={24} />
-                  <span className="font-bold text-[14px] leading-none">{tool.name}</span>
-                </button>
-              ))}
+              {tools.map((tool) => {
+                const on = tool.key === pickedTool?.key;
+                return (
+                  <button
+                    key={tool.key}
+                    type="button"
+                    onClick={() => setPickedTool(on ? null : tool)}
+                    aria-pressed={on}
+                    className={cn(
+                      "relative flex min-h-[84px] cursor-pointer flex-col items-center justify-center gap-[7px] rounded-2xl border transition-colors duration-150",
+                      on ? "border-line-strong bg-yellow-100 text-ink-900" : "border-line bg-card text-txt-strong",
+                    )}
+                  >
+                    {/* 색만으로 "고른 것"을 말하지 않는다(공통 규칙). */}
+                    {on ? (
+                      <span className="absolute right-2.5 top-2.5 text-yellow-700">
+                        <Icon name="check" size={13} />
+                      </span>
+                    ) : null}
+                    <Icon name={tool.icon as IconName} size={24} />
+                    <span className="font-bold text-[14px] leading-none">{tool.name}</span>
+                  </button>
+                );
+              })}
             </div>
+
+            {pickedTool ? (
+              <div className="mt-4 flex flex-col gap-2">
+                {/* **두 길의 가능 여부를 같은 함수로 판한다.** 이미 뽑힌 결과를 다시 덮어쓰는
+                    길(무효 재추첨)을 "지금 바로 추첨" 이라고 부르면 누가 그 사실을 알 수 없다 —
+                    서버는 조용히 그 자리를 비우고 새 결과로 덮어쓴다. */}
+                {canDrawIn(sheetView) ? (
+                  <Btn full icon="dices" disabled={busy.draw} onClick={() => void handleDraw(pickedTool)}>
+                    지금 바로 추첨
+                  </Btn>
+                ) : null}
+                {/* `voided` 은 제안하지 않는다 — 이미 뽑힌 결과가 있으므로 같은 역할에 두 길이
+                    겹치면 어느 쪽인지 모른다(`canProposeIn`). 하나만 떠야 어느 쪽인지 안다. */}
+                {canProposeIn(sheetView) ? (
+                  <Btn
+                    full
+                    v="outline"
+                    icon="users-round"
+                    disabled={busy.propose}
+                    onClick={() => void handlePropose(pickedTool)}
+                  >
+                    팀에 제안하고 동의 받기
+                  </Btn>
+                ) : null}
+                {/* **어느 쪽이 team 에 영향을 주는지 말해 준다.** 누가 누를지 모르는 상황에서
+                    고를 수 있어야 하고, 동의가 강제가 아니라는 사실도 같이 알려 준다. */}
+                <Note tone="info" icon="users-round" className="mt-1">
+                  지금 바로 추첨은 <b>누가 눌렀는지 팀에 알리지 않고</b> 진행됩니다. 팀에 제안하면
+                  동의할 때까지 기다리고, 반대하는 사람이 있으면 진행되지 않습니다.
+                </Note>
+              </div>
+            ) : null}
           </>
         )}
       </Sheet>
@@ -941,5 +1038,74 @@ function PickChip({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * 동의 대기 중인 제안 하나.
+ *
+ * **목록(07)과 시트가 같은 컴포넌트를 쓴다.** 홈 알림에서 `/team` 으로 들어온 팀원은 역할
+ * 행에서 이걸 보고 답해야 하는데, 시트 안에만 있으면 화면 하나를 더 열어야 답할 수 있게
+ * 된다 — "답해야 하는데 어디서 답하지"가 생긴다.
+ *
+ * 여기서 말하는 동의·반대는 **추첨을 시작해도 되는가** 다. 당첨자가 역할을 맡을지 정하는
+ * 받기·안 받기와 다른 말이다(`docs/product-language.md`).
+ */
+function ConsentPanel({
+  consent,
+  roleLabel,
+  busy,
+  onAgree,
+  onObject,
+  compact = false,
+}: {
+  consent: ConsentView & { kind: "waiting" };
+  roleLabel: string;
+  busy: boolean;
+  onAgree: () => void;
+  onObject: () => void;
+  compact?: boolean;
+}) {
+  const waiting = consent.totalMembers - consent.responded;
+  return (
+    <div className={cn("rounded-xl bg-fill", compact ? "mt-2.5 p-2.5" : "p-4")}>
+      <div className={cn("text-[12px] font-semibold text-txt", compact ? "mb-2" : "mb-3")}>
+        {roleLabel} 추첨 제안 · {consent.proposedBy}님이 올렸습니다
+      </div>
+
+      <div className={cn("flex flex-wrap items-center gap-1.5", compact ? "mb-2" : "mb-3")}>
+        <Chip tone="n" icon="dices">
+          {consent.tool}
+        </Chip>
+        <Chip tone="ok" icon="check">
+          동의 {consent.agreed}명
+        </Chip>
+        <Chip tone="warn" icon="clock">
+          미응답 {waiting}명
+        </Chip>
+      </div>
+
+      {compact ? null : (
+        <p className="t-note m-0 mb-3 text-txt-muted">
+          응답 마감 {consent.respondBy}까지 <b>반대하는 사람이 없으면</b> 추첨할 수 있게 됩니다. 누군가
+          반대하면 이 제안은 사라지고, 다시 올려야 합니다.
+        </p>
+      )}
+
+      {consent.iAgreed ? (
+        <Chip tone="ok" icon="check">
+          내가 동의함
+        </Chip>
+      ) : (
+        <div className="flex gap-2">
+          <Btn size="sm" icon="check" disabled={busy} onClick={onAgree}>
+            동의하기
+          </Btn>
+          <Btn size="sm" v="ghost" icon="x" disabled={busy} onClick={onObject}>
+            반대하기
+          </Btn>
+        </div>
+      )}
+    </div>
   );
 }

@@ -368,7 +368,7 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
       agreed: agrees,
       responded: c.responses.length,
       totalMembers: members.length,
-      respondBy: c.respondBy.toISOString(),
+      respondBy: formatDeadline(c.respondBy),
       iAgreed: session ? c.responses.some((r) => r.memberId === session.id && r.agree) : false,
     };
   }

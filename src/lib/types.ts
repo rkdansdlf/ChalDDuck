@@ -1002,6 +1002,7 @@ export type RoleDrawConsentView = {
   responded: number;
   /** 팀 전체 인원. 동의 n명 / 몇 명이 되돌려 줘야 하는지 를 말한다. */
   totalMembers: number;
+  /** 사람이 읽는 마감 시각. **서버에서 포맷해 내려온다** — 클라이언트가 다시 계산하지 않는다. */
   respondBy: string;
   /** 내가 이미 동의했는지. 화면에서 버튼을 숨기는 데 쓴다. */
   iAgreed: boolean;
