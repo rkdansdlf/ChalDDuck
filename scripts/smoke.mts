@@ -3656,14 +3656,52 @@ console.log("\n문서가 숫자를 담지 않는다");
    * 사람은 그 수를 전체로 믿는다 — 실제로 겪었다. 헤드오프 표는 10행짜리 원본이고 지금은
    * 25곳이다.
    *
-   * 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 쓰지 못하게** 막는다.
-   */
+* 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 쓰지 못하게** 막는다.
+    */
   const docs = ["../README.md", "../CLAUDE.md"];
   for (const rel of docs) {
     const text = readFileSync(new URL(rel, import.meta.url), "utf8");
     check(`${rel} 은 정책 개수를 적지 않는다`, /정책\s*\d+\s*건/.test(text), false);
     check(`${rel} 은 컴포넌트 개수를 적지 않는다`, /컴포넌트\s*\d+\s*종/.test(text), false);
+
+    /**
+     * **문서가 부르는 명령이 실제로 있어야 한다.**
+     *
+     * `check:migrations` 라는 명령은 없었다 — 실제 이름은 `db:migrations` 이었다. 문서만 옛
+     * 이름이라 읽는 사람은 그 명령을 못 실행하고, "이 검사를 돌리면 되겠지" 하고 넘어간다.
+     * **깨지면 조용히 사라지는 종류**라 사용자가 신고하기 전에 누가 먼저 고쳐야 하는 줄 모른다.
+     *
+     * 존재하지 않는 스크립트를 **쓰기만** 막는다 — 명령을 추가해도 이 검사는 걸리지 않는다.
+     * 그러니 새 명령을 문서에 적을 때는 `package.json` 에 먼저 넣는다.
+     */
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { scripts: Record<string, string> };
+    const called = [...text.matchAll(/npm run ([\w:-]+)/g)].map((m) => m[1]);
+    check(
+      `${rel} 이 부르는 명령이 실제로 있다`,
+      [...new Set(called)].filter((name) => !(name in pkg.scripts)),
+      [],
+    );
   }
+
+  /**
+   * 문서에 적힌 **배포 빌드 명령**이 실제 `vercel.json` 과 같은지 본다. 이게 어긋나면
+   * 로컬 `npm run build` 는 통과하는데 **배포만 죽는다** — 2026-09-28 이 정확히 그 상황이었다
+   * (`vercel.json` 이 `next build` 를 직접 불러 `build` 스크립트의 플래그를 건너뛰었다).
+   */
+  const vercel = JSON.parse(
+    readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
+  ) as { buildCommand: string };
+  const readmeText = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  check("README 의 빌드 명령이 vercel.json 과 같다", readmeText.includes(vercel.buildCommand), true);
+  // 빌드 단계는 반드시 `npm run build` 를 지나야 한다 — `next build` 를 직접 부르면
+  // `package.json` 의 `build` 스크립트(플래그 포함)가 통째로 건너뛰어진다.
+  check(
+    "배포 빌드는 package.json 의 build 를 지난다",
+    /npm run build\s*$/.test(vercel.buildCommand.trim()),
+    true,
+  );
 
   // 제거했다면 목록을 읽을 자리는 남아 있어야 한다 — 화면 안의 검토 표시와 그 열기.
   const note = readCode("../src/components/ui/note.tsx");
