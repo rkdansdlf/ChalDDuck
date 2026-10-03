@@ -215,7 +215,6 @@ function Picker({
                     {item.desc} · {item.minPlayers}명부터
                   </span>
                 </span>
-                {item.playable ? null : <Chip icon="circle-dashed">준비 중</Chip>}
               </button>
             );
           })}
@@ -303,7 +302,7 @@ function Picker({
         <Undecided>라이어 제시어 목록은 기획안에 없어 임시로 정했습니다.</Undecided>
       </Body>
 
-      {game?.playable ? (
+      {game ? (
         <Dock>
           <Btn
             full

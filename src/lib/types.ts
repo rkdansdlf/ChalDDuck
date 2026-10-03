@@ -220,8 +220,6 @@ export type AiTool = {
   /** `IconName` 과 같은 kebab-case 어휘. */
   icon: string;
   note: string;
-  /** 아직 열지 않은 도구는 false. */
-  ready: boolean;
   /** 도구 화면 경로. 아직 없으면 null. */
   href: string | null;
 };
@@ -797,8 +795,6 @@ export type IceGame = {
    * 상한이 필요 없다. 서버도 같은 값으로 막는다(화면만 막으면 남의 요청으로 열린다).
    */
   maxPlayers?: number;
-  /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
-  playable: boolean;
 };
 
 /** 라이어: liar | citizen / 마피아: mafia | police | doctor | citizen */

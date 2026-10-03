@@ -344,7 +344,7 @@ export function HomeScreen({
             <SuggestionChip key={s.key} suggestion={s} onOpen={() => router.push(s.href)} />
           ))}
           {aiTools
-            .filter((tool): tool is typeof tool & { href: string } => tool.ready && tool.href !== null)
+            .filter((tool): tool is typeof tool & { href: string } => tool.href !== null)
             .slice(0, suggestions.length > 0 ? 2 : 4)
             .map((tool) => (
               <button

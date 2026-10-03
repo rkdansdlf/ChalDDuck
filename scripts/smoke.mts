@@ -24,6 +24,7 @@ import {
   AI_POLICY,
   CUSHION_DEFAULT_MODE,
   CUSHION_LEVELS,
+  AI_TOOLS,
   ICE_GAMES,
   MENU_OPTIONS,
   RANDOM_TOOLS,
@@ -1328,6 +1329,36 @@ console.log("\n회의 확정 예약 작업 (같은 일을 두 번 불러도 알�
     await db.meetingSlot.deleteMany({ where: { id: { in: [slot.id, raceSlot.id] } } });
     await db.notification.deleteMany({ where: { memberId: { in: others }, kind: "meeting", body: { contains: "확정됐어요" } } });
   }
+}
+
+console.log("\n도구와 게임: 전부 열려 있다 (비활성화 상태는 쓰지 않는다)");
+{
+  /**
+   * **결정: 일부러 닫아 둘 도구·게임이 없다.** 그래서 `ready`·`playable` 같은 플래그와
+   * "준비 중" 칩을 걷었다 — 유효 데이터가 0개인 분기였다.
+   *
+   * 플래그를 지운 뒤 남는 것은 **`href` 가 없는 도구 하나**다. 도구가 갈 곳 없이 들어오면
+   * 홈의 바로가기가 그 도구를 **조용히 걸러 낸다**(홈은 `href !== null` 로 거른다) — 목록이
+   * 하나 줄었는데 아무도 모른다. 그래서 **전 도구에 갈 곳이 있다**를 고정한다.
+   */
+  check("도구는 하나 이상 있다", AI_TOOLS.length > 0, true);
+  check(
+    "모든 도구에 갈 곳이 있다 (홈이 조용히 걸러 내지 않는다)",
+    AI_TOOLS.filter((t) => t.href === null).map((t) => t.key),
+    [],
+  );
+
+  // 아이스브레이킹도 같다 — `playable` 을 지운 뒤 남는 것은 `game` 을 못 찾는 경우뿐이다.
+  check("아이스브레이킹은 하나 이상 있다", ICE_GAMES.length > 0, true);
+  truthy(
+    "게임을 못 찾는 경우에도 설명은 읽을 수 있다 (Dock 만 사라진다)",
+    readCode("../src/features/social/icebreak-screen.tsx").includes("{game ? ("),
+  );
+
+  // 재도입 방지: 플래그가 다시 생기면 바로 잡는다.
+  const types = readCode("../src/lib/types.ts");
+  check("도구에 '아직 열지 않았다' 플래그가 없다", /\n\s*ready: boolean;/.test(types), false);
+  check("게임에 '실행까지 연결됐다' 플래그가 없다", /\n\s*playable: boolean;/.test(types), false);
 }
 
 console.log("\n누가 하지");
