@@ -261,6 +261,96 @@ function truthy(what: string, got: boolean) {
   check(what, got, true);
 }
 
+/* ── 주석에 한자가 섞여 들어오지 않았는지 ──────────────────── */
+
+console.log("\n주석 인코딩");
+{
+/**
+   * 한국어 주석 한 칸에 **한자 글리프가 하나씩** 섞여 들어온다.
+   *
+   * ## 왜 이게 반복됐는가
+   *
+   * 실제 오염은 전부 이 모양이다 — 띄어쓰기와 문맥은 멀쩡한데 **글자 하나만** 중국어로
+   * 바뀌어 있다. "위아래로" 가 "위" + (위) + "아래" + (아래) + "로" 가 되고, "팀이" 가
+   * "—" + (팀) + "이" 가 되고, "추천을" 이 (추천) + "을" 로 쪼개진다.
+   *
+   * 컴파일도 통과하고 테스트도 통과한다 — **주석은 실행되지 않으니까.** 그래서 한 번 발견하고
+   * 두면 다음 주석에서 다시 생기고, 2026-09-30 기준으로 **14곳**이 쌓여 있었다(그중 두 곳은
+   * 그날 내가 쓴 코드 안이었다). 스윕만으로는 다음 주석에서 재생된다. 그래서 이 불변식을 둔다.
+   *
+   * **이 설명에 한자를 쓰지 않는 이유**는 아래 `probes` 다 — 오염된 예시를 주석에 적으면
+   * 이 검사가 자기 자신을 잡아 실패한다. 그래서 실제 예시는 문자열 배열에 넣고(코드이지 주석이
+   * 아니다), 여기에는 설명만 남긴다.
+   *
+   * ## 왜 **주석 줄만** 보는가
+   *
+   * 이 저장소에는 **의도적으로 중국어가 있는** 자리가 있다:
+   *
+   * - `scripts/cushion-corpus.mts` — 한국어 문장에 중국어가 섞인 입력 픽스처
+   * - `src/lib/read-cushion.ts` — 중국어 거절 문구를 알아보는 정규식
+   * - `scripts/smoke.mts` — 위 둘을 검사하는 픽스처
+   *
+   * 셋 다 **문자열·정규식 안**이라 주석 줄 검사로는 걸리지 않는다. 그런데 중국어 욕설 픽스처
+   * 처럼 한글이 한자와 **이어진 문자열**이 있어 "한자 옆에 한글" 로 보는 검사는 오탐을 낸다.
+   * 그래서 주석 줄로 한정한다.
+   */
+  const HAN_IN_COMMENT = /[\u4e00-\u9fff]/;
+  /** `// …` 또는 블록 주석의 `* …` 줄. 문자열 안의 `//` 는 걸리지 않는다(줄 첫 칸 기준). */
+  const isCommentLine = (line: string) => /^\s*(\/\/|\*)/.test(line);
+  const hasHanInComment = (line: string) => isCommentLine(line) && HAN_IN_COMMENT.test(line);
+
+  const roots = ["../src", "../scripts", "../prisma"];
+  /** `generated` 는 Prisma 클라이언트라 한국어가 없고 양만 많다. */
+  const skip = new Set(["node_modules", "generated", ".next", "handoff"]);
+  const found: string[] = [];
+  let scanned = 0;
+
+  const walkForHan = (dir: string) => {
+    for (const entry of readdirSync(join(dir, ""), { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walkForHan(full);
+        continue;
+      }
+      if (!/\.(ts|tsx|mjs|mts)$/.test(entry.name)) continue;
+      scanned += 1;
+      readFileSync(full, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (hasHanInComment(line)) found.push(`${full}:${i + 1}`);
+        });
+    }
+  };
+  for (const root of roots) walkForHan(new URL(root, import.meta.url).pathname);
+
+  // 14곳을 고쳤으니 0이어야 한다. 목록을 그대로 보여 주면 어디를 고쳤는지와 앞으로 어디가
+  // 오염됐는지 한 번에 읽힌다 — 파일:줄 형태.
+  check("주석에 한자 글리프가 없다", found, []);
+
+  // 검사가 실제로 **뭔가를 잡는지** 확인한다. 이 검사가 고장 나면 조용히 통과하는데,
+  // 그러면 위의 0은 아무 의미가 없어진다.
+  const probes = [
+    ["// 團이 그대로 남았다", true],
+    [" * 화면上下로 흩어지면", true],
+    ['const s = "抱歉, 我无法协助"; // 주석은 깨끗함', false],
+    ["const s = '고양이새가来了';", false],
+    ["// 한글이 남았다", false],
+  ] as const;
+  check(
+    "검사가 한자를 잡고 픽스처는 통과시킨다",
+    probes.map(([line, want]) => [hasHanInComment(line), want]),
+    [
+      [true, true],
+      [true, true],
+      [false, false],
+      [false, false],
+      [false, false],
+    ],
+  );
+  check("주석 검사 대상이 실제로 있다", scanned > 50, true);
+}
+
 /* ── 사용자 노출 용어: 기준에서 되돌아가지 않았는지 ─────────── */
 
 /**
@@ -2998,7 +3088,7 @@ console.log("\nDM 목록 조회 비용");
     check("스레드마다 LIMIT 1 로 멈춘다", /LIMIT 1/i.test(sql), true);
     check("스레드 밖의 값을 고르지 않는다", /LATERAL/i.test(sql), true);
 
-    // 함수가 올바르다고 호출부가把它를 버리면 또 그대로다. 실제로 있었던 일이 이것이다 —
+    // 함수가 올바르다고 호출부가 그 결과를 버리면 또 그대로다. 실제로 있었던 일이 이것이다 —
     // `getDmThreads` 가 이 경로를 두고 Prisma `distinct` 로 직접 읽었다. 함수를 고쳐 놓아도
     // **누가 부르는지**를 함께 고정해야 한다.
     const api = readCode("../src/data/api.ts");
@@ -3032,7 +3122,7 @@ console.log("\nDM 목록 조회 비용");
     // **실행마다 다른 표식.** 이 검사는 로컬 DB 를 쓴다. 다른 사람이 같은 저장소에서
   // `npm test` 를 동시에 돌리면, 둘이 같은 방에 같은 접두사로 줄을 세운다 — 그럼
   // "치운 뒤에도 남았나" 를 재는 쪽이 **상대의 줄을 뒤집어쓴다.**
-  //(`계속 같은 방을 쓰는另一个 검사와 함께 돌 때 실제로 났다.)
+  //(`계속 같은 방을 쓰는 다른 검사와 함께 돌 때 실제로 났다.)
   // 접두사에 실행마다 다른 값을 넣어 **내 줄만** 세고 치운다.
   const runTag = `${process.pid}-${Date.now().toString(36)}`;
   const mine = `규모 확인 ${runTag} `;
@@ -3972,7 +4062,7 @@ console.log("\n마피아 게임: 밤을 두 번 처리하지 않는다");
    * 처리하면 안 된다 — 두 사람이 죽거나, 같은 밤이 두 줄로 남거나, 판정 뒤에 늦은 행동이 남는다.
    *
    * 막는 곳은 두 군데다. ① 단계가 `night` 가 아니면 거절한다. ② 그 밤에 이미 누군가 빠졌으면
-   * 거절한다(`nightAlreadyStruck`). 여기서는 ② 를 **실제 DB 행**으로 확인한다 —夜里에 적힌
+   * 거절한다(`nightAlreadyStruck`). 여기서는 ② 를 **실제 DB 행**으로 확인한다 — 밤에 적힌
    * 자리가 있으면 밤은 이미 끝난 밤이다.
    */
   const team = await db.team.create({

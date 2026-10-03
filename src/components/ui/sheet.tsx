@@ -22,7 +22,7 @@ export function Sheet({
   onClose: () => void;
   /**
    * 시트 맨 아래에 붙는 동작 막대. 입력 항목이 있는 시트에는 보통 하나가 있어야 한다 —
-   * 입력과 확인이 화면上下로 흩어지면 무엇을 확정하는지 애매해진다.
+   * 입력과 확인이 화면 위로 흩어지면 무엇을 확정하는지 애매해진다.
    */
   footer?: ReactNode;
   children: ReactNode;

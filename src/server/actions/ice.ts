@@ -260,7 +260,7 @@ export async function castIceVote(targetId: string): Promise<IceResult> {
     if (!target || target.outAt || targetId === me.id) return "그 사람에게는 투표할 수 없습니다.";
 
     // 결선이면 **동점자만** 고를 수 있다. 이 검사를 빼면 "결선 중" 화면에 다른 사람이 그대로
-    // 남아 있고, 그에게投한 표는 집계에서 조용히 버려진다(탈락은 결선 밖의 사람이 당해 보인다).
+    // 남아 있고, 그에게 던진 표는 집계에서 조용히 버려진다(탈락은 결선 밖의 사람이 당해 보인다).
     const eligible = fresh.eligibleTargets.filter((id) => id !== targetId || !target!.outAt);
     if (fresh.eligibleTargets.length > 0 && !eligible.includes(targetId)) {
       return "결선 투표입니다 — 동점자 중 한 명에게만 투표할 수 있습니다.";
