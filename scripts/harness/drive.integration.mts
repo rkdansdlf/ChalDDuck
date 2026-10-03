@@ -305,7 +305,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const D = await makeTeam("D");
     // 자리에 **딱 하나**를 남겨 둔다. 그래서 2단계는 들어가야 하는데 — 1단계와 2단계의
     // 용량 판정은 같은 식이다. 두 단계를 가르는 것은 **브라우저가 말한 크기와 실제로 들어온
-    // 크기의 차이** 뿐이다. 서명 주소로는 무엇이든 올릴 수 있으므로 이것이 규칙의 핵���이다.
+    // 크기의 차이** 뿐이다. 서명 주소로는 무엇이든 올릴 수 있으므로 이것이 규칙의 핵심이다.
     await seedBytes(D.id, D.box.id, TEAM_CAP_BYTES - size, "자리는 하나");
     const prepared = await as(D.asLeader, () =>
       actions.prepareUpload(D.box2.id, { name: "남는 자리.png", size, type: PNG }),

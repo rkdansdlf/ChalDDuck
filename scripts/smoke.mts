@@ -3974,6 +3974,70 @@ console.log("\n이름이 식별자로 남는 근거 (한 팀에 같은 이름은
 console.log("\n사용자 노출 용어");
 checkProductLanguage();
 
+console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
+{
+  /**
+   * **한글 옆에 붙은 `�` 는 깨진 글자다.**
+   *
+   * 편집 도구가 한국어 한 글자를 중간에서 잘라 저장하면 그 자리에 U+FFFD 가 남고, **아무도
+   * 모른다** — 주석이면 읽다가 뜻이 이상한 걸 넘어가고, 문서면 그 줄만 뒤틀린다. 실제로
+   * `scripts/harness/drive.integration.mts` 의 "이것이 규칙의 핵" 뒤가 깨진 채로 남아 있었다.
+   *
+   * **깨진 글자를 인용하지 않는다.** 이 문서에서 그 글자를 그대로 베끼면 **이 검사가 저를
+   * 잡는다** — 실제로 이 주석을 처음 쓸 때 그렇게 걸렸다. 인용은 "핵" 뒤가 깨졌다는 설명으로
+   * 대신한다.
+   *
+   * **일부러 쓴 `�` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
+   * 화면에 `�` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
+   * "있느냐"가 아니라 **"한글 옆에 붙어 있느냐"** 로 본다 — 저 뜻으로 지우면 설명이 사라진다.
+   */
+  const root = new URL("../", import.meta.url);
+
+  /**
+   * **`.mts`·`.mjs` 도 본다.** 위의 `productCopySources` 는 사용자 노출 문구용이라 `.tsx?` 만
+   * 훑는다 — 그래서 처음에는 이 검사가 통과했다. 깨진 글자는 **도구 스크립트 주석**에 남아
+   * 있었는데(`scripts/harness/drive.integration.mts`), 바로 그 파일을 못 보고 있어서였다.
+   * 훑는 범위를 넓히는 김에 알려 줄 알람 문구 검사와 섞지 않는다.
+   */
+  const SKIP = new Set(["node_modules", "generated", ".next", "prototype"]);
+  function textSources(dir: URL): URL[] {
+    const out: URL[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue;
+      const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
+      if (entry.isDirectory()) out.push(...textSources(child));
+      else if (/\.(ts|tsx|mts|mjs)$/.test(entry.name)) out.push(child);
+    }
+    return out;
+  }
+
+  const broken: string[] = [];
+  for (const file of [...textSources(new URL("src/", root)), ...textSources(new URL("scripts/", root))]) {
+    const rel = file.pathname.slice(root.pathname.length);
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        const at = [...line].findIndex((c) => c === "\uFFFD");
+        if (at === -1) return;
+        const around = [...line].slice(Math.max(0, at - 1), at + 2).join("");
+        if (/[가-힣]/.test(around)) broken.push(`${rel}:${i + 1} ${around}`);
+      });
+  }
+  check("한글 옆에 깨진 글자가 없다", broken, []);
+
+  // **문서도 본다.** 코드가 깨지면 눈에 띄지만, 마크다운이 깨지면 조용히 읽힌다.
+  for (const doc of ["../README.md", "../docs/product-language.md", "../docs/handoff/HANDOFF.md"]) {
+    const rel = doc.replace("../", "");
+    const hits = readFileSync(new URL(doc, import.meta.url), "utf8")
+      .split("\n")
+      .filter((line) => {
+        const at = [...line].findIndex((c) => c === "\uFFFD");
+        return at !== -1 && /[가-힣]/.test([...line].slice(Math.max(0, at - 1), at + 2).join(""));
+      });
+    check(`${rel} 에 깨진 글자가 없다`, hits, []);
+  }
+}
+
 /* ── 미결 목록은 주석까지 세지 않는다 ─────────────────────────── */
 
 console.log("\n미결 목록 도구 (npm run decisions)");
