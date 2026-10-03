@@ -62,3 +62,6 @@ scripts/*.tmp.*
 .tmp-*
 *_backup/
 
+
+# 병렬 작업의 워크트리 — 저장소에 들어가면 안 된다
+.worktrees/
