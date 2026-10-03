@@ -3846,6 +3846,40 @@ console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
   check("서버도 같은 순수 판정을 부른다", actions.includes("canEditTask("), true);
 }
 
+console.log("\n이름이 식별자로 남는 근거 (한 팀에 같은 이름은 한 명)");
+{
+  /**
+   * **DB 제약이 이름 조회의 안전을 지탱한다.** 이름으로 사람을 찾는 자리가 네 군데인데
+   * (`assigneeIdOf`·`invite/settle.ts`·`actions/rejoin.ts`·`actions/onboarding.ts`)
+   * `Member` 의 `@@unique([teamId, name])` 이 그 자리를 모호하지 않게 붙잡고 있다.
+   *
+   * 제약만 풀면 **아무 예외도 나지 않는다** — 담당자가 두 명 중 아무에게나 붙고, 재입장이
+   * 남의 기록을 되살린다. 그래서 이 검사는 제약의 **존재**를 본다. 지울 때는 네 곳을 id
+   * 조회로 바꾼 뒤에 함께 지운다(`prisma/schema.prisma` 의 그 제약 옆 주석 참고).
+   */
+  const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+  // 다음 모델까지 자른다 — 길이를 정수로 두면 주석이 길어졌을 때 잘려서 조용히 실패한다.
+  const memberStart = schema.indexOf("model Member {");
+  const memberModel = schema.slice(memberStart, schema.indexOf("\nmodel ", memberStart + 1));
+  truthy("Member 에 팀 안 이름 유일 제약이 있다", /@@unique\(\[teamId, name\]\)/.test(memberModel));
+
+  // 이름으로 찾는 자리가 남아 있는데 제약만 없으면 조용히 틀린다 — 그래서 **양쪽** 본다.
+  const nameLookups = [
+    ["담당자 지정", "../src/server/actions/tasks.ts", /teamId,\s*name:\s*trimmed/],
+    ["초대 승인", "../src/server/invite/settle.ts", /teamId_name/],
+    ["재입장", "../src/server/actions/rejoin.ts", /teamId_name/],
+    ["이름 겹침 거절", "../src/server/actions/onboarding.ts", /teamId_name/],
+  ] as const;
+  for (const [what, file, re] of nameLookups) {
+    truthy(`${what} 은 이름을 키로 삼는다`, re.test(readCode(file)));
+  }
+
+  // 거절하는 길이 **화면 밖에서** 조용히 succeeds 하면 안 된다 — `name-taken` 을 돌려줘야
+  // 화면이 재입장으로 안내한다(던지면 배포본에서 문구가 가려진다).
+  const onboarding = readCode("../src/server/actions/onboarding.ts");
+  check("같은 이름은 거절한다 (name-taken)", /"name-taken"/.test(onboarding), true);
+}
+
 console.log("\n사용자 노출 용어");
 checkProductLanguage();
 

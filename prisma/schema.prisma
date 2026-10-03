@@ -190,6 +190,27 @@ model Member {
   iceHosted             IceRound[]             @relation("IceHost")
   iceSeats              IceSeat[]              @relation("IceSeatOf")
 
+  /// **한 팀에 같은 이름은 한 명이다 — 정한 정책이고, 받치는 기둥이다.**
+  ///
+  /// 이름은 사람이 읽는 값이면서 **아래 조회들의 키**다. 같은 이름이 둘이면 어느 쪽인지
+  /// 정할 수 없고, 정하지 않은 채로 진행하면 조용히 **남의 기록으로 붙는다.**
+  ///
+/// 이름을 키로 삼는 곳은 네 군데다: `actions/tasks.ts` 의 `assigneeIdOf`(담당자 지정),
+  /// `invite/settle.ts`(초대 승인), `actions/rejoin.ts`(재입장), `actions/onboarding.ts`
+  /// (이름 겹침 확인).
+  ///
+  /// 그래서 같은 이름의 둘째 사람은 **팀원이 되지 못한다** — 지금은 **두 곳**에서 막는다.
+  /// 신청할 때(`actions/onboarding.ts`) 와 팀장이 승인할 때(`invite/settle.ts`) 모두
+  /// `name-taken` 을 돌려준다. 두 곳이 필요한 이유는 `invite/settle.ts` 머리말에 적혀 있다 —
+  /// 승인은 끝난 뒤 신청인 브라우저가 폴링할 때 제약이 터지면 그 예외가 "폴링이 겹쳤다" 고
+  /// 읽혀 요청을 조용히 지웠기 때문이다. 막는 자리를 승인으로 옮겨야 그 예외가 없다.
+  ///
+  /// 예전에 "같은 이름의 다른 사람에게도 본인인 것처럼 보였다"는 화면을 냈지만, 실제로는
+  /// 팀장 승인으로도 못 여는 길이라 거짓말이라 걷었다(`features/onboarding/rejoin-screen.tsx`
+  /// 참고).
+  ///
+  /// ⚠️ **이 제약을 풀려면 위 네 곳을 id 조회로 바꿔야 한다.** 제약만 풀면 두 사람의 기여
+  /// 기록이 한 사람에게 붙는다 — 아무 예외도 없이.
   @@unique([teamId, name])
   @@index([email])
 }
