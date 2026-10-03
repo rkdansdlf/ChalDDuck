@@ -19,6 +19,7 @@ import { teamUsedBytes } from "@/server/drive/usage";
 import { DRIVE_READ_KEY, readNavBadges, type NavBadges } from "@/server/nav/badges";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { isStorageConfigured, explainStorageFailure, storage } from "@/server/storage/client";
+import { recordDriveVersionContrib } from "@/server/contrib/auto-record";
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
 
@@ -302,7 +303,7 @@ export async function finishUpload(
     const versions = await tx.fileVersion.findMany({ where: { fileId: file.id }, select: { label: true } });
     const label = nextVersionLabel(versions);
 
-    await tx.fileVersion.create({
+    const version = await tx.fileVersion.create({
       data: {
         fileId: file.id,
         label,
@@ -321,6 +322,17 @@ export async function finishUpload(
         // 라벨은 저장하지 않고 제출함 마감과 올린 시각으로 그때그때 계산한다.
       },
     });
+
+    await recordDriveVersionContrib(tx, {
+      versionId: version.id,
+      fileName: file.name,
+      versionLabel: label,
+      authorId: me.id,
+      bytes,
+      storagePath: upload.path,
+      mimeType: type.contentType,
+    });
+
     return { status: "ok", fileId: file.id, fileName: file.name, label, isNewFile: !target };
   });
 
@@ -330,6 +342,7 @@ export async function finishUpload(
   }
 
   revalidatePath("/drive", "layout");
+  revalidatePath("/team/contrib", "layout");
   revalidatePath("/home");
   return result;
 }
@@ -503,6 +516,16 @@ export async function saveChatAttachmentToDrive(
       },
     });
 
+    await recordDriveVersionContrib(tx, {
+      versionId: version.id,
+      fileName: file.name,
+      versionLabel: label,
+      authorId: message.authorId,
+      bytes,
+      storagePath: attachPath,
+      mimeType: type.contentType,
+    });
+
     await tx.message.update({ where: { id: message.id }, data: { savedVersionId: version.id } });
     return { status: "ok", label, fileName: file.name, boxName: box.name };
   });
@@ -520,6 +543,7 @@ export async function saveChatAttachmentToDrive(
   });
 
   revalidatePath("/drive", "layout");
+  revalidatePath("/team/contrib", "layout");
   revalidatePath("/chat", "layout");
   revalidatePath("/home");
   return result;

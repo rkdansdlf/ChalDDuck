@@ -157,14 +157,34 @@ export function TasksScreen({
               >
                 <button
                   type="button"
-                  disabled={busy.cycle}
+                  disabled={busy.cycle || !task.canEdit}
                   onClick={() =>
-                    void run("cycle", async () => {
-                      await cycleTaskStatus(task.id);
-                      router.refresh();
-                    }, "상태를 바꾸지 못했습니다. 다시 눌러 주세요.")
+                    void run(
+                      "cycle",
+                      async () => {
+                        await cycleTaskStatus(task.id);
+                        router.refresh();
+                      },
+                      // **조용히 아무 일도 일어나지 않게 하지 않는다.** 상태는 곧 "다 했다" 이고
+                      // 그건 담당자의 것이지 옆에서 지켜보던 사람의 것이 아니다. 막힌 이유를
+                      // 그대로 말한다(`editBlockedBecause` 는 서버가 계산해 보낸 값이다).
+                      task.editBlockedBecause === "leader-only"
+                        ? "넣기 전에 있던 업무라 팀장만 상태를 바꿀 수 있습니다."
+                        : "남이 넣은 업무라 상태를 바꿀 수 없습니다.",
+                    )
                   }
-                  aria-label={`${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`}
+                  // 막힌 사람은 **누를 수 없다** — 그런데 화면 낭독문에는 이유를 남긴다.
+                  // 화면을 못 누르는 것과 왜 못 누르는지 아는 것을 같게 만들면, 눈으로 볼 수 없는 규칙이 되어 버린다.
+                  aria-disabled={!task.canEdit}
+                  aria-label={
+                    task.canEdit
+                      ? `${task.title} — 지금 ${status.label}, 눌러서 다음 상태로`
+                      : `${task.title} — ${
+                          task.editBlockedBecause === "leader-only"
+                            ? "넣기 전에 있던 업무라 팀장만 바꿀 수 있습니다"
+                            : "남이 넣은 업무라 바꿀 수 없습니다"
+                        }`
+                  }
                   className={cn(
                     "mt-px flex-none cursor-pointer border-none bg-transparent p-0 select-none transition-transform duration-150 active:scale-90",
                     done ? "text-ok" : "text-txt-muted hover:text-txt-strong",

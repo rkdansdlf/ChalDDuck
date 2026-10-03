@@ -27,7 +27,6 @@ import {
 import { isMarked, participationText } from "./participation";
 import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
-import { StepRail } from "./step-rail";
 
 /**
  * 17 기여도 · 팀원 확인.
@@ -37,6 +36,14 @@ import { StepRail } from "./step-rail";
  */
 /** 함께 보고 있는 목록의 확인 주기. 확인·반박은 사람이 하므로 길게 둔다. */
 const CONTRIB_POLL_MS = 20_000;
+
+function recordDateText(record: TeamCheckRecord): string {
+  if (record.whenLabel) return record.whenLabel;
+  if (!record.createdAt) return "";
+  const d = new Date(record.createdAt);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 export function ContribTeamScreen({
   records,
@@ -58,6 +65,17 @@ export function ContribTeamScreen({
   const [reason, setReason] = useState("");
   /** 기준을 바꾸기 전에 "이렇게 바뀌는데 괜찮나"를 한 번 더 묻는다. */
   const [changing, setChanging] = useState<{ needed: number; affected: number } | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const { toast, busy, run } = useAction();
   const working = busy.act === true;
 
@@ -224,12 +242,11 @@ export function ContribTeamScreen({
     <>
       <AppBar
         title="기여 기록 확인"
-        sub="3 / 4단계 · 팀원 확인"
+        sub="팀원 기록 상호 확인"
         onBack={() => router.push("/team/contrib")}
       />
 
       <Body dense>
-        <StepRail at={2} />
 
         {/* 3단 세그먼트 필터 탭 */}
         <div className="mb-3.5 flex gap-1.5 rounded-[13px] bg-fill p-1">
@@ -331,6 +348,8 @@ export function ContribTeamScreen({
                     ? "내가 확인하면 확정돼요"
                     : `내가 확인하면 ${remaining - 1}명 남아요`;
 
+              const isExpanded = expandedIds.has(record.id) || !!record.dispute;
+
               return (
                 <div
                   key={record.id}
@@ -345,105 +364,27 @@ export function ContribTeamScreen({
                       <span className="font-bold text-[15px] text-txt-strong">{record.who}</span>
                     </div>
                     <span className="text-[12.5px] font-medium text-txt-muted">
-                      {record.evidence ? "9/11 – 9/18" : "9월"}
+                      {recordDateText(record)}
                     </span>
                   </div>
 
                   {/* 제목 */}
-                  <h3 className="m-0 mt-2.5 font-bold text-[15.5px] leading-snug text-txt-strong">
+                  <h3 className="m-0 mt-2 font-bold text-[15.5px] leading-snug text-txt-strong">
                     {record.title}
                   </h3>
-                  <div className="mt-0.5 text-[13px] text-txt-muted">
-                    {record.evidence ? "드라이브 버전 기록" : "확정된 역할: 일정 관리"}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] text-txt-muted">
+                    <span>{record.source === "auto" ? "자동 수집 기록" : "직접 추가한 기록"}</span>
+                    {record.detail ? (
+                      <>
+                        <span className="text-txt-faint">·</span>
+                        <span>{record.detail}</span>
+                      </>
+                    ) : null}
                   </div>
 
-                  {/* 증빙 첨부 파일 */}
-                  {record.evidence ? (
-                    <div className="mt-2.5">
-                      <EvidenceLink recordId={record.id} evidence={record.evidence} />
-                    </div>
-                  ) : null}
-
-                  {/* 참여 표시 — 팀장 권한 및 표시 현황 */}
-                  {record.participation || isLeader ? (
-                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                      {record.participation ? (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium",
-                            isMarked(record.participation)
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-zinc-100 text-zinc-500",
-                          )}
-                        >
-                          <Icon name="users-round" size={12} />
-                          {participationText(record.participation)}
-                        </span>
-                      ) : null}
-                      {isLeader ? (
-                        <Btn
-                          size="sm"
-                          v="ghost"
-                          icon={isMarked(record.participation) ? "x" : "check"}
-                          disabled={working}
-                          onClick={() => toggleParticipation(record)}
-                        >
-                          {isMarked(record.participation)
-                            ? "표시 취소"
-                            : record.participation
-                              ? "다시 표시"
-                              : "참여로 표시"}
-                        </Btn>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {/* 도트 확인 인디케이터 */}
-                  <div className="mt-3 flex items-center gap-1.5 text-[13px]">
-                    <span className="flex items-center gap-1">
-                      {dots.map((_, i) => (
-                        <span
-                          key={i}
-                          className={cn(
-                            "size-2 rounded-full inline-block",
-                            i < record.confirms
-                              ? "bg-txt-strong"
-                              : "border border-line-strong/60 bg-transparent",
-                          )}
-                        />
-                      ))}
-                    </span>
-                    <span className="font-bold text-txt-strong">
-                      확인 {record.confirms}/{policy.needed}명
-                    </span>
-                    <span className="text-txt-muted">· {subText}</span>
-                  </div>
-
-                  {/* 의견 차이 내용 (있을 때) */}
-                  {record.dispute ? (
-                    <div className="mt-3 rounded-xl bg-err-bg px-3 py-2.5">
-                      <div className="t-cap-strong mb-1 font-bold text-[#8A3B31]">적힌 의견</div>
-                      <div className="text-[13.5px] leading-[1.5] text-[#8A3B31]">
-                        {record.dispute}
-                      </div>
-                      {record.dmWith ? (
-                        <div className="mt-2">
-                          <Btn
-                            size="sm"
-                            v="outline"
-                            icon="messages-square"
-                            onClick={() => router.push(`/chat/dm/${record.dmWith}`)}
-                          >
-                            1:1 DM
-                          </Btn>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {/* 버튼 영역 */}
+                  {/* 1차 액션 버튼 영역: 기본으로 노출 */}
                   {!record.isMine && !record.confirmBlockedBy && record.state !== "disputed" ? (
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-2.5 flex gap-2">
                       {record.iConfirmed ? (
                         <div className="flex flex-1 items-center justify-center gap-1.5 rounded-control border border-ok/30 bg-ok-bg py-2 text-[13px] font-bold text-want">
                           <Icon name="check" size={14} strokeWidth={2.5} />
@@ -475,9 +416,109 @@ export function ContribTeamScreen({
                       </button>
                     </div>
                   ) : record.isMine ? (
-                    <p className="t-note m-0 mt-2.5 text-txt-muted">
+                    <p className="t-note m-0 mt-2 text-txt-muted">
                       내 기록은 내가 확인할 수 없습니다
                     </p>
+                  ) : null}
+
+                  {/* 하단 요약 및 자세히 토글 */}
+                  <div className="mt-2.5 flex items-center justify-between border-t border-line/60 pt-2 text-[12.5px]">
+                    <div className="flex items-center gap-1.5 text-txt-muted">
+                      <span className="flex items-center gap-0.5">
+                        {dots.map((_, i) => (
+                          <span
+                            key={i}
+                            className={cn(
+                              "size-1.5 rounded-full inline-block",
+                              i < record.confirms
+                                ? "bg-txt-strong"
+                                : "border border-line-strong/60 bg-transparent",
+                            )}
+                          />
+                        ))}
+                      </span>
+                      <span className="font-semibold text-txt-strong">
+                        {record.confirms}/{policy.needed}명
+                      </span>
+                      <span className="text-[11.5px] text-txt-muted">· {subText}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(record.id)}
+                      className="flex cursor-pointer items-center gap-0.5 text-[12px] font-medium text-txt-muted hover:text-txt-strong"
+                    >
+                      <span>{isExpanded ? "접기" : "자세히"}</span>
+                      <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={13} />
+                    </button>
+                  </div>
+
+                  {/* 상세 영역 (자세히 토글 시 펼침) */}
+                  {isExpanded ? (
+                    <div className="mt-2.5 space-y-2 border-t border-line/50 pt-2 text-[13px]">
+                      {/* 증빙 첨부 파일 */}
+                      {record.evidence ? (
+                        <div>
+                          <EvidenceLink recordId={record.id} evidence={record.evidence} />
+                        </div>
+                      ) : null}
+
+                      {/* 참여 표시 — 팀장 권한 및 표시 현황 */}
+                      {record.participation || isLeader ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {record.participation ? (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium",
+                                isMarked(record.participation)
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-zinc-100 text-zinc-500",
+                              )}
+                            >
+                              <Icon name="users-round" size={12} />
+                              {participationText(record.participation)}
+                            </span>
+                          ) : null}
+                          {isLeader ? (
+                            <Btn
+                              size="sm"
+                              v="ghost"
+                              icon={isMarked(record.participation) ? "x" : "check"}
+                              disabled={working}
+                              onClick={() => toggleParticipation(record)}
+                            >
+                              {isMarked(record.participation)
+                                ? "표시 취소"
+                                : record.participation
+                                  ? "다시 표시"
+                                  : "참여로 표시"}
+                            </Btn>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* 의견 차이 내용 (있을 때) */}
+                      {record.dispute ? (
+                        <div className="rounded-xl bg-err-bg px-3 py-2.5">
+                          <div className="t-cap-strong mb-1 font-bold text-[#8A3B31]">적힌 의견</div>
+                          <div className="text-[13.5px] leading-[1.5] text-[#8A3B31]">
+                            {record.dispute}
+                          </div>
+                          {record.dmWith ? (
+                            <div className="mt-2">
+                              <Btn
+                                size="sm"
+                                v="outline"
+                                icon="messages-square"
+                                onClick={() => router.push(`/chat/dm/${record.dmWith}`)}
+                              >
+                                1:1 DM
+                              </Btn>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               );

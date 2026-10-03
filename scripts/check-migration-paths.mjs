@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import * as fs from "node:fs";
+
+import { stripComments } from "./strip-comments.mjs";
 
 /**
  * 마이그레이션 **경로**를 실제 Postgres 로 확인한다. 개발 DB 로는 못 한다.
@@ -69,15 +72,35 @@ const migrate = (dir) =>
     encoding: "utf8",
   });
 
-/** 다리 이전 상태의 파일만 잠시 치워 두고 배포해, 업그레이드 경로를 만든다. */
-const withoutBridge = async (dir) => {
-  const bridge = `${dir}/${MIGRATIONS}/20260930210000_ice_legacy_vote_bridge`;
-  const stash = `${dir}/.bridge-stash`;
-  execFileSync("mv", [bridge, stash]);
+/**
+ * 마피아 계열 마이그레이션을 **전부** 치워 두고 배포해, "그 이전 상태" DB 를 만든다.
+ *
+ * ⚠️ **다리 하나만 치우면 안 된다.** 처음에 bridge 하나만 치웠더니, `IceBallot` 을 만들고 표를 옮기는
+ *    마이그레이션(`…190000`)이 ** 데이터를 심기 전에** 적용돼서 표가 0장 옮겨지고, 다리는 마지막에
+ *    적용됐다. 그 결과 경로가 실제 배포와 **다른 순서**로 굴러 조용히 다른 판정이 됐다.
+ *    순서를 흉내 내려면 잘라야 할 구간이 처음부터 끝까지다.
+ */
+const STASH = ".ice-stash";
+const withoutIceMafia = (dir) => {
+  const stash = `${dir}/${STASH}`;
+  execFileSync("mkdir", ["-p", stash]);
+  const moved = fs
+    .readdirSync(`${dir}/${MIGRATIONS}`)
+    // ⛔ 빠뜨리면 안 된다: `…200000_ice_timeline` 이 `IceBallot` 을 Alter 한다. 골라 걷어 내면
+    //    관계가 없는 테이블을 고치는 마이그레이션이 남아 배포가 P42P01 로 죽는다(실제로 걸렸다).
+    // ⚠️ `230000` 이 아니라 **223000** 이다 — `20260930230000_role_draw_consent_one_row` 는
+    //    **남의** 마이그레이션이라 걷어 내면 안 되고, 걷어 내서 그것만 빠지면 내 파일이 표가 없는
+    //    상태에서 먼저 돌아간다(실제로 걸렸다).
+    .filter((f) => /^20260930(150000|170000|190000|200000|210000|223000)_/.test(f))
+    .map((f) => {
+      execFileSync("mv", [`${dir}/${MIGRATIONS}/${f}`, `${stash}/${f}`]);
+      return f;
+    });
   try {
     migrate(dir);
   } finally {
-    execFileSync("mv", [stash, bridge]);
+    for (const f of moved) execFileSync("mv", [`${stash}/${f}`, `${dir}/${MIGRATIONS}/${f}`]);
+    fs.rmdirSync(stash);
   }
 };
 
@@ -102,7 +125,7 @@ try {
   console.log("\n② 업그레이드 — 진행 중인 판과 기존 표 4장을 심고 올린다");
   drop();
   psql(ADMIN, `CREATE DATABASE ${DB};`, true);
-  await withoutBridge(process.cwd());
+  withoutIceMafia(process.cwd());
 
   psql(
     URL,
@@ -138,11 +161,18 @@ try {
   check("옮긴 표의 내용까지 같다", bridge, "m_up1→m_up3 m_up2→m_up4 m_up3→m_up4 m_up5→m_up3");
 
   // ③ 다리의 주석과 SQL이 같은 말을 하는가 — 주석만 고치고 SQL은 틀린 경우가 있었다
-  const sql = readFileSync(`${MIGRATIONS}/20260930223000_ice_bridge_restore/migration.sql`, "utf8");
+  // ⚠️ **주석을 지우고 본다.** 이 파일은 주석 안에 문제의 옛 SQL 을 그대로 인용한다. 주석까지
+  //    검사하면 "고쳤어야 할 SQL" 을 검사하면서 옛 형태를 통과시켜 버린다(실제로 그렇게 걸렸다).
+  const sql = stripComments(readFileSync(`${MIGRATIONS}/20260930223000_ice_bridge_restore/migration.sql`, "utf8"));
   check("정정 마이그레이션이 UPDATE … FROM 으로 고친다", /UPDATE "IceSeat" s\s+SET "voteForId" = b\."targetId"/.test(sql), true);
   check("ON CONFLICT DO NOTHING 으로 도망가지 않는다", !/ON CONFLICT DO NOTHING/.test(sql), true);
+  check("스스로 컬럼을 지킨다", /ADD COLUMN IF NOT EXISTS "voteForId"/.test(sql), true);
+  // 옛 파일은 **고칠 수 없다**(이미 적용돼 체크섬이 다르다). 정정본이 따로 있어야 한다.
+  const old = stripComments(readFileSync(`${MIGRATIONS}/20260930210000_ice_legacy_vote_bridge/migration.sql`, "utf8"));
+  check("정정본이 따로 있다(이 결함의 증거)", old.includes("ON CONFLICT DO NOTHING"), true);
 } finally {
-  drop();
+  // 확인용으로 남겨 둔다(직접 들여다보려면). 지우려면 KEEP_PATH_DB=1 로 두지 않는다.
+  if (!process.env.KEEP_PATH_DB) drop();
 }
 
 console.log(failed === 0 ? "\n모두 통과" : `\n${failed}건 실패`);

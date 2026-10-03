@@ -1,9 +1,13 @@
-import { getContribKinds, getCurrentTeam, getMyContrib } from "@/data/api";
+import { getContribKinds, getCurrentTeam, getMyContrib, getTeamCheck } from "@/data/api";
 import { ContribSelfScreen } from "@/features/contrib/contrib-self-screen";
 
-/** 16 기여도 · 본인 확인. */
+/** 기여 기록 허브 */
 export default async function ContribSelfPage() {
   const team = await getCurrentTeam();
-  const [records, kinds] = await Promise.all([getMyContrib(team.id), getContribKinds()]);
-  return <ContribSelfScreen records={records} kinds={kinds} />;
+  const [records, kinds, teamRecords] = await Promise.all([
+    getMyContrib(team.id),
+    getContribKinds(),
+    getTeamCheck(team.id),
+  ]);
+  return <ContribSelfScreen records={records} kinds={kinds} teamRecords={teamRecords} />;
 }

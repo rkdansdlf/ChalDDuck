@@ -397,11 +397,17 @@
     display: none !important;
   }
   [data-print-doc] {
-    width: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(297mm - 32mm) !important;
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
     border: none !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }

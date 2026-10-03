@@ -1443,7 +1443,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
   // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
   // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
   // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles] = await Promise.all([
+  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
     db.member.findMany({
       where: { teamId },
       // `wantRole`(희망)은 **읽지 않는다** — 역할은 수락된 추첨에서만 온다. 아래 주석 참고.
@@ -1478,6 +1478,12 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
     }),
     // 역할은 **수락이 끝난 추첨**에서만 온다(`getAcceptedRoleAssignments`).
     getAcceptedRoleAssignments(teamId),
+    // 확인된 주요 기록 (리포트 요약 표시용)
+    db.contribRecord.findMany({
+      where: { member: { teamId }, state: "ok" },
+      select: { memberId: true, title: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    }),
   ]);
 
   // **어느 칸에 넣는지는 `data/contrib-report-totals.ts` 한 곳이 정한다.** 모으는 규칙이
@@ -1488,6 +1494,15 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
     shownPerRecord: shownPerRecord.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
     unresolved: unresolvedRows.map((r) => ({ memberId: r.memberId, n: r._count._all })),
   });
+
+  const highlightsByMember = new Map<string, string[]>();
+  for (const r of okRecords) {
+    const list = highlightsByMember.get(r.memberId) ?? [];
+    if (list.length < 3) {
+      list.push(r.title);
+      highlightsByMember.set(r.memberId, list);
+    }
+  }
 
   return members.map((m) => {
     // 기록이 한 건도 없는 사람도 줄은 서야 한다(성적 근거는 빈칸이 아니라 0 이다).
@@ -1511,6 +1526,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
       participations: bucket?.participations ?? 0,
       unresolved: bucket?.unresolved ?? 0,
+      highlights: highlightsByMember.get(m.id) ?? [],
     };
   });
 }

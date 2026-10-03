@@ -3,10 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { TASK_KINDS } from "@/data/catalog";
 import type { Task, TaskKindKey } from "@/lib/types";
-import { canEditTask, shouldNotifyAssignee } from "@/lib/task-permission";
+import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "@/lib/task-permission";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
+import { recordTaskDoneContrib, unrecordTaskContrib } from "@/server/contrib/auto-record";
 
 /**
  * 21 / 24 할 일 · 콕 찌르기 서버 액션.
@@ -32,20 +33,65 @@ function todayInSeoul(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 }
 
-/** 상태를 다음 단계로 넘긴다. */
+/**
+ * 상태를 다음 단계로 넘긴다.
+ *
+ * ## 넣은 사람 + 팀장 (2026-09-28 결정)
+ *
+ * 예전에는 **누구나** anyone's 상태를 바꿨다. 그래서 남의 업무를 남이 "다 했다"로 닫을 수
+ * 있었고 — 화면이 막는 대신 서버가 막는 자리였는데, 아무도 거기를 보지 않았다. 담당자 지정
+ * 은 그때 닫았는데 이 자리는 그대로 남아 있었다.
+ *
+ * **담당자가 바꾸면 안 되는 이유**: 상태는 곧 "진행 중 / 끝남"이고, 그건 담당자의 것이지
+ * 옆에서 지켜보던 사람의 것이 아니다. 넣은 사람이 바뀐 것도 눈치채지 못한 채 "다 했다"가
+ * 되면 그 사람은 아무것도 모른다.
+ *
+ * 제목·담당자·기한과 **같은 규칙**으로 한다(`canEditTask`) — 한 가지만 열고 나머지를 열어 둔
+ * 규칙은 사용자가 외우지 못하고, 외울 수 없는 규칙은 규칙이 아니다.
+ */
 export async function cycleTaskStatus(taskId: string): Promise<void> {
   const me = await requireSessionMember();
 
-  const task = await db.task.findFirst({ where: { id: taskId, teamId: me.teamId } });
+  const task = await db.task.findFirst({
+    where: { id: taskId, teamId: me.teamId },
+    // `recordTaskDoneContrib` 에 넘길 값도 여기서 읽는다 — 같은 행을 두 번 읽지 않는다.
+    select: { id: true, status: true, createdById: true, title: true, assigneeId: true, due: true },
+  });
   if (!task) throw new Error("할 일을 찾을 수 없습니다.");
 
+  // 화면이 버튼을 숨겼다고 안전하지 않다 — 서버 액션은 POST 로 바로 부를 수 있다.
+  const blocked = taskEditBlock(task, me);
+  if (blocked) {
+    throw new Error(
+      blocked === "leader-only"
+        ? "넣기 전에 있던 업무라 팀장만 상태를 바꿀 수 있습니다."
+        : "남이 넣은 업무라 상태를 바꿀 수 없습니다.",
+    );
+  }
+
   const current = (task.status as Task["status"]) ?? "todo";
-  await db.task.update({
-    where: { id: task.id },
-    data: { status: NEXT_STATUS[current] ?? "todo" },
+  const next = NEXT_STATUS[current] ?? "todo";
+
+  await db.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: task.id },
+      data: { status: next },
+    });
+
+    if (next === "done") {
+      await recordTaskDoneContrib(tx, {
+        id: task.id,
+        title: task.title,
+        assigneeId: task.assigneeId,
+        due: task.due,
+      });
+    } else if (current === "done") {
+      await unrecordTaskContrib(tx, task.id);
+    }
   });
 
   revalidatePath("/home", "layout");
+  revalidatePath("/team/contrib", "layout");
 }
 
 /**

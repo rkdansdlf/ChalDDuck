@@ -864,6 +864,10 @@ model ContribRecord {
   evidenceName  String?
   evidenceBytes Int?
   evidenceMime  String?
+  /// 자동 수집 출처 종류: task | drive_version
+  originType    String?
+  /// 자동 수집 출처 id: Task.id | FileVersion.id
+  originId      String?
   createdAt     DateTime @default(now())
 
   member         Member                 @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
@@ -873,7 +877,9 @@ model ContribRecord {
   disputes       ContribDispute[]
   participations ContribParticipation[]
 
+  @@unique([originType, originId, memberId])
   @@index([memberId])
+  @@index([originType, originId])
 }
 
 /// 한 사람이 한 기록에 남긴 의견 하나.

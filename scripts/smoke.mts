@@ -5274,4 +5274,37 @@ console.log("\n배정 알림 (맡은 사람은 그 사실을 알아야 한다)")
   check("순수 판정을 거친다", actions.includes("shouldNotifyAssignee("), true);
 }
 
+/* ── 상태 변경도 넣은 사람 + 팀장 ──────────────────────────── */
+
+console.log("\n남의 업무 상태를 남이 바꿀 수 없다");
+{
+  // **어제 발견한 실제 허점이다.** 담당자 지정은 그날 닫았는데 이 자리는 그대로였고,
+  // 그 목록에 한 줄도 없었다 — 아무도 보지 않았으므로. 2026-09-28 에 닫았다.
+  //
+  // 닫는 방식은 제목·담당자·기한과 **똑같은 규칙**(`canEditTask`)이다. 한 가지만 열고
+  // 나머지를 열어 둔 규칙은 외우지 못하고, 외울 수 없는 규칙은 규칙이 아니다.
+  const actions = readCode("../src/server/actions/tasks.ts");
+  const from = actions.indexOf("export async function cycleTaskStatus");
+  const fn = actions.slice(from, actions.indexOf("\nexport async function", from + 10));
+
+  // 서버가 막는다 — 화면이 버튼을 숨겼다고 안전하지 않으므로(서버 액션은 POST 로 바로
+  // 부를 수 있다).
+  check("순수 판정을 부른다", fn.includes("taskEditBlock("), true);
+  const guard = fn.indexOf("taskEditBlock(");
+  const write = fn.indexOf("data: { status: next }");
+  truthy("쓰기 전에 판정한다", guard > 0 && write > guard);
+  // 넣기 전에 있던 업무(작성자 없음)는 팀장에게만 연다 — 제목과 같은 규칙.
+  check("막힌 이유를 말한다", fn.includes("넣기 전에 있던 업무") && fn.includes("남이 넣은 업무"), true);
+
+  // **같은 판정**이어야 한다 — 두 곳에서 따로 만들면 어느 한쪽이 조용히 어긋난다.
+  const perm = readCode("../src/lib/task-permission.ts");
+  check("넣은 사람 + 팀장 규칙이 실제로 있다", /createdById === me.id \|\| me.isLeader/.test(perm), true);
+  check("작성자가 없으면 팀장에게만 연다", /createdById === null\) return me.isLeader/.test(perm), true);
+
+  // 화면은 **서버가 계산해 보낸 값**만 본다 — 같은 판정을 또 짜지 않는다.
+  const screen = readCode("../src/features/tasks/tasks-screen.tsx");
+  check("화면이 같은 판정을 다시 짜지 않는다", /canEditTask/.test(screen), false);
+  check("조용히 아무 일도 일어나지 않게 않는다", screen.includes("남이 넣은 업무라 상태를 바꿀 수 없습니다"), true);
+}
+
 await finish();

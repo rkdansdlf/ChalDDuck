@@ -640,6 +640,16 @@ export type TeamCheckRecord = {
   id: string;
   who: string;
   title: string;
+  /** task | file | meet | help | due */
+  kind: string;
+  /** auto = 자동 수집 / self = 직접 추가 */
+  source: string;
+  /** 상세 내용/설명 */
+  detail: string;
+  /** 작성자가 적은 기간/일시 라벨 */
+  whenLabel: string | null;
+  /** 생성 시각 ISO */
+  createdAt: string;
   state: "ok" | "pending" | "disputed";
   /** 내 기록인지. 자기 기록은 확인하거나 정정을 적을 수 없다. */
   isMine: boolean;
@@ -741,6 +751,8 @@ export type ContribReportRow = {
    * 읽히는 문서가 되므로 센다.
    */
   unresolved: number;
+  /** 확인된 주요 활동 항목 요약 (최대 3건) */
+  highlights?: string[];
 };
 
 /* ── 21 / 24 할 일 · 콕 찌르기 ──────────────────────────────── */

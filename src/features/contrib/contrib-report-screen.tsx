@@ -7,11 +7,11 @@ import {
   Btn,
   Chip,
   Dock,
+  Icon,
   Note,
   Undecided,
 } from "@/components/ui";
 import type { ContribReportRow, Team } from "@/lib/types";
-import { StepRail } from "./step-rail";
 
 /**
  * 18 기여도 · 1장 PDF.
@@ -34,16 +34,62 @@ export function ContribReportScreen({
 }) {
   const router = useRouter();
 
+  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
+  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
+  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
+
   return (
     <>
       <AppBar
         title="리포트 미리 보기"
-        sub="4 / 4단계"
-        onBack={() => router.push("/team/contrib/members")}
+        sub="제출용 1장 요약"
+        onBack={() => router.push("/team/contrib")}
       />
 
       <Body dense>
-        <StepRail at={3} />
+
+        {/* 제출 전 점검 상태 — 앱 UI 전용 (인쇄 제외) */}
+        <div className="mb-3.5 rounded-control border border-line bg-card p-3.5 shadow-2xs">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[13.5px] font-bold text-txt-strong">제출 전 기록 점검</span>
+            <span className="text-[12px] font-medium text-txt-muted">
+              총 {totalConfirmed + totalPending + totalDisputed}건
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[12.5px]">
+            <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+              <Icon name="check" size={13} />
+              확인 완료 {totalConfirmed}건
+            </span>
+            {totalPending > 0 ? (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+                <Icon name="circle-dashed" size={13} />
+                미확인 {totalPending}건
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 font-medium text-txt-muted">
+                <Icon name="check" size={13} />
+                미확인 없음
+              </span>
+            )}
+            {totalDisputed > 0 ? (
+              <span className="inline-flex items-center gap-1 font-medium text-red-700">
+                <Icon name="circle-alert" size={13} />
+                의견 차이 {totalDisputed}건
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 font-medium text-txt-muted">
+                <Icon name="check" size={13} />
+                의견 차이 없음
+              </span>
+            )}
+          </div>
+          {totalPending > 0 || totalDisputed > 0 ? (
+            <div className="mt-2 text-[12px] leading-relaxed text-amber-800">
+              ⚠️ 아직 확인되지 않았거나 의견 차이가 있는 기록이 있습니다. 인쇄 전 팀원 확인을 권장합니다.
+            </div>
+          ) : null}
+        </div>
 
         {/* 제출물 미리 보기 — 앱 색이 아니라 문서 색을 쓴다.
             넓은 화면에서는 A4 비율(1:1.414)을 최소 높이로 잡아 인쇄했을 때의 모습에 가깝게 보여 준다.
@@ -99,6 +145,23 @@ export function ContribReportScreen({
                   </Chip>
                 ) : null}
               </div>
+
+              {/* 확인된 주요 활동 요약 */}
+              {row.highlights && row.highlights.length > 0 ? (
+                <div className="mt-2 space-y-0.5 pl-1 text-[12.5px] leading-snug">
+                  {row.highlights.map((h, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 text-txt-muted">
+                      <span className="text-[11px] text-txt-faint">•</span>
+                      <span className="truncate font-medium text-txt-strong">{h}</span>
+                    </div>
+                  ))}
+                  {row.confirmed > row.highlights.length ? (
+                    <div className="pl-3 text-[11.5px] text-txt-faint">
+                      + 그 외 확인된 기록 {row.confirmed - row.highlights.length}건
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ))}
 
@@ -108,9 +171,9 @@ export function ContribReportScreen({
           </div>
         </div>
 
-        <Note tone="info" icon="wand-sparkles" title="AI는 확인된 기록만 요약합니다" className="mb-3">
-          미확인·의견 차이 항목은 요약 문장에 넣지 않고 <b>따로 표시</b>합니다. 수치는 정해진 규칙으로만
-          셉니다.
+        <Note tone="info" icon="clipboard-check" title="확인된 사실만 근거로 반영됩니다" className="mb-3">
+          팀원의 교차 확인을 거친 기록만 최종 근거로 삼습니다. 인위적인 평점이나 임의 추정은 포함되지 않으며
+          수치는 정해진 원칙으로 투명하게 집계됩니다.
         </Note>
 
         <Undecided>

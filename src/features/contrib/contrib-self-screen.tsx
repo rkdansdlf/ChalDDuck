@@ -14,9 +14,8 @@ import {
   Sheet,
   type IconName,
 } from "@/components/ui";
-import type { ContribKind, ContribRecord } from "@/lib/types";
+import type { ContribKind, ContribRecord, TeamCheckRecord } from "@/lib/types";
 import { ContribRow } from "./contrib-row";
-import { StepRail } from "./step-rail";
 
 /**
  * 16 기여도 · 본인 확인.
@@ -27,66 +26,145 @@ import { StepRail } from "./step-rail";
 export function ContribSelfScreen({
   records,
   kinds,
+  teamRecords = [],
 }: {
   records: ContribRecord[];
   kinds: ContribKind[];
+  teamRecords?: TeamCheckRecord[];
 }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
+  const [showConfirmed, setShowConfirmed] = useState(false);
 
-  const pending = records.filter((r) => r.state === "pending").length;
+  // 팀 전체 준비 상태 집계
+  const totalTeam = teamRecords.length;
+  const confirmedTeam = teamRecords.filter((r) => r.state === "ok").length;
+  const toCheckCount = teamRecords.filter(
+    (r) => !r.isMine && !r.iConfirmed && r.state !== "disputed" && !r.confirmBlockedBy,
+  ).length;
+  const disputedCount = teamRecords.filter((r) => r.state === "disputed").length;
+
+  // 내 기록: 대기/의견 차이 vs 확인 완료 분리
+  const actionRequiredRecords = records.filter((r) => r.state !== "ok");
+  const confirmedRecords = records.filter((r) => r.state === "ok");
 
   return (
     <>
       <AppBar
-        title="내 기여 기록"
-        sub="2 / 4단계 · 본인 확인"
+        title="기여 기록 허브"
+        sub="기여 증빙 및 제출 준비"
         onBack={() => router.push("/team")}
       />
 
       <Body dense>
-        <StepRail at={1} />
+        {/* 상단 진행 상태 대시보드 */}
+        <div className="mb-4 rounded-control border border-line bg-card p-4 shadow-2xs">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="font-bold text-[14px] text-txt-strong">
+              제출 준비 {confirmedTeam} / {totalTeam}건 완료
+            </span>
+            <span className="font-semibold text-[12px] text-txt-muted">
+              {totalTeam > 0 ? `${Math.round((confirmedTeam / totalTeam) * 100)}%` : "0%"}
+            </span>
+          </div>
 
-        <Note tone="info" icon="scale" title="점수나 순위를 만들지 않습니다" className="mb-3.5">
-          확정된 역할과 <b>실제 수행 내역</b>만 모읍니다. MBTI, 채팅량, 친목은 기여 기록에 넣지
-          않습니다.
-        </Note>
+          <div className="mb-2.5 h-1.5 w-full overflow-hidden rounded-full bg-line">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+              style={{ width: `${totalTeam > 0 ? (confirmedTeam / totalTeam) * 100 : 0}%` }}
+            />
+          </div>
 
-        <SecTitle note="빠진 항목이 있으면 직접 추가할 수 있습니다">
-          앱이 모은 기록 {records.length}건
+          <div className="flex flex-wrap items-center justify-between gap-1 text-[12.5px] text-txt-muted">
+            <span>
+              팀원 확인 필요 {toCheckCount}건 · 의견 조정 {disputedCount}건
+            </span>
+            {toCheckCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => router.push("/team/contrib/members")}
+                className="cursor-pointer font-bold text-ink-900 underline underline-offset-2 hover:opacity-80"
+              >
+                확인할 기록 {toCheckCount}건 보기 →
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* 확인 대기 및 조율 중인 내 기록 */}
+        <SecTitle note="팀원 확인을 기다리거나 조율 중인 항목입니다">
+          확인 대기 중인 내 기록 {actionRequiredRecords.length}건
         </SecTitle>
-        <Rows className="mb-3">
-          {records.map((record) => (
-            <ContribRow key={record.id} record={record} kinds={kinds} />
-          ))}
-        </Rows>
+
+        {actionRequiredRecords.length > 0 ? (
+          <Rows className="mb-3">
+            {actionRequiredRecords.map((record) => (
+              <ContribRow key={record.id} record={record} kinds={kinds} />
+            ))}
+          </Rows>
+        ) : (
+          <div className="mb-3 rounded-control border border-dashed border-line bg-card/50 p-4 text-center text-[13px] text-txt-muted">
+            확인 대기 중인 기록이 없습니다. 모두 확인되었거나 새로운 작업을 추가할 수 있습니다.
+          </div>
+        )}
+
+        {/* 확인 완료된 내 기록 (접을 수 있음) */}
+        {confirmedRecords.length > 0 ? (
+          <div className="mb-3">
+            <button
+              type="button"
+              onClick={() => setShowConfirmed((prev) => !prev)}
+              className="flex w-full cursor-pointer items-center justify-between py-2 text-[13px] font-semibold text-txt-muted hover:text-txt-strong"
+            >
+              <span>확인 완료된 기록 {confirmedRecords.length}건</span>
+              <span className="flex items-center gap-1 text-[12px]">
+                {showConfirmed ? "접기" : "펼치기"}
+                <Icon name={showConfirmed ? "chevron-up" : "chevron-down"} size={14} />
+              </span>
+            </button>
+
+            {showConfirmed ? (
+              <Rows className="mt-1">
+                {confirmedRecords.map((record) => (
+                  <ContribRow key={record.id} record={record} kinds={kinds} />
+                ))}
+              </Rows>
+            ) : null}
+          </div>
+        ) : null}
 
         <Btn v="outline" full icon="plus" className="mb-3.5" onClick={() => setAdding(true)}>
           공동·오프라인 작업 추가
         </Btn>
 
-        {pending > 0 ? (
-          <Note tone="warn" icon="circle-dashed" title={`팀원 확인 대기 ${pending}건`}>
-            내가 추가한 항목은 팀원이 확인하기 전까지 <b>대기</b>로 남습니다. 임의로 확정하지 않습니다.
-          </Note>
-        ) : null}
-
         <Note tone="info" icon="users-round" className="mb-3.5">
-          회의 참여는 <b>팀장이 직접 표시합니다</b>(자동 판정하지 않습니다). 여기는 내 기록만
-          고치는 곳이라 참여 표시는 두지 않습니다 — 누가 표시했는지는 팀원 확인 화면에
-          있습니다.
+          회의 참여는 <b>팀장이 직접 표시합니다</b>(자동 판정하지 않습니다).
+          팀원들의 교차 확인 내역은 상단 바로가기를 통해 확인하실 수 있습니다.
         </Note>
       </Body>
 
       <Dock>
-        <Btn
-          full
-          size="lg"
-          iconRight="arrow-right"
-          onClick={() => router.push("/team/contrib/members")}
-        >
-          팀원 확인으로 넘기기
-        </Btn>
+        <div className="flex w-full gap-2">
+          {toCheckCount > 0 ? (
+            <Btn
+              v="outline"
+              size="lg"
+              className="flex-1"
+              onClick={() => router.push("/team/contrib/members")}
+            >
+              팀원 확인 ({toCheckCount})
+            </Btn>
+          ) : null}
+          <Btn
+            full={toCheckCount === 0}
+            size="lg"
+            className="flex-1"
+            iconRight="arrow-right"
+            onClick={() => router.push("/team/contrib/report")}
+          >
+            제출용 리포트 보기
+          </Btn>
+        </div>
       </Dock>
 
       <Sheet open={adding} title="빠진 작업 추가" onClose={() => setAdding(false)}>
