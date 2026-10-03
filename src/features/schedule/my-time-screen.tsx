@@ -41,6 +41,7 @@ import { ScheduleTabs } from "./schedule-tabs";
 import { dateOfDay, type CandidateDate } from "./week";
 import { WeekGrid } from "./week-grid";
 import { WeekPicker } from "./week-picker";
+import { parseIcsTimetable, parseTimetableText, type ParsedTimeBlock } from "./timetable-parser";
 
 const LENGTHS = [1, 2, 3, 4];
 
@@ -107,7 +108,60 @@ export function MyTimeScreen({
   // 방금 만들고 아직 칠하지 않은 사유 이름. 블록에 쓰이기 전에도 칩으로 남아 있어야 한다.
   const [newLabels, setNewLabels] = useState<string[]>([]);
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [parsedBlocks, setParsedBlocks] = useState<ParsedTimeBlock[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
   const { toast, busy, flash, run } = useAction();
+
+  const handleAnalyze = () => {
+    if (!importText.trim()) return;
+    const { blocks: parsed, errors } = parseTimetableText(importText);
+    setParsedBlocks(parsed);
+    setImportErrors(errors);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        const { blocks: parsed, errors } = parseIcsTimetable(content);
+        setParsedBlocks(parsed);
+        setImportErrors(errors);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const applyImport = () => {
+    if (!parsedBlocks || parsedBlocks.length === 0) return;
+    setBlocks((prev) => {
+      let updated = prev;
+      for (const p of parsedBlocks) {
+        updated = placeBlock(updated, {
+          id: nextBlockId(),
+          day: p.day,
+          startHour: p.startHour,
+          hours: p.hours,
+          kind: "custom",
+          label: p.label,
+          weekOf: null,
+        });
+      }
+      return updated;
+    });
+    for (const p of parsedBlocks) {
+      remember({ kind: "custom", label: p.label });
+    }
+    flash(`${parsedBlocks.length}개 수업을 시간표에 반영했습니다`);
+    setImportOpen(false);
+    setParsedBlocks(null);
+    setImportText("");
+    setImportErrors([]);
+  };
 
   /** 칩 줄에 보일 내 사유 이름들 — 블록에 쓰인 것 + 방금 만든 것. */
   const labels = useMemo(
@@ -307,9 +361,14 @@ export function MyTimeScreen({
           끌기). 칠한 시간을 누르면 고치거나 지울 수 있습니다. 점선 테두리는 그 주에만 있는 시간입니다.
         </p>
 
-        <Btn full v="outline" icon="plus" onClick={openAdd} className="mb-3.5">
-          요일·시간을 골라 추가
-        </Btn>
+        <div className="mb-3.5 flex gap-2">
+          <Btn full v="outline" icon="plus" onClick={openAdd} className="flex-1">
+            직접 추가
+          </Btn>
+          <Btn full v="outline" icon="download" onClick={() => setImportOpen(true)} className="flex-1">
+            시간표 가져오기
+          </Btn>
+        </div>
 
         {/* 범례 */}
         <div className="mb-3 flex flex-wrap gap-1.5">
@@ -495,6 +554,100 @@ export function MyTimeScreen({
             </div>
           </>
         ) : null}
+      </Sheet>
+
+      <Sheet
+        open={importOpen}
+        title="시간표 간편 가져오기"
+        onClose={() => {
+          setImportOpen(false);
+          setParsedBlocks(null);
+          setImportErrors([]);
+        }}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="t-body m-0 text-txt-muted text-[13px] leading-relaxed">
+            에브리타임 시간표나 대학 포털 강의 텍스트를 붙여넣거나, iCalendar (.ics) 파일을 올려 한 번에 시간표를 등록하세요.
+          </p>
+
+          <div>
+            <Label>에브리타임 / 시간표 텍스트 붙여넣기</Label>
+            <textarea
+              rows={4}
+              placeholder={`예시:\n자료구조 월 10:00-12:00, 수 10:00-12:00\n알고리즘 화 14:00~16:00\n운영체제 목 13:00 - 15:00`}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              className="box-border w-full rounded-xl border border-line bg-fill p-3 font-mono text-[13px] text-txt outline-none focus:border-action"
+            />
+            <div className="mt-1.5 flex justify-end">
+              <Btn size="sm" v="outline" onClick={handleAnalyze} disabled={!importText.trim()}>
+                텍스트 분석하기
+              </Btn>
+            </div>
+          </div>
+
+          <div className="border-t border-line pt-2.5">
+            <Label>또는 캘린더 파일 (.ics) 올리기</Label>
+            <input
+              type="file"
+              accept=".ics,text/calendar"
+              onChange={handleFileUpload}
+              className="block w-full text-[12px] text-txt-muted file:mr-2.5 file:rounded-lg file:border-0 file:bg-fill file:px-3 file:py-1.5 file:text-[12px] file:font-semibold file:text-txt"
+            />
+          </div>
+
+          {parsedBlocks ? (
+            <div className="border-t border-line pt-2.5">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-bold text-[14px] text-txt-strong">
+                  인식된 수업 ({parsedBlocks.length}개)
+                </span>
+                <span className="text-[12px] text-txt-muted">
+                  총 {parsedBlocks.reduce((acc, b) => acc + b.hours, 0)}시간
+                </span>
+              </div>
+
+              {parsedBlocks.length === 0 ? (
+                <Panel s="fill" pad={12} className="text-center text-[13px] text-txt-muted">
+                  인식된 시간표가 없습니다. 형식을 확인해 주세요.
+                </Panel>
+              ) : (
+                <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">
+                  {parsedBlocks.map((b, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between rounded-lg bg-fill px-2.5 py-1.5 text-[12px]"
+                    >
+                      <span className="font-bold text-txt">{b.label}</span>
+                      <span className="text-txt-muted font-mono">
+                        {days[b.day]} {hours[b.startHour]}시 ~ {Number(hours[b.startHour]) + b.hours}시 ({b.hours}h)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {importErrors.length > 0 ? (
+                <div className="mt-2 text-[11px] text-coral-700">
+                  {importErrors.map((err, i) => (
+                    <div key={i}>{err}</div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="mt-3">
+                <Btn
+                  full
+                  icon="check"
+                  onClick={applyImport}
+                  disabled={parsedBlocks.length === 0}
+                >
+                  내 시간표에 일괄 반영하기
+                </Btn>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </Sheet>
 
       <Toast msg={toast} />

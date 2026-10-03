@@ -152,6 +152,12 @@ export type MeetingProposal = {
   respondBy: string | null;
   /** 내가 이미 응답했는지 — 같은 사람이 두 번 누르지 않게 한다. */
   myResponse: "agree" | "against" | null;
+  /** 회의 장소 (오프라인 회의실 또는 온라인 URL). */
+  location?: string | null;
+  /** 회의 안건. */
+  agenda?: string | null;
+  /** 회의 소요 시간(분). 기본 60분. */
+  durationMinutes?: number;
 };
 
 /** 한 주의 회의 시간 후보와 그 주의 상황. */
@@ -976,3 +982,34 @@ export type RoleNegotiation = {
   /** 역할별로 거절해서 다음 추첨에서 빠지는 사람들. */
   rejected: Partial<Record<RoleKey, string[]>>;
 };
+
+/* ── 통합 캘린더 · 일정 ─────────────────────────────────────── */
+
+export type CalendarEventType = "meeting" | "task" | "box";
+
+export type CalendarEvent = {
+  id: string;
+  type: CalendarEventType;
+  title: string;
+  /** 한국 날짜 ("YYYY-MM-DD"). */
+  date: string;
+  /** "16:00 – 18:00" 또는 "23:59" 등 시간 표시. */
+  time: string | null;
+  /** 회의 상태("confirmed") / 할 일 상태("todo"|"doing"|"done") 등. */
+  status?: string;
+  /** D-Day 숫자: 0 = 오늘, >0 = 남은 일수(D-3이면 3), <0 = 지난 일수(-1이면 1일 지남). */
+  dday: number;
+  /** "D-Day", "D-3", "D+1" */
+  ddayText: string;
+  /** 담당자 또는 대상자 이름. */
+  assignee?: string | null;
+  /** 역할 이름 ("자료조사", "발표" 등). */
+  roleName?: string | null;
+  /** 회의 장소 (오프라인 회의실 또는 온라인 URL). */
+  location?: string | null;
+  /** 회의 안건. */
+  agenda?: string | null;
+  /** 클릭 시 이동할 링크. */
+  href?: string;
+};
+

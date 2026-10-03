@@ -21,6 +21,7 @@ import type {
   AppNotification,
   BusyBlock,
   BusyKind,
+  CalendarEvent,
   ChatMessage,
   ChatPurified,
   CushionLevelKey,
@@ -61,9 +62,12 @@ import {
   candidateDates,
   scheduleWeeks,
   weekName,
+  todayInSeoul,
   weekRange,
   type CandidateDate,
 } from "@/features/schedule/week";
+import { calcDday, normalizeTaskDueDate, sortCalendarEvents } from "@/features/schedule/calendar-events";
+import { candidateDateOf } from "@/server/meetings/candidates";
 import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
@@ -672,7 +676,109 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     pending: Math.max(0, total - proposal.responses.length),
     respondBy: formatDeadline(proposal.respondBy),
     myResponse: mine ? (mine.agree ? "agree" : "against") : null,
+    location: proposal.location ?? null,
+    agenda: proposal.agenda ?? null,
+    durationMinutes: proposal.durationMinutes ?? 60,
   };
+}
+
+/**
+ * 팀 통합 캘린더 이벤트 목록.
+ *
+ * 확정된 회의·제안 중인 회의 + 마감일이 있는 업무(Task) + 마감일이 있는 제출함(DriveBox)을
+ * 모아 날짜순·D-Day 순으로 돌려준다.
+ */
+export async function getTeamCalendarEvents(teamId: string): Promise<CalendarEvent[]> {
+  const today = todayInSeoul();
+  const currentYear = Number(today.slice(0, 4));
+
+  const [proposals, tasks, boxes] = await Promise.all([
+    db.meetingProposal.findMany({
+      where: { teamId },
+      include: { slot: true, responses: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.task.findMany({
+      where: { teamId, due: { not: "" } },
+      include: { assignee: { select: { name: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    db.submissionBox.findMany({
+      where: { teamId, dueAt: { not: null } },
+      orderBy: { dueAt: "asc" },
+    }),
+  ]);
+
+  const events: CalendarEvent[] = [];
+
+  // 1. 회의 이벤트 (확정된 회의 or 응답 대기 제안)
+  for (const p of proposals) {
+    const stage = effectiveStage({
+      stage: p.stage as MeetingProposal["stage"],
+      respondBy: p.respondBy,
+      against: p.responses.filter((r) => !r.agree).length,
+    });
+    if (stage === "confirmed" || stage === "proposed") {
+      const date = p.date ?? (p.slot ? candidateDateOf(p.slot.day)?.date ?? today : today);
+      const { dday, ddayText } = calcDday(date, today);
+      const isConfirmed = stage === "confirmed";
+      events.push({
+        id: `meeting-${p.id}`,
+        type: "meeting",
+        title: isConfirmed ? "정기 팀 회의" : "회의 제안 (응답 대기)",
+        date,
+        time: p.slot?.time ?? null,
+        status: stage,
+        dday,
+        ddayText,
+        location: p.location ?? null,
+        agenda: p.agenda ?? null,
+        href: "/schedule/slots",
+      });
+    }
+  }
+
+  // 2. 할 일 마감 이벤트 (Task.due)
+  for (const t of tasks) {
+    const normDate = normalizeTaskDueDate(t.due, currentYear);
+    if (!normDate) continue;
+    const { dday, ddayText } = calcDday(normDate, today);
+    events.push({
+      id: `task-${t.id}`,
+      type: "task",
+      title: t.title,
+      date: normDate,
+      time: null,
+      status: t.status,
+      dday,
+      ddayText,
+      assignee: t.assignee?.name ?? null,
+      href: "/home/tasks",
+    });
+  }
+
+  // 3. 드라이브 제출함 마감 이벤트 (SubmissionBox.dueAt)
+  for (const b of boxes) {
+    if (!b.dueAt) continue;
+    const kstDate = toKstInputValue(b.dueAt); // "YYYY-MM-DDTHH:mm"
+    const date = kstDate.slice(0, 10);
+    const time = kstDate.slice(11, 16);
+    const { dday, ddayText } = calcDday(date, today);
+    events.push({
+      id: `box-${b.id}`,
+      type: "box",
+      title: `${b.name} 제출 마감`,
+      date,
+      time,
+      status: "due",
+      dday,
+      ddayText,
+      roleName: b.role,
+      href: `/drive/${b.id}`,
+    });
+  }
+
+  return sortCalendarEvents(events);
 }
 
 /* ── 12 / 13 / 22 드라이브 ─────────────────────────────────── */

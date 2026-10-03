@@ -5,16 +5,18 @@ import type { MouseEvent } from "react";
 import { Icon, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
-const TABS: Array<{ key: "mine" | "team"; label: string; icon: IconName; href: string }> = [
+export type ScheduleTabKey = "mine" | "team" | "calendar";
+
+const TABS: Array<{ key: ScheduleTabKey; label: string; icon: IconName; href: string }> = [
   { key: "mine", label: "내 시간", icon: "user-round", href: "/schedule" },
   { key: "team", label: "팀 겹쳐보기", icon: "users-round", href: "/schedule/team" },
+  { key: "calendar", label: "팀 일정", icon: "calendar", href: "/schedule/calendar" },
 ];
 
 /**
- * 일정 탭의 두 화면 — 내 시간표를 적는 곳과 팀 시간표를 겹쳐 보는 곳.
+ * 일정 탭의 세 화면 — 내 시간표를 적는 곳, 팀 시간표를 겹쳐 보는 곳, 팀 전체 일정(캘린더·마감).
  *
- * 탭 전환이 아니라 **주소가 다른 두 화면**이다. 팀 겹쳐보기는 팀원 전원의 시간표를 서버에서
- * 읽어야 하고, 알림에서 바로 들어올 수도 있어야 한다.
+ * 탭 전환이 아니라 **주소가 다른 세 화면**이다.
  *
  * `onLeave` 는 저장하지 않은 변경이 있는 화면이 이동을 가로챌 때 쓴다(내 시간표).
  */
@@ -22,7 +24,7 @@ export function ScheduleTabs({
   current,
   onLeave,
 }: {
-  current: "mine" | "team";
+  current: ScheduleTabKey;
   onLeave?: (href: string, e: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   return (
