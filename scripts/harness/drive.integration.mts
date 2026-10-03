@@ -117,35 +117,53 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     if (!res.ok) throw new Error(`저장소 올리기 실패 ${res.status} ${await res.text()}`);
   }
 
-  /** 올리기 전체 — 사람이 하는 순서 그대로: 1단계 → 저장소 → 2단계. */
-  async function upload(
+  type Prepared = Awaited<ReturnType<typeof actions.prepareUpload>>;
+
+  /**
+   * 올리기 **앞부분** — 1단계(주소 발급) → 저장소에 실제로 올리기.
+   *
+   * 동시성 시험은 이것을 두 번 하고 **그다음에** 2단계를 함께 보낸다. 앞부분까지 같이
+   * `Promise.all` 로 돌리면 "누가 먼저 끝나느냐"에 따라 1단계에서 걸릴 수도 있고 안 걸릴
+   * 수도 있다 — 그러면 **잠금**을 시험하는 것이 아니라 스케줄링 우연을 시험하게 된다.
+   */
+  async function stage(token: string, boxId: string, name: string): Promise<Prepared> {
+    const prepared = await as(token, () =>
+      actions.prepareUpload(boxId, { name, size: CONTENT.byteLength, type: PNG }),
+    );
+    if (prepared.status === "ok") await putObject(prepared.signedUrl, CONTENT, prepared.contentType);
+    return prepared;
+  }
+
+  /** 올리기 뒷부분 — 2단계(버전 기록). */
+  async function finishStaged(
     token: string,
     boxId: string,
     name: string,
-    opts: { fileId?: string; bytes?: Buffer } = {},
-  ) {
-    const bytes = opts.bytes ?? CONTENT;
-    const prepared = await as(token, () =>
-      actions.prepareUpload(boxId, { name, size: bytes.length, type: PNG }),
-    );
-    if (prepared.status !== "ok") return { prepared, finished: undefined };
-    await putObject(prepared.signedUrl, bytes, prepared.contentType);
+    prepared: Prepared,
+    fileId?: string,
+  ): Promise<{ prepared: Prepared; finished: Awaited<ReturnType<typeof actions.finishUpload>> | null }> {
+    if (prepared.status !== "ok") return { prepared, finished: null };
     const finished = await as(token, () =>
-      actions.finishUpload(boxId, { path: prepared.path, name }, opts.fileId),
+      actions.finishUpload(boxId, { path: prepared.path, name }, fileId),
     );
     return { prepared, finished };
   }
 
   /**
-   * 성공한 올리기 결과를 **확인해서** 돌려준다. `!` 로 침묵하게 넘기지 않는다 — 앞의 검사가
-   * 이미 "성공" 이라고 했으니 여기서 실패하면 그 두 검사가 거짓말한 것이다.
+   * 성공한 결과를 **확인해서** 돌려준다. `!` 로 침묵하게 넘기지 않는다 — 앞의 검사가 이미
+   * "성공" 이라고 말했는데 여기서 실패하면 그 두 검사가 거짓말한 것이다.
    */
   type OkFinish = Extract<Awaited<ReturnType<typeof actions.finishUpload>>, { status: "ok" }>;
-  function okFinish(r: { finished?: Awaited<ReturnType<typeof actions.finishUpload>> }): OkFinish {
+  function okFinish(r: { finished: { status: string } | null }): OkFinish {
     if (!r.finished || r.finished.status !== "ok") {
       throw new Error(`성공한 올리기를 전제하는데 결과가 ${JSON.stringify(r.finished)} 이다`);
     }
-    return r.finished;
+    return r.finished as OkFinish;
+  }
+
+  /** 올리기 전체 — 사람이 하는 순서 그대로. */
+  async function upload(token: string, boxId: string, name: string, opts: { fileId?: string } = {}) {
+    return finishStaged(token, boxId, name, await stage(token, boxId, name), opts.fileId);
   }
 
   /**
@@ -314,14 +332,20 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const E = await makeTeam("E");
     // **하나만 들어갈 자리**를 남긴다. 두 개가 동시에 들어와야.lock 이 일을 한다.
     await seedBytes(E.id, E.box.id, TEAM_CAP_BYTES - size, "동시 검사용");
+    // 둘 다 **자리 안에 보인 상태**로 만든다 — 1단계는 잠금 밖에서 세므로 둘 다 통과해야
+    // 한다. 여기서 하나라도 1단계에서 막히면 잠금을 시험한 것이 아니라 1단계를 시험한 것이다.
+    const staged1 = await stage(E.asLeader, E.box2.id, "동시 1.png");
+    const staged2 = await stage(E.asMate, E.box2.id, "동시 2.png");
+    check("둘 다 1단계를 통과했다", [staged1.status, staged2.status], ["ok", "ok"]);
+    // 지금부터 **같은 순간에** 2단계를 보낸다.
     const both = await Promise.all([
-      upload(E.asLeader, E.box2.id, "동시 1.png"),
-      upload(E.asMate, E.box2.id, "동시 2.png"),
+      finishStaged(E.asLeader, E.box2.id, "동시 1.png", staged1),
+      finishStaged(E.asMate, E.box2.id, "동시 2.png", staged2),
     ]);
-    const statuses = both.map((r) => r.finished?.status).sort();
+    const statuses = both.map((r) => r.finished?.status ?? "1단계에서 멈춤").sort();
     check("둘 중 하나만 들어간다", statuses, ["ok", "over-quota"]);
     check("팀 용량이 한도를 넘지 않는다", (await teamUsedBytes(E.id)) <= TEAM_CAP_BYTES, true);
-    const kept = both.map(okFinish);
+    const kept = both.filter((r) => r.finished?.status === "ok").map(okFinish);
     check("버전은 하나만 생겼다", (await versionsOf(kept[0].fileId)).length, 1);
     /** E 팀은 이제 **정확히 한도**다. 이 버전을 같은 경로로 다시 알리는 시험에 쓴다. */
     const cappedRow = (await versionsOf(kept[0].fileId))[0]!;
