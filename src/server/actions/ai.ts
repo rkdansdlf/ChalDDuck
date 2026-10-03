@@ -1,6 +1,7 @@
 "use server";
 
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
+import { getCurrentTeam, getTeamToolContext } from "@/data/api";
 import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
 import { aiQuotaFor, aiUsageCsv, type AiQuota } from "@/server/ai/limit";
 import { runTool } from "@/server/ai/run";
@@ -29,9 +30,34 @@ import { requireSessionMember } from "@/server/session";
  * 조각이 필요 없을 때 그 길이 된다.
  */
 
-/** 회의 메모에서 요약과 할 일 **후보**를 뽑는다. 그대로 반영되지는 않는다. */
+/**
+ * 회의 메모에서 요약과 할 일 **후보**를 뽑는다. 그대로 반영되지는 않는다.
+ *
+ * ## 팀 문맥을 여기서 붙이는 이유
+ *
+ * **세션이 있는 이 자리**가 팀과 팀원을 함께 아는 유일한 곳이다. 화면이 조합해서 넘기면
+ * 도구마다 다른 명단이 들어가고 **AI 가 본 팀이 사람마다 달라진다.**
+ *
+ * 문맥은 **담당자 매칭 재료**로도 쓰인다 — 모델이 적은 이름은 그대로 믿지 않고
+ * `lib/tool-assignee.ts` 가 팀원 명단과 다시 대조한다. 그래서 "AI 가 유나 라고 적었다" 와
+ * "우리 팀에 최유나 가 있다" 가 이어지면 담당자가 되고, 없으면 `null` 이 된다.
+ *
+ * 문맥 조회가 실패해도 **서기는 계속 돌아간다** — 회의 메모에서 뽑는 일은 팀 문맥과
+ * 별개이기 때문이다. 조회가 죽은 걸로 "AI 가 고장났다" 고 말하면 사실이 다르다.
+ */
 export async function summarizeMeeting(raw: string): Promise<AiResult<ClerkDraft>> {
-  return runTool("clerk", () => ai.summarizeMeeting(raw));
+  const team = await getCurrentTeam();
+
+  return runTool("clerk", async () => {
+    let context;
+    try {
+      context = await getTeamToolContext(team.id);
+    } catch (cause: unknown) {
+      // **문맥 없이도 답한다.** 명단이 없으면 매칭을 시도하지 않을 뿐이다.
+      console.error("[ai:clerk] 팀 문맥을 읽지 못했습니다. 문맥 없이 진행합니다:", cause);
+    }
+    return ai.summarizeMeeting(raw, undefined, context);
+  });
 }
 
 /** 출처가 없는 결과는 돌려주지 않는다. 적합도 점수는 만들지 않는다. */

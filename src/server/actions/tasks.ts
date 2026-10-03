@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { TASK_KINDS } from "@/data/catalog";
 import type { Task, TaskKindKey } from "@/lib/types";
 import { canEditTask, shouldNotifyAssignee } from "@/lib/task-permission";
+import { matchAssigneeToMember } from "@/lib/tool-assignee";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -218,8 +219,21 @@ export async function addTasksFromClerk(
     where: { teamId: me.teamId, leftAt: null },
     select: { id: true, name: true },
   });
-  const idOf = (name: string | null) =>
-    name ? (roster.find((m) => m.name === name)?.id ?? null) : null;
+  /**
+   * 이름을 팀원 id 로 — **`lib/tool-assignee.ts` 의 매칭을 그대로 쓴다.**
+   *
+   * 예전에는 여기서 `roster.find((m) => m.name === name)` 로 **직접 정확 일치** 했다. 그래서
+   * AI 서기가 `민준` 라고 적으면(명단에는 `김민준`) **항상 매칭에 실패해 담당자 없는 업무가
+   * 생겼다** — 사람이 화면에서 이름을 눌러 고쳐야 했다. 그게 2단계-a2 가 고치는 실제 손해다.
+   *
+   * **매칭 규칙이 두 곳에 있으면 안 된다.** 서기 화면(AI 서기 → 후보 정리)과 여기(업무 반영)가
+   * 서로 다른 규칙을 쓰면 "화면에서는 최유나 로 보이는데 업무에는 아무도 없��다" 가 조용히
+   * 벌어진다. 그래서 **한 함수만 쓴다.**
+   *
+   * 매칭되지 않으면 그대로 `null` 이다 — **없는 사람에게 일을 배정하지 않는다.** 담당자가 없는
+   * 업무는 화면에 "담당자 정하기" 로 보이고 아무에게도 알림이 가지 않는다.
+   */
+  const idOf = (name: string | null) => matchAssigneeToMember(name, roster).id;
 
   await db.task.createMany({
     data: candidates

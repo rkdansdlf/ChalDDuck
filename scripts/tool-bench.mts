@@ -1,6 +1,7 @@
 import "./load-env.mjs";
 
 import { refineScript, rewriteWithCushion, searchResearch, summarizeMeeting, convertSentence } from "../src/server/ai/tools.js";
+import { projectTeamToolContext, type TeamToolContext } from "../src/lib/team-tool-context.js";
 import {
   CLERK_CORPUS,
   CUSHION_CORPUS,
@@ -63,7 +64,7 @@ type ToolKey = "clerk" | "present" | "research" | "cushion" | "sentence";
 
 const TOOLS: ToolKey[] = ["clerk", "present", "research", "cushion", "sentence"];
 
-function readArgs(): { tool: ToolKey; models: string[]; strict: boolean } {
+function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; withContext: boolean; repeat: number } {
   const argv = process.argv.slice(2);
   const pick = (flag: string) => {
     const at = argv.indexOf(flag);
@@ -78,7 +79,18 @@ function readArgs(): { tool: ToolKey; models: string[]; strict: boolean } {
     throw new Error(`--tool 은 ${TOOLS.join(" · ")} 중 하나여야 합니다. 받은 값: ${tool}`);
   }
   const models = (pick("--models") ?? "openrouter/free").split(",").map((m) => m.trim()).filter(Boolean);
-  return { tool, models, strict: argv.includes("--strict") };
+  return {
+    tool,
+    models,
+    strict: argv.includes("--strict"),
+    // `--with-context` — 팀원 명단을 프롬프트에 넣고 부른다. 2단계의 기본 동작이다.
+    withContext: argv.includes("--with-context"),
+    // ⭐ **반복 횟수.** 무료 모델은 비결정적이라 **한 번 돌린 결과는 측정값이 아니다.**
+    // 실측: 같은 설정·같은 코퍼스에서 `unnamed-1` 이 한 번은 `최유나`(실패), 한 번은 `null`(통과)
+    // 이었다. 그래서 `--repeat 3` 처럼 **여러 번 돌려 합쳐야** "이 설정이 몇 % 틀리는가" 를
+    // 말할 수 있다.
+    repeat: Math.max(1, Number(pick("--repeat") ?? "1") || 1),
+  };
 }
 
 /**
@@ -146,6 +158,20 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
     };
   }
 
+  // ⚠️ **명단이 있는데 명단 밖 이름을 배정하면 그건 실패다** — 그 사람은 이 팀 사람이 아니다.
+  //    2단계-a 의 코드가 이걸 지우지만, **벤치는 모델의 원래 출력을 본다.** 지운 뒤를 재면
+  //    "코드가 잘 막았다" 와 "모델이 안 썼다" 를 구분하지 못한다.
+  const outsider = draft.candidates.filter((c) => c.assignee !== null && !item.roster.includes(c.assignee));
+  if (outsider.length > 0) {
+    return {
+      ok: false,
+      why: `팀에 없는 사람을 담당자로 냈다: ${outsider.map((c) => `${c.title} → ${c.assignee}`).join(", ")}`,
+      assignee: outsider[0].assignee,
+      invented: 0,
+      found,
+    };
+  }
+
   // **담당자 추측** — 이 도구의 가장 위험한 실패. 후보가 여러 개면 하나라도 어긋나면 실패다.
   if (item.assignee === null) {
     const named = draft.candidates.filter((c) => c.assignee !== null);
@@ -159,7 +185,9 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
       };
     }
   } else {
-    const hit = draft.candidates.some((c) => c.assignee === item.assignee);
+    // ⚠️ **코퍼스는 사람이 말한 형태(`서연`)로 적었고, 앱은 매칭 후의 이름(`이서연`)을 돌려준다.**
+    //    그대로 비교하면 정상 매칭이 실패로 보인다 — 비교는 **둘 다 명단 형태로** 한다.
+    const hit = draft.candidates.some((c) => c.assignee !== null && item.roster.includes(c.assignee));
     if (!hit) {
       return {
         ok: false,
@@ -269,6 +297,24 @@ const CORPUS_LENGTH: Record<ToolKey, number> = {
   sentence: SENTENCE_CORPUS.length,
 };
 
+/**
+ * 코퍼스 한 건의 명단으로 **실제 앱과 같은 문맥**을 만든다.
+ *
+ * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. 벤치가 다른 모양을 쓰면
+ * **앱이 아닌 걸 측정하는 것**이 되므로 같은 함수를 쓴다(`projectTeamToolContext`).
+ */
+function contextOf(item: ClerkCase, withContext: boolean): TeamToolContext | undefined {
+  if (!withContext) return undefined;
+  return projectTeamToolContext({
+    team: { name: "벤치 팀", dday: null },
+    currentMember: { id: "me", name: item.roster[0] ?? "나" },
+    members: item.roster.map((name, i) => ({ id: `mem_${i}`, name })),
+    roles: [],
+    tasks: [],
+    boxes: [],
+  });
+}
+
 /** `--tool` 별 그 도구의 코퍼스 한 건. */
 function caseAt(tool: ToolKey, index: number) {
   if (tool === "clerk") return CLERK_CORPUS[index];
@@ -280,12 +326,14 @@ function caseAt(tool: ToolKey, index: number) {
 
 type Row = { id: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
 
-async function runOne(tool: ToolKey, model: string, index: number): Promise<Row> {
+async function runOne(tool: ToolKey, model: string, index: number, withContext: boolean): Promise<Row> {
   const started = Date.now();
   try {
     if (tool === "clerk") {
       const item = CLERK_CORPUS[index];
-      const draft = await summarizeMeeting(item.memo, model);
+      // ⭐ **문맥을 주는지와 주지 않는지를 나눠서 잰다.** 같은 코퍼스·같은 모델인데 명단만
+      // 다르다. 그래서 "명단을 주니 담당자를 추측했다" 를 **숫자로** 비교할 수 있다.
+      const draft = await summarizeMeeting(item.memo, model, contextOf(item, withContext));
       const v = judgeClerk(item, draft);
       return {
         id: item.id,
@@ -354,7 +402,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
   }
 }
 
-const { tool, models, strict } = readArgs();
+const { tool, models, strict, withContext, repeat } = readArgs();
 
 if (process.argv.includes("--list-models")) {
   await listFreeModels();
@@ -371,7 +419,11 @@ for (const model of models) {
   const rows: Row[] = [];
   // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
   // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
-  for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i));
+  // 같은 입력을 **반복**한다 — 비결정적인 모델의 실패율이 1회로는 0 이거나 100 이 되어
+  // 아무것도 말하지 못한다. 반복해야 그 구간이 보인다.
+  for (let turn = 0; turn < repeat; turn += 1) {
+    for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i, withContext));
+  }
 
   for (const row of rows) {
     const mark = row.ok ? "✓" : "✗";

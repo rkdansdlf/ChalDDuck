@@ -18,6 +18,8 @@ import {
 import { cn } from "@/lib/cn";
 import type { Task } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
+import { handOffToCushion } from "@/features/tools/cushion-handoff";
+import { canOfferCushion, pokeRequestText } from "./poke-request";
 import { pokeTask } from "@/server/actions/tasks";
 
 /**
@@ -55,6 +57,28 @@ export function PokeScreen({
     (t) => t.status !== "done" && t.assignee && !t.isMine && !t.assigneeLeft,
   );
   const selectedTask = targets.find((t) => t.id === selected) ?? null;
+  /**
+   * "다듬고 보내기" 로 넘길 문장.
+   *
+   * **만들 수 없으면 `null` 이고 버튼도 그리지 않는다.** 빈 문자열을 넘기면 쿠션 화면이
+   * 빈 칸으로 열리고 사람은 "왜 아무것도 없어" 하고 돌아온다.
+   *
+   * ⚠️ **오늘 이미 보낸 일은 다시 권하지 않는다** — 같은 말을 두 번 다듬게 하면 한도가 두 번
+   * 깎이고, 어차피 어제 알림을 받은 사람이니 의미가 없다.
+   */
+  const polishable =
+    selectedTask &&
+    canOfferCushion({
+      assigneeName: selectedTask.assignee,
+      title: selectedTask.title,
+      alreadySent: poked.includes(selectedTask.id),
+    })
+      ? pokeRequestText({
+          assigneeName: selectedTask.assignee ?? "",
+          title: selectedTask.title,
+          due: selectedTask.due,
+        })
+      : null;
 
   const send = async () => {
     if (!selectedTask || poked.includes(selectedTask.id)) return;
@@ -143,6 +167,32 @@ export function PokeScreen({
         <Btn full size="lg" icon={sending ? "loader-circle" : "bell"} disabled={!selectedTask || sending} onClick={send}>
           {sending ? "보내는 중…" : "진행상황 물어보기 (콕 찌르기)"}
         </Btn>
+
+        {/**
+         * **다듬고 보내기** — 2단계-b.
+         *
+         * 여기로 오는 이유는 **사람이 말을 다듬어야 하는 자리**이기 때문이다. "진행상황
+         * 물어보기" 는 정해 둔 문장을 그대로 보내고, 이쪽은 **요구하는 내용은 같고 말투만**
+         * 바꾼다(쿠션 번역기의 대 원칙). **같은 내용을 담은 두 길**이라 다른 게 없어야 한다.
+         *
+         * ⚠️ **넘길 문장이 없으면 버튼을 그리지 않는다.** 빈 문자열을 넘기면 쿠션 화면이
+         * 빈 칸으로 열리고 사람은 "왜 아무것도 없어" 하고 돌아온다. `pokeRequestText` 가
+         * `null` 을 주는 것(담당자 없음·제목 없음·마감 미정)이 그 신호다.
+         */}
+        {polishable ? (
+          <Btn
+            full
+            className="mt-2"
+            v="outline"
+            icon="message-square-heart"
+            onClick={() => {
+              handOffToCushion(polishable);
+              router.push("/tools/cushion");
+            }}
+          >
+            말투만 다듬고 보내기
+          </Btn>
+        ) : null}
       </Dock>
 
       <Toast msg={toast} />

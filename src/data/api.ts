@@ -6,6 +6,8 @@ import { isMbtiType } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
+import { requireSessionMember } from "@/server/session";
+import { projectTeamToolContext, type TeamToolContext } from "@/lib/team-tool-context";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
 import { contribTotals } from "./contrib-report-totals";
@@ -738,6 +740,63 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
  *(`briefing.ts` 의 `boxesDueSoon`), 제출함 화면이 `dueAt` 을 읽을 때도 같은 문자열을
  * 쓴다 — 다른 곳에서 `new Date(dueAt)` 를 직접 파싱하면 기준이 어긋난다.
  */
+/**
+ * AI 도구 하나에 넘길 **팀 문맥**(허용된 필드만 — `lib/team-tool-context.ts`).
+ *
+ * ## 왜 여기서 만들고, 도구가 아니라 화면에서 찾는가
+ *
+ * 세션이 있는 곳(서버 액션)이 **유일하게** 팀과 팀원을 함께 알고 있다. 화면이 각자 조합해서
+ * 넘기면 도구마다 다른 명단이 들어가고, **AI 가 본 팀이 사람마다 달라진다.**
+ *
+ * ## 나간 팀원은 넣지 않는다
+ *
+ * `leftAt` 이 있는 사람은 알림이 안 닿는다(`notify` 가recipient 에서 뺀다) — 즉 **담당자로
+ * 잡아도 아무도 알지 못한다.** 조용히 배정된 책임이므로 명단에서 뺀다. 같은 이유로 알림
+ * 대상도 아니다.
+ *
+ * **재입장 대기 중인 사람(`memberClaim`)도 넣지 않는다** — 아직 팀원이 아니라 "누군가
+ * 들어오려는 상태" 다. AI 가 그 이름을 담당자로 잡으면 팀원이 아닌 사람에게 일이 배정된다.
+ */
+export async function getTeamToolContext(teamId: string): Promise<TeamToolContext> {
+  const session = await requireSessionMember();
+  const [team, roster, boxes, openTasks] = await Promise.all([
+    db.team.findUnique({ where: { id: teamId }, select: { name: true, dday: true } }),
+    db.member.findMany({
+      where: { teamId, leftAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.submissionBox.findMany({
+      where: { teamId },
+      select: { role: true, name: true, dueAt: true },
+      orderBy: { id: "asc" },
+    }),
+    db.task.findMany({
+      where: { teamId, status: { not: "done" } },
+      select: { id: true, title: true, assignee: { select: { name: true } }, due: true, status: true },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    }),
+  ]);
+
+  if (!team) throw new Error("팀을 찾을 수 없습니다.");
+
+  return projectTeamToolContext({
+    team: { name: team.name, dday: team.dday },
+    currentMember: { id: session.id, name: session.name },
+    members: roster,
+    roles: ROLES.map((r) => ({ key: r.key, name: r.name })),
+    tasks: openTasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      assignee: t.assignee?.name ?? null,
+      due: t.due,
+      status: t.status,
+    })),
+    boxes: boxes.map((b) => ({ role: b.role as RoleKey, name: b.name, dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null })),
+  });
+}
+
 export async function getBoxDeadlines(
   teamId: string,
 ): Promise<Array<{ role: RoleKey; name: string; dueAt: string | null }>> {

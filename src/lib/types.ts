@@ -304,8 +304,23 @@ export type SentenceMode = {
 export type ClerkCandidate = {
   id: string;
   title: string;
-  /** AI 가 추측한 담당자. 회의에서 정해지지 않았으면 null 이고 사람이 정해야 한다. */
+  /**
+   * 담당자 — **우리 팀에 있는 사람만** 여기 들어온다(2단계-a).
+   *
+   * 모델이 적은 이름은 그대로 믿지 않는다. 팀원 명단과 대조해 **실제로 있는 사람일 때만**
+   * 이름이 남고, 없으면 `null` 이다. 결정하지 않았을 뿐 아니라 **없는 이름을 쓰지도 않는다.**
+   */
   assignee: string | null;
+  /**
+   * 담당자가 **왜** 이 모양인지(2단계-a).
+   *
+   * `matched` — 팀원 명단에서 찾았다 · `unset` — 모델도 정하지 않았다 ·
+   * `no-match` — **명단에 없는 이름을 지웠다** · `ambiguous` — **누구인지 몰라 물어야 한다.**
+   *
+   * ⚠️ **비어 있을 수 있다** — 예시 결과는 매칭을 시도하지 않았으므로 채울 이유가 없다.
+   * `undefined` 는 "모르겠다" 가 아니라 **"시도하지 않았다"** 다.
+   */
+  assigneeReason?: "matched" | "unset" | "no-match" | "ambiguous";
   /** 왜 이 사람을 넣었는지 — 근거 없이 배정하지 않는다. */
   basis: string;
   due: string;

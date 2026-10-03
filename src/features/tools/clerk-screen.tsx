@@ -22,7 +22,8 @@ import { DraftSourceChip } from "./draft-source-chip";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
-import type { AiAnswerSource, ClerkDraft, Member } from "@/lib/types";
+import type { AiAnswerSource, ClerkCandidate, ClerkDraft, Member } from "@/lib/types";
+import { assigneeOrigin } from "@/lib/tool-assignee";
 
 const STEP_LABELS = ["회의 내용 입력", "요약 · 할 일 후보", "업무에 반영"];
 
@@ -57,6 +58,17 @@ export function ClerkScreen({
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   /** 사람이 확인·수정한 담당자. */
   const [assignees, setAssignees] = useState<Record<string, string | null>>({});
+  /**
+   * **사람이 건드린 후보**를 기억한다(2단계-a2 결정: 한 번 유지 + 출처 표시).
+   *
+   * 왜 기억해야 하나: 순환 버튼이 **같은 이름으로 돌아올 수 있다.** 그때 화면에 보이는 값은
+   * AI 가 정한 값과 글자가 같아서 **구분이 사라진다.** 하지만 그 순간 담당자는 사람이 고른
+   * 값이다 — **값이 같아도 누가 정했는지가 다르다.**
+   *
+   * 표시만 사라지고 배정은 유지된다. 표시를 지우면 "AI 가 정했습니다" 는 사실이 되고,
+   * 그건 이 저장소가 없애온 사고다.
+   */
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const candidates = draft?.candidates ?? [];
   const acceptedCount = candidates.filter((c) => picked[c.id]).length;
@@ -81,6 +93,8 @@ export function ClerkScreen({
 
   /** 담당자를 팀원 목록 순서대로 돌린다. */
   const cycleAssignee = (id: string) => {
+    // **사람이 건드렀다** — AI 출처 표시를 끈다. 값이 같아도 사람의 선택이다.
+    setTouched((prev) => ({ ...prev, [id]: true }));
     setAssignees((prev) => {
       const current = prev[id];
       const index = current ? names.indexOf(current) : -1;
@@ -206,6 +220,38 @@ export function ClerkScreen({
                             <Chip icon="user-round" tone={assignee ? "n" : "warn"}>
                               {assignee ?? "담당자 정하기"}
                             </Chip>
+                          {/**
+                           * **담당자가 왜 비었는지**를 한 줄로 밝힌다.
+                           *
+                           * 지우기 전에는 "AI 가 추측하지 않았다" 는 좋은 소식이었지만, 지운 뒤에는
+                           * 사용자가 "AI 가 못 찾아서 지웠나, 원래 정하지 않았나" 를 알 수 없다.
+                           * 둘은 **사람이 하는 일이 다르다**(찾아서 고르기 / 정하기). "담당자 정하기"
+                           * 만으로는 구분되지 않는다.
+                           */}
+                          {assigneeReasonOf(candidate) ? (
+                            <Chip tone="warn">{assigneeReasonOf(candidate)}</Chip>
+                          ) : null}
+                          {/**
+                           * **AI 가 읽은 담당자임을 밝힌다.**
+                           *
+                           * a1 이후 이 칩은 명단에 실제 있는 이름을 보여 주므로 **결정한 것처럼
+                           * 읽힌다.** 스크롤만 하는 사람은 구분하지 못한다 — 이 저장소가 이미 한 번
+                           * 겪은 "담당자를 조용히 매달지 못하게 한다" 의 같은 모양이다.
+                           *
+                           * 그래서 **단계를 늘리지 않고 출처를 밝힌다.** 그리고 사람이 이 칩을
+                           * 건드리면 **사라진다** — 그 순간부터는 사람이 고른 값이라 AI 출처가
+                           * 아니다. 배정은 그대로 두고 **표시만** 뗀다.
+                           */}
+                          {assigneeOrigin({
+                              modelName: candidate.assignee,
+                              currentNow: assignee,
+                              touched: touched[candidate.id] === true,
+                              reason: candidate.assigneeReason,
+                            }) === "ai" ? (
+                            <Chip tone="n" icon="sparkles">
+                              메모에서 읽은 담당자예요
+                            </Chip>
+                          ) : null}
                           </button>
                           <Chip icon="calendar-clock">{candidate.due}</Chip>
                         </div>
@@ -280,4 +326,33 @@ export function ClerkScreen({
       </Body>
     </>
   );
+}
+
+/**
+ * 후보의 담당자가 **비었을 때 왜 비었는지** 한 줄.
+ *
+ * ## 왜 화면에 그대로 보여 주나
+ *
+ * 2단계-a 에서 모델이 적은 이름은 팀원 명단과 대조해 **지워진다.** 사용자는 그 이름을
+ * 봤을 수도 있다 — 화면에서 지워졌을 뿐 입력으로는 남아 있다. **왜 지웠는지 말하지 않으면
+ * "AI 가 실수했다" 고 오해하고, 사람이 같은 후보를 다시 고쳐 넣는다**(그때 매칭이 또 안 된다).
+ *
+ * | 사유 | 사람이 할 일 |
+ * |---|---|
+ * | `no-match` | **이름을 바꿔야 한다** — 명단에 없는 이름이었다 |
+ * | `ambiguous` | **누군지 물어야 한다** — 같은 이름이 둘 이상이다 |
+ * | `unset` | 정하면 된다 — 모델도 정하지 않았다 |
+ *
+ * `matched` 인데 비어 있는 경우는 **나올 수 없다**(있으면 이름이 남는다). 그래도 화면이
+ * 조용해지지 않게 **기본값은 사람이 정하게 두고** 화면도 같은 말을 쓴다.
+ *
+ * ⚠️ **사유가 아예 없는 경우**(예시 결과 — 매칭을 시도하지 않음)는 아무것도 붙이지 않는다.
+ * "이름을 못 찾았다" 고 말하면 **거짓말**이 된다.
+ */
+function assigneeReasonOf(candidate: ClerkCandidate): string | null {
+  if (candidate.assignee) return null;
+  if (candidate.assigneeReason === "no-match") return "이름이 명단에 없어 지웠어요";
+  if (candidate.assigneeReason === "ambiguous") return "같은 이름이 둘이라 누구인지 물어봐야 해요";
+  if (candidate.assigneeReason === "unset") return "담당자가 정해지지 않았어요";
+  return null;
 }
