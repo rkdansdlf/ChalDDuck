@@ -314,7 +314,7 @@ export async function getAcceptedRoleAssignments(
 
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
-  const [draws, rejections] = await Promise.all([
+  const [draws, rejections, consents, members, session] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
       include: { winner: { select: { id: true, name: true, leftAt: true } } },
@@ -323,9 +323,22 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
       where: { teamId },
       include: { member: { select: { name: true } } },
     }),
+    // 동의 제안은 **마감을 지나도 행이 남는다** — 팀이 동의한 도구가 계속 쓰여야 하므로.
+    // 살아 있는지만 여기서 보지 않는다(읽을 때마다 시각으로 계산한다).
+    db.roleDrawConsent.findMany({
+      where: { teamId },
+      include: {
+        proposedBy: { select: { id: true, name: true } },
+        responses: { select: { memberId: true, agree: true } },
+      },
+    }),
+    // 배지와 "몇 명이 응답해야 하는지" 를 말하려면 팀 전체 인원이 필요하다. 나간 사람은 뺀다.
+    db.member.findMany({ where: { teamId, leftAt: null }, select: { id: true } }),
+    // **내가 동의했는지** — 화면이 자기 응답 버튼을 숨기려면 판정자가 있어야 한다.
+    getSessionMember(),
   ]);
 
-  const result: RoleNegotiation = { draws: {}, rejected: {} };
+  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {} };
 
   for (const d of draws) {
     result.draws[d.role as RoleKey] = {
@@ -343,6 +356,21 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
   for (const r of rejections) {
     const role = r.role as RoleKey;
     result.rejected[role] = [...(result.rejected[role] ?? []), r.member.name];
+  }
+  for (const c of consents) {
+    // **반대는 저장되지 않는다**(제안이 지워진다). 그래도 `agree: false` 가 들어오면
+    // 카운트에서 빼 둔다 — 나중에 반대를 저장하는 방식으로 바꿔도 이 조회가 그대로 맞는다.
+    const agrees = c.responses.filter((r) => r.agree).length;
+    result.consents[c.role as RoleKey] = {
+      tool: c.tool,
+      proposedBy: c.proposedBy.name,
+      proposedById: c.proposedById,
+      agreed: agrees,
+      responded: c.responses.length,
+      totalMembers: members.length,
+      respondBy: c.respondBy.toISOString(),
+      iAgreed: session ? c.responses.some((r) => r.memberId === session.id && r.agree) : false,
+    };
   }
 
   return result;

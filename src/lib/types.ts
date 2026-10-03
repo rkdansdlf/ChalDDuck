@@ -981,6 +981,30 @@ export type RoleNegotiation = {
   draws: Partial<Record<RoleKey, RoleDrawResult>>;
   /** 역할별로 거절해서 다음 추첨에서 빠지는 사람들. */
   rejected: Partial<Record<RoleKey, string[]>>;
+  /**
+   * 역할별로 **팀에 제안된 동의**. 없으면 아직 아무도 제안하지 않았다.
+   *
+   * 마감을 지났는지는 여기서 판하지 않는다 — 화면과 서버가 함께 쓰는
+   * `consentViewOf`(roster-model)가 `respondBy` 와 **now** 를 보고 정한다.
+   */
+  consents: Partial<Record<RoleKey, RoleDrawConsentView>>;
+};
+
+/** 07 추첨 동의 제안 — 팀 화면이 읽는 모양. */
+export type RoleDrawConsentView = {
+  /** 제안에 고정된 도구. */
+  tool: string;
+  proposedBy: string;
+  proposedById: string;
+  /** 지금 동의한 사람 수. */
+  agreed: number;
+  /** 지금 응답한 사람 수. 반대는 제안을 지우므로 남지 않는다. */
+  responded: number;
+  /** 팀 전체 인원. 동의 n명 / 몇 명이 되돌려 줘야 하는지 를 말한다. */
+  totalMembers: number;
+  respondBy: string;
+  /** 내가 이미 동의했는지. 화면에서 버튼을 숨기는 데 쓴다. */
+  iAgreed: boolean;
 };
 
 /* ── 통합 캘린더 · 일정 ─────────────────────────────────────── */

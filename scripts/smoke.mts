@@ -549,7 +549,6 @@ console.log("\n추첨 동의 제안");
   const NOW = new Date("2026-10-01T09:00:00Z");
   const live = (ms: number) =>
     ({
-      role: "research",
       tool: "룰렛",
       proposedBy: "김민준",
       agreed: 2,

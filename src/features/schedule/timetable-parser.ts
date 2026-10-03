@@ -184,7 +184,7 @@ export function parseIcsTimetable(icsContent: string): {
       }
 
       // 요일 파싱 (RRULE BYDAY 또는 DTSTART 날짜)
-      let days: number[] = [];
+      const days: number[] = [];
       if (rruleMatch) {
         const byDays = rruleMatch[1].split(",");
         for (const bd of byDays) {

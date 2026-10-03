@@ -25,13 +25,16 @@ import { cn } from "@/lib/cn";
 import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { createInviteLink, disableInviteLink } from "@/server/actions/invite";
-import { acceptRoleDraw, claimSoleRole, drawForRole, rejectRoleDraw } from "@/server/actions/roles";
+import { acceptRoleDraw, claimSoleRole, drawForRole, proposeRoleDraw, rejectRoleDraw, respondRoleDraw } from "@/server/actions/roles";
 import {
   NO_DRAW_POOL_TEXT,
   applyMyChoices,
+  canProposeIn,
+  consentViewOf,
   drawPoolOf,
   roleViewOf,
   wantersOf,
+  type ConsentView,
 } from "./roster-model";
 
 /**
@@ -50,6 +53,7 @@ export function RosterScreen({
   roster,
   tools,
   negotiation,
+  now: nowIso,
   rejoinPending,
   invites,
   isLeader,
@@ -59,6 +63,13 @@ export function RosterScreen({
   roster: Member[];
   tools: RandomTool[];
   negotiation: RoleNegotiation;
+  /**
+   * 서버가 이 화면을 그릴 때의 시각(ISO).
+   *
+   * 동의 대기는 `respondBy` 와 "지금"을 비교해 정한다. 클라이언트가 다시 재면 서버가 그린
+   * 것과 다른 그림이 그려진다(하이드레이션 불일치) — 시각은 읽는 곳에서 한 번만 정한다.
+   */
+  now: string;
   /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
   rejoinPending: number;
   /** 팀이 나눈 초대들. 팀장이 아니면 빈 목록 — 링크를 다시 보여줄 수는 없다(아래 주석). */
@@ -67,12 +78,17 @@ export function RosterScreen({
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
-  const { draws, rejected } = negotiation;
+  const { draws, rejected, consents } = negotiation;
   const { toast, busy, flash, run } = useAction();
 
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  /**
+   * 시트 안에서 **고른 도구.** 누르는 즉시 뽑지 않고 고른 뒤 무엇을 할지 고른다 —
+   * "지금 뽑기"와 "팀에 제안" 두 길이 있으므로 탭이 곧 실행이면 실수로 바로 뽑힌다.
+   */
+  const [pickedTool, setPickedTool] = useState<RandomTool | null>(null);
   /**
    * **방금 만든 초대 링크의 원문.** 여기서만 산다.
    *
@@ -149,12 +165,56 @@ export function RosterScreen({
     return members.filter((m) => names.has(m.name)).map((m) => m.id);
   };
 
+  /** 지금 화면에 그릴 동의 상태. 서버가 준 시각으로만 판한다(하이드레이션 불일치 방지). */
+  const now = useMemo(() => new Date(nowIso), [nowIso]);
+  const consentFor = (role: RoleKey): ConsentView => consentViewOf(consents[role] ?? null, now);
+
   /** 서버의 `drawPoolOf` 와 같은 규칙으로 연출에 쓸 후보를 고른다. */
   const candidatePoolFor = (role: RoleKey): DrawCandidate[] =>
     drawPoolOf(wantersOf(members, role), role, new Set(excludedIdsOf(role))).pool.map((m) => ({
       name: m.name,
       mbti: m.mbti,
     }));
+
+  /**
+   * 추첨을 **팀에 제안한다** — 도구도 함께 올린다.
+   *
+   * 제안이 살아 있으면 또 올리지 않는다. 서버도 막지만 화면이 알고 있으면 버튼을 닫아
+   * 눌렀다가 "이미 제안했습니다"만 듣게 하지 않는다.
+   */
+  const handlePropose = async (tool: RandomTool) => {
+    if (!drawingFor) return;
+    const role = drawingFor;
+    const roleLabel = roles.find((r) => r.key === role)?.name ?? "역할";
+    await run(
+      "propose",
+      async () => {
+        const result = await proposeRoleDraw(role, tool.name);
+        router.refresh();
+        if (result === "already") return "이미 동의를 받고 있는 제안이 있습니다";
+        if (result === "settled") return `${roleLabel}은(는) 이미 정해졌거나 기다리는 중입니다`;
+        setPickedTool(null);
+        setDrawingFor(null);
+        return `${roleLabel} 추첨을 ${tool.name}으로 제안했습니다 — 팀이 동의해야 진행됩니다`;
+      },
+      "제안하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+    );
+  };
+
+  /** 팀원이 동의하거나 반대한다. 어느 쪽이든 시트를 닫고 목록으로 돌아간다. */
+  const handleConsentAnswer = (role: RoleKey, agree: boolean, roleLabel: string) =>
+    run(
+      "consent",
+      async () => {
+        const answer = await respondRoleDraw(role, agree);
+        router.refresh();
+        if (answer === "closed") return "이미 마감 났거나 제안이 없습니다";
+        setPickedTool(null);
+        setDrawingFor(null);
+        return agree ? "동의했습니다" : `${roleLabel} 추첨에 반대했습니다`;
+      },
+      agree ? "동의하지 못했습니다." : "반대하지 못했습니다.",
+    );
 
   /**
    * 당첨자는 서버가 고른다 — 화면에서 뽑아 보내면 누구나 자기를 적어 보낼 수 있다.

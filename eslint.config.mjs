@@ -20,6 +20,7 @@ const eslintConfig = defineConfig([
     // 에이전트 작업용 git worktree — 저장소 전체 사본이 들어 있어, 검사하면 그 안의
     // 생성물(src/generated)까지 잡혀 오류가 만 건 넘게 나온다.
     ".claude/**",
+    ".worktrees/**",
   ]),
   {
     rules: {

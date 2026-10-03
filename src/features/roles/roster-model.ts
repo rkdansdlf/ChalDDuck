@@ -150,7 +150,6 @@ export type RoleView =
 
 /** 진행 중인 동의 제안 — 있으면 그 역할의 추첨이 잠긴다. */
 export type DrawConsent = {
-  role: RoleKey;
   /** 제안에 고정된 도구. 추첨할 때 이 값이 쓰인다(클라이언트에서 받지 않는다). */
   tool: string;
   proposedBy: string;
