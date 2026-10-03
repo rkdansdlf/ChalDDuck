@@ -2,7 +2,6 @@
 
 import { randomInt } from "node:crypto";
 import { ICE_GAMES } from "@/data/catalog";
-import type { Prisma } from "@/generated/prisma";
 import {
   canEnterMafiaPhase,
   mayTargetAtNight,
@@ -24,6 +23,7 @@ import {
   resolveLiarVote,
   voteBlockedText,
 } from "@/server/ice/rules";
+import { applyMafiaDayVote, clearBridgeVotes } from "@/server/ice/day-vote";
 import { icePhase, iceViewFor } from "@/server/ice/view";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember, type SessionMember } from "@/server/session";
@@ -40,8 +40,6 @@ import { requireSessionMember, type SessionMember } from "@/server/session";
  */
 export type IceResult = { view: IceView | null; message?: string };
 
-/** 트랜잭션 클라이언트. 트랜잭션 밖에서도(`db`) 부를 수 있게 타입 하나만 둔다. */
-type Tx = Prisma.TransactionClient;
 
 async function done(me: SessionMember, message?: string): Promise<IceResult> {
   return { view: await iceViewFor(me), message };
@@ -85,26 +83,6 @@ async function exclusionsFor(teamId: string): Promise<{ recentWords: string[]; p
     recentWords: past.flatMap((r) => (r.word ? [r.word] : [])),
     previousLiarId: past[0]?.seats[0]?.memberId ?? null,
   };
-}
-
-/**
- * 다리 정리: 구버전이 보는 `IceSeat.voteForId` 를 비운다.
- *
- * ## 왜 새 코드에서도 이걸 하나
- *
- * 이 칸의 유일한 목적은 **구버전 인스턴스가 아직 트래픽을 받는 동안** 그 판을 마감할 수 있게 하는
- * 것이다(2026-09-30). 그런데 구버전도 이 칸을 보고 집계하므로, 새 코드가 표를 지울 때 이 칸을
- * 남겨 두면 **옛 코드로 마감했을 때 지난 표까지 세어** 다른 사람이 빠진다. 옛 코드가 비우던 자리와
- * 같은 자리에서 같은 조건으로 비운다.
- *
- * `targetId` 를 주면 그 사람에게 던진 표도 함께 지운다 — 그 사람은 이미 빠졌으므로.
- */
-async function clearBridgeVotes(tx: Tx, roundId: string, targetId?: string): Promise<void> {
-  if (targetId === undefined) {
-    await tx.iceSeat.updateMany({ where: { roundId }, data: { voteForId: null } });
-    return;
-  }
-  await tx.iceSeat.updateMany({ where: { roundId, OR: [{ memberId: targetId }, { voteForId: targetId }] }, data: { voteForId: null } });
 }
 
 /**
@@ -392,68 +370,19 @@ export async function closeIceVote(): Promise<IceResult> {
       return undefined;
     }
 
-    const aliveIds = new Set(alive.map((s) => s.memberId));
-    const eligible =
-      fresh.eligibleTargets.length > 0 ? fresh.eligibleTargets.filter((id) => aliveIds.has(id)) : [...aliveIds];
-    const vote = resolveDayVote({ ballots, eligible, runoffs: fresh.runoffCount });
-
-    if (vote.kind === "noVote") {
-      // 승부가 나지 않았다. **토론으로 되돌린다** — 같은 표로 재투표하게 두지 않는다.
-      await clearBridgeVotes(tx, fresh.id);
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { phase: "discussion", eligibleTargets: [], phaseStartedAt: new Date() },
-      });
-      return "아직 아무도 투표하지 않았습니다. 이야기를 나눈 뒤 다시 투표해 주세요.";
-    }
-
-    if (vote.kind === "runoff") {
-      // **동점자끼리만** 다시 투표한다. 결선은 새 회차다 — 같은 회차로 두면 결선 앞의 표가
-      // 결선 표에 덮어써져 "누가 누구에게 표를 던졌는가" 가 그 낮의 표만 남는다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { voteSeq: fresh.voteSeq + 1, runoffCount: fresh.runoffCount + 1, eligibleTargets: vote.candidates },
-      });
-      return `동점입니다. ${vote.candidates.length}명끼리 다시 투표합니다.`;
-    }
-
-    if (vote.kind === "stuck") {
-      // 결선을 해도 동점이다. 아무도 빠지지 않고 **전체 후보로 돌아간다** — 여기서 또 좁히면
-      // 무한 반복이다.
-      await clearBridgeVotes(tx, fresh.id);
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: { phase: "discussion", eligibleTargets: [], phaseStartedAt: new Date() },
-      });
-      return "결선을 해도 동점입니다. 아무도 탈락하지 않습니다. 이야기를 더 나눈 뒤 다시 투표해 주세요.";
-    }
-
-    await tx.iceSeat.update({
-      where: { roundId_memberId: { roundId: fresh.id, memberId: vote.targetId } },
-      data: { outAt: new Date(), outHow: "vote", outDay: fresh.day },
+    // 마피아: 표를 모으고(구버전이 던진 표까지 흡수해) 결과를 적용한다. 적용 로직이 액션 밖에 있어
+    // 실제 DB 로 부를 수 있다(`server/ice/day-vote.ts` — 정규식 검사가 이 분기의 누락을 놓쳤었다).
+    return applyMafiaDayVote(tx, {
+      roundId: fresh.id,
+      game: fresh.game,
+      voteSeq: fresh.voteSeq,
+      runoffCount: fresh.runoffCount,
+      eligibleTargets: fresh.eligibleTargets,
+      day: fresh.day,
+      alive: alive.map((s) => ({ memberId: s.memberId, role: s.role as IceRole })),
+      ballots,
+      legacy: fresh.seats.map((s) => ({ memberId: s.memberId, voteForId: s.voteForId })),
     });
-    const code = mafiaOutcome(alive.filter((s) => s.memberId !== vote.targetId).map((s) => s.role as IceRole));
-    if (code) {
-      // 끝난 판은 마지막 투표를 그대로 남겨 결과 화면에 보여 준다.
-      await tx.iceRound.update({
-        where: { id: fresh.id },
-        data: {
-          phase: "revealed",
-          resultCode: code,
-          winner: code === ICE_RESULT_CODES.mafiaWin ? "mafia" : "citizen",
-          eligibleTargets: [],
-          phaseStartedAt: new Date(),
-        },
-      });
-      return undefined;
-    }
-    await clearBridgeVotes(tx, fresh.id);
-    // 끝나지 않았으면 **밤이 곧바로 온다** — 밤 번호가 하나 올라가고, 후보는 처음부터 다시 넓어진다.
-    await tx.iceRound.update({
-      where: { id: fresh.id },
-      data: { phase: "night", day: fresh.day + 1, eligibleTargets: [], phaseStartedAt: new Date() },
-    });
-    return undefined;
   });
 
   return done(me, note);

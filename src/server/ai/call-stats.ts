@@ -139,17 +139,70 @@ export async function sweepAiCalls(): Promise<number> {
 }
 
 
+export type AiAnomalies = {
+  hasFailureSpike: boolean;
+  hasRetrySpike: boolean;
+  hasHighLatency: boolean;
+  warnings: string[];
+};
+
+/**
+ * AI 호출 상태의 이상 징후를 판정하는 순수 함수.
+ * UI와 cron 작업이 동일한 단일 기준을 공유한다.
+ */
+export function detectAiAnomalies(input: {
+  totalCalls: number;
+  failureRate: number | null;
+  retryRate: number | null;
+  slowRate: number | null;
+}): AiAnomalies {
+  const { totalCalls, failureRate, retryRate, slowRate } = input;
+  if (totalCalls < 5) {
+    return {
+      hasFailureSpike: false,
+      hasRetrySpike: false,
+      hasHighLatency: false,
+      warnings: [],
+    };
+  }
+
+  const hasFailureSpike = (failureRate ?? 0) >= 0.2;
+  const hasRetrySpike = (retryRate ?? 0) >= 0.3;
+  const hasHighLatency = (slowRate ?? 0) >= 0.3;
+
+  const warnings: string[] = [];
+  if (hasFailureSpike && failureRate !== null) {
+    warnings.push(`최근 AI 호출 실패율이 ${(failureRate * 100).toFixed(0)}%로 높습니다.`);
+  }
+  if (hasRetrySpike && retryRate !== null) {
+    warnings.push(`재시도(폴백) 비율이 ${(retryRate * 100).toFixed(0)}%로 높습니다.`);
+  }
+  if (hasHighLatency) {
+    warnings.push("지연 응답 비율이 기준치보다 높습니다.");
+  }
+
+  return {
+    hasFailureSpike,
+    hasRetrySpike,
+    hasHighLatency,
+    warnings,
+  };
+}
+
 export type TeamAiWeeklySummary = {
   days: number;
+  hasData: boolean;
   totalCalls: number;
-  successRate: number;
-  refusalRate: number;
-  failureRate: number;
+  successRate: number | null;
+  refusalRate: number | null;
+  failureRate: number | null;
   avgLatencyMs: number | null;
-  slowRate: number;
-  fallbackCount: number;
-  fallbackRate: number;
-  /** 이상 상태 경고 메시지 목록 (성공률 저조, 폴백 급증, 지연 심화 등) */
+  slowRate: number | null;
+  /** 재시도(폴백)가 일어난 호출 수 */
+  retryCount: number;
+  /** 재시도 비율 (호출이 없으면 null) */
+  retryRate: number | null;
+  /** 이상 상태 경고 메시지 목록 */
   warnings: string[];
 };
 
@@ -173,14 +226,15 @@ export async function teamAiWeeklySummary(teamId: string, days = 7): Promise<Tea
   if (total === 0) {
     return {
       days,
+      hasData: false,
       totalCalls: 0,
-      successRate: 1,
-      refusalRate: 0,
-      failureRate: 0,
+      successRate: null,
+      refusalRate: null,
+      failureRate: null,
       avgLatencyMs: null,
-      slowRate: 0,
-      fallbackCount: 0,
-      fallbackRate: 0,
+      slowRate: null,
+      retryCount: 0,
+      retryRate: null,
       warnings: [],
     };
   }
@@ -207,32 +261,27 @@ export async function teamAiWeeklySummary(teamId: string, days = 7): Promise<Tea
   const refusalRate = refused / total;
   const failureRate = failed / total;
   const slowRate = slow / total;
-  const fallbackRate = retried / total;
+  const retryRate = retried / total;
   const avgLatencyMs = Math.round(latencyTotal / total);
 
-  const warnings: string[] = [];
-  if (total >= 5) {
-    if (failureRate >= 0.2) {
-      warnings.push(`최근 AI 호출 실패율이 ${(failureRate * 100).toFixed(0)}%로 높습니다.`);
-    }
-    if (fallbackRate >= 0.3) {
-      warnings.push(`폴백(재시도) 비율이 ${(fallbackRate * 100).toFixed(0)}%로 급증했습니다.`);
-    }
-    if (slowRate >= 0.3) {
-      warnings.push("AI 응답 지연 빈도가 평소보다 높습니다.");
-    }
-  }
+  const { warnings } = detectAiAnomalies({
+    totalCalls: total,
+    failureRate,
+    retryRate,
+    slowRate,
+  });
 
   return {
     days,
+    hasData: true,
     totalCalls: total,
     successRate,
     refusalRate,
     failureRate,
     avgLatencyMs,
     slowRate,
-    fallbackCount: retried,
-    fallbackRate,
+    retryCount: retried,
+    retryRate,
     warnings,
   };
 }

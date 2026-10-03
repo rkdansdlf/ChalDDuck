@@ -36,6 +36,7 @@ import type {
   IceGame,
   IceView,
   Member,
+  MeetingNote,
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
@@ -659,7 +660,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
   const proposal = await db.meetingProposal.findFirst({
     where: { teamId },
     orderBy: { createdAt: "desc" },
-    include: { slot: true, responses: true },
+    include: { slot: true, responses: true, note: { select: { id: true } } },
   });
 
   if (!proposal) {
@@ -672,6 +673,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
       against: 0,
       respondBy: null,
       myResponse: null,
+      hasNote: false,
     };
   }
 
@@ -681,6 +683,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
   const mine = proposal.responses.find((r) => r.memberId === session?.id);
 
   return {
+    id: proposal.id,
     // 저장된 값이 아니라 **계산한** 상태를 보여 준다 — 예약 작업이 표를 고치기 전에
     // 화면을 열어도 지나간 마감이 "대기 중"으로 보이지 않게.
     stage: effectiveStage({
@@ -707,6 +710,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     location: proposal.location ?? null,
     agenda: proposal.agenda ?? null,
     durationMinutes: proposal.durationMinutes ?? 60,
+    hasNote: Boolean(proposal.note),
   };
 }
 
@@ -723,7 +727,7 @@ export async function getTeamCalendarEvents(teamId: string): Promise<CalendarEve
   const [proposals, tasks, boxes] = await Promise.all([
     db.meetingProposal.findMany({
       where: { teamId },
-      include: { slot: true, responses: true },
+      include: { slot: true, responses: true, note: { select: { id: true } } },
       orderBy: { createdAt: "desc" },
     }),
     db.task.findMany({
@@ -761,6 +765,8 @@ export async function getTeamCalendarEvents(teamId: string): Promise<CalendarEve
         ddayText,
         location: p.location ?? null,
         agenda: p.agenda ?? null,
+        meetingId: p.id,
+        hasNote: Boolean(p.note),
         href: "/schedule/slots",
       });
     }
@@ -1697,3 +1703,82 @@ export async function getSentenceSample(mode: string): Promise<string> {
 export async function getSentenceSampleOutput(mode: string): Promise<string> {
   return SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
 }
+
+/* ── 회의록 아카이브 ─────────────────────────────────────────── */
+
+export async function getMeetingProposalById(
+  teamId: string,
+  proposalId: string,
+): Promise<{
+  id: string;
+  date: string | null;
+  time: string | null;
+  location: string | null;
+  agenda: string | null;
+  durationMinutes: number;
+} | null> {
+  const proposal = await db.meetingProposal.findFirst({
+    where: { id: proposalId, teamId },
+    include: { slot: true },
+  });
+  if (!proposal) return null;
+  return {
+    id: proposal.id,
+    date: proposal.date,
+    time: proposal.slot?.time ?? null,
+    location: proposal.location ?? null,
+    agenda: proposal.agenda ?? null,
+    durationMinutes: proposal.durationMinutes ?? 60,
+  };
+}
+
+export async function getMeetingNote(noteId: string): Promise<MeetingNote | null> {
+  const session = await getSessionMember();
+  if (!session) return null;
+
+  const note = await db.meetingNote.findFirst({
+    where: { id: noteId, teamId: session.teamId },
+    include: { createdBy: { select: { name: true } } },
+  });
+  if (!note) return null;
+
+  return {
+    id: note.id,
+    teamId: note.teamId,
+    meetingId: note.meetingId,
+    title: note.title,
+    rawText: note.rawText,
+    summary: note.summary,
+    taskCount: note.taskCount,
+    createdById: note.createdById,
+    createdByName: note.createdBy?.name ?? null,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+  };
+}
+
+export async function getMeetingNoteByProposal(meetingId: string): Promise<MeetingNote | null> {
+  const session = await getSessionMember();
+  if (!session) return null;
+
+  const note = await db.meetingNote.findFirst({
+    where: { meetingId, teamId: session.teamId },
+    include: { createdBy: { select: { name: true } } },
+  });
+  if (!note) return null;
+
+  return {
+    id: note.id,
+    teamId: note.teamId,
+    meetingId: note.meetingId,
+    title: note.title,
+    rawText: note.rawText,
+    summary: note.summary,
+    taskCount: note.taskCount,
+    createdById: note.createdById,
+    createdByName: note.createdBy?.name ?? null,
+    createdAt: note.createdAt.toISOString(),
+    updatedAt: note.updatedAt.toISOString(),
+  };
+}
+

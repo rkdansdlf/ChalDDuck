@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { sweepAttempts } from "@/server/auth/attempts";
 import { describePurification, purificationStats } from "@/server/ai/purify-stats";
-import { aiCallStats, describeAiCalls, sweepAiCalls } from "@/server/ai/call-stats";
+import { aiCallStats, describeAiCalls, detectAiAnomalies, sweepAiCalls } from "@/server/ai/call-stats";
 import { db } from "@/server/db";
 import { sweepAiUsage } from "@/server/ai/limit";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
@@ -91,15 +91,14 @@ export async function GET(request: Request) {
     if (callStats.calls > 0) {
       const line = describeAiCalls(callStats);
       console.log(`[${team.name}] ${line}`);
-      if (callStats.calls >= 5) {
-        const failRatio = callStats.outcomes.failed / callStats.calls;
-        const fallbackRatio = callStats.retried / callStats.calls;
-        if (failRatio >= 0.2) {
-          console.warn(`[${team.name}] ⚠️ AI 호출 실패율 경고: ${(failRatio * 100).toFixed(0)}%`);
-        }
-        if (fallbackRatio >= 0.3) {
-          console.warn(`[${team.name}] ⚠️ AI 호출 폴백 급증 경고: ${(fallbackRatio * 100).toFixed(0)}%`);
-        }
+      const anomalies = detectAiAnomalies({
+        totalCalls: callStats.calls,
+        failureRate: callStats.outcomes.failed / callStats.calls,
+        retryRate: callStats.retried / callStats.calls,
+        slowRate: callStats.slow,
+      });
+      for (const warning of anomalies.warnings) {
+        console.warn(`[${team.name}] ⚠️ ${warning}`);
       }
       calls.push({ team: team.name, ...callStats });
     }

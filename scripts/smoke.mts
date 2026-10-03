@@ -87,7 +87,7 @@ import {
 } from "../src/lib/when.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
 import { consumeAiQuota, refundAiQuota } from "../src/server/ai/limit.js";
-import { fallbackModelFor, isTransient, modelFor } from "../src/server/ai/model.js";
+import { fallbackModelFor, isTransient, modelFor, withFallback } from "../src/server/ai/model.js";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { flush, newLineSplitter, pushBytes } from "../src/lib/ai-stream-lines.js";
@@ -99,7 +99,7 @@ import {
   pokeTargets,
   suggestTools,
 } from "../src/features/home/briefing.js";
-import { aiCallStats, describeAiCalls, type AiCallStats } from "../src/server/ai/call-stats.js";
+import { aiCallStats, describeAiCalls, detectAiAnomalies, type AiCallStats } from "../src/server/ai/call-stats.js";
 import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
@@ -163,6 +163,7 @@ import {
   resolveLiarVote,
   voteBlockedText,
 } from "../src/server/ice/rules.js";
+import { applyMafiaDayVote } from "../src/server/ice/day-vote.js";
 import { icePhase, iceViewFor } from "../src/server/ice/view.js";
 import {
   contribByLabel,
@@ -2800,6 +2801,15 @@ console.log("\nAI 한도: 실패하면 되돌아온다");
   check("성공한 호출은 한도를 그대로 둔다", run.indexOf("return { ok: true") < run.indexOf("refundAiQuota("), true);
   // 키가 없으면 애초에 깎지 않았으므로, 되돌릴 것도 없다.
   check("키가 없으면 한도를 깎지 않는다", /if \(live\) \{[\s\S]*?consumeAiQuota/.test(run), true);
+
+  // 재생성(redo) vs 세션 복원(restore) 한도 계약 검증
+  const draftHook = readCode("../src/features/tools/use-ai-draft.ts");
+  // redo는 force: true로 execute를 실행하여 run() (서버 호출 -> 한도 1회 차감)을 수행한다.
+  check("redo는 서버 호출 함수를 강제 실행한다", /redo = useCallback\(\(\) => execute\(true\)/.test(draftHook), true);
+  // restore는 오직 로컬 history 상태만 조작하고 execute나 run을 절대 호출하지 않는다 (한도 0회 차감)
+  const restoreFn = draftHook.slice(draftHook.indexOf("restore = useCallback("));
+  check("restore는 run() 또는 execute()를 부르지 않는다", !restoreFn.includes("run(") && !restoreFn.includes("execute("), true);
+  check("restore는 로컬 state만 갱신한다", restoreFn.includes("setResult(") && restoreFn.includes("setHistory("), true);
 }
 
 /* ── AI 모델: 도구마다 다른 모델을 쓴다 ──────────────────────── */
@@ -2889,6 +2899,46 @@ console.log("\nAI 재시도 정책");
   check("메시지에 429 가 있어도 그렇다", isTransient(new Error("429 Too Many Requests")), false);
   check("키가 없으면 다시 시도하지 않는다", isTransient(err(401, "AuthenticationError", "invalid api key")), false);
   check("잘못된 요청도 다시 시도하지 않는다", isTransient(err(400, "BadRequestError")), false);
+
+  // withFallback 계약 테스트 (1차 일시실패 → 정확히 1회 폴백 모델 호출 → 성공 또는 최종 실패)
+  {
+    const calls: string[] = [];
+    const res = await withFallback("clerk", "model-a", "model-b", async (m) => {
+      calls.push(m);
+      if (m === "model-a") throw new Error("빈 응답");
+      return "성공";
+    });
+    check("1차 일시 실패 시 폴백 모델로 1회 재시도하여 성공", res, "성공");
+    check("호출 순서는 [primary, fallback]", calls, ["model-a", "model-b"]);
+  }
+  {
+    const calls: string[] = [];
+    let caught: Error | null = null;
+    try {
+      await withFallback("clerk", "model-a", "model-b", async (m) => {
+        calls.push(m);
+        throw new Error("빈 응답");
+      });
+    } catch (e) {
+      caught = e as Error;
+    }
+    check("2차 폴백까지 실패하면 최종 예외 발생", caught?.message, "빈 응답");
+    check("더 이상 추가 재시도하지 않고 정확히 2회에서 멈춤", calls, ["model-a", "model-b"]);
+  }
+  {
+    const calls: string[] = [];
+    let caught: Error | null = null;
+    try {
+      await withFallback("clerk", "model-a", "model-b", async (m) => {
+        calls.push(m);
+        throw err(429, "RateLimitError", "429 Too Many Requests");
+      });
+    } catch (e) {
+      caught = e as Error;
+    }
+    check("429 같은 비일시적 오류는 폴백 없이 즉시 중단", calls, ["model-a"]);
+    check("429 예외 유지", caught?.message, "429 Too Many Requests");
+  }
 }
 
 /* ── AI 초안: 모델이 뭘 주든 화면에 오게 정리한다 ────────────── */
@@ -2929,14 +2979,28 @@ console.log("\nAI 초안 정리 (모델을 부르지 않고 확인한다)");
   check("코드펜스 안의 JSON", extractJsonObject('설명입니다\n```json\n{"a":1}\n```\n끝'), { a: 1 });
   check("앞뒤 설명이 붙은 JSON", extractJsonObject('결과는 {"a":"x"} 입니다.'), { a: "x" });
   check("문자열 안의 중괄호는 세지 않는다", extractJsonObject('앞 {"a":"}{"} 뒤'), { a: "}{" });
-  check("객체가 아니면 받지 않는다", extractJsonObject("[1,2]"), null);
-  check("JSON 이 없으면 null", extractJsonObject("그냥 글"), null);
+  check("배열 타입은 객체가 아니므로 거부", extractJsonObject("[1,2,3]"), null);
+  check("문자열 타입 거부", extractJsonObject('"hello"'), null);
+  check("숫자 타입 거부", extractJsonObject("12345"), null);
+  check("불리언 타입 거부", extractJsonObject("true"), null);
+  check("JSON 이 없으면 null", extractJsonObject("그냥 일반 텍스트 설명"), null);
   check("빈 입력은 null", extractJsonObject(null), null);
+  check("공백만 있는 입력은 null", extractJsonObject("   \n\t  "), null);
   check("깨진 JSON 은 null", extractJsonObject('{"a":'), null);
+  check("닫히지 않은 문자열", extractJsonObject('{"a":"broken}'), null);
+
+  // 필수 키 및 스키마 검사
   check("필수 키가 다 있으면 빈 목록", missingRequired({ required: ["a", "b"] }, { a: 1, b: 2 }), []);
   check("빠진 필수 키를 알려 준다", missingRequired({ required: ["a", "b"] }, { a: 1 }), ["b"]);
   check("required 가 없으면 빈 목록", missingRequired({}, {}), []);
+  check("필수 키가 배열이 아니어도 에러 안 남", missingRequired({ required: "not-array" as never }, { a: 1 }), []);
   check("깨진 인자는 재시도 대상이다", isTransient(new SyntaxError("Unexpected token")), true);
+
+  // 이상 징후 판정 단일 규칙 테스트
+  check("호출 5건 미만이면 이상 징후 없음", detectAiAnomalies({ totalCalls: 4, failureRate: 0.5, retryRate: 0.5, slowRate: 0.5 }).warnings.length, 0);
+  check("실패율 20% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0.25, retryRate: 0, slowRate: 0 }).hasFailureSpike, true);
+  check("재시도 30% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0, retryRate: 0.35, slowRate: 0 }).hasRetrySpike, true);
+  check("지연 30% 이상 감지", detectAiAnomalies({ totalCalls: 10, failureRate: 0, retryRate: 0, slowRate: 0.4 }).hasHighLatency, true);
 
   // 발표 지원 — **질문만** 담는다. 답이 섞이면 "발표자가 모르는 답"이 초안이 된다.
   const present = shapePresentDraft({ refined: "  다듬은 대본  ", questions: ["  왜?  ", "   ", null] });
@@ -4331,6 +4395,246 @@ console.log("\n마피아 게임: 낮 투표와 결선");
   truthy("다리 마이그레이션이 표를 되돌린다", /FROM "IceBallot"/.test(bridge));
   // "언제 지운다" 를 못 박아 두지 않으면 다리가 영구화된다 — 표의 자리가 두 벌이 된다.
   truthy("다리가 언제 지워지는지 Says 한다", /다음 배포에서 이 컬럼을 (다시 )?지우/.test(bridge));
+}
+
+console.log("\n마피아 게임: 결선이 다리를 비우는가 (실제 DB 위에서)");
+{
+  /**
+   * 짚어진 결함 2: **결선을 만들었을 때 다리 표를 비우지 않았다.**
+   *
+   * 예전 검사는 `clearBridgeVotes(db, round.id)` 가 파일 어딘가에 있는지만 봤다 — 그래서
+   * `startIceVote()` 한 곳에 있어도 통과했고, 결선 분기에서 빠진 채 남았다. 그 결과 다리 칸에는
+   * 직전 일반투표의 표가 남고, 구버전이 마감하면 **지난 표를 결선 표로 세어** 결선 밖의 사람이
+   * 탈락했다.
+   *
+   * 여기서는 **세션도 액션도 아닌** 적용 로직(`server/ice/day-vote.ts`)을 트랜잭션째로 부른다.
+   * 정규식이 아니라 DB 의 상태로 확인한다.
+   */
+  const team = await db.team.create({
+    data: { name: "결선 다리 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호", "최수빈"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+
+    const mk = (phase: string, seq: number) =>
+      db.iceRound.create({
+        data: {
+          teamId: team.id,
+          activeKey: team.id,
+          game: "mafia",
+          phase,
+          day: 1,
+          voteSeq: seq,
+          hostId: seats[0].id,
+          seats: { create: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? "mafia" : "citizen" })) },
+        },
+      });
+
+    const read = async () => {
+      const r = await db.iceRound.findFirstOrThrow({ where: { activeKey: team.id } });
+      const rows = await db.iceSeat.findMany({ where: { roundId: r.id }, select: { voteForId: true } });
+      const ballots = await db.iceBallot.findMany({ where: { roundId: r.id, seq: r.voteSeq } });
+      return { round: r, legacy: rows.map((x) => x.voteForId).filter((x) => x !== null).length, ballots: ballots.length };
+    };
+
+    // ㊿ 동점인 일반투표: 이서연 2표, 박지호 2표 → 결선이 된다.
+    const round = await mk("voting", 1);
+    await db.iceBallot.createMany({
+      data: [
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[0].id, targetId: seats[1].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[2].id, targetId: seats[1].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[1].id, targetId: seats[2].id, runoff: false },
+        { roundId: round.id, seq: 1, day: 1, memberId: seats[3].id, targetId: seats[2].id, runoff: false },
+      ],
+    });
+    // 다리 칸에도 같은 표가 남아 있다(신버전이 같이 쓴다).
+    await db.iceSeat.updateMany({ where: { roundId: round.id }, data: { voteForId: null } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[2].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[2].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } }, data: { voteForId: seats[2].id } });
+    check("결선을 만들기 전 다리에도 표가 있다", (await read()).legacy, 4);
+
+    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    const message = await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: ballots0,
+        legacy: rows0,
+      }),
+    );
+
+    // ① 회차가 올랐다 — 결선은 새 투표다.
+    const after = await read();
+    check("결선은 회차를 열었다", after.round.voteSeq, 2);
+    check("결선 후보는 동점자 둘이다", after.round.eligibleTargets, [seats[1].id, seats[2].id]);
+    check("결선 횟수를 셌다", after.round.runoffCount, 1);
+    // ② ⚠️ 다리가 **비워졌다** — 안 비우면 구버전이 마감할 때 지난 표를 결선 표로 센다.
+    check("다리 표가 전부 지워졌다", after.legacy, 0);
+    check("아직 아무도 탈락하지 않았다", (await db.iceSeat.findMany({ where: { roundId: round.id, outAt: null } })).length, 4);
+    check("사회자에게 동점임을 말한다", message?.includes("동점"), true);
+    // ③ 신 회차에는 표가 없다 — 지난 표와 섞이지 않는다.
+    check("새 회차에는 표가 없다", after.ballots, 0);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+
+    // ㋑ 결선이 아니라 **처형**이면 다리도 비워진다(옛 코드가 비우던 자리와 같은 조건).
+    const second = await mk("voting", 1);
+    await db.iceBallot.createMany({
+      data: [
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[0].id, targetId: seats[1].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[1].id, targetId: seats[2].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[2].id, targetId: seats[3].id, runoff: false },
+        { roundId: second.id, seq: 1, day: 1, memberId: seats[3].id, targetId: seats[2].id, runoff: false },
+      ],
+    });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: second.id, memberId: seats[3].id } }, data: { voteForId: seats[2].id } });
+
+    const rows1 = (await db.iceSeat.findMany({ where: { roundId: second.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots1 = await db.iceBallot.findMany({ where: { roundId: second.id, seq: 1 } });
+    await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: second.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        // ⚠️ 마피아가 0명이면 **판이 끝난다**(시민 승리) — 밤으로 가는 것을 보려면 마피아가 있어야 한다.
+        alive: seats.map((s, i) => ({ memberId: s.id, role: i === 0 ? ("mafia" as const) : ("citizen" as const) })),
+        ballots: ballots1,
+        legacy: rows1,
+      }),
+    );
+    const afterElim = await read();
+    check("처형된 사람은 빠졌다", (await db.iceSeat.findMany({ where: { roundId: second.id, outAt: null } })).length, 3);
+    check("처형 뒤에도 다리는 비워진다", afterElim.legacy, 0);
+    // 판이 끝나지 않았으면 밤이 온다 — 밤 번호가 하나 올라간다.
+    check("처형 뒤 밤이 왔다", [afterElim.round.phase, afterElim.round.day], ["night", 2]);
+
+    await db.iceRound.delete({ where: { id: second.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
+}
+
+console.log("\n마피아 게임: 구버전이 던진 표를 신버전이 센다");
+{
+  /**
+   * 짚어진 결함 3: 다리는 **신버전 → 구버전** 방향으로만 통한다.
+   *
+   * ```
+   * 구버전 투표 → voteForId 에만 있음 → 신버전은 IceBallot 만 읽음 → 그 표가 사라진 것처럼 보인다
+   * ```
+   *
+   * 배포가 끝나기 전 1~2분 동안 실제로 이 일이 일어난다. 그래서 마감할 때 **다리 칸에 홀로 있는 표를
+   * 표 기록으로 접는다.** 여기서는 그것이 실제 DB 에서 **정확히 1표**로 계산되는지 본다.
+   */
+  const team = await db.team.create({
+    data: { name: "수렴 확인용", course: "검증", code: `CD-${Math.random().toString(36).slice(2, 8).toUpperCase()}` },
+  });
+  try {
+    const names = ["김민준", "이서연", "박지호"];
+    const seats: { id: string }[] = [];
+    for (const name of names) seats.push(await db.member.create({ data: { teamId: team.id, name } }));
+    const round = await db.iceRound.create({
+      data: {
+        teamId: team.id,
+        activeKey: team.id,
+        game: "mafia",
+        phase: "voting",
+        day: 1,
+        voteSeq: 1,
+        hostId: seats[0].id,
+        seats: { create: seats.map((s) => ({ memberId: s.id, role: "citizen" })) },
+      },
+    });
+
+    // 구버전 인스턴스만 표를 던진 상태: 다리 칸에만 있다.
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[1].id } });
+    check("신버전 기록에는 아직 표가 없다", await db.iceBallot.count({ where: { roundId: round.id } }), 0);
+
+    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    const rows2 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const message = await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 1,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: [],
+        legacy: rows2,
+      }),
+    );
+
+    // ㋒ 흡수된 표는 **기록에도 남는다** — 결과 화면의 "누가 누구에게 표를 던졌는지" 때문이다.
+    const stored = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
+    check("구버전 표가 표 기록으로 접혔다", stored.length, 2);
+    check("누가 누구에게 던졌는지 남는다", stored.map((b) => `${b.memberId === seats[0].id ? "김민준" : "이서연"}→${b.targetId === seats[1].id ? "이서연" : "박지호"}`), [
+      "김민준→이서연",
+      "이서연→이서연",
+    ]);
+    // 이서연이 2표를 받아 처형된다 — 세지 않았다면 동점/무표가 되어 아무도 빠지지 않는다.
+    const out = await db.iceSeat.findMany({ where: { roundId: round.id, outAt: { not: null } } });
+    check("구버전이 던진 표로 이서연이 빠졌다", out.map((s) => s.memberId), [seats[1].id]);
+    check("박지호는 빠지지 않았다", (await db.iceSeat.findMany({ where: { roundId: round.id, memberId: seats[2].id, outAt: null } })).length, 1);
+    check("처형이었다면 말을 남기지 않는다", message, undefined);
+
+    // ㋓ **표 기록이 이긴다** — 양쪽에 있으면 더 최신인 기록을 덮어쓰지 않는다.
+    await db.iceRound.update({ where: { id: round.id }, data: { phase: "voting", voteSeq: 2 } });
+    await db.iceBallot.create({ data: { roundId: round.id, seq: 2, day: 1, memberId: seats[0].id, targetId: seats[2].id, runoff: false } });
+    await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[0].id } }, data: { voteForId: seats[1].id } });
+    const rows3 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
+      memberId: s.memberId,
+      voteForId: s.voteForId,
+    }));
+    const ballots3 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 2 } });
+    await db.$transaction((tx) =>
+      applyMafiaDayVote(tx, {
+        roundId: round.id,
+        game: "mafia",
+        voteSeq: 2,
+        runoffCount: 0,
+        eligibleTargets: [],
+        day: 1,
+        alive: seats.map((s) => ({ memberId: s.id, role: "citizen" as const })),
+        ballots: ballots3,
+        legacy: rows3,
+      }),
+    );
+    check("표 기록은 다리에 덮이지 않는다", await db.iceBallot.count({ where: { roundId: round.id, seq: 2 } }), 1);
+    check("박지호가 빠졌다(기록이 이긴 결과)", (await db.iceSeat.findMany({ where: { roundId: round.id, memberId: seats[2].id, outAt: { not: null } } })).length, 1);
+
+    await db.iceRound.delete({ where: { id: round.id } });
+  } finally {
+    await db.team.delete({ where: { id: team.id } }).catch(() => {});
+  }
 }
 
 console.log("\n마피아 게임: 결과 타임라인");

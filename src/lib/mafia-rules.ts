@@ -385,6 +385,40 @@ export function mafiaTimeline(input: {
 }
 
 /**
+ * **구버전이 던진 표를 표 기록에 수렴시킨다.**
+ *
+ * ## 왜 이게 필요한가
+ *
+ * 다리는 한 방향으로만 통합니다. 신버전은 표와 다리 칸에 **둘 다** 쓰지만, 배포가 끝나기 전의
+ * 구버전 인스턴스는 다리 칸에만 씁니다. 그래서 그 1~2분 동안
+ *
+ * ```
+ * 구버전 투표 → voteForId 에만 있음 → 신버전은 IceBallot 만 읽음 → 그 표가 사라진 것처럼 보인다
+ * ```
+ *
+ * 가 된다. 사용자는 실제로 눌렀는데 아무도 세지 않는다. 그래서 마감할 때 **다리 칸에 홀로 있는 표를
+ * 표 기록으로 접는다.** 읽기 전용으로 다리에 의존하지 않고, 쓰는 쪽만 다를 뿐이게 만드는 것이다.
+ *
+ * ## 겹치면 표 기록이 이긴다
+ *
+ * 같은 사람이 양쪽에서 투표했다면 **표 기록(신버전)이 최신**이다 — 다리 칸은 그보다 먼저 쓰인 값이라
+ * 오래된 값이다. 그래서 표 기록을 절대 덮어쓰지 않는다.
+ *
+ * 이 함수는 **판정을 하지 않는다.** 대상이 고를 수 있는 사람인지는 `resolveDayVote` 가 후보 목록으로
+ * 거른다. 여기서는 "이 표가 기록에 없다" 만 본다.
+ */
+export function convergeLegacyVotes(
+  ballots: { memberId: string; targetId: string }[],
+  legacy: { memberId: string; voteForId: string | null }[],
+): { merged: { memberId: string; targetId: string }[]; added: { memberId: string; targetId: string }[] } {
+  const known = new Set(ballots.map((b) => b.memberId));
+  const added = legacy
+    .filter((l) => l.voteForId !== null && !known.has(l.memberId))
+    .map((l) => ({ memberId: l.memberId, targetId: l.voteForId as string }));
+  return { merged: [...ballots, ...added], added };
+}
+
+/**
  * 살아 있는 자리로 **누가 이겼는지.** 아직 끝나지 않았으면 null.
  *
  * 승패 **코드**(`ICE_RESULT_CODES`)는 [`server/ice/rules.ts`](@/server/ice/rules) 가 만든다 —

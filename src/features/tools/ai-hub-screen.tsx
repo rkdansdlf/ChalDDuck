@@ -34,10 +34,19 @@ export function AiHubScreen({
 
   const [exporting, setExporting] = useState(false);
   const [summary, setSummary] = useState<TeamAiWeeklySummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!aiReady) return;
-    getTeamAiSummary().then(setSummary).catch(() => {});
+    getTeamAiSummary()
+      .then((data) => {
+        setSummary(data);
+        setSummaryError(null);
+      })
+      .catch((cause: unknown) => {
+        console.error("[ai-hub] getTeamAiSummary failed:", cause);
+        setSummaryError("최근 AI 도구 상태 지표를 불러오지 못했습니다.");
+      });
   }, [aiReady]);
 
   const downloadUsage = async () => {
@@ -65,6 +74,11 @@ export function AiHubScreen({
         {summary && summary.warnings.length > 0 ? (
           <Note tone="warn" icon="circle-alert" title="AI 도구 응답 안내" className="mb-3">
             {summary.warnings.join(" ")}
+          </Note>
+        ) : null}
+        {summaryError ? (
+          <Note tone="warn" icon="circle-alert" title="지표 조회 불가" className="mb-3">
+            {summaryError}
           </Note>
         ) : null}
         <div className="mb-4 flex flex-col gap-[9px]">

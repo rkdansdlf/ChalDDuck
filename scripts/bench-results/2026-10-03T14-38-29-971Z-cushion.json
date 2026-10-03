@@ -1,0 +1,29 @@
+{
+  "tool": "cushion",
+  "at": "2026-10-03T14:38:29.971Z",
+  "repeat": 2,
+  "corpus": 6,
+  "models": [
+    {
+      "model": "inclusionai/ling-3.0-flash-sante:free",
+      "passesPerRun": [
+        5,
+        4
+      ],
+      "total": 6,
+      "rate": 0.75,
+      "worst": 0.6666666666666666,
+      "avgSeconds": 2.565,
+      "byKind": {
+        "normal": {
+          "passed": 9,
+          "total": 12
+        }
+      },
+      "failures": {
+        "due-1": 2,
+        "soft-2": 1
+      }
+    }
+  ]
+}

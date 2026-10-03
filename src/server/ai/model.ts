@@ -258,7 +258,7 @@ export function isTransient(error: unknown): boolean {
  * 벤치가 **한 모델을 재려면** 그렇다. 측정하는 값은 "그 모델이 어떻게 하는가" 인데, 첫 모델이
  * 실패했을 때 다른 모델로 물어보면 **둘의 점수가 섞인다** — 비교가 아니다.
  */
-async function withFallback<T>(
+export async function withFallback<T>(
   tool: AiToolKey,
   primary: string,
   fallback: string | null,

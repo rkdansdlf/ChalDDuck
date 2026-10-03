@@ -19,6 +19,7 @@ import type { MeetingProposal, MeetingSlot, MeetingWeek, Team } from "@/lib/type
 import { useAction } from "@/lib/use-action";
 import { whenText } from "./meeting-cell";
 import { downloadIcsFile, generateGoogleCalendarUrl, generateIcsContent } from "./calendar-export";
+import { MeetingNoteSheet } from "./meeting-note-sheet";
 import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
@@ -58,6 +59,7 @@ export function SlotsScreen({
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [location, setLocation] = useState("");
   const [agenda, setAgenda] = useState("");
+  const [viewingNote, setViewingNote] = useState(false);
   const { toast, busy, flash, run } = useAction();
   const requesting = busy.request === true;
 
@@ -220,13 +222,26 @@ export function SlotsScreen({
                 </Btn>
               </div>
 
-              <Btn
-                v="yellow"
-                icon="book-open"
-                onClick={() => router.push("/tools/clerk")}
-              >
-                AI 서기로 회의록 작성하기
-              </Btn>
+              <div className="flex gap-2">
+                {proposal.hasNote ? (
+                  <Btn
+                    v="yellow"
+                    icon="file-text"
+                    className="flex-1"
+                    onClick={() => setViewingNote(true)}
+                  >
+                    회의록 보기
+                  </Btn>
+                ) : null}
+                <Btn
+                  v={proposal.hasNote ? "outline" : "yellow"}
+                  icon="book-open"
+                  className="flex-1"
+                  onClick={() => router.push(proposal.id ? `/tools/clerk?meetingId=${proposal.id}` : "/tools/clerk")}
+                >
+                  {proposal.hasNote ? "AI 서기 다시 작성" : "AI 서기로 회의록 작성하기"}
+                </Btn>
+              </div>
             </div>
           </div>
         ) : stage === "proposed" && proposed ? (
@@ -567,6 +582,13 @@ export function SlotsScreen({
           )}
         </Dock>
       ) : null}
+
+      <MeetingNoteSheet
+        open={viewingNote}
+        meetingId={proposal.id ?? null}
+        title={proposal.agenda || "정기 팀 회의록"}
+        onClose={() => setViewingNote(false)}
+      />
 
       <Toast msg={toast} />
     </>

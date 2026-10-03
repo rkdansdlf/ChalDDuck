@@ -2,6 +2,7 @@ import "./load-env.mjs";
 
 import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 import { stripComments } from "./strip-comments.mjs";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 
@@ -35,6 +36,8 @@ import { PrismaClient } from "../src/generated/prisma/client.js";
  * - **로컬 DB 에서만 돈다.** 시드와 같은 이유다(`load-env.mjs` 가 `.env.development.local`
  *   을 먼저 읽는다). 아래에서 다시 확인하므로 이 검사가 실수로 운영 DB 를 만져도 **검사가
  *   시작되지 않는다.**
+ * - **한 번에 하나만 돈다.** 같은 로컬 DB 를 두 실행이 동시에 만지면 **조용히 틀린다** —
+ *   아래 `claimDbLock` 이 그 이유를 갖고 있다.
  * - **주석을 지운 소스만 읽는다**(`readCode`). 형식 검사는 전부 이쪽을 쓴다.
  * - **실패하면 1 로 끝난다.** 두 파일이 각자 자기 파트로 따로 도므로, 한쪽이 죽어도 다른
  *   쪽의 결과는 살아 있다 — 그것이 분리한 목적이니까.
@@ -47,8 +50,61 @@ if (!["localhost", "127.0.0.1", "::1"].includes(host)) {
   throw new Error(`불변식 확인은 로컬 DB 에서만 돕니다. 지금은 ${host} 를 가리킵니다.`);
 }
 
-/** 검사 하나가 쓰는 DB. 두 스위치가 각자 같은 로컬 DB 를 본다 — 그래서 함께 도는 게 정상이다. */
+/** 검사 하나가 쓰는 DB. 두 스위치는 같은 로컬 DB 를 본다 — 그래서 아래 락으로 직렬화한다. */
 export const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+
+/**
+ * **같은 로컬 DB 를 두 실행이 동시에 만지면 검사가 조용히 틀린다.**
+ *
+ * ## 실제로 겪은 실패
+ *
+ * 두 개를 겹쳐 돌렸을 때 회의 확정 검사 여섯 개가 동시에 깨졌다. 원인은 성립이 아니라
+ * **상대 실행이 내 픽스처를 지웠다**는 것이었다. `smoke.mts` 의 회의 제안 검사는 팀 전체의
+ * 제안을 `deleteMany({ where: { teamId } })` 로 치우는데, 그 팀은 두 실행이 **공유한다**
+ * (`findFirst({ orderBy: { createdAt: "asc" } })` 는 가장 오래된 팀을 준다).
+ *
+ * ## 왜 테스트 전용 팀을 만들지 않기로 했는가
+ *
+ * 팀을 갈라놓는 것으로는 **안 된다.** 회의 확정 예약 작업이 **전 팀을 스캔**한다
+ * (`confirm-due.ts` 의 `where: { stage: "proposed", respondBy: { lte: now } }` — 팀
+ * 필터가 없다). 그래서 상대 실행이 만든 만료된 제안을 **내 실행이 뒤집어 버린다.**
+ * 알림 개수도 `kind` 와 본문 문자열로 전역에서 세므로 팀과 상관없이 섞인다.
+ *
+ * 테스트 전용 팀을 만들려면 픽스처를 전부 갈아야 하고, 그래도 전역 스캔은 남는다.
+ * **직렬화가 더 작고 더 확실하다** — 전역 스캔·전역 카운트·전역 정리가 한 번에 해결된다.
+ * 남는 비용은 느려지는 것뿐이고, 그것은 "검사가 틀리는 것"보다 싸다.
+ *
+ * ## 왜 전용 연결을 쓰는가
+ *
+ * 어드바이저리 락은 **세션** 단위다. 풀링된 연결 위에서 잡으면 그 연결이 회수될 때
+ * 조용히 풀린다. 그래서 락 전용 클라이언트를 하나 열어 **프로세스 수명 동안 붙잡는다.**
+ */
+const LOCK_KEY = 4_107_213_901;
+
+async function claimDbLock() {
+  const lock = new pg.Client({ connectionString });
+  await lock.connect();
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let announced = false;
+  for (;;) {
+    const got = await lock.query("SELECT pg_try_advisory_lock($1) AS ok", [LOCK_KEY]);
+    if (got.rows[0]?.ok) {
+      if (announced) console.log("  · 앞선 실행이 끝나서 이어서 돕니다");
+      return lock;
+    }
+    if (Date.now() > deadline) {
+      throw new Error("다른 불변식 확인이 10분째 DB 를 잡고 있습니다 — 먼저 끝나길 기다리세요.");
+    }
+    if (!announced) {
+      // **대기 중이라는 사실을 말한다.** 조용히 멈춘 검사는 멈춘 것처럼 보인다.
+      console.log("  · 다른 불변식 확인이 DB 를 쓰고 있습니다 — 끝나면 이어서 돕니다");
+      announced = true;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+const lock = await claimDbLock();
 
 let failed = 0;
 let passed = 0;
@@ -121,6 +177,9 @@ export function readCode(rel: string): string {
  */
 export async function finish(): Promise<void> {
   await db.$disconnect();
+  // 락을 먼저 풀고 — 풀지 않으면 이 프로세스가 끝날 때까지 뒤의 실행이 서 있게 된다.
+  await lock.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]).catch(() => {});
+  await lock.end();
   console.log(`\n${failed === 0 ? "모두 통과" : `${failed}건 실패`} — ${passed}건 통과, ${failed}건 실패`);
   if (failed > 0) process.exit(1);
 }

@@ -59,6 +59,7 @@ model Team {
   proposals       MeetingProposal[]
   messages        Message[]
   tasks           Task[]
+  meetingNotes    MeetingNote[]
   aiUsage         AiUsage[]
   aiCalls         AiCall[]
   iceRounds       IceRound[]
@@ -181,6 +182,7 @@ model Member {
   pushSubscriptions     PushSubscription[]
   proposalsMade         MeetingProposal[]
   meetingResponses      MeetingResponse[]
+  meetingNotes          MeetingNote[]
   roleDraws             RoleDraw[]
   roleRejections        RoleRejection[]
   drawConsentsProposed  RoleDrawConsent[]      @relation("ConsentProposer")
@@ -435,8 +437,34 @@ model MeetingProposal {
   slot       MeetingSlot?      @relation(fields: [slotId], references: [id], onDelete: SetNull)
   proposedBy Member            @relation(fields: [proposedById], references: [id], onDelete: Cascade)
   responses  MeetingResponse[]
+  note       MeetingNote?
 
   @@index([teamId])
+}
+
+/// 회의록 아카이브. AI 서기 결과 또는 작성된 회의록을 영구 보관한다.
+model MeetingNote {
+  id          String   @id @default(cuid())
+  teamId      String
+  /// 연결된 회의 제안(확정 회의). 일반 자유 회의록일 경우 null.
+  meetingId   String?  @unique
+  title       String
+  /// 원문 음성 인식 / 타이핑 텍스트.
+  rawText     String
+  /// AI 구조화 요약본 (Markdown).
+  summary     String
+  /// 추출 및 등록된 액션 아이템 수.
+  taskCount   Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  team      Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  meeting   MeetingProposal? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  createdBy Member?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+  @@index([meetingId])
 }
 
 model MeetingResponse {

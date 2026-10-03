@@ -18,6 +18,7 @@ import type { CalendarEvent, CalendarEventType, Team } from "@/lib/types";
 import { ScheduleTabs } from "./schedule-tabs";
 import { groupEventsByDate } from "./calendar-events";
 import { todayInSeoul } from "./week";
+import { MeetingNoteSheet } from "./meeting-note-sheet";
 
 const DAY_NAMES = ["월", "화", "수", "목", "금", "토", "일"];
 
@@ -107,6 +108,7 @@ export function CalendarScreen({
   const [viewMonth, setViewMonth] = useState(currentMonth);
   const [selectedDate, setSelectedDate] = useState<string | null>(today);
   const [filterType, setFilterType] = useState<CalendarEventType | "all">("all");
+  const [viewingNote, setViewingNote] = useState<{ meetingId: string; title: string } | null>(null);
 
   const calendarDays = useMemo(
     () => getMonthDays(viewYear, viewMonth, today),
@@ -355,7 +357,15 @@ export function CalendarScreen({
           ) : (
             <Rows>
               {displayedEvents.map((ev) => (
-                <EventCard key={ev.id} event={ev} />
+                <EventCard
+                  key={ev.id}
+                  event={ev}
+                  onOpenNote={
+                    ev.meetingId
+                      ? (meetingId, title) => setViewingNote({ meetingId, title })
+                      : undefined
+                  }
+                />
               ))}
             </Rows>
           )}
@@ -367,11 +377,27 @@ export function CalendarScreen({
             <SecTitle note="남은 일수가 적은 순">다가오는 마감 & 회의</SecTitle>
             <Rows>
               {upcomingEvents.map((ev) => (
-                <EventCard key={`upcoming-${ev.id}`} event={ev} compact />
+                <EventCard
+                  key={`upcoming-${ev.id}`}
+                  event={ev}
+                  compact
+                  onOpenNote={
+                    ev.meetingId
+                      ? (meetingId, title) => setViewingNote({ meetingId, title })
+                      : undefined
+                  }
+                />
               ))}
             </Rows>
           </div>
         )}
+
+        <MeetingNoteSheet
+          open={Boolean(viewingNote)}
+          meetingId={viewingNote?.meetingId ?? null}
+          title={viewingNote?.title}
+          onClose={() => setViewingNote(null)}
+        />
       </Body>
     </>
   );
@@ -380,9 +406,11 @@ export function CalendarScreen({
 function EventCard({
   event,
   compact = false,
+  onOpenNote,
 }: {
   event: CalendarEvent;
   compact?: boolean;
+  onOpenNote?: (meetingId: string, title: string) => void;
 }) {
   const isMeeting = event.type === "meeting";
   const isBox = event.type === "box";
@@ -408,14 +436,34 @@ function EventCard({
           </span>
         </div>
 
-        {event.href && (
-          <Link
-            href={event.href}
-            className="text-[12px] font-semibold text-action no-underline hover:underline"
-          >
-            보기 &gt;
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {isMeeting && event.meetingId && (
+            event.hasNote ? (
+              <button
+                type="button"
+                onClick={() => onOpenNote?.(event.meetingId!, event.title)}
+                className="text-[12px] font-semibold text-brand underline cursor-pointer"
+              >
+                회의록 보기
+              </button>
+            ) : (
+              <Link
+                href={`/tools/clerk?meetingId=${event.meetingId}`}
+                className="text-[12px] font-semibold text-txt-muted hover:text-action underline"
+              >
+                AI 서기 작성
+              </Link>
+            )
+          )}
+          {event.href && (
+            <Link
+              href={event.href}
+              className="text-[12px] font-semibold text-action no-underline hover:underline"
+            >
+              보기 &gt;
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="flex items-baseline justify-between gap-2">

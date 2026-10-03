@@ -135,6 +135,7 @@ export type MeetingSlot = {
  * `idle` 은 제안이 아직 없는 상태다.
  */
 export type MeetingProposal = {
+  id?: string;
   stage: "idle" | "proposed" | "confirmed" | "carried";
   slot: MeetingSlot | null;
   /**
@@ -158,6 +159,8 @@ export type MeetingProposal = {
   agenda?: string | null;
   /** 회의 소요 시간(분). 기본 60분. */
   durationMinutes?: number;
+  /** 회의록 작성 여부. */
+  hasNote?: boolean;
 };
 
 /** 한 주의 회의 시간 후보와 그 주의 상황. */
@@ -1034,7 +1037,27 @@ export type CalendarEvent = {
   location?: string | null;
   /** 회의 안건. */
   agenda?: string | null;
+  /** 회의 식별자(회의 타입일 때). */
+  meetingId?: string;
+  /** 회의록 작성 여부. */
+  hasNote?: boolean;
   /** 클릭 시 이동할 링크. */
   href?: string;
+};
+
+/* ── 회의록 아카이브 ─────────────────────────────────────────── */
+
+export type MeetingNote = {
+  id: string;
+  teamId: string;
+  meetingId: string | null;
+  title: string;
+  rawText: string;
+  summary: string;
+  taskCount: number;
+  createdById: string | null;
+  createdByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 

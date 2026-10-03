@@ -23,8 +23,18 @@ import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
 import type { AiAnswerSource, ClerkDraft, Member } from "@/lib/types";
+import { saveMeetingNote } from "@/server/actions/notes";
 
 const STEP_LABELS = ["회의 내용 입력", "요약 · 할 일 후보", "업무에 반영"];
+
+export type MeetingContext = {
+  id: string;
+  date: string | null;
+  time: string | null;
+  location: string | null;
+  agenda: string | null;
+  durationMinutes: number;
+} | null;
 
 /**
  * 20 AI 서기.
@@ -38,16 +48,30 @@ export function ClerkScreen({
   sample,
   roster,
   aiReady,
+  meeting,
 }: {
   sample: string;
   roster: Member[];
   aiReady: boolean;
+  meeting?: MeetingContext;
 }) {
   const router = useRouter();
   const names = roster.map((m) => m.name);
 
+  // 회의 연계 시 회의 정보가 포함된 초기 템플릿 생성
+  const initialText = meeting
+    ? `[회의 정보]
+- 일시: ${meeting.date ?? "미정"} ${meeting.time ? `(${meeting.time})` : ""}
+- 장소: ${meeting.location || "미정"}
+- 안건: ${meeting.agenda || "정기 팀 회의"}
+- 참석자: ${names.join(", ")}
+
+[회의록 메모]
+`
+    : sample;
+
   const [step, setStep] = useState(0);
-  const [raw, setRaw] = useState(sample);
+  const [raw, setRaw] = useState(initialText);
   const [draft, setDraft] = useState<ClerkDraft | null>(null);
   const [source, setSource] = useState<AiAnswerSource | null>(null);
   const [working, setWorking] = useState(false);
@@ -101,6 +125,24 @@ export function ClerkScreen({
 
         {aiReady ? null : <SampleNote className="mb-3.5" />}
         {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
+        {meeting ? (
+          <Panel s="card" pad={12} r={14} className="mb-3.5 border-l-4 border-l-brand bg-card">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-bold text-[13.5px] text-txt-strong">
+                <Icon name="calendar" size={15} className="text-brand" />
+                <span>연계된 회의: {meeting.agenda || "정기 팀 회의"}</span>
+              </div>
+              <Chip tone="ok">
+                {meeting.date ?? "날짜 미정"}
+              </Chip>
+            </div>
+            <div className="mt-1 text-[12px] text-txt-muted">
+              {meeting.time ? `${meeting.time} · ` : ""}{meeting.location ? `${meeting.location} · ` : ""}
+              회의 내용 요약 시 회의록이 자동 아카이브됩니다.
+            </div>
+          </Panel>
+        ) : null}
 
         {step === 0 ? (
           <>
@@ -226,23 +268,40 @@ export function ClerkScreen({
               size="lg"
               icon="list-checks"
               className="mt-3.5"
-              disabled={acceptedCount === 0}
+              disabled={acceptedCount === 0 || working}
               onClick={async () => {
-                // 담당자는 사람이 확인한 값을 쓴다 — AI 가 추측한 값이 아니다.
-                await addTasksFromClerk(
-                  candidates
-                    .filter((c) => picked[c.id])
-                    .map((c) => ({
-                      title: c.title,
-                      due: c.due,
-                      assignee: assignees[c.id] ?? null,
-                    })),
-                );
-                setStep(2);
-                router.refresh();
+                setWorking(true);
+                try {
+                  // 1. 담당자는 사람이 확인한 값을 쓴다 — AI 가 추측한 값이 아니다.
+                  await addTasksFromClerk(
+                    candidates
+                      .filter((c) => picked[c.id])
+                      .map((c) => ({
+                        title: c.title,
+                        due: c.due,
+                        assignee: assignees[c.id] ?? null,
+                      })),
+                  );
+
+                  // 2. 회의록 및 요약본을 DB에 영구 보관 (아카이브)
+                  await saveMeetingNote({
+                    meetingId: meeting?.id ?? null,
+                    title: meeting?.agenda || "정기 팀 회의록",
+                    rawText: raw,
+                    summary: draft.summary,
+                    taskCount: acceptedCount,
+                  });
+
+                  setStep(2);
+                  router.refresh();
+                } catch (cause: unknown) {
+                  setError(cause instanceof Error ? cause.message : "반영 중 오류가 발생했습니다.");
+                } finally {
+                  setWorking(false);
+                }
               }}
             >
-              선택한 {acceptedCount}건 업무로 반영하기
+              선택한 {acceptedCount}건 업무로 반영 및 회의록 저장
             </Btn>
           </div>
         ) : null}
@@ -257,10 +316,10 @@ export function ClerkScreen({
                 <Icon name="check" size={24} />
               </div>
               <div className="keep-all font-extrabold text-[18px] leading-[1.35] text-ink-900">
-                할 일 {acceptedCount}건이 업무 목록에 추가됐습니다
+                할 일 {acceptedCount}건이 업무 목록에 추가되고<br />회의록이 안전하게 보관되었습니다
               </div>
               <div className="keep-all mt-1.5 font-medium text-[13.5px] leading-[1.5] text-yellow-700">
-                담당자에게 별도로 수락을 요청하세요
+                캘린더 및 회의 조율 화면에서 언제든 회의록을 다시 확인할 수 있습니다
               </div>
             </Panel>
 
@@ -272,6 +331,18 @@ export function ClerkScreen({
             >
               할 일 · 체크리스트에서 보기
             </Btn>
+            {meeting ? (
+              <Btn
+                full
+                size="lg"
+                v="outline"
+                icon="calendar"
+                className="mt-2"
+                onClick={() => router.push("/schedule/calendar")}
+              >
+                팀 통합 캘린더로 이동
+              </Btn>
+            ) : null}
             <Btn full size="lg" v="outline" className="mt-2" onClick={() => router.push("/tools")}>
               AI 도구로 돌아가기
             </Btn>
