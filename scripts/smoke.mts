@@ -2652,7 +2652,7 @@ console.log("\n푸시 알림");
 console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 정한다)");
 {
   // 1. **응답이 없으면 일이 밀린다.** 여기 있는 것들은 전부 "당신이 해야 하는 일이 생겼다".
-  for (const kind of ["join-request", "rejoin-request", "contrib-dispute", "contrib-confirm", "poke"] as const) {
+  for (const kind of ["join-request", "rejoin-request", "contrib-dispute", "contrib-confirm", "poke", "task-assigned", "role-consent"] as const) {
     check(`응답이 필요한 ${kind} 은 밖으로 부른다`, pushPolicy(kind), "push");
   }
   check("회의 제안은 밖으로 부른다", pushPolicy("meeting"), "push");
@@ -2668,8 +2668,8 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
 
   // 이 표가 어긋나면 어느 종류가 화면 밖으로 샜는지 알 수 없다. 종류를 빠뜨리지 않게 세운다.
   const kinds: NotifyKind[] = [
-    "poke", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
-    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "drive",
+    "poke", "task-assigned", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
+    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "role-consent", "drive",
   ];
   check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
 }
