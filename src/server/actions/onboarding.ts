@@ -324,7 +324,7 @@ export async function joinTeam(
   // 승인을 기다려야 하는 쪽(요청 길)은 잠금을 잡을 필요가 없다 — 팀장을 세는 판정이 이미
   // 끝났으니, 그대로 나간다.
   const entry = await db.$transaction(async (tx) => {
-    // 잠금 없음 (경합 검사 확인용 — 곧 되돌린다)
+    await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${team.id} FOR UPDATE`;
 
     const hasLeader =
       (await tx.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;

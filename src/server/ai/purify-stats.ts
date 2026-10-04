@@ -11,7 +11,7 @@ import {
 } from "@/lib/read-cushion";
 
 /**
- * 읽기 순화의 **하루 지표**.
+ * 읽기 도움의 **하루 지표**.
  *
  * 이 기능은 느낌으로 튜닝하면 안 된다. 실측에서 이미 "협조적인 말은 되고 싸운 말은 안 된다" 가
  * 나왔고, 그 판단을 뒤집는 근거는 **숫자**다 — "free: usable 41% / model A: usable 91%,
@@ -19,15 +19,15 @@ import {
  *
  * ## 무엇을 세고 무엇을 세지 않는가
  *
- * - `rows` — 순화 대상 말의 개수(= 상태가 저장된 행). **후보 수의 대용**이다.
- * - `buckets` — 각 행이 어떤 결말인지(순화됨·가림·거절·버림·실패·처리 중).
- * - `coverage` — 읽는 사람이 **끊김 없이** 읽을 수 있는 비율(순화 + 가림).
+ * - `rows` — 읽기 도움 대상 말의 개수(= 상태가 저장된 행). **후보 수의 대용**이다.
+ * - `buckets` — 각 행이 어떤 결말인지(읽기 도움됨·가림·거절·버림·실패·처리 중).
+ * - `coverage` — 읽는 사람이 **끊김 없이** 읽을 수 있는 비율(읽기 도움 + 가림).
  * - `aiShare` — 그중 **AI 가 실제로 한** 비율. 커버리지가 높아도 이 값이 낮으면
  *   규칙 가림이 기능 전체를 버티고 있는 것이다(실측 16말에서 그렇게 나왔다).
  * - `avgLatencyMs` — 호출이 얼마나 걸렸나. **행 기준 평균**이므로 큰 묶음에 끌려간다.
  *   호출 수(`calls`)와 함께 볼 때만 뜻가 있다.
  * - `calls` — 오늘 실제로 AI 를 부른 횟수(`AiUsage`).
- * - `reuse` — **결과 하나가 몇 개의 읽기를 대신했나**(`행 ÷ 호출`). 이 값이 순화 구조의
+ * - `reuse` — **결과 하나가 몇 개의 읽기를 대신했나**(`행 ÷ 호출`). 이 값이 읽기 도움 구조의
  *   성패를 말해 준다: 같은 말을 팀원 수만큼 다시 부르면 1.0, 공유하면 팀 인원만큼 올라간다.
  *   예전 구조(말, 읽는 사람) 은 이 값이 **항상 1.0** 이었다. 호출이 0 이면(전부 규칙 가림)
  *   AI 가 모든 읽기를 대신한 것이므로 행 수를 그대로 쓴다.
@@ -43,7 +43,7 @@ export type PurificationStats = {
   reasons: Record<string, number>;
   /** AI 가 실제로 한 비율. */
   aiShare: number;
-  /** 읽는 사람이 끊김 없이 읽을 수 있는 비율(순화 + 가림). */
+  /** 읽는 사람이 끊김 없이 읽을 수 있는 비율(읽기 도움 + 가림). */
   coverage: number;
   calls: number;
   /** 결과 하나가 대신한 읽기 수(행 ÷ 호출). 공유 전에는 1.0, 공유 후에는 팀 인원만큼 오른다. */
@@ -102,7 +102,7 @@ export async function purificationStats(teamId: string, at = Date.now()): Promis
     coverage: purificationCoverage(buckets),
     calls: usage,
     // **재사용**: 오늘 만들어진 결과를 몇 명이 나눠 봤나.
-    // 행 수(=순화된 말) 하나가 AI 호출 여러 번을 대신하면 이 값이 올라간다.
+    // 행 수(=다듬어진 말) 하나가 AI 호출 여러 번을 대신하면 이 값이 올라간다.
     reuse: usage > 0 ? rows.length / usage : rows.length,
     avgLatencyMs: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
     modes: Object.fromEntries(settings.map((row) => [row.mode, row._count._all])),

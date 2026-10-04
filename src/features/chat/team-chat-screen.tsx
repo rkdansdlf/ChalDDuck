@@ -30,9 +30,9 @@ import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-cha
  * 정해진 일까지 "정해지지 않았다" 는 말처럼 읽혔다. 정한 것만 여기에 모았다 — 모두 임의 값이
  * 아니라, 반대편도 정할 수 없으므로 **가장 덜 침해적인 쪽**을 고른 것이다.
  *
- * - **원문은 그대로 저장한다.** 순화는 보기에만 건다. `Message.text` 는 손대지 않는다.
- * - **읽는 사람에게만 순화문이 보인다.** 같은 방에서도 남에게는 원문으로 보인다.
- * - **언제든 원문으로 돌아갈 수 있다.** 순화가 끄졌거나 실패했으면 원문이 보인다.
+ * - **원문은 그대로 저장한다.** 읽기 도움은 보기에만 건다. `Message.text` 는 손대지 않는다.
+ * - **읽는 사람에게만 읽기 도움문이 보인다.** 같은 방에서도 남에게는 원문으로 보인다.
+ * - **언제든 원문으로 돌아갈 수 있다.** 읽기 도움이 끄졌거나 실패했으면 원문이 보인다.
  * - **팀 전체가 보는 단톡방 하나뿐이다.** 채널을 나누지 않는다.
  * - **첨부 규칙은 드라이브와 같다**(문서·이미지·PPT·PDF, 한 파일 50MB). 1:1 대화에는 붙이지
  *   않는다 — 한쪽을 정해야 하는 사안이기 때문이다.
@@ -98,9 +98,9 @@ export function TeamChatScreen({
   const lostFileRef = useRef<(message: ChatMessage) => void>(() => {});
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
   /**
-   * 오늘 남은 **순화** 몫 — 도구 몫과 별개다(`server/ai/limit.ts` 의 `quotaPicks`).
+   * 오늘 남은 **읽기 도움** 몫 — 도구 몫과 별개다(`server/ai/limit.ts` 의 `quotaPicks`).
    *
-   * 순화가 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
+   * 읽기 도움이 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
    * 그럼에도 부르면 필요 없는 왕복이 늘어난다.
    */
   const cushionUsage = useCushionUsageToday(cushion.enabled);
@@ -149,12 +149,12 @@ export function TeamChatScreen({
   }, [discard, flash, fileLostText]);
 
     /**
-   * 읽기 순화 설정을 바꾼다 — 끄기·강도·말투.
+   * 읽기 도움 설정을 바꾼다 — 끄기·강도·말투.
    *
-   * **기다리지 않는다.** 순화본은 화면에 이미 있으므로 먼저 칩을 바꾸고 저장은 나중에 한다.
+   * **기다리지 않는다.** 다듬은 말은 화면에 이미 있으므로 먼저 칩을 바꾸고 저장은 나중에 한다.
    * 저장이 거절되면 서버가 준 문구를 그대로 토스트로 말하고 이전 값으로 되돌린다.
    *
-   * **기준이 바뀌면 그 방의 순화본은 사라진다** — 서버가 지운다. "보통" 으로 골랐는데
+   * **기준이 바뀌면 그 방의 다듬은 말은 사라진다** — 서버가 지운다. "보통" 으로 골랐는데
    * "강하게" 로 만든 말이 남아 있으면 아무도 그 차이를 알 수 없다.
    */
   const changeCushion = async (next: { enabled?: boolean; mode?: string; tone?: string }) => {

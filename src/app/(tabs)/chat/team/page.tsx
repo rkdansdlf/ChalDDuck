@@ -17,7 +17,7 @@ export default async function TeamChatPage() {
     getTeamMessages(team.id),
     getRoster(team.id),
     getSubmissionBoxes(team.id),
-    // 읽기 순화 설정. 이 방만 해당한다 — DM 은 따로 읽고 쓴다.
+    // 읽기 도움 설정. 이 방만 해당한다 — DM 은 따로 읽고 쓴다.
     getTeamReadCushion(),
   ]);
 

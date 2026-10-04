@@ -15,9 +15,9 @@ import { ChatAttachment, SharedDriveCard } from "./chat-attachment";
  *
  * 차이는 하나뿐이다: 단톡방은 상대 이름을 말풍선 위에 붙이고, DM 은 상대가 한 명뿐이라 붙이지 않는다.
  *
- * **읽기 순화도 여기서 그린다.** 순화본이 있으면 순화문을, 없으면 원문을 보인다 —
+ * **읽기 도움도 여기서 그린다.** 다듬은 말이 있으면 읽기 도움문을, 없으면 원문을 보인다 —
  * 어느 쪽을 그릴지 고르는 계산은 `lib/read-cushion.ts` 한 곳에 있다(서버와 같은 규칙).
- * 그리고 **누르면 원문으로 돌아간다.** 순화는 읽기 전용이라는 약속의 반대편이 대조다 —
+ * 그리고 **누르면 원문으로 돌아간다.** 읽기 도움은 읽기 전용이라는 약속의 반대편이 대조다 —
  * 돌아갈 길이 없으면 그 기능은 "상대 말을 대신 쓰는 것"이 된다.
  *
  * `memo` 를 붙였다 — 메시지 하나를 보내면 배열이 새로 만들어지지만, 바뀌지 않은
@@ -33,10 +33,10 @@ export const MessageBubble = memo(function MessageBubble({
 }: {
   message: ChatMessage;
   /**
-   * 이 말의 순화문. **없으면 원문으로 그린다.**
+   * 이 말의 읽기 도움문. **없으면 원문으로 그린다.**
    *
    * 말에 붙어 있지 않고 따로 온다(`ChatMessage` 에서 뺐다 — 사람이 한 말과 낙관적 말풍선이
-   * 같은 모양을 유지하도록). `undefined` 와 `null` 은 같은 뜻(순화본 없음)으로 받는다.
+   * 같은 모양을 유지하도록). `undefined` 와 `null` 은 같은 뜻(다듬은 말 없음)으로 받는다.
    */
   purifiedText?: string | null;
   /** 여러 사람이 있는 방에서만 상대 이름을 보여 준다. */
@@ -55,7 +55,7 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const mine = message.isMine;
 
-  // 누르고 있으면 원문으로, 놓으면 순화문으로. 이 상태는 **말풍선마다** 따로다 —
+  // 누르고 있으면 원문으로, 놓으면 읽기 도움문으로. 이 상태는 **말풍선마다** 따로다 —
   // 한 말만 대조해 보고 싶은데 방 전체가 원문으로 바뀌면 대조가 아니라 후퇴가 된다.
   const [showOriginal, setShowOriginal] = useState(false);
   const { text: displayText, kind } = displayTextOf(message, showOriginal);
@@ -64,7 +64,7 @@ export const MessageBubble = memo(function MessageBubble({
   /**
    * 라벨은 **누가 쓴 문장인지**로 갈린다.
    *
-   * `ai`(모델이 쓴 순화문)와 `mask`(규칙으로 위험 표현만 가린 것)은 **다른 라벨**이어야 한다.
+   * `ai`(모델이 쓴 읽기 도움문)와 `mask`(규칙으로 위험 표현만 가린 것)은 **다른 라벨**이어야 한다.
    * AI 가 거절돼 규칙이 대신 가렸는데 "다듬어 읽음" 이라 쓰면 그건 거짓말이다 — 읽는 사람은
    * "말투가 바뀐 것"으로 오해하고, 다음에는 그 라벨을 믿고 원문 보기를 누르지 않는다.
    */

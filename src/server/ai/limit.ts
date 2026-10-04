@@ -20,7 +20,7 @@ import type { SessionMember } from "@/server/session";
 /**
  * `AI_TOOL_NAMES` 의 key 와 같은 어휘다. 화면·표·집계가 같은 이름을 쓴다.
  *
- * `read-cushion` 은 읽기 순화(19·31)다 — 사용자가 도구를 연 것이 아니라 **읽기 설정을
+ * `read-cushion` 은 읽기 도움(19·31)다 — 사용자가 도구를 연 것이 아니라 **읽기 설정을
  * 켰을 뿐**인데도 모델을 부르므로 한도에서 빠지면 안 된다. 이 이름의 행이 없으면 "AI 를
  * 언제 왜 불렀나" 를 수습할 때 그 calls 가 통째로 사라진다.
  */
@@ -48,9 +48,9 @@ export type AiUsageToday = {
   team: number;
   /** 오늘 내가 AI 도구를 부른 횟수. */
   mine: number;
-  /** 오늘 이 팀이 읽기 순화를 돌린 횟수. 도구와 따로 센다(순화는 자동 실행). */
+  /** 오늘 이 팀이 읽기 도움을 돌린 횟수. 도구와 따로 센다(읽기 도움은 자동 실행). */
   cushionTeam: number;
-  /** 오늘 내가 읽기 순화를 돌린 횟수. */
+  /** 오늘 내가 읽기 도움을 돌린 횟수. */
   cushionMine: number;
 };
 
@@ -62,7 +62,7 @@ export type AiUsageToday = {
  */
 export async function aiUsageToday(me: SessionMember): Promise<AiUsageToday> {
   const day = todayInSeoul();
-  /** 본 장부는 순화를 세지 않는다 — 세면 분리가 아니라 두 번 세게 된다. */
+  /** 본 장부는 읽기 도움을 세지 않는다 — 세면 분리가 아니라 두 번 세게 된다. */
   const withoutCushion = { tool: { not: "read-cushion" as const } };
   const [team, mine, cushionTeam, cushionMine] = await Promise.all([
     db.aiUsage.count({ where: { teamId: me.teamId, day, ...withoutCushion } }),
@@ -84,9 +84,9 @@ export async function aiUsageToday(me: SessionMember): Promise<AiUsageToday> {
  *
  * 기록을 지우면 **다음번에 같은 질문을 할 수 없다.** 그래서 이 행은 그대로 둔다.
  *
- * ## 남긴 막힘 하나 — 순화 폭주
+ * ## 남긴 막힘 하나 — 읽기 도움 폭주
  *
- * 도구는 사람이 누른다. 아무도 안 누르면 아무 일도 없다. **읽기 순화만 메시지마다 자동으로**
+ * 도구는 사람이 누른다. 아무도 안 누르면 아무 일도 없다. **읽기 도움만 메시지마다 자동으로**
  * 도므로, 여기만 무제한이 가능한 형태의 사고다. 재시도 폭주는 `MAX_ATTEMPTS`·`FAILURE_BACKOFF_MS`
  * 로 묶여 있으니 순환은 구속된다 — 여기는 그 위에 있는 마지막 방어선이고, 관측치가 하루 1회인
  * 숫자(5,000)는 폭주만 잡는다.
@@ -117,7 +117,7 @@ export async function aiUsageToday(me: SessionMember): Promise<AiUsageToday> {
  *
  * ## 판단과 기록은 잠근 안에서 함께 한다
  *
- * 순화 폭주 판정은 팀의 하루 총량을 본다. 그 판단과 기록이 따로 놀면 **동시에 들어온 순화가
+ * 읽기 도움 폭주 판정은 팀의 하루 총량을 본다. 그 판단과 기록이 따로 놀면 **동시에 들어온 읽기 도움이
  * 둘 다 "아직 안 찼다" 를 보고 둘 다 지나간다** — 이것이 드라이브 용량에서 실제로 겪은 일이었고,
  * 같은 관용구(`Team` 행 `FOR UPDATE`)를 쓴다. 한 팀의 동시 호출은 많지 않아 기다림이 눈에 띄지
  * 않는다.
@@ -130,7 +130,7 @@ export async function recordAiUsage(
   tool: AiToolKey,
 ): Promise<{ ok: true; usageId: string } | { ok: false; message: string }> {
   const day = todayInSeoul();
-  // 순화는 자기 장부에만 적는다 — 본 장부에 함께 세면 두 번으로 세게 된다.
+  // 읽기 도움은 자기 장부에만 적는다 — 본 장부에 함께 세면 두 번으로 세게 된다.
   const isCushion = tool === "read-cushion";
   const inBook = isCushion
     ? { tool: "read-cushion" as const }
@@ -139,10 +139,10 @@ export async function recordAiUsage(
   return db.$transaction(async (tx): Promise<
     { ok: true; usageId: string } | { ok: false; message: string }
   > => {
-    // 순화 폭주 판정은 팀의 하루 총량을 본다 — 판단과 기록을 한 잠금 안에서 함께 한다.
+    // 읽기 도움 폭주 판정은 팀의 하루 총량을 본다 — 판단과 기록을 한 잠금 안에서 함께 한다.
     await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
 
-    // **순화만** 막는다 — 폭주 차단. 도구는 사람이 누르므로 필요 없다.
+    // **읽기 도움만** 막는다 — 폭주 차단. 도구는 사람이 누르므로 필요 없다.
     if (isCushion) {
       const teamUsed = await tx.aiUsage.count({ where: { teamId: me.teamId, day, ...inBook } });
       if (teamUsed >= AI_POLICY.cushionRunawayCapPerTeamPerDay) {

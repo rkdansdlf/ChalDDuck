@@ -998,7 +998,7 @@ type MessageRow = {
   /** 정렬용 실제 시각. `whenLabel` 은 "21:12" 라 사람이 읽는 문자열이라 비교할 수 없다. */
   createdAt: Date;
   viaCushion: boolean;
-  /** **이 사람의 지금 설정으로** 이 말을 어떻게 보여 줄지(읽기 순화). 성공·실패가 모두 담긴다. */
+  /** **이 사람의 지금 설정으로** 이 말을 어떻게 보여 줄지(읽기 도움). 성공·실패가 모두 담긴다. */
   purifications: CushionRow[];
   attachPath: string | null;
   attachName: string | null;
@@ -1028,12 +1028,12 @@ type CushionRow = {
 };
 
 /**
- * 순화 상태는 **이 사람이 지금 읽는 지문의 것만** 가져온다.
+ * 읽기 도움 상태는 **이 사람이 지금 읽는 지문의 것만** 가져온다.
  *
  * 예전에는 (말, 읽는 사람) 으로 저장했으므로 팀원 수만큼 행이 있었다. 지금은 (말, 지문) 이라
  * 한 말에 한 줄이고, `where` 에는 사람이 아니라 **지문**이 들어간다.
  *
- * 화면에는 **자기 지문의 순화본만** 보여야 한다 — 남의 강도나 남의 말투로 만든 글은 이 사람의
+ * 화면에는 **자기 지문의 다듬은 말만** 보여야 한다 — 남의 강도나 남의 말투로 만든 글은 이 사람의
  * 화면에 있으면 안 된다. 지문이 곧 그 경계다.
  */
 const messageInclude = (policyHash: string) => ({
@@ -1058,7 +1058,7 @@ function driveHref(boxId: string, fileId: string, versionId: string): string {
   return `/drive/${boxId}/${fileId}/${versionId}`;
 }
 
-/** 저장된 순화 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
+/** 저장된 읽기 도움 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
 function toChatPurified(row: CushionRow): ChatPurified {
   if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
     return {
@@ -1071,7 +1071,7 @@ function toChatPurified(row: CushionRow): ChatPurified {
   }
   // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
   // 저장되지 않은 status 값(옛 데이터·손으로 넣은 값)은 실패로 본다. 모르는 상태를
-  // "순화됨" 으로 그리는 일은 없어야 한다.
+  // "읽기 도움됨"으로 그리는 일은 없어야 한다.
   const status: "PENDING" | "REJECTED" | "FAILED" =
     row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
   return {
@@ -1097,7 +1097,7 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     sortAt: m.createdAt.toISOString(),
     status: "sent",
     viaCushion: m.viaCushion,
-    // 순화 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
+    // 읽기 도움 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
     // 실패한 말은 `text: null` 이라 화면에서 원문으로 넘어간다.
     purified: m.purifications[0] ? toChatPurified(m.purifications[0]) : null,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
@@ -1257,7 +1257,7 @@ async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
   return {
     enabled: row.enabled,
     mode: levelOf({ enabled: row.enabled, mode: row.mode as CushionLevelKey, tone: row.tone }),
-    // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 순화하지 않는다.
+    // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 읽기 도움으로 다듬지 않는다.
     tone: isCushionTone(row.tone) ? row.tone : null,
   };
 }
