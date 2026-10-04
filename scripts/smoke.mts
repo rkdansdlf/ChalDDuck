@@ -1,15 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
-
-/**
- * 낮 투표의 **적용** 로직은 액션 밖 모듈에 있다(2026-09-30).
- *
- * 옮긴 이유는 **세션 없이 부를 수 있게** 하려고 했기 때문이다. `"use server"` 파일의 export 는 전부
- * 서버 액션이라 트랜잭션 클라이언트를 넘길 수 없고, 그래서 "결선을 만들면 다리가 비워지는가" 를 실제
- * DB 로 확인할 방법이 없었고 소스 정규식만 남았다 — 그 정규식이 **분기 하나의 누락을 통과시켰다.**
- */
-const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { stripComments } from "../scripts/strip-comments.mjs";
@@ -17,6 +8,7 @@ import {
   AI_INPUT_LIMIT,
   aiInputOverrun,
 } from "../src/lib/ai-limit.js";
+import { ROLE_DECISION_HOW } from "../src/features/roles/copy.js";
 import {
   NO_DRAW_POOL_TEXT,
   awaitsMyConsent,
@@ -196,6 +188,11 @@ import {
   isResolutionWay,
   unresolvedAfter,
 } from "../src/features/contrib/resolution.js";
+
+/**
+ * 낮 투표의 적용 로직은 액션 밖 모듈에 있다(2026-09-30).
+ */
+const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 
 /**
  * 업무 규칙을 확인하는 불변식 모음.
@@ -710,6 +707,38 @@ console.log("\n추첨 동의 제안");
 }
 
 /* ── 동의 대기는 배지에서 겹침과 따로 센다 ────────────────────── */
+
+console.log("\n역할 배정 설명은 계약과 같다");
+{
+  const read = readCode;
+
+  // **사용자에게 말하는 역할 배정 설명이 두 화면에 복사돼 있으면 반드시 어긋난다.**
+  // 실제로 어긋났다 — 한쪽은 "경험"을 입력받을 곳이 없다고 말했고, 다른 쪽은 아니었다.
+  // 말은 `features/roles/copy.ts` 한 곳에만 둔다.
+  const copySource = read("../src/features/roles/copy.ts");
+  truthy("역할 배정 설명이 한 곳에 있다", /export const ROLE_DECISION_HOW/.test(copySource));
+  check("설명은 세 문장으로 되어 있다", ROLE_DECISION_HOW.join(" ").split(".").length - 1, 3);
+
+  for (const screen of ["../src/features/onboarding/role-screen.tsx", "../src/features/team/team-mbti.tsx"]) {
+    const name = screen.split("/").pop();
+    const src = read(screen);
+    check(`${name} 은 설명을 복사하지 않는다`, /ROLE_DECISION_HOW\.join\(" "\)/.test(src), true);
+    // **존재하지 않는 입력을 안내하지 않는다.** `경험` 은 `Member` 에 칸이 없고,
+    // 가능한 시간(`BusyBlock`)은 역할 배정을 읽지 않는다 — 회의 계산 전용이다.
+    check(`${name} 은 없는 입력(경험)을 말하지 않는다`, /경험/.test(src), false);
+  }
+
+  // 규칙이 실제로 무엇을 읽는지 — 설명이 코드와 같은 쪽에 있는지 본다.
+  const rolesAction = read("../src/server/actions/roles.ts");
+  check("후보는 희망자에서만 온다", /where: \{ teamId, wantRole: role, leftAt: null \}/.test(rolesAction), true);
+  check("피할 역할은 후보에서 빠진다", /drawPoolOf\(/.test(rolesAction), true);
+  const model = read("../src/features/roles/roster-model.ts");
+  check("피할 역할은 추첨 후보에서 빠진다", /wanted = wanters\.filter\(\(m\) => m\.veto !== role\)/.test(model), true);
+  // 역할 조율이 **가능한 시간을 읽지 않는다** — 읽고 있다면 설명이 거짓말이 되는 셈이다.
+  truthy("역할 조율은 가능한 시간을 읽지 않는다", /busyBlock/i.test(model + rolesAction) === false);
+  // MBTI 도 마찬가지다(CLAUDE.md 의 제품 약속).
+  truthy("역할 조율은 MBTI 를 읽지 않는다", /mbti/i.test(rolesAction) === false);
+}
 
 console.log("\n추첨 동의 · 배지");
 {

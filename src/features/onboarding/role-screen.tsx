@@ -20,6 +20,7 @@ import { checkJoinApproval, joinTeam, type JoinBlock } from "@/server/actions/on
 import { updateMemberEmail } from "@/server/actions/email-auth";
 import { useAction } from "@/lib/use-action";
 import { cn } from "@/lib/cn";
+import { ROLE_DECISION_HOW } from "@/features/roles/copy";
 import type { Role, RoleKey } from "@/lib/types";
 import { resetOnboarding, setVeto, setWant, toDraft, useOnboarding } from "./onboarding-state";
 import { useOnboardingGate } from "./use-onboarding-gate";
@@ -172,7 +173,7 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
 
         <div className="mt-4 flex items-center gap-2 text-[13px] leading-[1.5] text-txt-muted">
           <Icon name="lock" size={14} className="flex-none" />
-          <span>역할은 고른 것·경험·가능한 시간으로만 정해요. MBTI는 쓰지 않아요.</span>
+          <span>{ROLE_DECISION_HOW.join(" ")}</span>
         </div>
 
         {blocked ? <JoinBlockedNote reason={blocked} onGoToTeam={() => router.push("/team")} /> : null}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Btn, Panel, SecTitle, Sheet } from "@/components/ui";
 import { MBTI_TYPES, calculateTeamMbtiStats, characterImage, getMbtiMeta, type MbtiType } from "@/lib/mbti";
+import { ROLE_DECISION_HOW } from "@/features/roles/copy";
 import { cn } from "@/lib/cn";
 import type { Member } from "@/lib/types";
 import { updateMyMbti } from "@/server/actions/onboarding";
@@ -106,7 +107,7 @@ export function TeamMbti({ members }: { members: Member[] }) {
       <Sheet open={open} title="내 MBTI 변경" onClose={() => setOpen(false)}>
         <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
           고른 유형으로 찰떡 캐릭터가 정해집니다.{" "}
-          <b>역할 배정에는 쓰이지 않습니다</b> — 배정은 각자 고른 희망 역할과 추첨으로만 정해집니다.
+          <b>역할 배정에는 쓰이지 않습니다</b> — {ROLE_DECISION_HOW.join(" ")}
         </p>
 
         <div role="radiogroup" aria-label="MBTI 유형" className="mb-3.5 grid grid-cols-4 gap-[7px]">
