@@ -701,6 +701,16 @@ export type TeamCheckRecord = {
    * 거치지 않고 POST 로 바로 불릴 수 있다.
    */
   iCanResolve: boolean;
+  /**
+   * **내가 지금 떠 있는 반대를 남긴 사람인가** — 철회 버튼의 조건(`canWithdrawDispute`).
+   *
+   * `iCanResolve` 로 알 수 없다. 그 값은 기록 주인과 반대한 사람 **둘 다** true라, 그걸로
+   * 철회 버튼을 켜면 주인이 남의 반대를 대신 거두게 된다 — 그건 철회가 아니라 정리다.
+   *
+   * `disputedById` 를 그대로 주지 않고 판정 결과를 주는 이유가 이것이다. 화면이 두 id 를
+   * 비교해 규칙을 다시 짜면 **어느 쪽이 사실인지 알 수 없다.**
+   */
+  iFiledDispute: boolean;
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
   /** 확인할 때 열어 볼 근거 파일. 없으면 null. */

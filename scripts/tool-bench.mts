@@ -255,18 +255,23 @@ function judgePresent(item: PresentCase, draft: { refined: string; questions: st
   return { kept, keepTotal: item.keep.length, invented, questions, ok: problems.length === 0, why: problems.join(" · ") };
 }
 
-type ResearchVerdict = { sources: number; fake: number; ok: boolean; why: string };
+type ResearchVerdict = { sources: number; fake: number; years: number; citations: number; ok: boolean; why: string };
 
-function judgeResearch(item: ResearchCase, results: Array<{ url: string | null }>): ResearchVerdict {
+function judgeResearch(
+  item: ResearchCase,
+  results: Array<{ url: string | null; year?: string | null; citation?: string | null }>,
+): ResearchVerdict {
   const withUrl = results.filter((r) => r.url);
   const sources = withUrl.length;
   // 주소가 하나라도 없다면 "출처 없는 결과를 보여주지 않는다" 는 약속을 깬 것이다.
   // 코드가 이미 걸러 냈어야 하므로, 여기 남아 있으면 **코드 쪽 계약이 깨진 것**이다.
   const fake = results.length - sources;
+  const years = results.filter((r) => Boolean(r.year)).length;
+  const citations = results.filter((r) => Boolean(r.citation)).length;
   const problems: string[] = [];
   if (fake > 0) problems.push(`주소가 없는 카드가 ${fake}개 남았다`);
   if (sources < item.minSources) problems.push(`출처 ${sources}개(최소 ${item.minSources})`);
-  return { sources, fake, ok: problems.length === 0, why: problems.join(" · ") };
+  return { sources, fake, years, citations, ok: problems.length === 0, why: problems.join(" · ") };
 }
 
 /**
@@ -366,7 +371,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
         ok: v.ok,
         why: v.why,
         seconds: (Date.now() - started) / 1000,
-        cells: { 출처: v.sources, 지어냄: v.fake },
+        cells: { 출처: v.sources, 지어냄: v.fake, 연도: v.years, 인용: v.citations },
       };
     }
     if (tool === "cushion") {

@@ -12,7 +12,6 @@ import {
   Sheet,
   Textarea,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ConfirmsPolicy, Member, TeamCheckRecord } from "@/lib/types";
@@ -20,6 +19,7 @@ import { useAction } from "@/lib/use-action";
 import {
   confirmContribRecord,
   disputeContribRecord,
+  withdrawContribDispute,
   pollContribCheck,
   setConfirmsNeeded,
   setParticipation,
@@ -165,6 +165,28 @@ export function ContribTeamScreen({
       "의견을 남기지 못했습니다. 다시 시도해 주세요.",
     );
   };
+
+  /**
+   * 내가 남긴 반대를 철회한다.
+   *
+   * **"확실한가" 를 한 번 더 묻지 않는다.** 철회는 되돌릴 수 없다 — 다시 적어야 한다.
+   * 그래도 묻는다면 **기록 주인이 아니라 철회하는 사람**에게 묻는 셈이 되고, 그 사람이
+   * 언제든 철회할 수 있으므로 되돌릴 수 없다는 말이 사실이 아니다. 흔적이 남는다는 사실은
+   * 서버가 말하고 화면에도 적혀 있다.
+   */
+  const withdraw = (recordId: string) =>
+    run(
+      "act",
+      async () => {
+        setTouched(true);
+        const result = await withdrawContribDispute(recordId);
+        router.refresh();
+        if (result === "ok") return "반대를 철회했습니다. 이력에는 흔적이 남습니다";
+        if (result === "notYours") return "내가 남긴 반대가 아닙니다";
+        return "철회할 반대가 없습니다";
+      },
+      "철회하지 못했습니다. 다시 시도해 주세요.",
+    );
 
   /**
    * 기준을 고른다 — **서버가 몇 건이 달라지는지 먼저 말하고**, 그대로 할지 다시 받는다.
@@ -516,6 +538,17 @@ export function ContribTeamScreen({
                               </Btn>
                             </div>
                           ) : null}
+                          {/* 철회 — **내가 남긴 반대만** 보인다.
+                              `iFiledDispute` 가 판정 결과라 화면이 규칙을 다시 짜지 않는다.
+                              주인이 보이는 버튼은 주인이 남의 반대를 대신 거두는 버튼이 되고,
+                              그건 철회가 아니라 정리다. */}
+                          {record.iFiledDispute ? (
+                            <div className="mt-2">
+                              <Btn size="sm" v="ghost" icon="undo-2" onClick={() => withdraw(record.id)}>
+                                내가 남긴 반대를 철회하기
+                              </Btn>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -526,14 +559,14 @@ export function ContribTeamScreen({
           )}
         </div>
 
-        {/* 의견이 닫히고 나면 이 화면이 남는 곳이다 — 그래서 "답이 없는 반대를 되돌리는 길"이
-            없는 것도 여기에 적는다. `npm run decisions` 가 이 상자를 읽는다. */}
-        <Undecided>
-          <b>반대를 철회하는 길이 없습니다.</b> 직접 쓴 의견은 기록에 그대로 남습니다(한쪽 말로
-          덮지 않기 위해 지우지 않습니다). 사후에 &quot;내가 그랬던 것 같다&quot;로 바꾸려면 기록 주인과
-          다시 적어야 합니다. 참여 표시처럼 되돌리되 흔적을 남길 수도 있고, 의견은 한 번의
-          말이라 두지 않기로 할 수도 있습니다.
-        </Undecided>
+        {/* 반대표철은 2026-10-03 정해졌다 — 그래서 `<Undecided>` 가 아니라 규칙을 말한다.
+            지워지지 않는다는 사실은 그대로 두고, **누가** 철회할 수 있는지만 분명히 한다. */}
+        <Note tone="info" icon="undo-2" className="mt-3.5">
+          남긴 <b>반대는 철회할 수 있습니다</b> — 흔적은 남습니다. 철회해도 그 사람이 이력을
+          지운 것은 아닙니다: 이력에 철회가 남고 지금 떠 있는 의견만 사라집니다. 철회할 수 있는
+          사람은 <b>반대를 남긴 사람 본인</b>입니다 — 기록 주인은 정리를 함께 하지만 대신 철회하지
+          않습니다.
+        </Note>
       </Body>
 
       <Dock>

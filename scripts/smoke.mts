@@ -1932,6 +1932,34 @@ console.log("\n반대표철: 남길 길이 코드에 있다");
   check("기록 주인이 알 수 있다", fn.indexOf("notify(") > 0, true);
 }
 
+console.log("\n반대표철: 버튼은 남긴 사람에게만 보인다");
+{
+  /**
+   * 액션이 있어도 **버튼이 없으면 아무도 철회할 수 없다** — 2026-10-03 에 처음 액션만 넣었을
+   * 때가 그 상태였다. 그래서 화면에도 계약을 둔다.
+   *
+   * 판정은 **`iFiledDispute` 하나**로 한다. `iCanResolve` 로 켜면 주인에게도 보인다 — 그건
+   * 철회가 아니라 정리이고, 정리 버튼은 이미 따로 있다.
+   */
+  const screen = readCode("../src/features/contrib/contrib-team-screen.tsx");
+  check("철회 액션을 부른다", screen.includes("withdrawContribDispute("), true);
+  check("남긴 사람에게만 보인다", /\{record\.iFiledDispute \?/.test(screen), true);
+  // **주인이 대신 철회하는 길이 화면에 없다는 것** — 한쪽 말로 덮지 않는다는 원칙이 여기서
+  // 깨지면 철회가 정리로 둔갑한다.
+  check("iCanResolve 로 철회 버튼을 켜지 않는다", /iCanResolve[^\n]{0,80}철회/.test(screen), false);
+  // 철회 문구는 서버가 만든다 — 화면이 문구를 보내지 않는다.
+  check("화면이 철회 문구를 만들지 않는다", screen.includes("WITHDRAWN_DISPUTE"), false);
+
+  // **흔적이 남는다는 사실을 철회할 사람에게 먼저 말한다.** 남지 않는다면 이 버튼은 사람이
+  // 자기 말을 지우는 버튼이 되어 되돌릴 수 없다.
+  truthy("철회하면 무엇이 남는지 말한다", screen.includes("이력에는 흔적이 남습니다"));
+
+  // 조회는 **판정 결과를 준다** — `disputedById` 를 그대로 노출하지 않는다. 화면이 두 id 를
+  // 비교해 규칙을 다시 짜면 어느 쪽이 사실인지 알 수 없다.
+  const query = readCode("../src/server/contrib/team-check.ts");
+  check("조회가 판정 결과를 준다", query.includes("iFiledDispute: canWithdrawDispute("), true);
+}
+
 console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
 {
   const testTeam = await db.team.create({

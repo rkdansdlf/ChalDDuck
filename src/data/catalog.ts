@@ -264,24 +264,33 @@ export const RESEARCH_SAMPLE_RESULTS: ResearchResult[] = [
   {
     id: "r1",
     title: "MBTI 유형과 팀 협업 만족도의 관계",
-    source: "한국심리학회지 · 2021",
+    source: "한국심리학회지",
     snippet:
       "MBTI 유형보다 역할 명확성이 팀 협업 만족도에 더 큰 영향을 보였다는 연구 결과입니다.",
     url: null,
+    year: "2021",
+    kind: "academic",
+    citation: '김민수 외 (2021). "MBTI 유형과 팀 협업 만족도의 관계", 한국심리학회지.',
   },
   {
     id: "r2",
     title: "대학생 팀 프로젝트의 역할 분담 전략",
-    source: "교육공학연구 · 2019",
+    source: "교육공학연구",
     snippet: "자발적 희망 기반 역할 분담이 배정식보다 만족도가 높게 나타났습니다.",
     url: null,
+    year: "2019",
+    kind: "academic",
+    citation: '이진아 (2019). "대학생 팀 프로젝트의 역할 분담 전략", 교육공학연구.',
   },
   {
     id: "r3",
     title: "비대면 팀 프로젝트 커뮤니케이션 실태",
-    source: "한국콘텐츠학회논문지 · 2022",
+    source: "한국콘텐츠학회논문지",
     snippet: "채팅 중심 소통에서 발생하는 오해 사례와 완화 방법을 다룹니다.",
     url: null,
+    year: "2022",
+    kind: "academic",
+    citation: '박서현 외 (2022). "비대면 팀 프로젝트 커뮤니케이션 실태", 한국콘텐츠학회논문지.',
   },
 ];
 

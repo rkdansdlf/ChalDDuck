@@ -1,5 +1,6 @@
 import "./load-env.mjs";
 
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
@@ -169,6 +170,99 @@ export function readCode(rel: string): string {
 }
 
 /**
+ * **자기 팀을 만들어** 검사 하나가 쓰게 한다. 마지막에 지운다.
+ *
+ * ## 왜 있는가 — 2026-09-28
+ *
+ * 예전에는 검사마다 이렇게 팀을 얻었다 —
+ *
+ * ```ts
+ * const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+ * ```
+ *
+ * **DB 에 이미 있는 팀**이다. 그것이 세 가지 문제를 만들었다 —
+ *
+ * 1. **두 실행이 부딪힌다.** 이 스위치는 DB 를 잡는 어드바이저리 락이 있어서 원래는 직렬화돼야 했다.
+ *    그런데 검사들이 **`.mjs` 사본**(잠금이 없는 것)을 불러 오고 있어서 **직렬화가 통하지
+ *    않았다** — 게이트가 두 번 거짓말했다. 그 사본을 지우면 이 락이 실제로 걸린다.
+ * 2. **시드 팀을 오염시킨다.** 회의 제안·슬롯·알림을 그 팀에 직접 만들어 두고, 아무도 지우지
+ *    않는다. 개발자가 `db:seed` 를 다시 해도 남는다.
+ * 3. **격리가 없다.** 시드가 바뀌면 여기 쓰는 검사들이 함께 바뀐다 — 무엇이 망가졌는지 알 수
+ *    없다.
+ *
+ * 그래서 각 검사는 **자기 팀**을 쓰고 여기서 한 번에 치운다. `scripts/harness/` 의 `makeTeam`
+ * 과 같은 관용구다.
+ *
+ * ## 멤버는 왜 세 명인가
+ *
+ * 두 명이면 "다른 사람이 막혔다" 를 볼 수 없다. 세 명이면 팀장 1 + 동료 2 이고, 실제 화면에서
+ * 나올 수 있는 최소 구성이 된다. 호출자가 원하는 수를 넘길 수 있다.
+ */
+export type IsolatedTeam = {
+  team: { id: string; name: string; code: string; course: string; menuPick?: string | null };
+  /** 팀장. `isLeader` 가 **켜져 있다** — 다른 규칙이 이 값을 읽는다. */
+  leader: { id: string; name: string };
+  /** 동료 1 · 2. 순서대로 넣는다. */
+  mates: Array<{ id: string; name: string }>;
+  members: Array<{ id: string; name: string; isLeader: boolean }>;
+};
+
+const isolatedTeams: string[] = [];
+
+export async function makeIsolatedTeam(
+  label: string,
+  opts: { mates?: number; course?: string } = {},
+): Promise<IsolatedTeam> {
+  const mateCount = opts.mates ?? 2;
+  const team = await db.team.create({
+    data: {
+      name: `검사 ${label}`,
+      course: opts.course ?? "검증",
+      code: `CD-${randomUUID().slice(0, 6).toUpperCase()}`,
+    },
+  });
+  isolatedTeams.push(team.id);
+
+  const leader = await db.member.create({
+    data: { teamId: team.id, name: "김민준", isLeader: true },
+  });
+  const mateNames = ["이서연", "박도윤", "최지우", "정하은"];
+  const mates = [];
+  for (let i = 0; i < mateCount; i += 1) {
+    mates.push(
+      await db.member.create({
+        data: { teamId: team.id, name: mateNames[i % mateNames.length]! },
+      }),
+    );
+  }
+
+  const members = [leader, ...mates].map((m) => ({
+    id: m.id,
+    name: m.name,
+    isLeader: m.id === leader.id,
+  }));
+  return {
+    team,
+    leader: { id: leader.id, name: leader.name },
+    mates: mates.map((m) => ({ id: m.id, name: m.name })),
+    members,
+  };
+}
+
+/** 이 스위치가 만든 팀을 지운다. 검사가 중간에 죽어도 남지 않게 `finish()` 에서 부른다. */
+async function dropIsolatedTeams(): Promise<void> {
+  if (isolatedTeams.length === 0) return;
+  const ids = isolatedTeams.splice(0, isolatedTeams.length);
+  try {
+    await db.team.deleteMany({ where: { id: { in: ids } } });
+  } catch (cause) {
+    // 못 지워도 검사를 실패시키지 않는다 — 남은 팀은 `makeIsolatedTeam` 이 매번 다른
+    // `code` 를 만들므로 다음 실행에 영향을 주지 않는다.
+    console.error(`[db-test-base] 검사용 팀 ${ids.length}개를 지우지 못했습니다`, cause);
+  }
+}
+
+/**
  * 이 스위치를 마치고 요약한다. **파일 맨 끝에서 한 번만** 부른다.
  *
  * 성공이면 그대로 끝나고, 실패가 하나라도 있으면 1 로 끝난다 — 그래야 `package.json` 의
@@ -176,6 +270,8 @@ export function readCode(rel: string): string {
  * 초록불로 보이지 않는다.**
  */
 export async function finish(): Promise<void> {
+  // **자기 팀을 먼저 치운다** — 검사가 만든 흔적이 남지 않게. `db` 를 닫기 전에 해야 한다.
+  await dropIsolatedTeams();
   await db.$disconnect();
   // 락을 먼저 풀고 — 풀지 않으면 이 프로세스가 끝날 때까지 뒤의 실행이 서 있게 된다.
   await lock.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]).catch(() => {});

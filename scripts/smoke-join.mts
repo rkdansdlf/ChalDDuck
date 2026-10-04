@@ -1,4 +1,4 @@
-import { db, check, truthy, readCode, finish } from "./db-test-base.mjs";
+import { check, db, finish, makeIsolatedTeam, readCode, truthy } from "./db-test-base.mjs";
 import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
 import {
@@ -110,7 +110,7 @@ console.log("\n횟수표 (동시에 찍어도 합이 정확하다)");
 
 console.log("\n가입 요청 토큰 불변식 (다른 브라우저가 가로챌 수 없다)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("회의 참여 표시");
   if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
   const suffix = String(Date.now() % 1e7);
   const name = `불변${suffix}`;
@@ -142,7 +142,7 @@ console.log("\n가입 요청 토큰 불변식 (다른 브라우저가 가로챌 
 
 console.log("\n가입 요청 토큰 불변식 (동시에 같은 이름으로 신청하면 한 명만 이긴다)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("회의 제안");
   if (!team) throw new Error("시드 팀이 없습니다. 먼저 db:seed 를 돌리세요.");
   const suffix = String(Date.now() % 1e7);
   const name = `경쟁${suffix}`;

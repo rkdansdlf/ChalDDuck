@@ -330,7 +330,15 @@ export async function searchResearch(
 
   onPhase?.("shaping");
   const shaped = await askShape<{
-    results: Array<{ title: string; source: string; snippet: string; url: string }>;
+    results: Array<{
+      title: string;
+      source: string;
+      snippet: string;
+      url: string;
+      year?: string | null;
+      kind?: "academic" | "stats" | "news" | "web" | null;
+      citation?: string | null;
+    }>;
   }>({
     tool: "research",
     // **카드 정리도 같은 모델로** 한다. 검색한 모델과 정리하는 모델이 다르면 앞 model's
@@ -342,7 +350,10 @@ export async function searchResearch(
 
 지켜야 할 것:
 - url 은 **출처 목록에 있는 주소 그대로만** 쓴다. 다른 주소를 쓰거나 만들어 내지 않는다.
-- source 는 어디서 나온 자료인지를 짧게 적는다(매체·기관 이름, 연도를 알면 함께).
+- source 는 어디서 나온 자료인지를 짧게 적는다(매체·기관·학회지 이름).
+- year 는 자료의 발행 연도나 시점(예: "2024", "2023.11")을 적는다. 알 수 없으면 null.
+- kind 는 자료의 성격이다: 학술 논문·연구는 "academic", 통계·조사 보고서는 "stats", 언론 보도·기사는 "news", 일반 웹문서는 "web".
+- citation 은 과제·보고서에 넣을 수 있는 표준 참고문헌 형식이다(예: 발행처 (연도), "자료명", URL).
 - snippet 은 그 자료가 무엇을 말하는지 한두 문장으로 적는다.
 - 검색 내용에 근거가 없는 카드는 만들지 않는다.`,
     // 모델이 본문을 한 글자도 안 돌려주는 일이 있어(무료 모델에서 겪었다) 페이지 발췌를
@@ -364,7 +375,14 @@ ${answer.citations
             type: "object",
             properties: {
               title: { type: "string" },
-              source: { type: "string", description: "매체·기관 이름 (연도를 알면 함께)" },
+              source: { type: "string", description: "매체·기관·학회지 이름" },
+              year: { type: ["string", "null"], description: '발행 연도 (예: "2024") 또는 null' },
+              kind: {
+                type: "string",
+                enum: ["academic", "stats", "news", "web"],
+                description: "자료의 성격",
+              },
+              citation: { type: ["string", "null"], description: "표준 참고문헌 표기" },
               snippet: { type: "string", description: "무엇을 다루는 자료인지 한두 문장" },
               url: { type: "string", description: "출처 목록에 있는 주소 그대로" },
             },
@@ -379,14 +397,49 @@ ${answer.citations
   // 마지막 문 — 인용되지 않은 주소가 붙은 카드는 버린다. 프롬프트가 아니라 여기가 규칙이다.
   return (shaped.results ?? [])
     .filter((r) => allowed.has(r.url) && orNull(r.title) !== null)
-    .map((r, index) => ({
-      id: `r${index + 1}`,
-      title: r.title.trim(),
-      // 출처 이름을 못 적으면 주소의 도메인이라도 보여 준다 — 빈 칸보다 낫다.
-      source: orNull(r.source) ?? hostOf(r.url),
-      snippet: orNull(r.snippet) ?? "",
-      url: r.url,
-    }));
+    .map((r, index) => {
+      const src = orNull(r.source) ?? hostOf(r.url);
+      const title = r.title.trim();
+      const year = cleanYear(r.year);
+      const kind = cleanKind(r.kind, src);
+      const citation = orNull(r.citation) ?? makeCitation(src, title, year, r.url);
+      return {
+        id: `r${index + 1}`,
+        title,
+        source: src,
+        snippet: orNull(r.snippet) ?? "",
+        url: r.url,
+        year,
+        kind,
+        citation,
+      };
+    });
+}
+
+function cleanYear(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const match = raw.match(/\b(19\d\d|20\d\d)\b/);
+  return match ? match[1] : orNull(raw);
+}
+
+function cleanKind(
+  raw: string | null | undefined,
+  source: string,
+): "academic" | "stats" | "news" | "web" {
+  if (raw === "academic" || raw === "stats" || raw === "news" || raw === "web") return raw;
+  if (/학회|논문|학술|연구|journal|kci|riss|dbpia/i.test(source)) return "academic";
+  if (/통계|kosis|조사|statista|보고서/i.test(source)) return "stats";
+  if (/뉴스|일보|신문|news|times|press/i.test(source)) return "news";
+  return "web";
+}
+
+function makeCitation(source: string, title: string, year: string | null, url: string): string {
+  const parts: string[] = [];
+  if (source) parts.push(source);
+  if (year) parts.push(`(${year})`);
+  parts.push(`"${title}"`);
+  if (url) parts.push(url);
+  return parts.join(", ");
 }
 
 /** 주소에서 보여 줄 만한 이름만 뽑는다. */
