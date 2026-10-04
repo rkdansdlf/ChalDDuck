@@ -44,8 +44,9 @@ export function DmListScreen({ threads: fromServer }: { threads: DmThread[] }) {
         </Note>
 
         <Undecided>
-          DM 을 팀원이 먼저 개설할 수 있는지, 메시지 삭제·나가기가 되는지는 기획안에 없어 다루지
-          않았습니다.
+          DM 은 **개설 단계가 없다** — 상대 팀원을 고르고 첫 메시지를 보내면 그 자리에서 만들어진다
+          (`threadKey` 를 서버가 만든다). 목록은 메시지가 있는 방만 보여 준다. **삭제·나가기는 아직
+          없다** — 기획안에 없어 만들지 않았다.
         </Undecided>
       </Body>
     </>

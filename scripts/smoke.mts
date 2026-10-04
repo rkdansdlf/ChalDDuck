@@ -5497,4 +5497,44 @@ console.log("\n남의 업무 상태를 남이 바꿀 수 없다");
   check("조용히 아무 일도 일어나지 않게 않는다", screen.includes("남이 넣은 업무라 상태를 바꿀 수 없습니다"), true);
 }
 
+/* ── 미결 목록은 코드와 말아야 한다 ────────────────────────── */
+
+console.log("\n미결 목록이 코드와 어긋나지 않는가");
+{
+  // 이 목록은 README 가 "미결 항목의 정본" 이라 부르는 자리다. 2026-09-28 에 **세 항목이
+  // 사실과 반대로** 적혀 있었다 —
+  //
+  // - 동명이인: "이름만으로 구분합니다" → 실제로는 **두 번째가 막힌다**(유일 제약)
+  // - 예상 질문: "다루지 않았습니다" → 실제로는 **자료에서 뽑는다**
+  // - 원문 링크: "다루지 않았습니다" → 실제로는 **출처 없는 결과를 아예 보여 주지 않는다**
+  //
+  // 틀린 정본은 아무것도 고치지 않은 채 다음 사람을 그 방향으로 엉뚱하게wyn다. 특히 원문 링크
+  // 항목은 **안전과 관련된 쪽**이 틀려 있었다 — "출처를 안 보여 준다" 고 읽으면 문제가 있다.
+  const readAt = (file: string, needle: string) => readCode(file).includes(needle);
+  const decision = readCode("../src/app/onboarding/name/page.tsx");
+
+  // ① 동명이인 — **막는** 것이 맞다.
+  check("동명이인이 '구분'된다고 하지 않는다", decision.includes("이름만으로 구분합니다"), false);
+  check("같은 이름은 함께 있을 수 없다고 적는다", decision.includes("함께 있을 수는 없다"), true);
+  check("서버가 막는다고 적는다", /유일 제약/.test(decision), true);
+
+  // ② 예상 질문 — **뽑는다**고 적어야 한다.
+  const present = readCode("../src/features/tools/present-screen.tsx");
+  check("예상 질문을 '다루지 않았다' 고 하지 않는다", present.includes("다루지"), false);
+  const tools = readCode("../src/server/ai/tools.ts");
+  check("정말 자료에서 뽑는다", /질문을 뽑는다/.test(tools), true);
+
+  // ③ 원문 링크 — **보여 준다**고 적어야 한다.
+  const research = readCode("../src/features/tools/researcher-screen.tsx");
+  check("원문 링크를 '다루지 않았다' 고 하지 않는다", research.includes("원문 링크를 그대로"), false);
+  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(research), true);
+  // 화면에 그대로 보이는 문구까지 확인한다 — 주석만 고쳐지고 화면은 옛말이면 그게 거짓말이다.
+  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(readCode("../src/features/tools/researcher-screen.tsx")), true);
+
+  // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
+  const dm = readCode("../src/features/chat/dm-list-screen.tsx");
+  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dm), true);
+  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dm), true);
+}
+
 await finish();
