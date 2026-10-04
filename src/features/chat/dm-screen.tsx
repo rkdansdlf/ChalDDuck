@@ -21,7 +21,7 @@ import { useChatThread, useLoadOlderOnScroll, useStickToBottom } from "./use-cha
  *
  * 단톡방(19)과 **같은 말풍선 규격**을 쓴다. 상대가 한 명뿐이라 이름만 붙이지 않는다.
  *
- * 읽기 순화도 **방마다 따로**다 — 1:1 대화는 아무도 못 봤다고 하긴 어려운 자리라, 켜고
+ * 읽기 도움도 **방마다 따로**다 — 1:1 대화는 아무도 못 봤다고 하긴 어려운 자리라, 켜고
  * 끄는 사람이 단톡방에서의 선택과 같은지 알 수 없다. 그래서 상태를 방 단위로 읽고 쓴다.
  */
 export function DmScreen({
@@ -52,9 +52,9 @@ export function DmScreen({
   const { flash, run } = useAction();
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
   /**
-   * 오늘 남은 **순화** 몫 — 도구 몫과 별개다(`server/ai/limit.ts` 의 `quotaPicks`).
+   * 오늘 남은 **읽기 도움** 몫 — 도구 몫과 별개다(`server/ai/limit.ts` 의 `quotaPicks`).
    *
-   * 순화가 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
+   * 읽기 도움이 켜진 방에서만 읽는다 — 꺼진 방은 AI 를 부르지 않으므로 조회할 이유가 없고,
    * 그럼에도 부르면 필요 없는 왕복이 늘어난다.
    */
   const cushionUsage = useCushionUsageToday(cushion.enabled);
@@ -90,12 +90,12 @@ export function DmScreen({
   );
 
   /**
-   * 읽기 순화 설정을 바꾼다 — 끄기·강도·말투.
+   * 읽기 도움 설정을 바꾼다 — 끄기·강도·말투.
    *
-   * **기다리지 않는다.** 순화본은 화면에 이미 있으므로 먼저 칩을 바꾸고 저장은 나중에 한다.
+   * **기다리지 않는다.** 다듬은 말은 화면에 이미 있으므로 먼저 칩을 바꾸고 저장은 나중에 한다.
    * 거절되면 서버가 준 문구를 그대로 토스트로 말하고 이전 값으로 되돌린다(단톡방과 같은 순서).
    *
-   * **기준이 바뀌면 그 대화의 순화본은 사라진다** — 서버가 지운다. "보통" 으로 골랐는데
+   * **기준이 바뀌면 그 대화의 다듬은 말은 사라진다** — 서버가 지운다. "보통" 으로 골랐는데
    * "강하게" 로 만든 말이 남아 있으면 아무도 그 차이를 알 수 없다.
    */
   const changeCushion = async (next: { enabled?: boolean; mode?: string; tone?: string }) => {

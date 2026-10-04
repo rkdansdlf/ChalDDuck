@@ -2,7 +2,7 @@ import { getContribReport, getCurrentTeam } from "@/data/api";
 import { ContribReportScreen } from "@/features/contrib/contrib-report-screen";
 
 /**
- * 18 기여도 · 1장 PDF.
+ * 18 기여 기록 · 1장 PDF.
  *
  * 리포트에는 발행일이 찍힌다. 빌드 시점에 굳으면 어제 날짜가 박힌 문서가 나오므로
  * 요청마다 렌더한다.

@@ -38,11 +38,11 @@ export function useAiUsageToday(enabled = true): { used: number; readable: boole
 }
 
 /**
- * **읽기 순화**를 오늘 몇 번 돌렸는지 — 도구와 따로 센다(`server/ai/limit.ts`).
+ * **읽기 도움**를 오늘 몇 번 돌렸는지 — 도구와 따로 센다(`server/ai/limit.ts`).
  *
- * 순화는 **누가 누를 때만 일어나지 않는다** — 메시지마다 자동으로 돈다. 그래서 도구 화면처럼
+ * 읽기 도움은 **누가 누를 때만 일어나지 않는다** — 메시지마다 자동으로 돈다. 그래서 도구 화면처럼
  * 버튼 옆에 숫자를 붙여 놓으면, AI 를 **요청하지 않은** 사람이 숫자를 재워 본다. 그래서 이 값은
- * 순화 화면에서만 읽는다.
+ * 읽기 도움 화면에서만 읽는다.
  */
 export function useCushionUsageToday(enabled = true): { used: number; readable: boolean } {
   const [usage, setUsage] = useState<{ used: number; readable: boolean } | null>(null);
@@ -55,7 +55,7 @@ export function useCushionUsageToday(enabled = true): { used: number; readable: 
         if (!cancelled) setUsage({ used: q.cushionMine, readable: true });
       })
       .catch(() => {
-        // 못 읽어도 읽기는 된다 — 순화가 안 되는 것이지 대화를 못 보는 것이 아니다.
+        // 못 읽어도 읽기는 된다 — 읽기 도움이 안 되는 것이지 대화를 못 보는 것이 아니다.
       });
     return () => {
       cancelled = true;

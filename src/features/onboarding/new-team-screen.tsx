@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, Toast, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Field, Input, Note, Panel, Toast } from "@/components/ui";
 import { createTeam } from "@/server/actions/onboarding";
 import type { Team } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
@@ -114,9 +114,8 @@ export function NewTeamScreen() {
               {submitting ? "만드는 중…" : "팀 만들기"}
             </Btn>
 
-            <Undecided>
-              최초 생성자가 팀장 권한을 갖는지, 팀 정보를 나중에 고칠 수 있는지가 기획안에 없어 다루지 않았습니다.
-            </Undecided>
+            {/* 규칙 확정: 최초 생성자가 창작자 쿠키(cd_creator)를 통해 첫 팀장이 되며,
+                이후 팀 설정(16)에서 팀장 위임(transferLeadership)이 가능하다. (scripts/harness/join.mts로 검증) */}
           </>
         ) : (
           <>

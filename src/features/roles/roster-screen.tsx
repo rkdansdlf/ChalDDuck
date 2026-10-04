@@ -26,6 +26,7 @@ import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { createInviteLink, disableInviteLink } from "@/server/actions/invite";
 import { acceptRoleDraw, claimSoleRole, drawForRole, proposeRoleDraw, rejectRoleDraw, respondRoleDraw } from "@/server/actions/roles";
+import { EXPIRY_CHOICES, USE_CHOICES } from "@/server/invite/choices";
 import {
   NO_DRAW_POOL_TEXT,
   applyMyChoices,
@@ -38,6 +39,20 @@ import {
   type ConsentView,
   type RoleView,
 } from "./roster-model";
+
+/**
+ * 기한을 사람이 읽을 이름으로.
+ *
+ * **키를 `EXPIRY_CHOICES` 의 값으로 갖는다.** 값을 문자열로 따로 적지 않으므로 목록과 이름이
+ * 어긋날 수 없고, `EXPIRY_CHOICES` 에 값을 하나 더 넣으면 여기가 컴파일 에러가 난다 — 이름을
+ * 붙이지 않은 선택지가 사용자에게 "7일" 처럼 숫자로 노출되지 않는다.
+ */
+const EXPIRY_LABELS: Record<(typeof EXPIRY_CHOICES)[number], string> = {
+  1: "하루",
+  3: "3일",
+  7: "일주일",
+  30: "한달",
+};
 
 /**
  * 07 팀 역할 조율.
@@ -981,8 +996,12 @@ function InviteManager({
           <PickChip on={uses === null} onClick={() => setUses(null)}>
             제한 없음
           </PickChip>
-          {["1", "2", "3", "5", "10"].map((n) => (
-            <PickChip key={n} on={uses === n} onClick={() => setUses(n)}>
+          {/* **목록을 여기서 다시 적지 않는다.** 서버가 받아들이는 값은 `USE_CHOICES` 다
+              (`server/invite/choices.ts`) — 화면에 나열을 따로 적어 두면 한쪽만 고쳐지고,
+              화면에서 고를 수 있는데 서버가 거절하는 값이 남는다(서버가 조용히 자르는
+              경로라 "몇 명분" 을 눌렀는데 반영이 안 되는 것으로 보인다). */}
+          {USE_CHOICES.map((n) => (
+            <PickChip key={n} on={uses === String(n)} onClick={() => setUses(String(n))}>
               {n}명
             </PickChip>
           ))}
@@ -995,14 +1014,11 @@ function InviteManager({
           <PickChip on={days === null} onClick={() => setDays(null)}>
             기한 없음
           </PickChip>
-          {[
-            ["1", "하루"],
-            ["3", "3일"],
-            ["7", "일주일"],
-            ["30", "한달"],
-          ].map(([v, name]) => (
-            <PickChip key={v} on={days === v} onClick={() => setDays(v)}>
-              {name}
+          {/* 값은 `EXPIRY_CHOICES` 에서, 사람이 읽을 이름은 여기서. 두 list 다 따로 적으면
+              화면에만 고를 수 있는 기한이 생기고, 서버는 조용히 그 값을 자른다. */}
+          {EXPIRY_CHOICES.map((d) => (
+            <PickChip key={d} on={days === String(d)} onClick={() => setDays(String(d))}>
+              {EXPIRY_LABELS[d] ?? `${d}일`}
             </PickChip>
           ))}
         </div>

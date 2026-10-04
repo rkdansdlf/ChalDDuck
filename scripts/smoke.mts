@@ -1,15 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
-
-/**
- * 낮 투표의 **적용** 로직은 액션 밖 모듈에 있다(2026-09-30).
- *
- * 옮긴 이유는 **세션 없이 부를 수 있게** 하려고 했기 때문이다. `"use server"` 파일의 export 는 전부
- * 서버 액션이라 트랜잭션 클라이언트를 넘길 수 없고, 그래서 "결선을 만들면 다리가 비워지는가" 를 실제
- * DB 로 확인할 방법이 없었고 소스 정규식만 남았다 — 그 정규식이 **분기 하나의 누락을 통과시켰다.**
- */
-const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { stripComments } from "../scripts/strip-comments.mjs";
@@ -17,6 +8,7 @@ import {
   AI_INPUT_LIMIT,
   aiInputOverrun,
 } from "../src/lib/ai-limit.js";
+import { ROLE_DECISION_HOW } from "../src/features/roles/copy.js";
 import {
   NO_DRAW_POOL_TEXT,
   awaitsMyConsent,
@@ -37,6 +29,7 @@ import {
   AI_POLICY,
   CUSHION_DEFAULT_MODE,
   CUSHION_LEVELS,
+  AI_TOOLS,
   ICE_GAMES,
   MENU_OPTIONS,
   RANDOM_TOOLS,
@@ -200,6 +193,12 @@ import {
   isResolutionWay,
   unresolvedAfter,
 } from "../src/features/contrib/resolution.js";
+import { getPublicReport } from "../src/server/contrib/report.js";
+
+/**
+ * 낮 투표의 적용 로직은 액션 밖 모듈에 있다(2026-09-30).
+ */
+const DAY_VOTE = readCode("../src/server/ice/day-vote.ts");
 
 /**
  * 업무 규칙을 확인하는 불변식 모음.
@@ -714,6 +713,38 @@ console.log("\n추첨 동의 제안");
 }
 
 /* ── 동의 대기는 배지에서 겹침과 따로 센다 ────────────────────── */
+
+console.log("\n역할 배정 설명은 계약과 같다");
+{
+  const read = readCode;
+
+  // **사용자에게 말하는 역할 배정 설명이 두 화면에 복사돼 있으면 반드시 어긋난다.**
+  // 실제로 어긋났다 — 한쪽은 "경험"을 입력받을 곳이 없다고 말했고, 다른 쪽은 아니었다.
+  // 말은 `features/roles/copy.ts` 한 곳에만 둔다.
+  const copySource = read("../src/features/roles/copy.ts");
+  truthy("역할 배정 설명이 한 곳에 있다", /export const ROLE_DECISION_HOW/.test(copySource));
+  check("설명은 세 문장으로 되어 있다", ROLE_DECISION_HOW.join(" ").split(".").length - 1, 3);
+
+  for (const screen of ["../src/features/onboarding/role-screen.tsx", "../src/features/team/team-mbti.tsx"]) {
+    const name = screen.split("/").pop();
+    const src = read(screen);
+    check(`${name} 은 설명을 복사하지 않는다`, /ROLE_DECISION_HOW\.join\(" "\)/.test(src), true);
+    // **존재하지 않는 입력을 안내하지 않는다.** `경험` 은 `Member` 에 칸이 없고,
+    // 가능한 시간(`BusyBlock`)은 역할 배정을 읽지 않는다 — 회의 계산 전용이다.
+    check(`${name} 은 없는 입력(경험)을 말하지 않는다`, /경험/.test(src), false);
+  }
+
+  // 규칙이 실제로 무엇을 읽는지 — 설명이 코드와 같은 쪽에 있는지 본다.
+  const rolesAction = read("../src/server/actions/roles.ts");
+  check("후보는 희망자에서만 온다", /where: \{ teamId, wantRole: role, leftAt: null \}/.test(rolesAction), true);
+  check("피할 역할은 후보에서 빠진다", /drawPoolOf\(/.test(rolesAction), true);
+  const model = read("../src/features/roles/roster-model.ts");
+  check("피할 역할은 추첨 후보에서 빠진다", /wanted = wanters\.filter\(\(m\) => m\.veto !== role\)/.test(model), true);
+  // 역할 조율이 **가능한 시간을 읽지 않는다** — 읽고 있다면 설명이 거짓말이 되는 셈이다.
+  truthy("역할 조율은 가능한 시간을 읽지 않는다", /busyBlock/i.test(model + rolesAction) === false);
+  // MBTI 도 마찬가지다(CLAUDE.md 의 제품 약속).
+  truthy("역할 조율은 MBTI 를 읽지 않는다", /mbti/i.test(rolesAction) === false);
+}
 
 console.log("\n추첨 동의 · 배지");
 {
@@ -1395,6 +1426,36 @@ console.log("\n회의 확정 예약 작업 (같은 일을 두 번 불러도 알�
   }
 }
 
+console.log("\n도구와 게임: 전부 열려 있다 (비활성화 상태는 쓰지 않는다)");
+{
+  /**
+   * **결정: 일부러 닫아 둘 도구·게임이 없다.** 그래서 `ready`·`playable` 같은 플래그와
+   * "준비 중" 칩을 걷었다 — 유효 데이터가 0개인 분기였다.
+   *
+   * 플래그를 지운 뒤 남는 것은 **`href` 가 없는 도구 하나**다. 도구가 갈 곳 없이 들어오면
+   * 홈의 바로가기가 그 도구를 **조용히 걸러 낸다**(홈은 `href !== null` 로 거른다) — 목록이
+   * 하나 줄었는데 아무도 모른다. 그래서 **전 도구에 갈 곳이 있다**를 고정한다.
+   */
+  check("도구는 하나 이상 있다", AI_TOOLS.length > 0, true);
+  check(
+    "모든 도구에 갈 곳이 있다 (홈이 조용히 걸러 내지 않는다)",
+    AI_TOOLS.filter((t) => t.href === null).map((t) => t.key),
+    [],
+  );
+
+  // 아이스브레이킹도 같다 — `playable` 을 지운 뒤 남는 것은 `game` 을 못 찾는 경우뿐이다.
+  check("아이스브레이킹은 하나 이상 있다", ICE_GAMES.length > 0, true);
+  truthy(
+    "게임을 못 찾는 경우에도 설명은 읽을 수 있다 (Dock 만 사라진다)",
+    readCode("../src/features/social/icebreak-screen.tsx").includes("{game ? ("),
+  );
+
+  // 재도입 방지: 플래그가 다시 생기면 바로 잡는다.
+  const types = readCode("../src/lib/types.ts");
+  check("도구에 '아직 열지 않았다' 플래그가 없다", /\n\s*ready: boolean;/.test(types), false);
+  check("게임에 '실행까지 연결됐다' 플래그가 없다", /\n\s*playable: boolean;/.test(types), false);
+}
+
 console.log("\n누가 하지");
 {
   truthy("메뉴가 하나 이상 있다", MENU_OPTIONS.length > 0);
@@ -1697,6 +1758,118 @@ console.log("\n기여도 의견 (DB)");
     await db.contribDispute.deleteMany({ where: { recordId: record.id } });
     await db.contribRecord.delete({ where: { id: record.id } });
     check("확인용 기록을 지우면 이력도 함께 간다", await db.contribDispute.count({ where: { recordId: record.id } }), 0);
+  }
+}
+
+console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
+{
+  const testTeam = await db.team.create({
+    data: {
+      name: "공유토큰시험팀",
+      course: "컴퓨터공학종합설계",
+      code: `CD-RPT-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+    },
+  });
+  const m1 = await db.member.create({
+    data: { teamId: testTeam.id, name: "토큰팀원A", isLeader: true },
+  });
+  const m2 = await db.member.create({
+    data: { teamId: testTeam.id, name: "토큰팀원B" },
+  });
+
+  // 기여 실적 2건 생성 (1건 확인됨, 1건 의견 차이)
+  await db.contribRecord.create({
+    data: { memberId: m1.id, kind: "task", title: "API 설계", detail: "REST 규격", source: "self", state: "ok" },
+  });
+
+  await db.contribRecord.create({
+    data: { memberId: m2.id, kind: "task", title: "DB 모델링", detail: "ERD 작성", source: "self", dispute: "역할 중복" },
+  });
+
+  try {
+    const validToken = "valid-share-token-" + Date.now();
+    const expiresFuture = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+    // ① 정상 유효 토큰 생성 및 비로그인 조회
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: validToken,
+        scope: "professor",
+        expiresAt: expiresFuture,
+        createdById: m1.id,
+      },
+    });
+
+    const report = await getPublicReport(validToken);
+    truthy("유효한 토큰으로 리포트가 열린다", report !== null);
+    check("팀 이름이 맞는다", report?.teamName, "공유토큰시험팀");
+    check("교과목이 맞는다", report?.course, "컴퓨터공학종합설계");
+    check("scope 가 맞는다", report?.scope, "professor");
+    check("팀원 수가 맞는다", report?.memberCount, 2);
+    check("확인된 실적 수가 맞는다", report?.totalConfirmed, 1);
+    check("합의율이 0% 이상이다", typeof report?.consensusRate === "number" && report.consensusRate >= 0, true);
+
+    // ② 만료된 토큰 — null 반환
+    const expiredToken = "expired-token-" + Date.now();
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: expiredToken,
+        scope: "professor",
+        expiresAt: new Date(Date.now() - 1000), // 1초 전 만료
+        createdById: m1.id,
+      },
+    });
+    const expiredReport = await getPublicReport(expiredToken);
+    check("만료된 토큰은 리포트를 열지 못한다", expiredReport, null);
+
+    // ③ 폐기(취소)된 토큰 — null 반환
+    const revokedToken = "revoked-token-" + Date.now();
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: revokedToken,
+        scope: "internal",
+        expiresAt: expiresFuture,
+        revokedAt: new Date(), // 폐기됨
+        createdById: m1.id,
+      },
+    });
+    const revokedReport = await getPublicReport(revokedToken);
+    check("폐기된 토큰은 리포트를 열지 못한다", revokedReport, null);
+
+    // ④ 존재하지 않는 가짜 토큰 — null 반환
+    const fakeReport = await getPublicReport("completely-non-existent-token");
+    check("없는 토큰은 리포트를 열지 못한다", fakeReport, null);
+
+    // ⑤ 다른 팀 토큰과의 격리 확인
+    const otherTeam = await db.team.create({
+      data: {
+        name: "다른팀데이터",
+        course: "다른과목",
+        code: `CD-OTH-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+      },
+    });
+    try {
+      const otherToken = "other-team-token-" + Date.now();
+      await db.reportShareToken.create({
+        data: {
+          teamId: otherTeam.id,
+          token: otherToken,
+          scope: "professor",
+          expiresAt: expiresFuture,
+        },
+      });
+      const otherReport = await getPublicReport(otherToken);
+      check("다른 팀 토큰은 그 팀 데이터만 반환한다", otherReport?.teamName, "다른팀데이터");
+      check("A팀 데이터와 섞이지 않는다", otherReport?.teamName !== report?.teamName, true);
+    } finally {
+      await db.team.delete({ where: { id: otherTeam.id } });
+    }
+  } finally {
+    // cascade 로 reportShareToken, member, contribRecord 모두 함께 삭제됨
+    await db.team.delete({ where: { id: testTeam.id } });
   }
 }
 
@@ -2514,7 +2687,7 @@ console.log("\n푸시 알림");
 console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 정한다)");
 {
   // 1. **응답이 없으면 일이 밀린다.** 여기 있는 것들은 전부 "당신이 해야 하는 일이 생겼다".
-  for (const kind of ["join-request", "rejoin-request", "contrib-dispute", "contrib-confirm", "poke"] as const) {
+  for (const kind of ["join-request", "rejoin-request", "contrib-dispute", "contrib-confirm", "poke", "task-assigned", "role-consent"] as const) {
     check(`응답이 필요한 ${kind} 은 밖으로 부른다`, pushPolicy(kind), "push");
   }
   check("회의 제안은 밖으로 부른다", pushPolicy("meeting"), "push");
@@ -2530,10 +2703,32 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
 
   // 이 표가 어긋나면 어느 종류가 화면 밖으로 샜는지 알 수 없다. 종류를 빠뜨리지 않게 세운다.
   const kinds: NotifyKind[] = [
+    "poke", "task-assigned", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
+    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "role-consent", "drive",
+  ];
+  check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
+}
+
+/* ── 채팅 푸시: 하지 않기로 한 것을 고정한다 ──────────────────── */
+
+console.log("\n채팅 푸시 (v1 에서는 앱 밖으로 보내지 않는다)");
+{
+  // **결정을 적어만 두면 조용히 어겨진다.** 누군가 채팅에 알림을 붙이려고 할 때
+  // "이미 정했다" 는 사실을 가장 싼 곳에서 알려 주는 편이 나쁘지 않다.
+  //
+  // 채팅은 `NotifyKind` 에 **없다.** 그래서 이 자리의 종류를 나열하는 검사로 지킨다 —
+  // `chat` 이라는 종류가 생기면 이 검사가 바로 잡는다(그리고 그 순간에는 위 표에 근거를
+  // 적어야 한다).
+  const kinds: NotifyKind[] = [
     "poke", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
     "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "drive",
   ];
-  check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
+  check("알림 종류에 채팅이 새로 들어가지 않는다", kinds.includes("chat" as NotifyKind), false);
+
+  // 종류가 없는 것과 **아예 알림을 부르지 않는 것**은 다르다. 실제로 후자인지 본다 —
+  // 누군가 `notify()` 를 붙여도 종류 검사는 통과하므로, 부르는 행위 자체를 지킨다.
+  const chatActions = readCode("../src/server/actions/chat.ts");
+  check("채팅 액션은 알림을 부르지 않는다", /\bnotify\s*\(/.test(chatActions), false);
 }
 
 /* ── 푸시 본문 ──────────────────────────────────────────────── */
@@ -4110,14 +4305,52 @@ console.log("\n문서가 숫자를 담지 않는다");
    * 사람은 그 수를 전체로 믿는다 — 실제로 겪었다. 헤드오프 표는 10행짜리 원본이고 지금은
    * 25곳이다.
    *
-   * 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 쓰지 못하게** 막는다.
-   */
+* 그래서 이 검사는 "맞는 숫자"를 재는 대신 **개수를 쓰지 못하게** 막는다.
+    */
   const docs = ["../README.md", "../CLAUDE.md"];
   for (const rel of docs) {
     const text = readFileSync(new URL(rel, import.meta.url), "utf8");
     check(`${rel} 은 정책 개수를 적지 않는다`, /정책\s*\d+\s*건/.test(text), false);
     check(`${rel} 은 컴포넌트 개수를 적지 않는다`, /컴포넌트\s*\d+\s*종/.test(text), false);
+
+    /**
+     * **문서가 부르는 명령이 실제로 있어야 한다.**
+     *
+     * `check:migrations` 라는 명령은 없었다 — 실제 이름은 `db:migrations` 이었다. 문서만 옛
+     * 이름이라 읽는 사람은 그 명령을 못 실행하고, "이 검사를 돌리면 되겠지" 하고 넘어간다.
+     * **깨지면 조용히 사라지는 종류**라 사용자가 신고하기 전에 누가 먼저 고쳐야 하는 줄 모른다.
+     *
+     * 존재하지 않는 스크립트를 **쓰기만** 막는다 — 명령을 추가해도 이 검사는 걸리지 않는다.
+     * 그러니 새 명령을 문서에 적을 때는 `package.json` 에 먼저 넣는다.
+     */
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { scripts: Record<string, string> };
+    const called = [...text.matchAll(/npm run ([\w:-]+)/g)].map((m) => m[1]);
+    check(
+      `${rel} 이 부르는 명령이 실제로 있다`,
+      [...new Set(called)].filter((name) => !(name in pkg.scripts)),
+      [],
+    );
   }
+
+  /**
+   * 문서에 적힌 **배포 빌드 명령**이 실제 `vercel.json` 과 같은지 본다. 이게 어긋나면
+   * 로컬 `npm run build` 는 통과하는데 **배포만 죽는다** — 2026-09-28 이 정확히 그 상황이었다
+   * (`vercel.json` 이 `next build` 를 직접 불러 `build` 스크립트의 플래그를 건너뛰었다).
+   */
+  const vercel = JSON.parse(
+    readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
+  ) as { buildCommand: string };
+  const readmeText = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  check("README 의 빌드 명령이 vercel.json 과 같다", readmeText.includes(vercel.buildCommand), true);
+  // 빌드 단계는 반드시 `npm run build` 를 지나야 한다 — `next build` 를 직접 부르면
+  // `package.json` 의 `build` 스크립트(플래그 포함)가 통째로 건너뛰어진다.
+  check(
+    "배포 빌드는 package.json 의 build 를 지난다",
+    /npm run build\s*$/.test(vercel.buildCommand.trim()),
+    true,
+  );
 
   // 제거했다면 목록을 읽을 자리는 남아 있어야 한다 — 화면 안의 검토 표시와 그 열기.
   const note = readCode("../src/components/ui/note.tsx");
@@ -4353,8 +4586,106 @@ console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
   check("서버도 같은 순수 판정을 부른다", actions.includes("canEditTask("), true);
 }
 
+console.log("\n이름이 식별자로 남는 근거 (한 팀에 같은 이름은 한 명)");
+{
+  /**
+   * **DB 제약이 이름 조회의 안전을 지탱한다.** 이름으로 사람을 찾는 자리가 네 군데인데
+   * (`assigneeIdOf`·`invite/settle.ts`·`actions/rejoin.ts`·`actions/onboarding.ts`)
+   * `Member` 의 `@@unique([teamId, name])` 이 그 자리를 모호하지 않게 붙잡고 있다.
+   *
+   * 제약만 풀면 **아무 예외도 나지 않는다** — 담당자가 두 명 중 아무에게나 붙고, 재입장이
+   * 남의 기록을 되살린다. 그래서 이 검사는 제약의 **존재**를 본다. 지울 때는 네 곳을 id
+   * 조회로 바꾼 뒤에 함께 지운다(`prisma/schema.prisma` 의 그 제약 옆 주석 참고).
+   */
+  const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+  // 다음 모델까지 자른다 — 길이를 정수로 두면 주석이 길어졌을 때 잘려서 조용히 실패한다.
+  const memberStart = schema.indexOf("model Member {");
+  const memberModel = schema.slice(memberStart, schema.indexOf("\nmodel ", memberStart + 1));
+  truthy("Member 에 팀 안 이름 유일 제약이 있다", /@@unique\(\[teamId, name\]\)/.test(memberModel));
+
+  // 이름으로 찾는 자리가 남아 있는데 제약만 없으면 조용히 틀린다 — 그래서 **양쪽** 본다.
+  const nameLookups = [
+    ["담당자 지정", "../src/server/actions/tasks.ts", /teamId,\s*name:\s*trimmed/],
+    ["초대 승인", "../src/server/invite/settle.ts", /teamId_name/],
+    ["재입장", "../src/server/actions/rejoin.ts", /teamId_name/],
+    ["이름 겹침 거절", "../src/server/actions/onboarding.ts", /teamId_name/],
+  ] as const;
+  for (const [what, file, re] of nameLookups) {
+    truthy(`${what} 은 이름을 키로 삼는다`, re.test(readCode(file)));
+  }
+
+  // 거절하는 길이 **화면 밖에서** 조용히 succeeds 하면 안 된다 — `name-taken` 을 돌려줘야
+  // 화면이 재입장으로 안내한다(던지면 배포본에서 문구가 가려진다).
+  const onboarding = readCode("../src/server/actions/onboarding.ts");
+  check("같은 이름은 거절한다 (name-taken)", /"name-taken"/.test(onboarding), true);
+}
+
 console.log("\n사용자 노출 용어");
 checkProductLanguage();
+
+console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
+{
+  /**
+   * **한글 옆에 붙은 `�` 는 깨진 글자다.**
+   *
+   * 편집 도구가 한국어 한 글자를 중간에서 잘라 저장하면 그 자리에 U+FFFD 가 남고, **아무도
+   * 모른다** — 주석이면 읽다가 뜻이 이상한 걸 넘어가고, 문서면 그 줄만 뒤틀린다. 실제로
+   * `scripts/harness/drive.integration.mts` 의 "이것이 규칙의 핵" 뒤가 깨진 채로 남아 있었다.
+   *
+   * **깨진 글자를 인용하지 않는다.** 이 문서에서 그 글자를 그대로 베끼면 **이 검사가 저를
+   * 잡는다** — 실제로 이 주석을 처음 쓸 때 그렇게 걸렸다. 인용은 "핵" 뒤가 깨졌다는 설명으로
+   * 대신한다.
+   *
+   * **일부러 쓴 `�` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
+   * 화면에 `�` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
+   * "있느냐"가 아니라 **"한글 옆에 붙어 있느냐"** 로 본다 — 저 뜻으로 지우면 설명이 사라진다.
+   */
+  const root = new URL("../", import.meta.url);
+
+  /**
+   * **`.mts`·`.mjs` 도 본다.** 위의 `productCopySources` 는 사용자 노출 문구용이라 `.tsx?` 만
+   * 훑는다 — 그래서 처음에는 이 검사가 통과했다. 깨진 글자는 **도구 스크립트 주석**에 남아
+   * 있었는데(`scripts/harness/drive.integration.mts`), 바로 그 파일을 못 보고 있어서였다.
+   * 훑는 범위를 넓히는 김에 알려 줄 알람 문구 검사와 섞지 않는다.
+   */
+  const SKIP = new Set(["node_modules", "generated", ".next", "prototype"]);
+  function textSources(dir: URL): URL[] {
+    const out: URL[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue;
+      const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
+      if (entry.isDirectory()) out.push(...textSources(child));
+      else if (/\.(ts|tsx|mts|mjs)$/.test(entry.name)) out.push(child);
+    }
+    return out;
+  }
+
+  const broken: string[] = [];
+  for (const file of [...textSources(new URL("src/", root)), ...textSources(new URL("scripts/", root))]) {
+    const rel = file.pathname.slice(root.pathname.length);
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        const at = [...line].findIndex((c) => c === "\uFFFD");
+        if (at === -1) return;
+        const around = [...line].slice(Math.max(0, at - 1), at + 2).join("");
+        if (/[가-힣]/.test(around)) broken.push(`${rel}:${i + 1} ${around}`);
+      });
+  }
+  check("한글 옆에 깨진 글자가 없다", broken, []);
+
+  // **문서도 본다.** 코드가 깨지면 눈에 띄지만, 마크다운이 깨지면 조용히 읽힌다.
+  for (const doc of ["../README.md", "../docs/product-language.md", "../docs/handoff/HANDOFF.md"]) {
+    const rel = doc.replace("../", "");
+    const hits = readFileSync(new URL(doc, import.meta.url), "utf8")
+      .split("\n")
+      .filter((line) => {
+        const at = [...line].findIndex((c) => c === "\uFFFD");
+        return at !== -1 && /[가-힣]/.test([...line].slice(Math.max(0, at - 1), at + 2).join(""));
+      });
+    check(`${rel} 에 깨진 글자가 없다`, hits, []);
+  }
+}
 
 /* ── 미결 목록은 주석까지 세지 않는다 ─────────────────────────── */
 
@@ -5765,6 +6096,46 @@ console.log("\n남의 업무 상태를 남이 바꿀 수 없다");
   const screen = readCode("../src/features/tasks/tasks-screen.tsx");
   check("화면이 같은 판정을 다시 짜지 않는다", /canEditTask/.test(screen), false);
   check("조용히 아무 일도 일어나지 않게 않는다", screen.includes("남이 넣은 업무라 상태를 바꿀 수 없습니다"), true);
+}
+
+/* ── 미결 목록은 코드와 말아야 한다 ────────────────────────── */
+
+console.log("\n미결 목록이 코드와 어긋나지 않는가");
+{
+  // 이 목록은 README 가 "미결 항목의 정본" 이라 부르는 자리다. 2026-09-28 에 **세 항목이
+  // 사실과 반대로** 적혀 있었다 —
+  //
+  // - 동명이인: "이름만으로 구분합니다" → 실제로는 **두 번째가 막힌다**(유일 제약)
+  // - 예상 질문: "다루지 않았습니다" → 실제로는 **자료에서 뽑는다**
+  // - 원문 링크: "다루지 않았습니다" → 실제로는 **출처 없는 결과를 아예 보여 주지 않는다**
+  //
+  // 틀린 정본은 아무것도 고치지 않은 채 다음 사람을 그 방향으로 엉뚱하게wyn다. 특히 원문 링크
+  // 항목은 **안전과 관련된 쪽**이 틀려 있었다 — "출처를 안 보여 준다" 고 읽으면 문제가 있다.
+  const readAt = (file: string, needle: string) => readCode(file).includes(needle);
+  const decision = readCode("../src/app/onboarding/name/page.tsx");
+
+  // ① 동명이인 — **막는** 것이 맞다.
+  check("동명이인이 '구분'된다고 하지 않는다", decision.includes("이름만으로 구분합니다"), false);
+  check("같은 이름은 함께 있을 수 없다고 적는다", decision.includes("함께 있을 수는 없다"), true);
+  check("서버가 막는다고 적는다", /유일 제약/.test(decision), true);
+
+  // ② 예상 질문 — **뽑는다**고 적어야 한다.
+  const present = readCode("../src/features/tools/present-screen.tsx");
+  check("예상 질문을 '다루지 않았다' 고 하지 않는다", present.includes("다루지"), false);
+  const tools = readCode("../src/server/ai/tools.ts");
+  check("정말 자료에서 뽑는다", /질문을 뽑는다/.test(tools), true);
+
+  // ③ 원문 링크 — **보여 준다**고 적어야 한다.
+  const research = readCode("../src/features/tools/researcher-screen.tsx");
+  check("원문 링크를 '다루지 않았다' 고 하지 않는다", research.includes("원문 링크를 그대로"), false);
+  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(research), true);
+  // 화면에 그대로 보이는 문구까지 확인한다 — 주석만 고쳐지고 화면은 옛말이면 그게 거짓말이다.
+  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(readCode("../src/features/tools/researcher-screen.tsx")), true);
+
+  // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
+  const dm = readCode("../src/features/chat/dm-list-screen.tsx");
+  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dm), true);
+  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dm), true);
 }
 
 await finish();

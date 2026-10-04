@@ -6,15 +6,13 @@ import { isMbtiType } from "@/lib/mbti";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
-import { requireSessionMember } from "@/server/session";
-import { projectTeamToolContext, type TeamToolContext } from "@/lib/team-tool-context";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
-import { contribTotals } from "./contrib-report-totals";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
 import { canEditTask, taskEditBlock } from "@/lib/task-permission";
+import { projectTeamToolContext, type TeamToolContext } from "@/lib/team-tool-context";
 import { countUnresolved } from "@/server/rate-limit/join-throttle";
 import { isJoinCapped } from "@/server/rate-limit/policy";
 import type {
@@ -29,7 +27,6 @@ import type {
   CushionLevelKey,
   ContribKind,
   ContribRecord,
-  ContribReportRow,
   CushionTone,
   DmThread,
   DriveLimits,
@@ -42,7 +39,6 @@ import type {
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
-  PublicReportData,
   RandomTool,
   RecentItem,
   ResearchResult,
@@ -72,12 +68,10 @@ import {
 } from "@/features/schedule/week";
 import { calcDday, normalizeTaskDueDate, sortCalendarEvents } from "@/features/schedule/calendar-events";
 import { candidateDateOf } from "@/server/meetings/candidates";
-import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
-import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
 import { pushConfigured } from "@/server/notify/push";
@@ -189,30 +183,6 @@ export async function getRoster(teamId: string): Promise<Member[]> {
   }));
 }
 
-/**
- * 같은 팀에 같은 이름의 기록이 이미 있는지 확인한다.
- *
- * 재입장·기기 변경 시 기록을 잇기 위한 것이다. 동명이인 구분 방법은
- * **아직 확정되지 않은 정책**이라 지금은 이름만으로 판단한다.
- */
-export async function findExistingMember(teamCode: string, name: string): Promise<Member | null> {
-  const team = await getTeamByCode(teamCode);
-  if (!team) return null;
-
-  const member = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: normalizeName(name) } },
-  });
-  if (!member) return null;
-
-  return {
-    id: member.id,
-    name: member.name,
-    isMe: false,
-    mbti: toMbti(member.mbti),
-    want: toRole(member.wantRole),
-    veto: toRole(member.vetoRole),
-  };
-}
 
 /* ── 제품 설정 (팀마다 달라지지 않는 값) ───────────────────── */
 
@@ -899,19 +869,20 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
  *
  * ## 나간 팀원은 넣지 않는다
  *
- * `leftAt` 이 있는 사람은 알림이 안 닿는다(`notify` 가recipient 에서 뺀다) — 즉 **담당자로
- * 잡아도 아무도 알지 못한다.** 조용히 배정된 책임이므로 명단에서 뺀다. 같은 이유로 알림
- * 대상도 아니다.
+ * `leftAt` 이 있는 사람은 알림이 안 닿는다(`notify` 가 recipient 에서 뺀다) — 즉 **담당자로
+ * 잡아도 아무도 알지 못한다.** 조용히 배정된 책임이므로 명단에서 뺀다.
  *
  * **재입장 대기 중인 사람(`memberClaim`)도 넣지 않는다** — 아직 팀원이 아니라 "누군가
  * 들어오려는 상태" 다. AI 가 그 이름을 담당자로 잡으면 팀원이 아닌 사람에게 일이 배정된다.
  */
 export async function getTeamToolContext(teamId: string): Promise<TeamToolContext> {
-  const session = await requireSessionMember();
+  // main 의 관례대로 `getSessionMember` 를 쓴다(`requireSessionMember` 는 여기서 쓰이지 않는다).
+  const session = await getSessionMember();
+  if (!session) throw new Error("로그인이 필요합니다.");
   const [team, roster, boxes, openTasks] = await Promise.all([
     db.team.findUnique({ where: { id: teamId }, select: { name: true, dday: true } }),
     db.member.findMany({
-      where: { teamId, leftAt: null },
+      where: { teamId, ...ACTIVE },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
@@ -942,7 +913,11 @@ export async function getTeamToolContext(teamId: string): Promise<TeamToolContex
       due: t.due,
       status: t.status,
     })),
-    boxes: boxes.map((b) => ({ role: b.role as RoleKey, name: b.name, dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null })),
+    boxes: boxes.map((b) => ({
+      role: b.role as RoleKey,
+      name: b.name,
+      dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
+    })),
   });
 }
 
@@ -1061,7 +1036,7 @@ type MessageRow = {
   /** 정렬용 실제 시각. `whenLabel` 은 "21:12" 라 사람이 읽는 문자열이라 비교할 수 없다. */
   createdAt: Date;
   viaCushion: boolean;
-  /** **이 사람의 지금 설정으로** 이 말을 어떻게 보여 줄지(읽기 순화). 성공·실패가 모두 담긴다. */
+  /** **이 사람의 지금 설정으로** 이 말을 어떻게 보여 줄지(읽기 도움). 성공·실패가 모두 담긴다. */
   purifications: CushionRow[];
   attachPath: string | null;
   attachName: string | null;
@@ -1091,12 +1066,12 @@ type CushionRow = {
 };
 
 /**
- * 순화 상태는 **이 사람이 지금 읽는 지문의 것만** 가져온다.
+ * 읽기 도움 상태는 **이 사람이 지금 읽는 지문의 것만** 가져온다.
  *
  * 예전에는 (말, 읽는 사람) 으로 저장했으므로 팀원 수만큼 행이 있었다. 지금은 (말, 지문) 이라
  * 한 말에 한 줄이고, `where` 에는 사람이 아니라 **지문**이 들어간다.
  *
- * 화면에는 **자기 지문의 순화본만** 보여야 한다 — 남의 강도나 남의 말투로 만든 글은 이 사람의
+ * 화면에는 **자기 지문의 다듬은 말만** 보여야 한다 — 남의 강도나 남의 말투로 만든 글은 이 사람의
  * 화면에 있으면 안 된다. 지문이 곧 그 경계다.
  */
 const messageInclude = (policyHash: string) => ({
@@ -1121,7 +1096,7 @@ function driveHref(boxId: string, fileId: string, versionId: string): string {
   return `/drive/${boxId}/${fileId}/${versionId}`;
 }
 
-/** 저장된 순화 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
+/** 저장된 읽기 도움 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
 function toChatPurified(row: CushionRow): ChatPurified {
   if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
     return {
@@ -1134,7 +1109,7 @@ function toChatPurified(row: CushionRow): ChatPurified {
   }
   // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
   // 저장되지 않은 status 값(옛 데이터·손으로 넣은 값)은 실패로 본다. 모르는 상태를
-  // "순화됨" 으로 그리는 일은 없어야 한다.
+  // "읽기 도움됨"으로 그리는 일은 없어야 한다.
   const status: "PENDING" | "REJECTED" | "FAILED" =
     row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
   return {
@@ -1160,7 +1135,7 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     sortAt: m.createdAt.toISOString(),
     status: "sent",
     viaCushion: m.viaCushion,
-    // 순화 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
+    // 읽기 도움 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
     // 실패한 말은 `text: null` 이라 화면에서 원문으로 넘어간다.
     purified: m.purifications[0] ? toChatPurified(m.purifications[0]) : null,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
@@ -1320,7 +1295,7 @@ async function readCushionOf(threadKey: string): Promise<ReadCushionSetting> {
   return {
     enabled: row.enabled,
     mode: levelOf({ enabled: row.enabled, mode: row.mode as CushionLevelKey, tone: row.tone }),
-    // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 순화하지 않는다.
+    // 모르는 말투는 없는 것으로 본다 — 조용히 다른 말투로 읽기 도움으로 다듬지 않는다.
     tone: isCushionTone(row.tone) ? row.tone : null,
   };
 }
@@ -1461,7 +1436,7 @@ export async function getDmThread(teamId: string, threadId: string): Promise<DmT
   return threads.find((t) => t.id === threadId) ?? null;
 }
 
-/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+/* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
 export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
   const session = await getSessionMember();
@@ -1513,99 +1488,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   return teamCheckRecords(teamId, session?.id ?? null);
 }
 
-/** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
-export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
-  // **나간 사람도 남긴다.** 예전에는 여기만 `ACTIVE` 로 걸러서, 나간 팀원은 17 화면
-  // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
-  // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
-  // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
-    db.member.findMany({
-      where: { teamId },
-      // `wantRole`(희망)은 **읽지 않는다** — 역할은 수락된 추첨에서만 온다. 아래 주석 참고.
-      select: { id: true, name: true, leftAt: true },
-      orderBy: { joinedAt: "asc" },
-    }),
-    // **기록을 통째로 읽지 않고 DB 에서 센다.** 예전에는 `include: { contribRecords }` 로
-    // 전원을 다 받아와 JS 에서 숫자 셋을 만들었다. 그런데 기록은 지우지 않고(나간 사람도 남고),
-    // 의견(`ContribDispute`)과 참여 표시는 **이력으로 남는** 설계라 팀이 사는 동안 줄기만
-    // 한다 — 그 양이 그대로 페이로드가 된다.
-    db.contribRecord.groupBy({
-      by: ["memberId", "state"],
-      where: { member: { teamId } },
-      _count: { _all: true },
-    }),
-    // 참여 표시는 **현재 표시 중인 것만** 센다 — 취소한 표시까지 세면 지운 사실이 참여로
-    // 남는다. 관계에 필터를 준 `_count` 는 **SQL 에서 계산되므로** 표시 행을 받아오지
-    // 않는다(예전에는 표시를 배열로 받아와 `length` 를 세었다).
-    db.contribRecord.findMany({
-      where: { member: { teamId } },
-      select: {
-        memberId: true,
-        _count: { select: { participations: { where: { activeKey: { not: null } } } } },
-      },
-    }),
-    // **답이 없어 닫힌 의견.** 결론이 "합의 없음 · 원문 유지" 인 기록을 사람별로 센다 —
-    // 확인 절차는 돌아갔지만 반대가 표에 남아 있는 사실이라 리포트에 남긴다.
-    db.contribRecord.groupBy({
-      by: ["memberId"],
-      where: { member: { teamId }, dispute: { not: null }, resolution: RESOLUTION_WAYS.noAgreement },
-      _count: { _all: true },
-    }),
-    // 역할은 **수락이 끝난 추첨**에서만 온다(`getAcceptedRoleAssignments`).
-    getAcceptedRoleAssignments(teamId),
-    // 확인된 주요 기록 (리포트 요약 표시용)
-    db.contribRecord.findMany({
-      where: { member: { teamId }, state: "ok" },
-      select: { memberId: true, title: true },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    }),
-  ]);
-
-  // **어느 칸에 넣는지는 `data/contrib-report-totals.ts` 한 곳이 정한다.** 모으는 규칙이
-  // 두 군데로 나뉘면 목록마다 숫자가 어긋나고, 그건 성적 근거 문서에서 가장 나쁜 종류의
-  // 오류다. 그 파일이 순수 함수라 `scripts/smoke.mts` 가 이 규칙을 직접 돌릴 수 있다.
-  const totals = contribTotals({
-    states: stateCounts.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
-    shownPerRecord: shownPerRecord.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
-    unresolved: unresolvedRows.map((r) => ({ memberId: r.memberId, n: r._count._all })),
-  });
-
-  const highlightsByMember = new Map<string, string[]>();
-  for (const r of okRecords) {
-    const list = highlightsByMember.get(r.memberId) ?? [];
-    if (list.length < 3) {
-      list.push(r.title);
-      highlightsByMember.set(r.memberId, list);
-    }
-  }
-
-  return members.map((m) => {
-    // 기록이 한 건도 없는 사람도 줄은 서야 한다(성적 근거는 빈칸이 아니라 0 이다).
-    const bucket = totals.get(m.id);
-    // **희망으로 대신 채우지 않는다.** 확정된 배정이 없으면 그대로 "미정" 이다.
-    //
-    // 예전에는 `Member.wantRole`(1순위 희망)을 "합의한 역할"로 인쇄했다. 추첨 결과가 다른
-    // 사람에게 넘어갔는데도 그 사람의 희망이 그대로 찍히는 셈이고, 이 문서는 성적 근거로
-    // 쓰인다. 여기에 희망을 넣으면 없는 역할을 있는 것처럼 보여 **지금 버그가 그대로 숨어
-    // 버린다.** 07 화면도 둘을 "희망자"와 "확정"으로 구분해 말한다.
-    const roles = acceptedRoles.get(m.id) ?? [];
-    return {
-      memberId: m.id,
-      who: m.name,
-      left: m.leftAt !== null,
-      role: roles.length > 0 ? roles.map((r) => ROLES.find((x) => x.key === r)?.name).join(" · ") : "미정",
-      confirmed: bucket?.confirmed ?? 0,
-      pending: bucket?.pending ?? 0,
-      disputed: bucket?.disputed ?? 0,
-      // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
-      // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
-      participations: bucket?.participations ?? 0,
-      unresolved: bucket?.unresolved ?? 0,
-      highlights: highlightsByMember.get(m.id) ?? [],
-    };
-  });
-}
+export { getContribReport, getPublicReport } from "@/server/contrib/report";
 
 /* ── 21 할 일 ──────────────────────────────────────────────── */
 
@@ -1874,54 +1757,6 @@ export async function getMeetingNoteByProposal(meetingId: string): Promise<Meeti
   };
 }
 
-/* ── 공개 기여도 리포트 ─────────────────────────────────────────── */
 
-/**
- * 로그인 없는 외부 열람자(교수님 등)를 위한 리포트 조회.
- * 유효한 토큰일 때만 성적 증빙 데이터를 반환한다.
- */
-export async function getPublicReport(token: string): Promise<PublicReportData | null> {
-  const record = await db.reportShareToken.findFirst({
-    where: {
-      token,
-      revokedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-    include: {
-      team: { select: { id: true, name: true, course: true } },
-    },
-  });
-
-  if (!record) return null;
-
-  const rows = await getContribReport(record.teamId);
-  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
-  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
-  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
-  const totalAll = totalConfirmed + totalPending + totalDisputed;
-  const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
-
-  const issuedOn = new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Seoul",
-  })
-    .format(record.createdAt)
-    .replace(/\.$/, "");
-
-  return {
-    teamName: record.team.name,
-    course: record.team.course,
-    issuedOn,
-    scope: (record.scope as "professor" | "internal") ?? "professor",
-    memberCount: rows.length,
-    totalConfirmed,
-    totalPending,
-    totalDisputed,
-    consensusRate,
-    rows,
-  };
-}
 
 

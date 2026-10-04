@@ -46,7 +46,13 @@ export function hashInviteToken(raw: string): string {
  */
 export const INVITE_TOKEN_LENGTH = 43;
 
-const BASE64URL = /^[A-Za-z0-9_-]{43}$/;
+/**
+ * **`INVITE_TOKEN_LENGTH` 에서 만든다.** 둘을 따로 적으면 조용히 어긋난다 — 상수를 44로
+ * 바꿨는데 정규식만 43인 채로 남으면 **정상 토큰을 통과하지 못하는** 필터가 된다. 이 필터는
+ * DB 를 안 두드리고 버리는 문지기라(위 주석), 그게 어느 쪽으로 틀어도 아무 오류 없이
+ * "초대가 안 먹힌다" 만 보인다.
+ */
+const BASE64URL = new RegExp(`^[A-Za-z0-9_-]{${INVITE_TOKEN_LENGTH}}$`);
 
 export function looksLikeInviteToken(value: string): boolean {
   return BASE64URL.test(value);

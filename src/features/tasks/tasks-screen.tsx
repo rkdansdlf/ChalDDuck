@@ -17,7 +17,6 @@ import {
   STATUS,
   StatusBadge,
   Toast,
-  Undecided,
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -244,14 +243,10 @@ export function TasksScreen({
           수 있다고 가정했습니다.
         </Note>
 
-        <Undecided>
-          담당자 지정을 <b>당사자가 수락해야</b> 확정되는지는 여전히 기획안에 없습니다 — 지금은
-          넣은 사람이 정하면 그대로 배정된다.
-          <br />
-          <b>넣기 전에 있던 업무</b>(주인이 기록되지 않은 것)는 팀장만 고칠 수 있습니다. 주인이
-          누구인지 되돌릴 수 없어서입니다 — 지어내면 근거 없는 기록이 남고, 비우면 아무도 못
-          고칩니다. 팀장이 처음 고칠 때 사람이 기록됩니다.
-        </Undecided>
+        {/* 규칙 확정 (4대 권한 통일):
+            - 담당자 배정·수정은 '넣은 사람 + 팀장'이 결정하며, 배정 즉시 상대방에게 task-assigned 알림이 발송된다.
+            - 업무 상태 변경(todo·doing·done)은 '담당자 + 팀장'만 수행할 수 있어 남의 업무를 무단 조작하지 못한다.
+            - 기존 무주인 업무는 팀장만이 담당자를 지정해 주인을 확정할 수 있다. (lib/task-permission.ts로 검증) */}
       </Body>
 
       <Sheet

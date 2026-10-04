@@ -22,7 +22,7 @@ import { DraftSourceChip } from "./draft-source-chip";
 import { addTasksFromClerk } from "@/server/actions/tasks";
 import { cn } from "@/lib/cn";
 import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
-// 양쪽 다 필요하다 — `ClerkCandidate`(2단계-a 의 출처 표시)와 `saveMeetingNote`(회의록 저장).
+// 양쪽 다 필요하다 — `ClerkCandidate`(2단계-a 의 출처 표시)와 main 이 추가한 것들.
 import type { AiAnswerSource, ClerkCandidate, ClerkDraft, Member } from "@/lib/types";
 import { assigneeOrigin } from "@/lib/tool-assignee";
 import { saveMeetingNote } from "@/server/actions/notes";

@@ -9,7 +9,7 @@ import type { MbtiType } from "./mbti";
  * 계약(contract)이 되고, `src/data/` 의 목 구현만 교체하면 된다.
  */
 
-/** 역할 식별자 — 드라이브 제출함·기여도 기록이 모두 이 키로 묶인다. */
+/** 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다. */
 export type RoleKey = "research" | "deck" | "script" | "present" | "manage";
 
 export type Role = {
@@ -223,8 +223,6 @@ export type AiTool = {
   /** `IconName` 과 같은 kebab-case 어휘. */
   icon: string;
   note: string;
-  /** 아직 열지 않은 도구는 false. */
-  ready: boolean;
   /** 도구 화면 경로. 아직 없으면 null. */
   href: string | null;
 };
@@ -239,7 +237,7 @@ export type AiPolicy = {
   /** 사용 기록(횟수)을 남겨 두는 기간. 입력한 글과 결과는 애초에 저장하지 않는다. */
   retentionDays: number;
   /**
-   * **읽기 순화 폭주 차단(하루·팀).** 사용자에게 보이는 한도가 아니라 **안전장치**다.
+   * **읽기 도움 폭주 차단(하루·팀).** 사용자에게 보이는 한도가 아니라 **안전장치**다.
    *
    * ## 왜 이것만 남았는가 (2026-09-28)
    *
@@ -253,7 +251,7 @@ export type AiPolicy = {
    * 즉 그 숫자는 14일간 아무 일도 하지 않았다. 사용자에게 "하루 200회" 로 보이도록 찍혀 있던
    * 것은 **한도가 아니라 거짓이었다.**
    *
-   * 남긴 것은 **하나**다. 순화는 사람이 누르는 것이 아니라 **메시지마다 자동으로** 도는
+   * 남긴 것은 **하나**다. 읽기 도움은 사람이 누르는 것이 아니라 **메시지마다 자동으로** 도는
    * 유일한 기능이라, 여기만 무제한이 가능한 형태의 사고다. 재시도 폭주는 이미
    * `MAX_ATTEMPTS`·`FAILURE_BACKOFF_MS` 로 묶여 있으니 순환은 구속된다 — 이건 그 위에 있는
    * 마지막 방어선이고, 사람 눈에는 보이지 않는다(사용자에게 한도로 말하지 않는다).
@@ -294,7 +292,7 @@ export type AiAnswerSource =
 export type CushionTone = { key: string; name: string };
 
 /**
- * 읽기 순화의 강도.
+ * 읽기 도움의 강도.
  *
  * `OFF` 는 강도가 아니라 **끄는 상태** 다 — 그래서 여기 없고 `ReadCushionSetting.enabled`
  * 로 따로 둔다(끄기 전에 고른 단계를 잃지 않으려고).
@@ -329,14 +327,14 @@ export type ClerkCandidate = {
   /**
    * 담당자가 **왜** 이 모양인지(2단계-a).
    *
-   * `matched` — 팀원 명단에서 찾았다 · `unset` — 모델도 정하지 않았다 ·
+   * `matched` — 명단에서 찾았다 · `unset` — 모델도 정하지 않았다 ·
    * `no-match` — **명단에 없는 이름을 지웠다** · `ambiguous` — **누구인지 몰라 물어야 한다.**
    *
    * ⚠️ **비어 있을 수 있다** — 예시 결과는 매칭을 시도하지 않았으므로 채울 이유가 없다.
    * `undefined` 는 "모르겠다" 가 아니라 **"시도하지 않았다"** 다.
    */
   assigneeReason?: "matched" | "unset" | "no-match" | "ambiguous";
-  /** 왜 이 사람을 넣었는지 — 근거 없이 배정하지 않는다. */
+  /** 왜 이 후보를 넣었는지 — 근거 없이 배정하지 않는다. */
   basis: string;
   due: string;
 };
@@ -486,7 +484,7 @@ export type FileVersion = {
 export const TEAM_THREAD_ID = "team";
 
 /**
- * 이 메시지를 이 사람에게 보여 주는 순화 상태(19·31 읽기 순화).
+ * 이 메시지를 이 사람에게 보여 주는 읽기 도움 상태(19·31 읽기 도움).
  *
  * 실패도 **보인다** — 실패를 저장하지 않으면 실패를 셀 수도, 다시 부르지 않을 수도,
  * 왜 안 됐는지 나중에 알 수도 없다. `retryAfter` 는 "이 시각 전에는 다시 부르지 않는다" 다.
@@ -544,13 +542,13 @@ export type ChatMessage = {
    */
   viaCushion?: boolean;
   /**
-   * **나에게** 이 말을 어떻게 보여 줄 것인가(읽기 순화, 19·31). 아직 아무것도 없으면 null.
+   * **나에게** 이 말을 어떻게 보여 줄 것인가(읽기 도움, 19·31). 아직 아무것도 없으면 null.
    *
    * `text` 가 있는 상태(`PURIFIED`/`FALLBACK`)만 화면에 그릴 문장을 갖는다. 실패 상태는
    * `text: null` 이고 화면은 **원문**을 그린다.
    *
-   * `kind` 로 **누가 쓴 문장인지** 구분한다 — AI 가 쓴 순화문과 규칙으로 가린 문장은 라벨이
-   * 다르다. AI 가 아닌데 "순화됨" 이라 쓰면 그건 거짓말이다.
+   * `kind` 로 **누가 쓴 문장인지** 구분한다 — AI 가 쓴 읽기 도움문과 규칙으로 가린 문장은 라벨이
+   * 다르다. AI 가 아닌데 "읽기 도움됨" 이라 쓰면 그건 거짓말이다.
    */
   purified: ChatPurified | null;
   reactions?: MessageReaction[];
@@ -605,7 +603,7 @@ export type DmThread = {
   unread: number;
 };
 
-/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+/* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
 /**
  * 기여 기록의 종류.
@@ -768,7 +766,7 @@ export type ContribReportRow = {
   who: string;
   /** 팀을 나갔다 온 사람인지. 기록은 남으므로 줄도 남고, 구분만 해 준다. */
   left: boolean;
-  /** 합의한 역할 이름. */
+  /** 확정된 역할 이름. */
   role: string;
   confirmed: number;
   pending: number;
@@ -791,7 +789,7 @@ export type ContribReportRow = {
   highlights?: string[];
 };
 
-/** 외부 공개용 기여도 리포트 묶음 데이터 */
+/** 외부 공개용 기여 기록 리포트 묶음 데이터 */
 export type PublicReportData = {
   teamName: string;
   course: string;
@@ -862,8 +860,6 @@ export type IceGame = {
    * 상한이 필요 없다. 서버도 같은 값으로 막는다(화면만 막으면 남의 요청으로 열린다).
    */
   maxPlayers?: number;
-  /** 실행까지 연결된 게임인지. false 면 설명만 볼 수 있다. */
-  playable: boolean;
 };
 
 /** 라이어: liar | citizen / 마피아: mafia | police | doctor | citizen */

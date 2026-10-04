@@ -110,9 +110,8 @@ function readArgs(): {
     compare: argv.includes("--compare"),
     save: !argv.includes("--no-save"),
     // `--with-context` — **팀원 명단을 프롬프트에 넣고** 부른다. 2단계 이후 앱의 기본 동작이다.
-    // ⭐ **이 플래그가 없으면 오늘의 앱을 측정하지 못한다.** 2단계에서 서기 화면은 항상
-    // 문맥을 받는데, 벤치가 문맥 없이 돌면 "앱이 하는 일" 을 재는 것이 아니라 2단계 이전을
-    // 재게 된다. **앱과 벤치가 같은 조건이어야 비교가 성립한다.**
+    // ⭐ **이 플래그가 없으면 오늘의 앱을 측정하지 못한다.** 2단계에서 서기 화면은 항상 문맥을
+    // 받는데 벤치가 문맥 없이 돌면 "앱이 하는 일" 을 재는 것이 아니라 2단계 이전을 재게 된다.
     withContext: argv.includes("--with-context"),
   };
 }
@@ -353,11 +352,20 @@ const CORPUS_LENGTH: Record<ToolKey, number> = {
   sentence: SENTENCE_CORPUS.length,
 };
 
+/** `--tool` 별 그 도구의 코퍼스 한 건. */
+function caseAt(tool: ToolKey, index: number) {
+  if (tool === "clerk") return CLERK_CORPUS[index];
+  if (tool === "present") return PRESENT_CORPUS[index];
+  if (tool === "research") return RESEARCH_CORPUS[index];
+  if (tool === "cushion") return CUSHION_CORPUS[index];
+  return SENTENCE_CORPUS[index];
+}
+
 /**
  * 코퍼스 한 건의 명단으로 **실제 앱과 같은 문맥**을 만든다.
  *
- * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. **벤치가 다른 모양을 쓰면 앱이
- * 아닌 걸 측정하는 것**이므로 같은 함수(`projectTeamToolContext`)를 쓴다.
+ * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. **벤치가 다른 모양을 쓰면 앱이 아닌
+ * 걸 측정하는 것**이므로 같은 함수(`projectTeamToolContext`)를 쓴다.
  */
 function contextOf(item: ClerkCase, withContext: boolean): TeamToolContext | undefined {
   if (!withContext) return undefined;
@@ -371,15 +379,6 @@ function contextOf(item: ClerkCase, withContext: boolean): TeamToolContext | und
   });
 }
 
-/** `--tool` 별 그 도구의 코퍼스 한 건. */
-function caseAt(tool: ToolKey, index: number) {
-  if (tool === "clerk") return CLERK_CORPUS[index];
-  if (tool === "present") return PRESENT_CORPUS[index];
-  if (tool === "research") return RESEARCH_CORPUS[index];
-  if (tool === "cushion") return CUSHION_CORPUS[index];
-  return SENTENCE_CORPUS[index];
-}
-
 type Row = { id: string; kind: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
 
 async function runOne(tool: ToolKey, model: string, index: number, withContext: boolean): Promise<Row> {
@@ -388,7 +387,7 @@ async function runOne(tool: ToolKey, model: string, index: number, withContext: 
     if (tool === "clerk") {
       const item = CLERK_CORPUS[index];
       // ⭐ **같은 코퍼스·같은 모델인데 명단만 다르다.** 그래서 "명단을 주니 담당자를 추측했다" 를
-      // 숫자로 비교할 수 있다 — 이것이 이 플래그의 존재 이유다.
+      // 숫자로 비교할 수 있다 — 이것이 `--with-context` 의 존재 이유다.
       const draft = await summarizeMeeting(item.memo, model, contextOf(item, withContext));
       const v = judgeClerk(item, draft);
       return {

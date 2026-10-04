@@ -19,7 +19,7 @@ import { createReportShareToken } from "@/server/actions/report-share";
 export type ReportViewMode = "professor" | "internal";
 
 /**
- * 18 기여도 · 1장 PDF 및 보고서 화면.
+ * 18 기여 기록 · 1장 PDF 및 보고서 화면.
  *
  * 두 가지 뷰 모드 지원:
  * - "professor": 교수 제출용 공식 양식 (확인된 실적, 상호 확인율 %, 주요 활동 하이라이트 중심)

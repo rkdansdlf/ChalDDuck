@@ -25,6 +25,7 @@ const require_ = createRequire(import.meta.url);
 export const revalidated = [];
 
 const SESSION_COOKIE = "cd_session";
+const CREATOR_COOKIE = "cd_creator";
 const jar = new Map();
 
 function cookiesApi() {
@@ -69,14 +70,66 @@ const nextCacheStub = {
   unstable_noStore: () => {},
 };
 
-/** 테스트 전용 — 세션 항아리를 직접 다룬다. */
+/**
+ * 테스트 전용 — 쿠키 항아리를 직접 다룬다.
+ *
+ * ## `nobody()` 가 `cd_session` 만 지우는 이유
+ *
+ * 항아리에는 **세션이 아닌 쿠키도 들어간다.** 팀을 만든 브라우저를 기억하는 `cd_creator` 가
+ * 그 하나다 — 이게 있어야 "창작자가 첫 팀장" 이라는 규칙이 성립한다(창작자 쿠키는 하루 뒤
+ * 지워지므로, 팀장이 없을 때를 위해 "빈 팀의 첫 사람" 규칙도 함께 있다).
+ *
+ * `jar.clear()` 로 항아리 전체를 비우면 **그 규칙을 검사할 수 없게 된다.** 그래서 세션만
+ * 지운다. 항아리 전체를 비우는 일은 `reset()` 이라고 이름을 붙여 따로 둔다.
+ */
 export const session = {
   /** 이 팀원으로 행동한다. 서버 액션이 이 세션을 읽는다. */
   as(token) {
     jar.set(SESSION_COOKIE, token);
   },
+  /** 세션만 지운다 — 다른 쿠키(`cd_creator`)는 남는다. */
   nobody() {
+    jar.delete(SESSION_COOKIE);
+  },
+  /**
+   * **신원 쿠키**를 지운다(세션 + 창작자). 신청인의 요청 토큰(`cd_join`)은 **남긴다.**
+   *
+   * 팀장 세션으로 승인한 뒤 신청인 브라우저로 돌아와야 하는 검사가 있다. 항아리 전체를
+   * 비우면 **신청인이 자기 요청을 못 찾게 되어** 팀원이 되지 않는다 — 그건 버그가 아니라
+   * 하네스가 브라우저를 바꿔 버린 것이다.
+   */
+  reset() {
+    jar.delete(SESSION_COOKIE);
+    jar.delete(CREATOR_COOKIE);
+  },
+  /** 항아리 전체를 비운다 — **다른 브라우저**가 되어야 할 때만 쓴다. */
+  clearAll() {
     jar.clear();
+  },
+  /**
+   * abuse 한계용 신원 쿠키(`cd_anon`)를 정한다.
+   *
+   * ## 왜 이것이 필요한가 (2026-09-28)
+   *
+   * 가입 abuse 한계는 `cd_anon` 쿠키를 **행 키로** 쓴다(`rate-limit/join-throttle.ts` 의
+   * `hitWindow` — `INSERT … ON CONFLICT DO UPDATE` 는 **행 단위로 직렬화**된다).
+   *
+   * 즉 브라우저 열 개가 **하나의 항아리**(= 하나의 신원)를 쓰면 abuse 한계가 그들을 **차례로
+   * 처리한다** — 팀 행 잠금을 지워도 경합이 재현되지 않았다. 처음에 그 이유를 몰라서
+   * "검사가 잠금을 보고 있지 않다" 고 판단했다.
+   *
+   * **진짜 경합은 서로 다른 브라우저 사이에서 난다** — 각자 다른 신원을 갖고 동시에 붙을 때다.
+   * 그래서 경합 검사는 신원을 하나씩 심는다.
+   */
+  asBrowser(anonId) {
+    jar.set("cd_anon", anonId);
+  },
+  /** 창작자 쿠키를 심는다 — "이 브라우저가 팀을 만들었다" 를 서버가 믿게 한다. */
+  asCreator(teamId) {
+    jar.set(CREATOR_COOKIE, teamId);
+  },
+  hasCreatorCookie() {
+    return jar.has(CREATOR_COOKIE);
   },
   revalidated,
 };

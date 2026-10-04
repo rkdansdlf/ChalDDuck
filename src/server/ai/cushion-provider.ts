@@ -4,7 +4,7 @@ import { buildPurifyRequest, isRefusal, type PurifyItem } from "@/lib/read-cushi
 import { askText, isAiConfigured } from "./model";
 
 /**
- * 읽기 순화를 부르는 **자리**.
+ * 읽기 도움을 부르는 **자리**.
  *
  * ## 왜 인터페이스가 있나
  *
@@ -56,7 +56,7 @@ function openRouterProvider(id: string): CushionProvider {
  *
  * **기본값은 여기서 정하지 않는다.** 예전에는 `.env` 의 `OPENROUTER_MODEL` 을 여기서 다시
  * 읽어 provider 의 id 로 삼았는데, 그건 같은 값을 **두 곳에서** 고른 셈이라 도구별 라우팅이
- * 켜졌을 때 어긋났다(읽기 순화만 옛 기본값을 쓰는 것이 실제로 벌어졌다). 이제 이 id 는
+ * 켜졌을 때 어긋났다(읽기 도움만 옛 기본값을 쓰는 것이 실제로 벌어졌다). 이제 이 id 는
  * 비어 있고, `askText` 가 `modelFor("read-cushion")` 을 본다 — **모델을 고르는 자리는 한 곳.**
  */
 export function defaultProvider(): CushionProvider {

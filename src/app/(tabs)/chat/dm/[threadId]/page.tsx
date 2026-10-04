@@ -19,7 +19,7 @@ export default async function DmPage({ params }: PageProps<"/chat/dm/[threadId]"
   const [page, roster, cushion] = await Promise.all([
     getDmMessages(team.id, threadId),
     getRoster(team.id),
-    // 읽기 순화는 **이 대화만** 해당한다 — 단톡방에서의 선택을 그대로 물려받지 않는다.
+    // 읽기 도움은 **이 대화만** 해당한다 — 단톡방에서의 선택을 그대로 물려받지 않는다.
     getDmReadCushion(team.id, threadId),
   ]);
 

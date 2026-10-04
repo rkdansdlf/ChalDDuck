@@ -20,12 +20,12 @@ export function ReadCushionBar({
   setting: ReadCushionSetting;
   tones: CushionTone[];
   levels: CushionLevel[];
-  /** 순화가 도는 중인지. 도는 동안에도 원문은 이미 화면에 있다. */
+  /** 읽기 도음이 동작하는 중인지. 동작하는 동안에도 원문은 이미 화면에 있다. */
   working: boolean;
   /** 실패 이유. 사람이 읽을 문장이고, 원문(또는 규칙 가림)으로 읽고 있다는 사실을 함께 말한다. */
   notice: string | null;
   /**
-   * 오늘 순화를 몇 번 돌렸는지. `readable` 이 false 면 **읽지 못한 것**(AI 키 없음·요청 실패)이라
+   * 오늘 읽기 도움을 몇 번 돌리는지. `readable` 이 false 면 **읽지 못한 것**(AI 키 없음·요청 실패)이라
    * 숫자를 말하지 않는다. 한도가 없으므로 "남음" 을 말하지 않는다(2026-09-28).
    */
   usage: { used: number; readable: boolean };
@@ -107,7 +107,7 @@ export function ReadCushionBar({
 }
 
 /**
- * 01 읽기 순화 바텀 시트 (Plan A: 상단 공간 확보형).
+ * 01 읽기 도움 바텀 시트 (Plan A: 상단 공간 확보형).
  *
  * 상단 바가 250px 넘게 화면을 가리는 문제를 해결하기 위해,
  * 상단 AppBar 아이콘을 터치했을 때 열리는 시트로 분리한다.

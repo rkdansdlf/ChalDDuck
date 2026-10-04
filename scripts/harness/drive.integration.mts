@@ -99,6 +99,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       box,
       box2,
       leader,
+      mate,
       asLeader: await token(leader.id),
       asMate: await token(mate.id),
       /** 아무도 안 올린 새 팀원을 하나 더 만든다 — "나 neither 올린 사람도 팀장도 아닌 사람" 이 필요해. */
@@ -328,6 +329,59 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     );
     check("올린 것도 팀장도 아니면 막힌다", String(thirdTry).includes("본인이 올린 버전"), true);
     check("막힌 것은 버전으로 남지 않는다", (await versionsOf(fileR)).length, beforeBlocked);
+
+    /* ⑧-B 마감 수정은 담당자와 팀장만 ────────────────────── */
+    console.log("\n마감 수정은 담당자와 팀장만");
+    // 제출함 담당자를 지정한다 (R.box의 ownerId = R.mate.id)
+    await db.submissionBox.update({
+      where: { id: R.box.id },
+      data: { ownerId: R.mate.id },
+    });
+
+    // ① 담당자 — 변경 성공 및 이력 기록
+    const asOwnerRes = await as(R.asMate, () =>
+      actions.setBoxDeadline(R.box.id, "2026-10-15T23:59", "자료 보강을 위해 연장").then(
+        (r) => (r.ok ? "ok" : "fail"),
+        (e: Error) => e.message,
+      ),
+    );
+    check("담당자는 마감을 변경할 수 있다", asOwnerRes, "ok");
+    const history1 = await as(R.asMate, () => actions.getDeadlineHistory(R.box.id));
+    check("마감 변경 이력이 기록된다", history1.length, 1);
+    check("이력에 변경 사유가 남는다", history1[0]?.reason, "자료 보강을 위해 연장");
+
+    // ② 팀장 — 담당자가 아니어도 변경 가능
+    const asLeaderDeadline = await as(R.asLeader, () =>
+      actions.setBoxDeadline(R.box.id, "2026-10-16T23:59", "팀장 추가 연장").then(
+        (r) => (r.ok ? "ok" : "fail"),
+        (e: Error) => e.message,
+      ),
+    );
+    check("팀장은 남의 제출함 마감도 변경할 수 있다", asLeaderDeadline, "ok");
+    const history2 = await as(R.asLeader, () => actions.getDeadlineHistory(R.box.id));
+    check("팀장 변경 이력이 추가된다", history2.length, 2);
+
+    // ③ 그 둘 다 아닌 팀원 — 막힌다
+    const thirdDeadlineTry = await as(third.token, () =>
+      actions.setBoxDeadline(R.box.id, "2026-10-20T23:59", "임의 연장").then(
+        () => "(막지 않음)",
+        (e: Error) => e.message,
+      ),
+    );
+    check("담당자도 팀장도 아니면 마감 변경이 막힌다", String(thirdDeadlineTry).includes("담당자 또는 팀장"), true);
+    const boxAfterBlocked = await db.submissionBox.findUnique({ where: { id: R.box.id } });
+    check("막힌 시도는 마감 시각을 바꾸지 않는다", boxAfterBlocked?.dueAt?.getDate(), 16);
+    const historyAfterBlocked = await as(R.asLeader, () => actions.getDeadlineHistory(R.box.id));
+    check("막힌 시도는 이력을 남기지 않는다", historyAfterBlocked.length, 2);
+
+    // ④ 다른 팀의 마감 변경 시도 — 제출함을 찾을 수 없음으로 차단
+    const otherTeamDeadlineTry = await as(B.asLeader, () =>
+      actions.setBoxDeadline(R.box.id, "2026-10-25T23:59").then(
+        () => "(막지 않음)",
+        (e: Error) => e.message,
+      ),
+    );
+    check("다른 팀의 제출함 마감 변경은 막힌다", String(otherTeamDeadlineTry).includes("제출함을 찾을 수 없습니다"), true);
 
     /* ⑨ 한도 직전은 허용 */
     console.log("\n한도 직전은 허용한다");
