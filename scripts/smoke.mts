@@ -1960,6 +1960,92 @@ console.log("\n반대표철: 버튼은 남긴 사람에게만 보인다");
   check("조회가 판정 결과를 준다", query.includes("iFiledDispute: canWithdrawDispute("), true);
 }
 
+console.log("\nDM 나가기 (내 목록에서만 뺀다)");
+{
+  /**
+   * ## 왜 이 검사가 필요한가
+   *
+   * "나가기" 라는 이름은 **지우는 것**처럼 들린다. 그런데 대화는 두 사람의 것이므로 나 혼자
+   * 나간다고 **상대의 말까지 지워질 수는 없다.** 그래서 이건 지우기가 아니라 **빼기**여야 하고,
+   * 그 차이가 실수로 깨질 수 있는 곳이 세 군데다:
+   *
+   * 1. **말이 살아 있는가** — 빼기로 지워지면 복구할 수 없다.
+   * 2. **상대에게는 아무 변화가 없는가** — 상대가 조용히 사라지면 그 사람은 "왜 안 오지" 한다.
+   * 3. **뺀 방을 다시 열 수 있는가** — 되살아나길이 없으면 영영 못 본다.
+   */
+  const { team, members } = await makeIsolatedTeam("DM 나가기");
+  const me = members[0]!;
+  const other = members[1]!;
+  // **키를 여기서 직접 만든다.** `dmThreadKey` 를 불러 오면(`src/data/api.ts`) 그 모듈이
+  // `next/navigation` 을 끌어와 tsx 아래에서 깨진다. 이 검사는 **표의 불변식**이 대상이라
+  // 키의 모양만 맞으면 되고, **키를 한 곳에서만 만드는 규칙**은 아래 소스 검사가 지킨다.
+  const threadKey = `dm:${[me.id, other.id].sort().join(":")}`;
+
+  // **먼저 대화가 있어야 한다** — 빼기가 말과 무관하게 동작하는지 보려면 말이 있는 방이
+  // 있어야 하고, 말 없는 방에서는 아무 효과가 없어 아무것도 증명하지 못한다.
+  const said = await db.message.create({
+    data: { teamId: team.id, threadKey, authorId: other.id, text: "안녕하세요", whenLabel: "09:00" },
+  });
+  check("대화가 있다", said.threadKey, threadKey);
+
+  // 빼기 = 숨김 한 줄. **`upsert` 로 두 번 넣어도 두 줄이 되지 않아야 한다.**
+  await db.dmThreadHide.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    create: { memberId: me.id, threadKey },
+    update: {},
+  });
+  await db.dmThreadHide.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    create: { memberId: me.id, threadKey },
+    update: {},
+  });
+  check("두 번 넣어도 한 줄이다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 1);
+
+  // **1. 말이 살아 있는가.** 이것이 이 기능의 전부다.
+  check("말은 지워지지 않는다", await db.message.count({ where: { threadKey } }), 1);
+  check("상대의 말도 그대로다", (await db.message.findUniqueOrThrow({ where: { id: said.id } })).text, "안녕하세요");
+
+  // **2. 상대에게는 아무 변화가 없는가.** 상대 목록에 아직 있다 — **빼기는 내 것만** 빼야 한다.
+  check("상대의 자리에는 아무 변화가 없다", await db.dmThreadHide.count({ where: { memberId: other.id, threadKey } }), 0);
+  check("상대에게는 숨긴 행이 없다", await db.dmThreadHide.count({ where: { threadKey, memberId: other.id } }), 0);
+
+  // **3. 다시 열 수 있는가.** 숨김만 지우면 지난 말이 그대로 돌아온다.
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  check("숨김만 풀리면 다시 보인다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 0);
+  check("다시 열어도 지난 말은 그대로다", await db.message.count({ where: { threadKey } }), 1);
+
+  // **없는 것을 지워도 조용히 지나야 한다** — 나갔다 오는 길에서 흔들리면 안 된다.
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  check("없는 것을 지워도 조용히 지난다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 0);
+}
+
+console.log("\nDM 나가기: 뺀 것은 내 것뿐이다");
+{
+  const src = readCode("../src/data/api.ts");
+  const listFn = src.slice(src.indexOf("export async function getDmThreads"));
+  // **목록만** 뺀다. 한 방을 찾는 쪽이 걸러 버리면 되살아나길이 사라진다.
+  truthy("목록이 숨긴 것을 가린다", listFn.includes("dmThreadHide.findMany"));
+  truthy("가린 뒤에 걸러 낸다", listFn.includes("hidden.has("));
+
+  const oneFn = src.slice(src.indexOf("export async function getDmThread("));
+  // `getDmThread` 은 목록을 재사용하므로 숨긴 방을 **못 찾는다.** 그럼 팀원 목록에서 눌렀을 때
+  // 열리지 않는다 — 되살아나길이 이 끊긴 곳이다. 여기서 드러나야 고칠 수 있다.
+  truthy(
+    "한 방을 찾을 때는 숨김과 상관없이 열어 준다",
+    oneFn.includes("getDmThreads") === false || oneFn.includes("hidden") === false,
+  );
+
+  const action = readCode("../src/server/actions/dm.ts");
+  // **메시지를 지우는 구분이 없어야 한다** — "나가기" 라는 이름에 끌려 지우면 복구할 수 없다.
+  check("메시지를 지우지 않는다", /message\.delete|message\.deleteMany/.test(action), false);
+  // 방의 키는 **서버가 만든다** — 클라이언트가 만들면 두 사람이 다른 키를 만들어 같은 방이
+  // 두 개가 되고, 숨긴 자리와 실제 대화가 어긋난다.
+  truthy("방의 키를 서버가 만든다", action.includes("dmThreadKey("));
+  // **같은 팀인지 먼저 본다** — 없으면 남의 팀 사람으로 방을 만들고 숨길 자리를 만든다.
+  truthy("같은 팀인지 먼저 본다", action.includes("teamId: me.teamId"));
+}
+
 console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
 {
   const testTeam = await db.team.create({
@@ -3932,7 +4018,13 @@ console.log("\nDM 목록 조회 비용");
     // **누가 부르는지**를 함께 고정해야 한다.
     const api = readCode("../src/data/api.ts");
     const body = api.slice(api.indexOf("export async function getDmThreads("), api.indexOf("export async function getDmThreads(") + 2600);
-    check("getDmThreads 가 이 함수를 부른다", /lastMessagePerThread\(db, teamId, threadKeys\)/.test(body), true);
+    // **변수 이름이 아니라 행위를 고정한다.** 숨긴 대화까지 걸러 낸 뒤에는 쓰이는 키 목록이
+    // 달라지고(`threadKeys` 에서 보이는 것만으로), 이름을 박아 두면 뜻도 아닌 곳에서 깨진다.
+    check(
+      "getDmThreads 가 이 함수를 부른다",
+      /lastMessagePerThread\(db, teamId, [A-Za-z]+\)/.test(body),
+      true,
+    );
     check("getDmThreads 가 Prisma distinct 로 직접 읽지 않는다", /distinct: \["threadKey"\]/.test(body), false);
     console.log(`      (전체 메시지 ${existing} → ${grown}건, 조회 행은 ${after.length}행)`);
 

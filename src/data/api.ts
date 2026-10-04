@@ -1324,13 +1324,28 @@ export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   if (others.length === 0) return [];
 
   const threadKeyOf = new Map(others.map((other) => [other.id, dmThreadKey(session.id, other.id)]));
-  const threadKeys = [...threadKeyOf.values()];
+
+  /**
+   * **내가 빼 놓은 대화는 목록에서 뺀다** — 2026-10-03 결정.
+   *
+   * **빼는 것만** 한다. 말은 그대로 있고 상대 화면도 그대로다(`DmThreadHide` 참고). 그리고
+   * **`getDmThread`(한 방) 은 숨김이 걸린 방도 찾아야 한다** — 팀원 목록에서 누르면 그 방이
+   * 열려야 하는데 여기서 걸러 버리면 되살아나길 길이 사라진다.
+   */
+  const hides = await db.dmThreadHide.findMany({
+    where: { memberId: session.id },
+    select: { threadKey: true },
+  });
+  const hidden = new Set(hides.map((h) => h.threadKey));
+  const visible = others.filter((other) => !hidden.has(threadKeyOf.get(other.id)!));
+  if (visible.length === 0) return [];
+  const visibleKeys = visible.map((other) => threadKeyOf.get(other.id)!);
 
   // 안 읽은 수는 스레드마다 다른 기준 시각(마지막으로 읽은 때)을 써야 해서, 그 시각을
   // 먼저 받아 온 뒤에 물어야 한다.
   const [readMarks, lastMessages] = await Promise.all([
-    db.readMark.findMany({ where: { memberId: session.id, threadKey: { in: threadKeys } } }),
-    lastMessagePerThread(db, teamId, threadKeys),
+    db.readMark.findMany({ where: { memberId: session.id, threadKey: { in: visibleKeys } } }),
+    lastMessagePerThread(db, teamId, visibleKeys),
   ]);
 
   const unreadCounts = await db.message.groupBy({
@@ -1338,7 +1353,7 @@ export async function getDmThreads(teamId: string): Promise<DmThread[]> {
     where: {
       teamId,
       authorId: { not: session.id },
-      OR: threadKeys.map((threadKey) => ({
+      OR: visibleKeys.map((threadKey) => ({
         threadKey,
         createdAt: { gt: readAtByThreadKey(readMarks, threadKey) },
       })),
@@ -1349,7 +1364,7 @@ export async function getDmThreads(teamId: string): Promise<DmThread[]> {
   const lastByThreadKey = new Map(lastMessages.map((m) => [m.threadKey, m]));
   const unreadByThreadKey = new Map(unreadCounts.map((row) => [row.threadKey, row._count._all]));
 
-  return others.map((other) => {
+  return visible.map((other) => {
     const threadKey = threadKeyOf.get(other.id)!;
     const last = lastByThreadKey.get(threadKey);
 
