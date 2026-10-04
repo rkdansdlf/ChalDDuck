@@ -83,7 +83,7 @@ export function AiHubScreen({
         ) : null}
         <div className="mb-4 flex flex-col gap-[9px]">
           {tools.map((tool) => {
-            const open = tool.ready && tool.href !== null;
+            const open = tool.href !== null;
             return (
               <button
                 key={tool.key}

@@ -104,18 +104,6 @@ export async function findInviteByShortCode(code: string): Promise<Invite | null
 }
 
 /**
- * 팀장용: 그 팀의 초대들을 연다. **되돌린 것도 보여 준다** — 지웠다가 안 보이는 것보다
- * "이건 내가 껐어" 가 사실이고, 언제 만료되는지도 같이 보여 줘야 판단할 수 있다.
- */
-export async function listTeamInvites(teamId: string): Promise<Invite[]> {
-  return db.teamInvite.findMany({
-    where: { teamId },
-    orderBy: { createdAt: "desc" },
-    select: INVITE_COLUMNS,
-  });
-}
-
-/**
  * 되돌린다. **삭제하지 않는다.**
  *
  * 이 행이 "이 팀이 언제 누구에게 나눠 줬는가"의 기록이라, 지우면 되돌렸던 초대를 다시

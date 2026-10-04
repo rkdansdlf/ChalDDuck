@@ -75,7 +75,10 @@ npm run dev
 
 - **디자인 토큰** — 색·타이포·치수 ([`src/styles/tokens/`](src/styles/tokens))
 - **공통 컴포넌트** — [`src/components/ui/`](src/components/ui)
-- **온보딩 00~06** — 팀 만들기 → 초대 입장 → 이름 → MBTI(또는 30초 컷) → 캐릭터 → 희망 역할·Veto
+- **온보딩 00~06** — 팀 만들기 → 초대 입장 → 이름 → MBTI(또는 30초 컷) → 캐릭터 → 희망 역할·Veto.
+  06 팀 화면에는 **팀 MBTI 집계**도 붙습니다(`features/team/team-mbti.tsx`). MBTI는 **표시와
+  대화를 돕는 재료일 뿐이며, 역할 배정의 근거로 쓰지 않습니다** — 배정은 희망 역할과 Veto 만
+  봅니다(`data/accepted-roles.ts`). 캐릭터도 마찬가지입니다(05 화면에 같은 취지가 적혀 있습니다)
 - **07 팀 역할 조율** — 역할별 현황, 협의 → 추첨 → 수락/거절, 팀원별 선호
 - **08 내 가능한 시간** — 안 되는 시간만 표시. **목록형이 기본**, 주간 격자는 보조
 - **09 / 10 회의 시간** — 후보 제안 → 반대 없으면 자동 확정. 전원 불가한 주는 최다 인원 후보 + 다음 주 이월
@@ -186,9 +189,25 @@ npm run verify
 cp scripts/pre-push.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 ```
 
-`verify` 와 **같은 순서**로 돌립니다. 2026-09-28 에 화면만 먼저 반영하고 `src/data/api.ts`
-반영을 빼서 **타입 에러 57건**인 커밋이 push 돼 Vercel 빌드가 두 번 실패했습니다. 그 사실을
-알게 된 건 배포 목록을 봤을 때뿐이었습니다 — 로컬에서 먼저 멈추게 하는 것이 그 일을 막습니다.
+`verify` 를 돌립니다 — Vercel 이 하는 배포 게이트를 **더 엄격하게** 로컬에서 합니다. 순서가
+꼭 같을 필요는 없습니다. Vercel 에만 있는 것도, 로컬에만 있는 것도 있습니다.
+
+| | 로컬 (`npm run verify`) | Vercel (`vercel.json`) |
+|---|---|---|
+| `prisma migrate deploy` | — | **한다.** 운영 DB 에 실제로 적용한다 |
+| `db:check` · `storage:check:gate` · 빌드 | 한다 | 한다 |
+| `db:migrations` | **한다** | — |
+| `test` · `tsc` · `lint` | **한다** | — |
+
+로컬에만 있는 세 개는 각자의 이유가 있습니다. `db:migrations` 은 "파일이 커밋됐는가"인데
+Vercel clone 은 커밋된 것만 받아서 **항상 통과합니다.** `test`·`tsc`·`lint` 는 시간을 산다 —
+배포를 막을 이유가 아니라면 CI 에서 돌립니다. 반대로 Vercel 만 하는 `migrate deploy` 는
+로컬에서 대신할 수 없고, **빌드는 죽었는데 마이그레이션은 이미 운영 DB 에 적용된** 상태로
+남을 수 있습니다(그래서 실패한 배포 뒤에는 롤백이 아니라 코드를 굴립니다).
+
+2026-09-28 에 화면만 먼저 반영하고 `src/data/api.ts` 반영을 빼서 **타입 에러 57건**인 커밋이
+push 돼 Vercel 빌드가 두 번 실패했습니다. 그 사실을 알게 된 건 배포 목록을 봤을 때뿐이었고,
+로컬에서 먼저 멈추게 하는 것이 그 일을 막습니다.
 
 `.git/hooks/` 는 커밋되지 않으니 **규칙은 [`scripts/pre-push.sh`](scripts/pre-push.sh) 에
 있습니다.** 위 줄은 그 파일을 부르는 것만 합니다. 빼고 싶으면 `--no-verify` 로 부르되, 그
@@ -295,8 +314,16 @@ npm run deploy:why -- <배포 아이디>   # 그 배포
 배포본이 `main` 보다 앞서고, 다음 푸시가 또 다른 배포를 만들어 배포 이력이 두 갈래로벌어집니다. 되도록 푸시로만 올리세요.
 
 `vercel.json` 의 `buildCommand` 가 빌드 순서를 정합니다 —
-`prisma migrate deploy && npm run db:check && next build`. **푸시 = 마이그레이션 적용 +
-가드 + 빌드** 이므로 `db:check` 를 빠뜨릴 길이 없습니다.
+`prisma migrate deploy && npm run db:check && npm run storage:check:gate && npm run build`.
+**푸시 = 마이그레이션 적용 + 가드 + 빌드** 이므로 `db:check` 를 빠뜨릴 길이 없습니다.
+
+⚠️ **마지막은 `next build` 가 아니라 `npm run build` 여야 합니다.** `next build` 를 직접 부르면
+`package.json` 의 `build` 스크립트를 **통째로 건너뛰고**, 그 안에 있는 플래그가 배포에 닿지
+않습니다. 실제로 그랬습니다 — Next 16 은 `next build` 의 기본값이 Turbopack 인데, 이 앱은
+`--webpack` 으로 돌아가도록 해 둔 상태였고(`next/dist/docs/01-app/02-guides/upgrading/version-16.md`),
+배포는 그 플래그를 못 받아 Turbopack 으로 돌다가 `globals.css` 후처리에 죽었습니다. **로컬
+`npm run build` 는 통과하는데 배포만 빨간** — 이 문서를 고쳤어야 그 차이를 읽을 수 있었다는
+뜻입니다.
 
 새로 세팅한다면 저장소를 Vercel 프로젝트에 연결하고 **환경변수 여덟 개**를 넣으면 됩니다.
 
@@ -314,6 +341,21 @@ npm run deploy:why -- <배포 아이디>   # 그 배포
 
 **둘 중 하나만 있으면 됩니다.** 둘 다 있으면 Gmail 을 씁니다. 도메인이 생기면 `GMAIL_*` 를
 빼고 `RESEND_*` 만 남기면 됩니다 — 코드 수정이 아니라 환경변수만 바꾸면 되는 구조로 두었습니다.
+
+#### 없어도 되는 변수 — 코드에 기본값이 있습니다
+
+위 표와 달리 이 셋은 **비워도 앱이 돕습니다.** 값을 안 읽으면 코드 안의 기본값을 씁니다
+(그래서 배포할 때 넣을 필요가 없습니다).
+
+| 변수 | 비우면 | 기본값 |
+|---|---|---|
+| `VAPID_SUBJECT` | 푸시가 "알 수 없는 발신자"로 보일 수 있습니다 | `mailto:team@chalddeok.app` (`server/notify/push.ts`) |
+| `SUBMISSIONS_BUCKET` | 버킷 이름이 `submissions` 가 됩니다 | `submissions` (`server/storage/client.ts`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | `SUPABASE_SECRET_KEY` 를 대신 봅니다 | — (별칭) |
+
+`VAPID_SUBJECT` 는 **발신자로 보이는 연락처**입니다. 웹푸시는 이 값을 못 읽으면 일부 기기에서
+"알 수 없는 발신자"로 보입니다 — 앱 안에서는 아무 일도 안 보이는 차이라, 넣지 않으면 이유를
+찾을 자리가 없습니다.
 
 `RESEND_API_KEY` 는 **Vercel 의 Supabase 연동으로 채워지지 않습니다.** 연동은 `SUPABASE_*`
 만 채워 넣습니다. 그리고 Resend 는 **도메인을 소유해야만** 보낼 수 있는데, `*.vercel.app` 은
@@ -339,7 +381,7 @@ Vercel 이 소유한 공유 도메인이라 DNS 를 건드릴 수 없어 인증 
 "로컬 DB 로 개발하기"를 먼저 해 두세요.
 
 빌드 명령은 `vercel.json` 에 있습니다 —
-`prisma migrate deploy && npm run db:check && next build`.
+`prisma migrate deploy && npm run db:check && npm run storage:check:gate && npm run build`.
 **배포할 때마다 마이그레이션이 먼저 돕고, 그다음 DB 가 스키마와 같은지 확인합니다.**
 
 #### `db:check` — 왜 있는가
@@ -359,7 +401,7 @@ Vercel 이 소유한 공유 도메인이라 DNS 를 건드릴 수 없어 인증 
 규칙 하나만 지키면 됩니다: **`prisma/schema.prisma` 를 건드린 커밋에는 반드시
 마이그레이션을 함께 넣는다.** 그래야 `migrate deploy` 가 할 일을 찾습니다.
 
-#### `check:migrations` — 마이그레이션이 커밋되었는지
+#### `db:migrations` — 마이그레이션이 커밋되었는지
 
 `db:check` 는 **DB 와 스키마**만 비교합니다. "파일이 생겼는데 커밋 안 됐다"는 그 둘 어디에도
 없습니다. 그래서 이런 일이 실제로 났습니다.
@@ -372,10 +414,10 @@ Vercel 이 소유한 공유 도메인이라 DNS 를 건드릴 수 없어 인증 
 4. `db:check` 가 그 차이를 잡아 빌드가 실패했습니다 — 즉 **증상은 잡혔고 원인은 남았습니다.**
    스키마가 더 안 바뀌었다면 조용히 지나갔을 차이입니다.
 
-그래서 **푸시 전에** 이 검사를 둡니다(`npm run check:migrations`, `npm run verify` 의 첫 단계):
+그래서 **푸시 전에** 이 검사를 둡니다(`npm run db:migrations`, `npm run verify` 의 **두 번째** 단계):
 
 ```bash
-npm run check:migrations
+npm run db:migrations
 ```
 
 `prisma/migrations` 의 파일이 **커밋된 것(`HEAD`)** 과 같은지 봅니다.

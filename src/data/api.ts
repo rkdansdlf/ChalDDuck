@@ -71,7 +71,6 @@ import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { iceViewFor } from "@/server/ice/view";
 import { askedTodayBy } from "@/server/meetings/schedule-ask";
-import { normalizeName } from "@/features/roles/roster-model";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
 import { pushConfigured } from "@/server/notify/push";
@@ -183,30 +182,6 @@ export async function getRoster(teamId: string): Promise<Member[]> {
   }));
 }
 
-/**
- * 같은 팀에 같은 이름의 기록이 이미 있는지 확인한다.
- *
- * 재입장·기기 변경 시 기록을 잇기 위한 것이다. 동명이인 구분 방법은
- * **아직 확정되지 않은 정책**이라 지금은 이름만으로 판단한다.
- */
-export async function findExistingMember(teamCode: string, name: string): Promise<Member | null> {
-  const team = await getTeamByCode(teamCode);
-  if (!team) return null;
-
-  const member = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: normalizeName(name) } },
-  });
-  if (!member) return null;
-
-  return {
-    id: member.id,
-    name: member.name,
-    isMe: false,
-    mbti: toMbti(member.mbti),
-    want: toRole(member.wantRole),
-    veto: toRole(member.vetoRole),
-  };
-}
 
 /* ── 제품 설정 (팀마다 달라지지 않는 값) ───────────────────── */
 

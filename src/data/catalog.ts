@@ -76,7 +76,6 @@ export const AI_TOOLS: AiTool[] = [
     name: "쿠션 번역기",
     icon: "message-square-heart",
     note: "하고 싶은 말의 말투만 부드럽게 바꿔 줍니다",
-    ready: true,
     href: "/tools/cushion",
   },
   {
@@ -84,7 +83,6 @@ export const AI_TOOLS: AiTool[] = [
     name: "AI 서기",
     icon: "notebook-pen",
     note: "회의 내용을 할 일 카드로 정리합니다",
-    ready: true,
     href: "/tools/clerk",
   },
   {
@@ -92,7 +90,6 @@ export const AI_TOOLS: AiTool[] = [
     name: "AI 리서처",
     icon: "search",
     note: "자료 출처와 함께 찾아 줍니다",
-    ready: true,
     href: "/tools/researcher",
   },
   {
@@ -100,7 +97,6 @@ export const AI_TOOLS: AiTool[] = [
     name: "발표 지원",
     icon: "presentation",
     note: "대본 다듬기와 예상 질문 정리",
-    ready: true,
     href: "/tools/present",
   },
   {
@@ -108,7 +104,6 @@ export const AI_TOOLS: AiTool[] = [
     name: "상황별 문장 변환",
     icon: "file-output",
     note: "핵심 요약·교수님 질문 메일 모드",
-    ready: true,
     href: "/tools/sentence",
   },
 ];
@@ -356,7 +351,6 @@ export const ICE_GAMES: IceGame[] = [
       "시민이 뽑히면 라이어의 승리입니다.",
     ],
     minPlayers: 3,
-    playable: true,
   },
   {
     key: "mafia",
@@ -375,7 +369,6 @@ export const ICE_GAMES: IceGame[] = [
     //    판이 된다. 더 많은 사람이 하고 싶으면 두 판을 한다.
     minPlayers: MAFIA_MIN_PLAYERS,
     maxPlayers: MAFIA_MAX_PLAYERS,
-    playable: true,
   },
 ];
 

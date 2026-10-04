@@ -143,7 +143,7 @@ export async function startIceRound(game: IceGameKey, participantIds: string[]):
   const me = await requireSessionMember();
 
   const spec = ICE_GAMES.find((g) => g.key === game);
-  if (!spec?.playable) return done(me, "아직 열 수 없는 게임입니다.");
+  if (!spec) return done(me, "아직 열 수 없는 게임입니다.");
 
   const picked = await validParticipants(me.teamId, participantIds, spec.minPlayers, spec.maxPlayers);
   if (!picked.ids) return done(me, picked.message);
