@@ -106,6 +106,24 @@ export const session = {
   clearAll() {
     jar.clear();
   },
+  /**
+   * abuse 한계용 신원 쿠키(`cd_anon`)를 정한다.
+   *
+   * ## 왜 이것이 필요한가 (2026-09-28)
+   *
+   * 가입 abuse 한계는 `cd_anon` 쿠키를 **행 키로** 쓴다(`rate-limit/join-throttle.ts` 의
+   * `hitWindow` — `INSERT … ON CONFLICT DO UPDATE` 는 **행 단위로 직렬화**된다).
+   *
+   * 즉 브라우저 열 개가 **하나의 항아리**(= 하나의 신원)를 쓰면 abuse 한계가 그들을 **차례로
+   * 처리한다** — 팀 행 잠금을 지워도 경합이 재현되지 않았다. 처음에 그 이유를 몰라서
+   * "검사가 잠금을 보고 있지 않다" 고 판단했다.
+   *
+   * **진짜 경합은 서로 다른 브라우저 사이에서 난다** — 각자 다른 신원을 갖고 동시에 붙을 때다.
+   * 그래서 경합 검사는 신원을 하나씩 심는다.
+   */
+  asBrowser(anonId) {
+    jar.set("cd_anon", anonId);
+  },
   /** 창작자 쿠키를 심는다 — "이 브라우저가 팀을 만들었다" 를 서버가 믿게 한다. */
   asCreator(teamId) {
     jar.set(CREATOR_COOKIE, teamId);

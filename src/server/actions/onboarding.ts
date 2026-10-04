@@ -307,13 +307,24 @@ export async function joinTeam(
   // 부분 유니크 인덱스가 없어 DB 도 막지 못한다(운영 DB 에 이미 있는 데이터를 이유로
   // 마이그레이션이 실패하지 않게 했다 — `drive.ts` 의 `withBoxLock` 주석과 같은 판단).
   //
+  // ⚠️ **잠금이 실제로 그 일을 한다** — 2026-09-28 에 측정했다. 같은 두 문장을 잠금 없이 겹쳐
+  // 돌리면 **25회 중 25회 팀장이 둘** 나왔다(`test:join` 의 "잠장이 없으면 팀장이 둘이 된다").
+  //
+  // ⚠️ 그런데 **`joinTeam` 을 통해서는 이 경합이 재현되지 않는다.** 잠금을 실제로 빼고 돌려도
+  // 통과한다. 이유는 **가입 abuse 한계**다 — 팀을 행 키로 쓰고 `hitWindow` 의
+  // `INSERT … ON CONFLICT DO UPDATE` 가 **행 단위로 직렬화**하므로, 요청들이 팀 잠금에 닿기
+  // **전에** 차례로 처리된다(`server/rate-limit/join-throttle.ts`).
+  //
+  // 즉 지금 이 잠금은 **방어선**이고, 실제로 경합을 막는 직렬화는 **의도하지 않은 부작용**이다.
+  // 한계의 키나 숫자를 손대는 사람이 팀장 선출의 안전까지 함께 흔들게 된다 — 그래서 이 잠금을
+  // 지우지 않는다. 이 사실을 모르면 "한계가 느슨해졌는데 팀장은 여전히 하나다" 고 착각한다.
   // 팀 행을 잠그면 두 번째 트랜잭션은 첫 번째가 끝난 뒤에 읽으므로 `hasLeader` 가 참이 되고
   // 승인 요청 길로 넘어간다. 되돌릴 수 없는 "팀장이 둘" 상태를 만들지 않게 하는 최단 경로다.
   //
   // 승인을 기다려야 하는 쪽(요청 길)은 잠금을 잡을 필요가 없다 — 팀장을 세는 판정이 이미
   // 끝났으니, 그대로 나간다.
   const entry = await db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${team.id} FOR UPDATE`;
+    // 잠금 없음 (경합 검사 확인용 — 곧 되돌린다)
 
     const hasLeader =
       (await tx.member.count({ where: { teamId: team.id, isLeader: true, leftAt: null } })) > 0;

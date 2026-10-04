@@ -29,7 +29,7 @@ import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
 
 /**
- * 17 기여도 · 팀원 확인.
+ * 17 기여 기록 · 팀원 확인.
  *
  * 핵심: **의견이 다른 항목은 한쪽 말로 덮지 않고 둘 다 남긴다.** 기록이 한 사람의 주장으로
  * 정리돼 버리면, 정정을 요구한 사람은 기록을 신뢰할 수 없게 된다.

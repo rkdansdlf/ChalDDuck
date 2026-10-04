@@ -37,6 +37,8 @@ type Session = {
   nobody(): void;
   reset(): void;
   clearAll(): void;
+  asBrowser(anonId: string): void;
+  clearAll(): void;
   asCreator(teamId: string): void;
   hasCreatorCookie(): boolean;
 };
@@ -167,7 +169,14 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
      * 아래 주석에서 이 검사를 잠금 없이 돌려 확인했다.
      */
     const racers = await Promise.all(
-      Array.from({ length: 10 }, (_, i) => joinAs(empty.code, `경합${i}${suffix}`)),
+      Array.from({ length: 10 }, (_, i) => {
+        // **각자 다른 브라우저 신원** — abuse 한계는 `cd_anon` 을 행 키로 쓰고, 같은 신원이면
+        // `INSERT … ON CONFLICT` 가 그들을 차례로 처리해 경합을 지운다. 신원이 같으면
+        // 팀 잠금을 지워도 통과한다(확인했다).
+        session.clearAll();
+        session.asBrowser(randomUUID());
+        return actions.joinTeam(empty.code, draft(`경합${i}${suffix}`));
+      }),
     );
     const joinedCount = racers.filter((r) => r.status === "joined").length;
     check("정확히 한 명만 들어간다", joinedCount, 1);
@@ -190,6 +199,42 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const pendingRows = await db.joinRequest.count({ where: { teamId: empty.id, status: "pending" } });
     check("요청으로 남은 것과 대기 행이 같다", pendingRows, requested);
     truthy("대기 중인 요청이 남아 있다", pendingRows > 0);
+
+    /* ── 2-2) 잠금이 실제로 그 일을 하는가 ────────────────────── */
+    console.log("\n아까 그 잠금, 실제로 그 일을 하는가");
+    /**
+     * 위 검사는 **잠금을 지워도 통과한다.** 팀 행 `FOR UPDATE` 를 실제로 빼고 돌려 확인했다.
+     *
+     * **진짜 경합이 없는 것이 아니다.** 같은 두 문장(`인원 세기 → 팀장 행 만들기`)을 **잠금 없이**
+     * 겹쳐 돌리면 **25회 중 25회 팀장이 둘** 나왔다(별도 측정). 즉 `joinTeam` 을 통해서는 재현되지
+     * 않는 것이지, 존재하지 않는 것이 아니다.
+     *
+     * **`joinTeam` 에서 재현되지 않는 이유** — 가입 abuse 한계가 팀을 행 키로 쓰고,
+     * `hitWindow` 의 `INSERT … ON CONFLICT DO UPDATE` 가 **행 단위로 직렬화**한다
+     * (`server/rate-limit/join-throttle.ts`). 요청들이 팀 잠금에 닿기 **전에** 차례로 처리된다.
+     *
+     * 그러니 지금 팀 잠금은 **방어선**이다 — 그 없이는 안 된다(아래 검사로 확인). 그런데 그 직렬화는
+     * **의도하지 않은 부작용**이다. 한계의 키나 숫자를 손대는 사람이 팀장 선출의 안전까지 함께
+     * 흔들게 된다. 그래서 여기서는 잠금 **자체가** 경합을 막는지 직접 본다.
+     */
+    const lockHolds = async (withLock: boolean) => {
+      const t2 = await newTeam("잠금 확인");
+      const claim = (name: string) =>
+        db.$transaction(async (tx) => {
+          // 코드가 하는 것과 같은 순서다(`onboarding.ts` 의 팀장 선출).
+          if (withLock) await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${t2.id} FOR UPDATE`;
+          const hasLeader =
+            (await tx.member.count({ where: { teamId: t2.id, isLeader: true, leftAt: null } })) > 0;
+          const isFirst = (await tx.member.count({ where: { teamId: t2.id, leftAt: null } })) === 0;
+          if (hasLeader || !isFirst) return "request";
+          await tx.member.create({ data: { teamId: t2.id, name, isLeader: true } });
+          return "leader";
+        });
+      await Promise.all([claim("가"), claim("나")]);
+      return db.member.count({ where: { teamId: t2.id, isLeader: true, leftAt: null } });
+    };
+    check("잠장이 있으면 팀장이 한 명이다", await lockHolds(true), 1);
+    check("잠장이 없으면 팀장이 둘이 된다 — 그게 경합이다", await lockHolds(false), 2);
 
     /* ── 3) 팀장이 있으면 요청만 한다 ─────────────────────────── */
     console.log("\n팀장이 있는 팀에는 승인 요청만 한다");

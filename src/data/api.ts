@@ -1398,7 +1398,7 @@ export async function getDmThread(teamId: string, threadId: string): Promise<DmT
   return threads.find((t) => t.id === threadId) ?? null;
 }
 
-/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+/* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
 export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
   const session = await getSessionMember();

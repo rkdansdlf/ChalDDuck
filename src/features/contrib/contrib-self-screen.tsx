@@ -18,10 +18,10 @@ import type { ContribKind, ContribRecord, TeamCheckRecord } from "@/lib/types";
 import { ContribRow } from "./contrib-row";
 
 /**
- * 16 기여도 · 본인 확인.
+ * 16 기여 기록 · 본인 확인.
  *
- * 제품의 약속: **점수나 순위를 만들지 않는다.** 합의한 역할과 실제 수행 내역만 모으고,
- * MBTI·채팅량·친목은 기여도에 넣지 않는다.
+ * 제품의 약속: **점수나 순위를 만들지 않는다.** 확정된 역할과 실제 수행 내역만 모으고,
+ * MBTI·채팅량·친목은 기여 기록에 넣지 않는다.
  */
 export function ContribSelfScreen({
   records,

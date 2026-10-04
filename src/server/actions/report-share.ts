@@ -8,7 +8,7 @@ import { requireSessionMember } from "@/server/session";
 const EXPIRE_DAYS = 14;
 
 /**
- * 기여도 리포트 공유 링크용 보안 토큰을 생성하거나 기존 유효한 토큰을 반환한다.
+ * 기여 기록 리포트 공유 링크용 보안 토큰을 생성하거나 기존 유효한 토큰을 반환한다.
  */
 export async function createReportShareToken(scope: "professor" | "internal" = "professor"): Promise<{
   token: string;

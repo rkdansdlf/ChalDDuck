@@ -9,7 +9,7 @@ import type { MbtiType } from "./mbti";
  * 계약(contract)이 되고, `src/data/` 의 목 구현만 교체하면 된다.
  */
 
-/** 역할 식별자 — 드라이브 제출함·기여도 기록이 모두 이 키로 묶인다. */
+/** 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다. */
 export type RoleKey = "research" | "deck" | "script" | "present" | "manage";
 
 export type Role = {
@@ -590,7 +590,7 @@ export type DmThread = {
   unread: number;
 };
 
-/* ── 16 / 17 / 18 / 23 기여도 ───────────────────────────────── */
+/* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
 /**
  * 기여 기록의 종류.
@@ -753,7 +753,7 @@ export type ContribReportRow = {
   who: string;
   /** 팀을 나갔다 온 사람인지. 기록은 남으므로 줄도 남고, 구분만 해 준다. */
   left: boolean;
-  /** 합의한 역할 이름. */
+  /** 확정된 역할 이름. */
   role: string;
   confirmed: number;
   pending: number;
@@ -776,7 +776,7 @@ export type ContribReportRow = {
   highlights?: string[];
 };
 
-/** 외부 공개용 기여도 리포트 묶음 데이터 */
+/** 외부 공개용 기여 기록 리포트 묶음 데이터 */
 export type PublicReportData = {
   teamName: string;
   course: string;
