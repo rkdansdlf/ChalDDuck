@@ -122,7 +122,12 @@ export type MeetingSlot = {
   available: number;
   /** 팀 전체 인원. */
   total: number;
-  /** 못 오는 사람과 사유("박지호 · 아르바이트"). 전원 가능하면 `null`. */
+  /**
+   * 못 오는 **사유**와 몇 명인지("수업 2, 시험 기간"). 전원 가능하면 `null`.
+   *
+   * **이름은 없다** — 2026-10-03 결정. 후보는 팀 전체가 보는 화면이라 누구·무엇인지가 함께
+   * 새는 정보가 된다. 누군가 몇 명을 빼는지(가용 인원)와 왜 빼는지(사유)만 남긴다.
+   */
   blockedBy: string | null;
 };
 
@@ -329,6 +334,9 @@ export type ClerkDraft = {
   candidates: ClerkCandidate[];
 };
 
+/** 출처의 객관적 성격 (점수가 아닌 분류 속성). */
+export type ResearchSourceKind = "academic" | "stats" | "news" | "web";
+
 /** 리서처 결과. **출처가 없는 결과는 보여주지 않는다.** 적합도 점수는 만들지 않는다. */
 export type ResearchResult = {
   id: string;
@@ -341,6 +349,12 @@ export type ResearchResult = {
    * 샘플 결과에는 없어서 `null` 이 될 수 있다 — 화면은 그때 링크를 만들지 않는다.
    */
   url: string | null;
+  /** 발행 연도 또는 시점 (예: "2024", "2023.11"). 알 수 없으면 null. */
+  year?: string | null;
+  /** 출처 성격 분류 (학술·통계·언론·웹). */
+  kind?: ResearchSourceKind;
+  /** 과제·보고서용 표준 참고문헌 인용 표기. */
+  citation?: string | null;
 };
 
 /** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */
