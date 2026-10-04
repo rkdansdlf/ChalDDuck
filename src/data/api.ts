@@ -8,7 +8,6 @@ import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
-import { contribTotals } from "./contrib-report-totals";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -27,7 +26,6 @@ import type {
   CushionLevelKey,
   ContribKind,
   ContribRecord,
-  ContribReportRow,
   CushionTone,
   DmThread,
   DriveLimits,
@@ -40,7 +38,6 @@ import type {
   MeetingProposal,
   MeetingWeek,
   PresentDraft,
-  PublicReportData,
   RandomTool,
   RecentItem,
   ResearchResult,
@@ -70,7 +67,6 @@ import {
 } from "@/features/schedule/week";
 import { calcDday, normalizeTaskDueDate, sortCalendarEvents } from "@/features/schedule/calendar-events";
 import { candidateDateOf } from "@/server/meetings/candidates";
-import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { isAiConfigured } from "@/server/ai/model";
 import { db } from "@/server/db";
 import { iceViewFor } from "@/server/ice/view";
@@ -1454,99 +1450,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   return teamCheckRecords(teamId, session?.id ?? null);
 }
 
-/** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 **같은 표**에서 센다. */
-export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
-  // **나간 사람도 남긴다.** 예전에는 여기만 `ACTIVE` 로 걸러서, 나간 팀원은 17 화면
-  // (확인 요청 대상)과 배지에는 남아 있는데 리포트에서는 사라졌다. 본인이 팀원에게 확인을
-  // 요청받아 놓고 최종 문서에 이름이 없는 셈이었고, 기록은 성적 근거로 쓰인다. "명단과
-  // 집계에서 빠진다"는 규칙은 **명단이 아니라 집계**를 가리킨다.
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
-    db.member.findMany({
-      where: { teamId },
-      // `wantRole`(희망)은 **읽지 않는다** — 역할은 수락된 추첨에서만 온다. 아래 주석 참고.
-      select: { id: true, name: true, leftAt: true },
-      orderBy: { joinedAt: "asc" },
-    }),
-    // **기록을 통째로 읽지 않고 DB 에서 센다.** 예전에는 `include: { contribRecords }` 로
-    // 전원을 다 받아와 JS 에서 숫자 셋을 만들었다. 그런데 기록은 지우지 않고(나간 사람도 남고),
-    // 의견(`ContribDispute`)과 참여 표시는 **이력으로 남는** 설계라 팀이 사는 동안 줄기만
-    // 한다 — 그 양이 그대로 페이로드가 된다.
-    db.contribRecord.groupBy({
-      by: ["memberId", "state"],
-      where: { member: { teamId } },
-      _count: { _all: true },
-    }),
-    // 참여 표시는 **현재 표시 중인 것만** 센다 — 취소한 표시까지 세면 지운 사실이 참여로
-    // 남는다. 관계에 필터를 준 `_count` 는 **SQL 에서 계산되므로** 표시 행을 받아오지
-    // 않는다(예전에는 표시를 배열로 받아와 `length` 를 세었다).
-    db.contribRecord.findMany({
-      where: { member: { teamId } },
-      select: {
-        memberId: true,
-        _count: { select: { participations: { where: { activeKey: { not: null } } } } },
-      },
-    }),
-    // **답이 없어 닫힌 의견.** 결론이 "합의 없음 · 원문 유지" 인 기록을 사람별로 센다 —
-    // 확인 절차는 돌아갔지만 반대가 표에 남아 있는 사실이라 리포트에 남긴다.
-    db.contribRecord.groupBy({
-      by: ["memberId"],
-      where: { member: { teamId }, dispute: { not: null }, resolution: RESOLUTION_WAYS.noAgreement },
-      _count: { _all: true },
-    }),
-    // 역할은 **수락이 끝난 추첨**에서만 온다(`getAcceptedRoleAssignments`).
-    getAcceptedRoleAssignments(teamId),
-    // 확인된 주요 기록 (리포트 요약 표시용)
-    db.contribRecord.findMany({
-      where: { member: { teamId }, state: "ok" },
-      select: { memberId: true, title: true },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    }),
-  ]);
-
-  // **어느 칸에 넣는지는 `data/contrib-report-totals.ts` 한 곳이 정한다.** 모으는 규칙이
-  // 두 군데로 나뉘면 목록마다 숫자가 어긋나고, 그건 성적 근거 문서에서 가장 나쁜 종류의
-  // 오류다. 그 파일이 순수 함수라 `scripts/smoke.mts` 가 이 규칙을 직접 돌릴 수 있다.
-  const totals = contribTotals({
-    states: stateCounts.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
-    shownPerRecord: shownPerRecord.map((r) => ({ memberId: r.memberId, n: r._count.participations })),
-    unresolved: unresolvedRows.map((r) => ({ memberId: r.memberId, n: r._count._all })),
-  });
-
-  const highlightsByMember = new Map<string, string[]>();
-  for (const r of okRecords) {
-    const list = highlightsByMember.get(r.memberId) ?? [];
-    if (list.length < 3) {
-      list.push(r.title);
-      highlightsByMember.set(r.memberId, list);
-    }
-  }
-
-  return members.map((m) => {
-    // 기록이 한 건도 없는 사람도 줄은 서야 한다(성적 근거는 빈칸이 아니라 0 이다).
-    const bucket = totals.get(m.id);
-    // **희망으로 대신 채우지 않는다.** 확정된 배정이 없으면 그대로 "미정" 이다.
-    //
-    // 예전에는 `Member.wantRole`(1순위 희망)을 "합의한 역할"로 인쇄했다. 추첨 결과가 다른
-    // 사람에게 넘어갔는데도 그 사람의 희망이 그대로 찍히는 셈이고, 이 문서는 성적 근거로
-    // 쓰인다. 여기에 희망을 넣으면 없는 역할을 있는 것처럼 보여 **지금 버그가 그대로 숨어
-    // 버린다.** 07 화면도 둘을 "희망자"와 "확정"으로 구분해 말한다.
-    const roles = acceptedRoles.get(m.id) ?? [];
-    return {
-      memberId: m.id,
-      who: m.name,
-      left: m.leftAt !== null,
-      role: roles.length > 0 ? roles.map((r) => ROLES.find((x) => x.key === r)?.name).join(" · ") : "미정",
-      confirmed: bucket?.confirmed ?? 0,
-      pending: bucket?.pending ?? 0,
-      disputed: bucket?.disputed ?? 0,
-      // 사람별 숫자로는 보여 주되 **정렬도 강조도 하지 않는다** — "점수·순위를 만들지 않는다"는
-      // 이 리포트의 첫 원칙이다(README). 같은 줄의 다른 수와 모양을 같게 둔다.
-      participations: bucket?.participations ?? 0,
-      unresolved: bucket?.unresolved ?? 0,
-      highlights: highlightsByMember.get(m.id) ?? [],
-    };
-  });
-}
+export { getContribReport, getPublicReport } from "@/server/contrib/report";
 
 /* ── 21 할 일 ──────────────────────────────────────────────── */
 
@@ -1815,54 +1719,6 @@ export async function getMeetingNoteByProposal(meetingId: string): Promise<Meeti
   };
 }
 
-/* ── 공개 기여도 리포트 ─────────────────────────────────────────── */
 
-/**
- * 로그인 없는 외부 열람자(교수님 등)를 위한 리포트 조회.
- * 유효한 토큰일 때만 성적 증빙 데이터를 반환한다.
- */
-export async function getPublicReport(token: string): Promise<PublicReportData | null> {
-  const record = await db.reportShareToken.findFirst({
-    where: {
-      token,
-      revokedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-    include: {
-      team: { select: { id: true, name: true, course: true } },
-    },
-  });
-
-  if (!record) return null;
-
-  const rows = await getContribReport(record.teamId);
-  const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
-  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
-  const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
-  const totalAll = totalConfirmed + totalPending + totalDisputed;
-  const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
-
-  const issuedOn = new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Seoul",
-  })
-    .format(record.createdAt)
-    .replace(/\.$/, "");
-
-  return {
-    teamName: record.team.name,
-    course: record.team.course,
-    issuedOn,
-    scope: (record.scope as "professor" | "internal") ?? "professor",
-    memberCount: rows.length,
-    totalConfirmed,
-    totalPending,
-    totalDisputed,
-    consensusRate,
-    rows,
-  };
-}
 
 

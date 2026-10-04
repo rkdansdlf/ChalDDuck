@@ -188,6 +188,7 @@ import {
   isResolutionWay,
   unresolvedAfter,
 } from "../src/features/contrib/resolution.js";
+import { getPublicReport } from "../src/server/contrib/report.js";
 
 /**
  * 낮 투표의 적용 로직은 액션 밖 모듈에 있다(2026-09-30).
@@ -1722,6 +1723,118 @@ console.log("\n기여도 의견 (DB)");
     await db.contribDispute.deleteMany({ where: { recordId: record.id } });
     await db.contribRecord.delete({ where: { id: record.id } });
     check("확인용 기록을 지우면 이력도 함께 간다", await db.contribDispute.count({ where: { recordId: record.id } }), 0);
+  }
+}
+
+console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
+{
+  const testTeam = await db.team.create({
+    data: {
+      name: "공유토큰시험팀",
+      course: "컴퓨터공학종합설계",
+      code: `CD-RPT-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+    },
+  });
+  const m1 = await db.member.create({
+    data: { teamId: testTeam.id, name: "토큰팀원A", isLeader: true },
+  });
+  const m2 = await db.member.create({
+    data: { teamId: testTeam.id, name: "토큰팀원B" },
+  });
+
+  // 기여 실적 2건 생성 (1건 확인됨, 1건 의견 차이)
+  await db.contribRecord.create({
+    data: { memberId: m1.id, kind: "task", title: "API 설계", detail: "REST 규격", source: "self", state: "ok" },
+  });
+
+  await db.contribRecord.create({
+    data: { memberId: m2.id, kind: "task", title: "DB 모델링", detail: "ERD 작성", source: "self", dispute: "역할 중복" },
+  });
+
+  try {
+    const validToken = "valid-share-token-" + Date.now();
+    const expiresFuture = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+    // ① 정상 유효 토큰 생성 및 비로그인 조회
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: validToken,
+        scope: "professor",
+        expiresAt: expiresFuture,
+        createdById: m1.id,
+      },
+    });
+
+    const report = await getPublicReport(validToken);
+    truthy("유효한 토큰으로 리포트가 열린다", report !== null);
+    check("팀 이름이 맞는다", report?.teamName, "공유토큰시험팀");
+    check("교과목이 맞는다", report?.course, "컴퓨터공학종합설계");
+    check("scope 가 맞는다", report?.scope, "professor");
+    check("팀원 수가 맞는다", report?.memberCount, 2);
+    check("확인된 실적 수가 맞는다", report?.totalConfirmed, 1);
+    check("합의율이 0% 이상이다", typeof report?.consensusRate === "number" && report.consensusRate >= 0, true);
+
+    // ② 만료된 토큰 — null 반환
+    const expiredToken = "expired-token-" + Date.now();
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: expiredToken,
+        scope: "professor",
+        expiresAt: new Date(Date.now() - 1000), // 1초 전 만료
+        createdById: m1.id,
+      },
+    });
+    const expiredReport = await getPublicReport(expiredToken);
+    check("만료된 토큰은 리포트를 열지 못한다", expiredReport, null);
+
+    // ③ 폐기(취소)된 토큰 — null 반환
+    const revokedToken = "revoked-token-" + Date.now();
+    await db.reportShareToken.create({
+      data: {
+        teamId: testTeam.id,
+        token: revokedToken,
+        scope: "internal",
+        expiresAt: expiresFuture,
+        revokedAt: new Date(), // 폐기됨
+        createdById: m1.id,
+      },
+    });
+    const revokedReport = await getPublicReport(revokedToken);
+    check("폐기된 토큰은 리포트를 열지 못한다", revokedReport, null);
+
+    // ④ 존재하지 않는 가짜 토큰 — null 반환
+    const fakeReport = await getPublicReport("completely-non-existent-token");
+    check("없는 토큰은 리포트를 열지 못한다", fakeReport, null);
+
+    // ⑤ 다른 팀 토큰과의 격리 확인
+    const otherTeam = await db.team.create({
+      data: {
+        name: "다른팀데이터",
+        course: "다른과목",
+        code: `CD-OTH-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+      },
+    });
+    try {
+      const otherToken = "other-team-token-" + Date.now();
+      await db.reportShareToken.create({
+        data: {
+          teamId: otherTeam.id,
+          token: otherToken,
+          scope: "professor",
+          expiresAt: expiresFuture,
+        },
+      });
+      const otherReport = await getPublicReport(otherToken);
+      check("다른 팀 토큰은 그 팀 데이터만 반환한다", otherReport?.teamName, "다른팀데이터");
+      check("A팀 데이터와 섞이지 않는다", otherReport?.teamName !== report?.teamName, true);
+    } finally {
+      await db.team.delete({ where: { id: otherTeam.id } });
+    }
+  } finally {
+    // cascade 로 reportShareToken, member, contribRecord 모두 함께 삭제됨
+    await db.team.delete({ where: { id: testTeam.id } });
   }
 }
 

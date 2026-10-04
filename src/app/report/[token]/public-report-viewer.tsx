@@ -14,9 +14,9 @@ export function PublicReportViewer({ report }: { report: PublicReportData }) {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-100 py-6 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-zinc-100 py-6 px-4 sm:px-6 lg:px-8 print:min-h-0 print:bg-white print:p-0">
       {/* 상단 액션 바 (인쇄 제외) */}
-      <div className="mx-auto mb-6 flex max-w-[640px] items-center justify-between rounded-xl bg-white p-4 shadow-sm border border-zinc-200">
+      <div className="mx-auto mb-6 flex max-w-[640px] items-center justify-between rounded-xl bg-white p-4 shadow-sm border border-zinc-200 print:hidden">
         <div>
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-[16px] text-zinc-900">
@@ -38,7 +38,7 @@ export function PublicReportViewer({ report }: { report: PublicReportData }) {
       {/* 리포트 문서 (인쇄 영역) */}
       <div
         data-print-doc
-        className="mx-auto max-w-[640px] rounded-xl border border-zinc-200 bg-white p-8 shadow-sm lg:p-12"
+        className="mx-auto max-w-[640px] rounded-xl border border-zinc-200 bg-white p-8 shadow-sm lg:p-12 print:max-w-none print:border-none print:p-0 print:shadow-none"
       >
         {/* 헤더 */}
         <div className="border-b-2 border-zinc-900 pb-5">

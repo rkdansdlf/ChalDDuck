@@ -19,6 +19,7 @@
     "test:drive:probe": "tsx --conditions=react-server scripts/harness/probe.mts",
     "test:drive": "tsx --conditions=react-server scripts/harness/drive.mts",
     "test:ai": "tsx --conditions=react-server scripts/harness/ai.mts",
+    "test:join": "tsx --conditions=react-server scripts/harness/join.mts",
     "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
     "decisions": "node scripts/list-open-decisions.mjs",
     "notify:check": "tsx --conditions=react-server scripts/check-notify-setup.mts",
@@ -27,7 +28,7 @@
     "storage:check": "node scripts/check-storage.mjs",
     "storage:check:gate": "node scripts/check-storage.mjs --if-configured",
     "deploy:why": "node scripts/why-deploy-failed.mjs",
-    "verify:code": "npm run test && npm run test:drive && npm run test:ai && npm run build && npx tsc --noEmit && npm run lint",
+    "verify:code": "npm run test && npm run test:drive && npm run test:ai && npm run test:join && npm run build && npx tsc --noEmit && npm run lint",
     "verify": "npm run db:check && npm run db:migrations && npm run storage:check:gate && npm run verify:code",
     "tool:bench": "tsx --conditions=react-server scripts/tool-bench.mts"
   },
