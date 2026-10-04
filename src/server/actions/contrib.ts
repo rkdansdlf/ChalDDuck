@@ -214,6 +214,12 @@ export async function disputeContribRecord(
    * 것은 잠깐 동안일 뿐이고(커밋과 동시에 풀린다), 아무것도 읽지 않은 채로 되돌아가므로
    * 정보가 새어 나가지 않는다.
    */
+  /**
+   * ⚠️ **이 잠금은 실제로 그 일을 한다** — 2026-09-28 에 확인했다. 이 줄을 지우고 같은 검사를
+   * 돌리면 **두 사람이 동시에 달아 의견이 2 개 붙는다**(`npm run test:contrib`). `ContribDispute`
+   * 에 유니크 제약이 없으므로 **이 잠금이 유일한 방어선**이고, 없으면 코드가 막으려는 상황이 그대로
+   * 열린다. 주석으로만 알고 있었을 때는 이 사실을 확인할 방법이 없었다.
+   */
   const outcome = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "ContribRecord" WHERE "id" = ${recordId} FOR UPDATE`;
 
