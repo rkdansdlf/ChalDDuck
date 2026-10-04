@@ -115,8 +115,8 @@ export function PresentScreen({
         </Rows>
 
         <Undecided>
-          예상 질문을 자료 내용에서 뽑는지, 일반적인 질문 목록에서 고르는지가 기획안에 없어 다루지
-          않았습니다.
+          예상 질문은 **자료에서 뽑는다** — 대본을 넣으면 표현을 다듬으면서 나올 만한 질문을 함께
+          뽑는다(`server/ai/tools.ts` 의 발표 지원). 목록에서 고르는 방식은 없다.
         </Undecided>
       </Body>
     </>
