@@ -753,6 +753,38 @@ console.log("\n추첨 동의 제안");
 
 /* ── 동의 대기는 배지에서 겹침과 따로 센다 ────────────────────── */
 
+console.log("\n버튼 이름: 같은 동작은 같은 이름");
+{
+  const read = readCode;
+  // **같은 행위를 부르는 버튼이 둘 이상의 이름을 쓰면 어느 쪽을 공식으로 삼아야 할지
+  // 알 수 없다.** 실제로 있었다 — 회의 이월(같은 `carryOverMeeting`)이 화면마다
+  // "이번 주는 넘기고 다음 주에 잡기"(18자)와 "다음 주로 이월 확정하기"(13자)로 갈렸다.
+  // 어느 쪽이 틀렸는지는 아무도 모른다. 드라이브에 올린 뒤에야 알아챘다.
+  const slots = read("../src/features/schedule/slots-screen.tsx");
+
+  // 같은 행위를 부르는 **버튼 라벨**만 모은다 — 토스트 문구(`…넘겼습니다`) 는 성공을
+  // 말하는 거라 이름이 달라도 된다.
+  const labels = [...slots.matchAll(/>\s*([^<>{}\n]*(?:넘기|이월)[^<>{}\n]*)\s*</g)]
+    .map((m) => m[1].trim())
+    // 같은 이름은 하나만 센다 — 몇 번 등장하든 이름이 같으면 통한다.
+    .filter((v, i, a) => a.indexOf(v) === i);
+  check("같은 동작의 버튼 이름이 하나다", labels, ["다음 주로 넘기기"]);
+
+  // **회의 용어를 버튼에 쓰지 않는다.** `이월` 은 회의 계산 쪽 용어이고 사용자가 아는
+  // 말이 아니다. 결과 카드 제목처럼 이미 확정된 자리에는 남겨도 되지만, 누를 버튼에는
+  // "넘기기" 라고 plain하게 적는다.
+  truthy("버튼에 회의 용어(이월)가 없다", labels.every((l) => !l.includes("이월")));
+
+  // AppBar 제목이 Dock 버튼에 그대로 반복되면 두 곳에 같은 말이 있고, 짧은 쪽을 읽게 된다.
+  const poke = read("../src/features/tasks/poke-screen.tsx");
+  const appBar = poke.match(/<AppBar[\s\S]{0,240}?title="([^"]+)"/)?.[1] ?? "";
+  const dock = [...poke.matchAll(/>\s*([^<>{}\n]{3,})\s*</g)].map((m) => m[1].trim());
+  truthy(
+    "Dock 이 AppBar 제목을 그대로 되풀이하지 않는다",
+    appBar === "" || !dock.includes(appBar),
+  );
+}
+
 console.log("\n역할 배정 설명은 계약과 같다");
 {
   const read = readCode;
@@ -5089,7 +5121,13 @@ console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
   // 그 길로 넣은 업무는 팀장만 고칠 수 있게 되어 조용히 막힌다.
   const actions = readCode("../src/server/actions/tasks.ts");
   check("담당자가 들어가는 두 길 모두 주인을 남긴다", (actions.match(/createdById:\s*me\.id/g) ?? []).length >= 2, true);
-  check("서버도 같은 순수 판정을 부른다", actions.includes("canEditTask("), true);
+  // `taskEditBlock` 이 `canEditTask` 를 감싼다 — 같은 규칙을 부르면서 **왜 막혔는지**도
+  // 얻는다. 그래서 `canEditTask(` 를 직접 찾으면 깨진다(2026-09-28, `updateTask` 이 바뀜).
+  check(
+    "서버도 같은 순수 판정을 부른다",
+    actions.includes("canEditTask(") || actions.includes("taskEditBlock("),
+    true,
+  );
 }
 
 console.log("\n이름이 식별자로 남는 근거 (한 팀에 같은 이름은 한 명)");

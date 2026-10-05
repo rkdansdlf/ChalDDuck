@@ -21,7 +21,7 @@ import type { MeetingProposal, SubmissionBox, Task } from "@/lib/types";
  *
  * ## 이 파일의 대칙 — **없는 것은 없다고 쓴다**
  *
- * 아래 네 가지 중 **셋만** 세다. 나머지는 데이터가 없어서 **세지 않는다.**
+ * 아래 일곱 가지 중 **다섯 개만** 센다. 나머지는 데이터가 없어서 **세지 않는다.**
  *
  * | 세는 것 | 안 세는 이유 |
  * |---|---|
@@ -29,12 +29,18 @@ import type { MeetingProposal, SubmissionBox, Task } from "@/lib/types";
  * | ✅ 오늘 회의 | `MeetingProposal.date` 가 "YYYY-MM-DD" 다 |
  * | ✅ 마감 미정 업무 | `Task.due` 가 "미정" 으로 저장된다(빈 값) |
  * | ✅ 독촉할 일 | poke 화면과 **같은 조건**(`pokeTargets` 를 함께 쓴다) |
- * | ❌ 마감이 가까운 업무 | `Task.due` 는 **자유 텍스트**다("9/19", "다음 주", "9월쯤"). 비교할 시각이 없다 |
+ * | ✅ 마감이 임박한 업무 | **`Task.dueAt`(2-0 절)이 생겨서 이제 가능하다.** 정규값이 있는 일만 센다 |
  * | ❌ 회의가 끝났는데 메모 없음 | **회의록을 저장하는 곳이 없다**(스키마에 모델이 없다) |
  * | ❌ 발표 임박 | **발표일 필드가 없다.** `Team.dday` 는 "중간발표 D-12" 같은 문자열이다 |
  *
- * 지워버린 게 아니라 **세지 않는다는 사실을 코드에 남긴다.** 다음 사람이 "브리핑에 마감이
- * 임박한 일도 넣자" 고 하면 여기서 왜 안 되는지 읽으면 된다.
+ * ⚠️ **"마감이 임박한 업무" 는 전에 세지 못했고, 그건 버그가 아니라 데이터가 없는 상태였다.**
+ * `Task.due` 가 자유 텍스트("9/19", "다음 주", "9월쯤")라 비교할 시각이 없었고, 그래서
+ * "아직 안 정한 일" 로 대체했다. `dueAt` 이 생기면서 둘은 **서로 다른 두 가지**가 되었다 —
+ * **아직 안 정했다**(사람이 비워 뒀다)와 **임박했다**(정했다가 다가온다)를 같은 줄로 말하면
+ * 그 줄은 아무것도 말하지 않게 된다. 그래서 둘 다 센다.
+ *
+ * 지워버린 게 아니라 **세지 않는다는 사실을 코드에 남긴다.** 다음 사람이 "브리핑에 발표 임박도
+ * 넣자" 고 하면 여기서 왜 안 되는지 읽으면 된다.
  */
 
 /**
@@ -43,7 +49,7 @@ import type { MeetingProposal, SubmissionBox, Task } from "@/lib/types";
  * ⚠️ 여기서 `new Date(...)` 로 직접 파싱하면 **두 개의 기준**이 생긴다 — 하나는 느리고
  * 하나는 빠른 것이 화면마다 다른 말을 하게 된다. 변환만 하고 **판정은 하지 않는다.**
  */
-function parseDueAt(value: string | null | undefined, today: string): Date | null {
+function parseDueAt(value: string | null | undefined, _today: string): Date | null {
   if (!value) return null;
   const at = new Date(`${value}:00+09:00`);
   return Number.isNaN(at.getTime()) ? null : at;

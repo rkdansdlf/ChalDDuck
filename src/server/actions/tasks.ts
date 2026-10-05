@@ -7,7 +7,7 @@ import type { Task, TaskKindKey } from "@/lib/types";
 // 갱신한 권한 사유(`taskEditBlock`)가 같은 줄에서 충돌했다 — 어느 한쪽을 고르면 다른 쪽이
 // 조용히 사라진다. 그게 병합에서 가장 위험한 일이다(돌아가서 찾기 어려운 쪽이 아니라
 // **아무 일도 없던 쪽**).
-import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "@/lib/task-permission";
+import { shouldNotifyAssignee, taskEditBlock } from "@/lib/task-permission";
 import { matchAssigneeToMember } from "@/lib/tool-assignee";
 import { parseDueText } from "@/lib/due";
 import { db } from "@/server/db";
@@ -170,7 +170,18 @@ export async function updateTask(
     select: { id: true, createdById: true },
   });
   if (!task) throw new Error("할 일을 찾을 수 없습니다.");
-  if (!canEditTask(task, me)) throw new Error("만든 사람이 아니어서 고칠 수 없습니다.");
+  // **같은 막힘에 같은 말을 한다.** 화면은 서버가 계산해 보낸 `editBlockedBecause` 로 "넣기 전에
+  // 있던 업무라 팀장만 고칠 수 있습니다" 라고 말하는데, 여기서 "만든 사람이 아니어서" 라고 하면
+  // **사용자는 두 개의 다른 이유로 같은 막힘을 받는다**(2026-09-28 에 검사에서 드러남). 같은
+  // 막힘에 두 개의 다른 이유는 배워지지 않는다.
+  const block = taskEditBlock(task, me);
+  if (block) {
+    throw new Error(
+      block === "leader-only"
+        ? "넣기 전에 있던 업무라 팀장만 고칠 수 있습니다."
+        : "남이 넣은 업무라 고칠 수 없습니다.",
+    );
+  }
 
   const title = fields.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("할 일 제목을 적어 주세요.");

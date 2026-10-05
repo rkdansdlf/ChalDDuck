@@ -375,7 +375,7 @@ export function SlotsScreen({
                       )
                     }
                   >
-                    이번 주는 넘기고 다음 주에 잡기
+                    다음 주로 넘기기
                   </Btn>
                 )}
               </>
@@ -523,7 +523,7 @@ export function SlotsScreen({
                       )
                     }
                   >
-                    다음 주로 이월 확정하기
+                    다음 주로 넘기기
                   </Btn>
                 </>
               ) : null}
@@ -571,7 +571,7 @@ export function SlotsScreen({
                     )
                   }
                 >
-                  이번 주는 넘기고 다음 주에 잡기
+                  다음 주로 넘기기
                 </Btn>
               </div>
             )

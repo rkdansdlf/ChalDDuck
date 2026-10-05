@@ -22,10 +22,11 @@ export default async function HomePage() {
   // **오른쪽 기둥(최근 자료·AI 도구·마감 임박 추천)은 await 하지 않는다.** 왼쪽은 "지금 나를
   // 기다리는 일"이라 먼저 그려야 하고, 이쪽은 늦게 와도 된다. Promise 를 그대로 내려
   // 가장 느린 읽기가 홈 전체를 붙잡지 않게 한다. 먼저 시작해 두므로 병렬성은 그대로다.
-  const recent = getRecentItems(team.id);
-  const aiTools = getAiTools();
+  // 개별 조회가 실패해도 화면 전체가 깨지지 않도록 빈 배열로 안전하게 폴백한다.
+  const recent = getRecentItems(team.id).catch(() => []);
+  const aiTools = getAiTools().catch(() => []);
   // 마감 임박 추천용 — **역할과 마감 시각만** 읽는다(파일·버전 전체는 필요 없다).
-  const boxDeadlines = getBoxDeadlines(team.id);
+  const boxDeadlines = getBoxDeadlines(team.id).catch(() => []);
 
   const [roles, roster, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread] =
     await Promise.all([

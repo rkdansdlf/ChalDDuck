@@ -169,7 +169,7 @@ export function PokeScreen({
 
       <Dock>
         <Btn full size="lg" icon={sending ? "loader-circle" : "bell"} disabled={!selectedTask || sending} onClick={send}>
-          {sending ? "보내는 중…" : "진행상황 물어보기 (콕 찌르기)"}
+          {sending ? "보내는 중…" : "진행상황 묻기"}
         </Btn>
 
         {/**

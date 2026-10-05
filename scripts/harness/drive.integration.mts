@@ -497,10 +497,8 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     );
     check("첨부 주소를 발급한다", preparedAttach.status, "ok");
     let messageId = "";
-    let attachPath = "";
     if (preparedAttach.status === "ok") {
       await putObject(preparedAttach.signedUrl, CONTENT, preparedAttach.contentType);
-      attachPath = preparedAttach.path;
       const sent = await as(CH.asMate, () =>
         chat.sendChatMessage("team", "사진 같이 봅니다", {
           attachment: { path: preparedAttach.path, name: attachName },
