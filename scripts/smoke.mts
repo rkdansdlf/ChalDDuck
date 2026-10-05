@@ -6012,12 +6012,15 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   const tools = readCode("../src/server/ai/tools.ts");
   check("정말 자료에서 뽑는다", /질문을 뽑는다/.test(tools), true);
 
-  // ③ 원문 링크 — **보여 준다**고 적어야 한다.
+  const readRaw = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  // ③ 원문 링크 — **보여 준다**고 적어야 한다 (정책 주석 및 화면 노출).
   const research = readCode("../src/features/tools/researcher-screen.tsx");
+  const researchRaw = readRaw("../src/features/tools/researcher-screen.tsx");
   check("원문 링크를 '다루지 않았다' 고 하지 않는다", research.includes("원문 링크를 그대로"), false);
-  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(research), true);
+  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(researchRaw), true);
   // 화면에 그대로 보이는 문구까지 확인한다 — 주석만 고쳐지고 화면은 옛말이면 그게 거짓말이다.
-  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(readCode("../src/features/tools/researcher-screen.tsx")), true);
+  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(research), true);
 
   // ⑤ 2GB — **근거 파일을 세지 않는다.** 목록이 "포함할지 정해지지 않았다" 고 적혀 있었는데,
   // 용량을 세는 곳이 제출함 버전만 합산하므로 이미 **정해져 있었다**(읽는 쪽에는 안 보인다).
@@ -6027,13 +6030,13 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   const evidence = readCode("../src/server/actions/contrib.ts");
   check("근거 파일은 용량 계산에 들어가지 않는다", /teamUsedBytes/.test(evidence), false);
   check("근거 파일의 경로는 따로다", /evidence/.test(evidence), true);
-  const addScreen = readCode("../src/features/contrib/contrib-add-screen.tsx");
-  check("목록이 '세지 않는다' 고 적는다", addScreen.includes("근거 파일을 세지 않습니다"), true);
+  const addScreenRaw = readRaw("../src/features/contrib/contrib-add-screen.tsx");
+  check("목록이 '세지 않는다' 고 적는다", addScreenRaw.includes("근거 파일을 세지 않습니다"), true);
 
   // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
-  const dm = readCode("../src/features/chat/dm-list-screen.tsx");
-  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dm), true);
-  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dm), true);
+  const dmRaw = readRaw("../src/features/chat/dm-list-screen.tsx");
+  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dmRaw), true);
+  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dmRaw), true);
 }
 
 await finish();

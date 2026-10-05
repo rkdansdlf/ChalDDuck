@@ -15,7 +15,6 @@ import {
   SecTitle,
   Sheet,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { runAiResearch } from "./ai-stream-client";
@@ -471,13 +470,10 @@ export function ResearcherScreen({
           합니다.
         </Note>
 
-        <Undecided>
-          **원문 링크는 항상 보여 주고, 출처가 없는 결과는 아예 보여 주지 않는다**(적합도 점수도
-          만들지 않는다 — 점수를 매기면 사람이 그 표지를 믿게 된다). 남은 과제였던 **최신성(발행
-          연도)**과 **출처 성격(학술·통계·언론·웹)**을 객관적 속성으로 노출하고, **표준 참고문헌 인용
-          복사**, **팀 단톡방 공유**, **드라이브 제출함 저장**, **2-Track 추천 키워드 칩**을 연결해 팀
-          협업 및 자료 탐색 경험을 고도화했습니다.
-        </Undecided>
+        {/* 정책 확정:
+            원문 링크는 항상 보여 주고, 출처가 없는 결과는 아예 보여 주지 않는다 (적합도 점수도 만들지 않는다).
+            최신성(발행 연도)과 출처 성격(학술·통계·언론·웹)을 객관적 속성으로 노출하고,
+            표준 참고문헌 인용 복사, 팀 단톡방 공유, 드라이브 제출함 저장, 2-Track 추천 키워드 칩 고도화 완료. */}
       </Body>
 
       {/* 드라이브 제출함 선택 Sheet */}

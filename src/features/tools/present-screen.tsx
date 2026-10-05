@@ -12,7 +12,6 @@ import {
   Rows,
   SecTitle,
   Textarea,
-  Undecided,
 } from "@/components/ui";
 import { refineScript } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
@@ -114,10 +113,9 @@ export function PresentScreen({
           ))}
         </Rows>
 
-        <Undecided>
-          예상 질문은 **자료에서 뽑는다** — 대본을 넣으면 표현을 다듬으면서 나올 만한 질문을 함께
-          뽑는다(`server/ai/tools.ts` 의 발표 지원). 목록에서 고르는 방식은 없다.
-        </Undecided>
+        {/* 정책 확정:
+            예상 질문은 자료에서 뽑는다 — 대본을 넣으면 표현을 다듬으면서 나올 만한 질문을 함께
+            추출한다 (server/ai/tools.ts 의 발표 지원). 목록에서 고르는 방식은 없다. */}
       </Body>
     </>
   );
