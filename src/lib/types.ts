@@ -355,6 +355,8 @@ export type ResearchResult = {
   kind?: ResearchSourceKind;
   /** 과제·보고서용 표준 참고문헌 인용 표기. */
   citation?: string | null;
+  /** 이어서 탐색할 만한 연관 주제/질의어 목록. */
+  relatedQueries?: string[];
 };
 
 /** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */

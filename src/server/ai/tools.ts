@@ -339,6 +339,7 @@ export async function searchResearch(
       kind?: "academic" | "stats" | "news" | "web" | null;
       citation?: string | null;
     }>;
+    relatedQueries?: string[];
   }>({
     tool: "research",
     // **카드 정리도 같은 모델로** 한다. 검색한 모델과 정리하는 모델이 다르면 앞 model's
@@ -355,6 +356,7 @@ export async function searchResearch(
 - kind 는 자료의 성격이다: 학술 논문·연구는 "academic", 통계·조사 보고서는 "stats", 언론 보도·기사는 "news", 일반 웹문서는 "web".
 - citation 은 과제·보고서에 넣을 수 있는 표준 참고문헌 형식이다(예: 발행처 (연도), "자료명", URL).
 - snippet 은 그 자료가 무엇을 말하는지 한두 문장으로 적는다.
+- relatedQueries 는 이 주제와 관련해 팀플 발표·보고서 준비를 위해 더 깊이 찾아볼 만한 구체적인 연관 검색어 2~3개를 적는다.
 - 검색 내용에 근거가 없는 카드는 만들지 않는다.`,
     // 모델이 본문을 한 글자도 안 돌려주는 일이 있어(무료 모델에서 겪었다) 페이지 발췌를
     // 함께 넘긴다. 발췌는 검색이 가져온 실제 본문이라 이것만으로도 카드를 만들 수 있다.
@@ -365,7 +367,7 @@ ${answer.citations
   .map((c) => `- ${c.title} :: ${c.url}\n  ${c.excerpt.slice(0, 900) || "(발췌 없음)"}`)
   .join("\n")}`,
     shapeName: "research_results",
-    shapeDescription: "출처가 붙은 자료 카드 목록",
+    shapeDescription: "출처가 붙은 자료 카드 목록과 연관 검색어",
     schema: {
       type: "object",
       properties: {
@@ -389,10 +391,20 @@ ${answer.citations
             required: ["title", "source", "snippet", "url"],
           },
         },
+        relatedQueries: {
+          type: "array",
+          items: { type: "string" },
+          description: "더 깊이 찾아볼 만한 구체적인 연관 검색어 2~3개",
+        },
       },
       required: ["results"],
     },
   });
+
+  const relatedQueries = (shaped.relatedQueries ?? [])
+    .map((q) => q.trim())
+    .filter((q) => q.length > 0)
+    .slice(0, 3);
 
   // 마지막 문 — 인용되지 않은 주소가 붙은 카드는 버린다. 프롬프트가 아니라 여기가 규칙이다.
   return (shaped.results ?? [])
@@ -412,6 +424,7 @@ ${answer.citations
         year,
         kind,
         citation,
+        ...(index === 0 && relatedQueries.length > 0 ? { relatedQueries } : {}),
       };
     });
 }

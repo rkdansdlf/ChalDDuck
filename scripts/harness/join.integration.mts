@@ -57,7 +57,6 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   const actions = await import("../../src/server/actions/onboarding.js");
   const teamActions = await import("../../src/server/actions/team.js");
   const rejoin = await import("../../src/server/actions/rejoin.js");
-  const invites = await import("../../src/server/invite/service.js");
   const settle = await import("../../src/server/invite/settle.js");
 
   let failed = 0;
@@ -238,7 +237,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
     /* ── 3) 팀장이 있으면 요청만 한다 ─────────────────────────── */
     console.log("\n팀장이 있는 팀에는 승인 요청만 한다");
-    const pending = await db.joinRequest.findFirstOrThrow({
+    await db.joinRequest.findFirstOrThrow({
       where: { teamId: empty.id, status: "pending" },
     });
     const again = await joinAs(empty.code, `최민준${suffix}`);

@@ -26,7 +26,6 @@ import {
   voidedText,
 } from "../src/features/roles/roster-model.js";
 import {
-  AI_POLICY,
   CUSHION_DEFAULT_MODE,
   CUSHION_LEVELS,
   AI_TOOLS,
@@ -5254,11 +5253,6 @@ console.log("\n마피아 게임: 구버전이 던진 표를 신버전이 센다"
     await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[1].id } });
     check("신버전 기록에는 아직 표가 없다", await db.iceBallot.count({ where: { roundId: round.id } }), 0);
 
-    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
-      memberId: s.memberId,
-      voteForId: s.voteForId,
-    }));
-    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
     const rows2 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
       memberId: s.memberId,
       voteForId: s.voteForId,
@@ -6005,7 +5999,6 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   //
   // 틀린 정본은 아무것도 고치지 않은 채 다음 사람을 그 방향으로 엉뚱하게wyn다. 특히 원문 링크
   // 항목은 **안전과 관련된 쪽**이 틀려 있었다 — "출처를 안 보여 준다" 고 읽으면 문제가 있다.
-  const readAt = (file: string, needle: string) => readCode(file).includes(needle);
   const decision = readCode("../src/app/onboarding/name/page.tsx");
 
   // ① 동명이인 — **막는** 것이 맞다.

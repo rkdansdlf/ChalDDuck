@@ -260,6 +260,33 @@ export const CLERK_SAMPLE_DRAFT: ClerkDraft = {
 
 export const RESEARCH_SAMPLE_QUERY = "MBTI와 팀 프로젝트 만족도 관련 자료 있어?";
 
+/**
+ * 리서처 초기 진입 시 보여 주는 대학생 팀플 핵심 추천 검색어.
+ */
+export type ResearchCuratedSuggestion = {
+  tag: string;
+  query: string;
+};
+
+export const RESEARCH_CURATED_SUGGESTIONS: ResearchCuratedSuggestion[] = [
+  {
+    tag: "역할 분담 연구",
+    query: "팀 프로젝트 역할 분담과 협업 만족도 실증 연구",
+  },
+  {
+    tag: "무임승차 완화",
+    query: "대학생 팀 프로젝트 무임승차(free rider) 완화 전략",
+  },
+  {
+    tag: "청년 주거 통계",
+    query: "통계청 20대 청년 1인 가구 주거 및 생활 실태 조사 보고서",
+  },
+  {
+    tag: "발표 슬라이드 원칙",
+    query: "멀티미디어 학습 원리와 프레젠테이션 슬라이드 디자인 연구",
+  },
+];
+
 export const RESEARCH_SAMPLE_RESULTS: ResearchResult[] = [
   {
     id: "r1",
@@ -271,6 +298,11 @@ export const RESEARCH_SAMPLE_RESULTS: ResearchResult[] = [
     year: "2021",
     kind: "academic",
     citation: '김민수 외 (2021). "MBTI 유형과 팀 협업 만족도의 관계", 한국심리학회지.',
+    relatedQueries: [
+      "MBTI와 팀 커뮤니케이션 스타일 비교 연구",
+      "대학생 협동학습 갈등 해결 전략",
+      "팀 성과와 역할 명확성 실증 분석",
+    ],
   },
   {
     id: "r2",

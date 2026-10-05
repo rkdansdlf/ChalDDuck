@@ -1,4 +1,4 @@
-import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
+import { SCHEDULE_HOURS } from "@/data/catalog";
 import type { BusyKindKey } from "@/lib/types";
 
 export type ParsedTimeBlock = {

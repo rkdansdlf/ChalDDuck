@@ -20,6 +20,7 @@ import {
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { runAiResearch } from "./ai-stream-client";
 import { DraftSourceChip } from "./draft-source-chip";
+import { RESEARCH_CURATED_SUGGESTIONS } from "@/data/catalog";
 import { shareResearchToChat } from "@/server/actions/chat";
 import {
   getMyTeamSubmissionBoxesForSelect,
@@ -86,14 +87,16 @@ export function ResearcherScreen({
   const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
   const [driveSaving, setDriveSaving] = useState(false);
 
-  const search = async () => {
-    if (!query.trim() || working) return;
+  const search = async (overrideQuery?: string) => {
+    const q = (overrideQuery ?? query).trim();
+    if (!q || working) return;
+    if (overrideQuery) setQuery(overrideQuery);
     setWorking(true);
     setError(null);
     setPhase(null);
     try {
       const { value, source: made_by } = await runAiResearch({
-        query: query.trim(),
+        query: q,
         onPhase: setPhase,
       });
       setResults(value);
@@ -250,6 +253,23 @@ export function ResearcherScreen({
             {working ? "찾는 중" : "찾기"}
           </Btn>
         </form>
+
+        {/* 큐레이션 추천 검색어 칩 (Track 1) */}
+        <div className="mb-3.5 flex flex-wrap items-center gap-1.5" aria-label="추천 검색어">
+          <span className="t-cap flex-none font-medium text-txt-muted">추천:</span>
+          {RESEARCH_CURATED_SUGGESTIONS.map((item) => (
+            <button
+              key={item.tag}
+              type="button"
+              disabled={working}
+              onClick={() => search(item.query)}
+              className="inline-flex items-center gap-1 rounded-control border border-line bg-card px-2.5 py-1 text-[12px] font-medium text-txt hover:bg-fill active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              <span>{item.tag}</span>
+              <Icon name="arrow-right" size={10} className="text-txt-muted" />
+            </button>
+          ))}
+        </div>
 
         {/* 한 번에 수십 초가 걸린다 — 멈춘 것이 아니라 어느 단계인지를 알린다. 첫 단계 알림이
             오기 전에는 말하지 않는다(모르는 것을 지어내지 않는다). */}
@@ -422,6 +442,30 @@ export function ResearcherScreen({
           })}
         </div>
 
+        {/* AI 연관 검색어 칩 (Track 2) */}
+        {results.length > 0 && results[0]?.relatedQueries && results[0].relatedQueries.length > 0 ? (
+          <Panel s="fill" pad={14} r={16} className="mb-4">
+            <div className="mb-2 flex items-center gap-1.5 text-[13px] font-bold text-txt-strong">
+              <Icon name="sparkles" size={14} className="text-primary" />
+              <span>이어서 찾아볼 만한 연관 주제</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {results[0].relatedQueries.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  disabled={working}
+                  onClick={() => search(q)}
+                  className="inline-flex items-center gap-1.5 rounded-control border border-line-strong bg-card px-3 py-1.5 text-[12.5px] font-medium text-txt hover:border-primary hover:bg-fill active:scale-[0.98] transition-all disabled:opacity-50"
+                >
+                  <Icon name="search" size={12} className="text-txt-muted" />
+                  <span>{q}</span>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        ) : null}
+
         <Note tone="info" icon="shield" className="mb-3">
           결과는 <b>찾아온 자료</b>일 뿐입니다. 어떤 자료를 쓸지, 어떻게 인용할지는 직접 판단해야
           합니다.
@@ -431,7 +475,8 @@ export function ResearcherScreen({
           **원문 링크는 항상 보여 주고, 출처가 없는 결과는 아예 보여 주지 않는다**(적합도 점수도
           만들지 않는다 — 점수를 매기면 사람이 그 표지를 믿게 된다). 남은 과제였던 **최신성(발행
           연도)**과 **출처 성격(학술·통계·언론·웹)**을 객관적 속성으로 노출하고, **표준 참고문헌 인용
-          복사**, **팀 단톡방 공유**, **드라이브 제출함 저장**을 연결해 팀 협업 생태계와 통합했습니다.
+          복사**, **팀 단톡방 공유**, **드라이브 제출함 저장**, **2-Track 추천 키워드 칩**을 연결해 팀
+          협업 및 자료 탐색 경험을 고도화했습니다.
         </Undecided>
       </Body>
 

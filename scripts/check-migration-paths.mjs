@@ -3,7 +3,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { stripComments } from "./strip-comments.mjs";
 
 /**
  * SQL 주석을 지운다.
@@ -84,7 +83,7 @@ const psql = (sql, quiet = false) => {
   if (!quiet && out) console.log(`    ${out.split("\n").join("\n    ")}`);
   return out;
 };
-const admin = (sql) => execFileSync("psql", [ADMIN, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql], { encoding: "utf8" });
+const _admin = (sql) => execFileSync("psql", [ADMIN, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql], { encoding: "utf8" });
 
 const migrate = () =>
   execFileSync("npx", ["prisma", "migrate", "deploy"], {
