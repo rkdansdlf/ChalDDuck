@@ -176,11 +176,14 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const res = await call("harness-secret");
     check("200 이다", res.status, 200);
     const body = (await res.json()) as {
-      confirmed: number;
-      swept: { attempts: number; aiUsage: number; aiCalls: number };
+      confirmed: number | null;
+      swept: { attempts: number | null; aiUsage: number | null; aiCalls: number | null };
+      failures: string[];
     };
 
     check("마감된 회의 1건이 확정되었다", body.confirmed, 1);
+    // **조용히 실패하지 않는다** — 실패한 이름이 응답에 들어 있다. 0 과 실패는 다른 말이다.
+    check("실패한 것이 없음을 말한다", body.failures, []);
     const settled = await db.meetingProposal.findUniqueOrThrow({
       where: { id: proposal.id },
       select: { stage: true },
@@ -216,7 +219,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ── 6) 두 번 불러도 되돌아오지 않는다 ───────────────────── */
     console.log("\n두 번 불러도 같은 일을 두 번 하지 않는다");
     const again = await call("harness-secret");
-    const body2 = (await again.json()) as { confirmed: number; swept: { aiUsage: number } };
+    const body2 = (await again.json()) as { confirmed: number | null; swept: { aiUsage: number | null } };
     check("두 번째에는 아무것도 확정하지 않는다", body2.confirmed, 0);
     // 내가 심은 기간째 기록이 **또 지워지지 않았는지**로 본다 — 개수가 아니라 내 행으로.
     check("두 번째에도 기간째 기록은 산다", await db.aiUsage.count({ where: { teamId: team.id, day: inside } }), 1);

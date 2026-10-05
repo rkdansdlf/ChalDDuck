@@ -40,7 +40,21 @@ export async function GET(request: Request) {
     return Response.json({ error: "권한이 없습니다." }, { status: 401 });
   }
 
-  const confirmed = await confirmDueMeetings();
+  /**
+   * **하나가 던져도 나머지가 돈다.**
+   *
+   * 예전에는 `confirmDueMeetings()` 가 맨 앞에 있었고 **그것이 던지면 여기까지 오지 않았다.** 그
+   * 결과 청소가 하나도 실행되지 않아, 화면이 "90일 뒤 삭제됩니다" 라고 말하는 동안 **영영 거짓이
+   * 되고 아무도 모른다**(2026-09-28 `test:cron` 이 그 구조를 고정했다).
+   *
+   * 회의 확정이든 기록 청소든 **서로 무관한 일**이다. 하나가 실패해도 다른 하나는 하루라도 밀리지
+   * 않아야 하고 — 무엇이 실패했는지는 **응답으로 말해야** 조용히 실패하지 않는다.
+   */
+  const settled = await Promise.allSettled([confirmDueMeetings()]);
+  const confirmed = settled[0]?.status === "fulfilled" ? settled[0].value : null;
+  if (settled[0]?.status === "rejected") {
+    console.error("[cron:meetings] 마감된 회의 확정에 실패했습니다", settled[0].reason);
+  }
 
   // **요청의 경계에서 화면을 다시 그리게 한다.** `confirmDueMeetings` 는 평범한 모듈이라
   // 경계 밖에서 부를 수 있는데, `revalidatePath` 는 그 안에서 부르면 던진다
@@ -49,10 +63,9 @@ export async function GET(request: Request) {
   revalidatePath("/schedule", "layout");
   revalidatePath("/home");
 
-  // 같이 치우는 두 가지. 셋 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
-  // 예약 작업이 이미 있는 이 자리에 붙인다. 회의 확정이 실패하면 여기까지 오지 않지만,
-  // 그때는 치우는 일이 하루 밀리는 것뿐이다.
-  const [attempts, aiUsage, aiCalls, rejoins] = await Promise.all([
+  // 같이 치우는 것들. 모두 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라 예약 작업이
+  // 이미 있는 이 자리에 붙인다. **하나가 던져도 나머지는 돌아야 한다** — 같은 이유.
+  const swept = await Promise.allSettled([
     // 창이 지난 재입장 시도 기록.
     sweepAttempts(),
     // 보관 기간이 지난 AI 사용 기록 — 화면이 "N일 뒤 삭제"라고 적고 있으므로 실제로 지운다.
@@ -108,5 +121,34 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ confirmed, swept: { attempts, aiUsage, aiCalls, rejoins: rejoins.expired }, purification: purifications, aiCalls: calls });
+  /**
+   * 스윕 결과를 **이름 그대로** 꺼낸다. 실패한 것은 `null` 이고, 그 이름은 `failures` 에도
+   * 넣는다 — **조용히 0 을 말하지 않는다.** 0 과 실패는 전혀 다른 말이다.
+   */
+  const [attemptsR, aiUsageR, aiCallsR, rejoinsR] = swept;
+  const value = <T>(r: PromiseSettledResult<T>): T | null =>
+    r.status === "fulfilled" ? r.value : null;
+  const failures: string[] = [];
+  const names = ["attempts", "aiUsage", "aiCalls", "rejoins"] as const;
+  swept.forEach((r, i) => {
+    if (r.status === "rejected") {
+      failures.push(names[i]!);
+      console.error(`[cron:meetings] ${names[i]} 청소에 실패했습니다`, r.reason);
+    }
+  });
+  if (settled[0]?.status === "rejected") failures.unshift("confirmed");
+
+  return Response.json({
+    confirmed,
+    swept: {
+      attempts: value(attemptsR),
+      aiUsage: value(aiUsageR),
+      aiCalls: value(aiCallsR),
+      rejoins: rejoinsR.status === "fulfilled" ? rejoinsR.value.expired : null,
+    },
+    /** 실패한 것이 있으면 그 이름이 여기에 있다. 없으면 빈 배열. */
+    failures,
+    purification: purifications,
+    aiCalls: calls,
+  });
 }
