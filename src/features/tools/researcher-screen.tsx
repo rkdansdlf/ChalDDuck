@@ -13,12 +13,18 @@ import {
   Note,
   Panel,
   SecTitle,
+  Sheet,
   Toast,
   Undecided,
 } from "@/components/ui";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { runAiResearch } from "./ai-stream-client";
 import { DraftSourceChip } from "./draft-source-chip";
+import { shareResearchToChat } from "@/server/actions/chat";
+import {
+  getMyTeamSubmissionBoxesForSelect,
+  saveResearchToDrive,
+} from "@/server/actions/drive";
 import type { AiAnswerSource, ResearchResult, ResearchSourceKind } from "@/lib/types";
 
 /**
@@ -28,7 +34,8 @@ import type { AiAnswerSource, ResearchResult, ResearchSourceKind } from "@/lib/t
  * 점수를 붙이면 학생이 그 숫자만 보고 자료를 고르게 된다.
  *
  * 대신 객관적인 판단 속성(출처 성격·발행 연도)을 드러내고,
- * 과제·보고서 작성에 필요한 참고문헌 인용 표기 복사를 지원한다.
+ * 과제·보고서 작성에 필요한 참고문헌 인용 표기 복사와
+ * 팀 단톡방 공유 및 드라이브 제출함 저장을 지원한다.
  */
 
 const KIND_META: Record<
@@ -42,6 +49,12 @@ const KIND_META: Record<
 };
 
 type FilterKey = "all" | "recent" | "academic";
+
+type SubmissionBoxOption = {
+  id: string;
+  name: string;
+  role: string;
+};
 
 export function ResearcherScreen({
   sampleQuery,
@@ -63,8 +76,15 @@ export function ResearcherScreen({
   /** 지금 어느 단계인가. 서버가 알려 준 것만 보여 준다 — 화면이 시간으로 짐작하지 않는다. */
   const [phase, setPhase] = useState<"searching" | "shaping" | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
+
+  /** 드라이브 저장 시트 상태 */
+  const [targetForDrive, setTargetForDrive] = useState<ResearchResult | null>(null);
+  const [boxes, setBoxes] = useState<SubmissionBoxOption[]>([]);
+  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
+  const [driveSaving, setDriveSaving] = useState(false);
 
   const search = async () => {
     if (!query.trim() || working) return;
@@ -108,6 +128,71 @@ export function ResearcherScreen({
       setTimeout(() => setToastMsg(null), 2500);
     } catch {
       setToastMsg("복사에 실패했습니다.");
+      setTimeout(() => setToastMsg(null), 2500);
+    }
+  };
+
+  const shareToChat = async (result: ResearchResult) => {
+    if (sharingId) return;
+    setSharingId(result.id);
+    try {
+      const res = await shareResearchToChat({
+        title: result.title,
+        source: result.source,
+        snippet: result.snippet,
+        url: result.url,
+        year: result.year,
+      });
+      if (res.ok) {
+        setToastMsg("팀 단톡방에 자료 카드를 공유했습니다.");
+      } else {
+        setToastMsg(res.error || "단톡방 공유에 실패했습니다.");
+      }
+    } catch (cause: unknown) {
+      setToastMsg(cause instanceof Error ? cause.message : "공유에 실패했습니다.");
+    } finally {
+      setSharingId(null);
+      setTimeout(() => setToastMsg(null), 2500);
+    }
+  };
+
+  const openDriveSheet = async (result: ResearchResult) => {
+    setTargetForDrive(result);
+    if (boxes.length === 0) {
+      try {
+        const list = await getMyTeamSubmissionBoxesForSelect();
+        setBoxes(list);
+        if (list.length > 0 && !selectedBoxId) {
+          setSelectedBoxId(list[0].id);
+        }
+      } catch {
+        // 세션 없거나 조회 실패 시
+      }
+    }
+  };
+
+  const saveToDrive = async () => {
+    if (!targetForDrive || !selectedBoxId || driveSaving) return;
+    setDriveSaving(true);
+    try {
+      const res = await saveResearchToDrive(selectedBoxId, {
+        title: targetForDrive.title,
+        source: targetForDrive.source,
+        snippet: targetForDrive.snippet,
+        url: targetForDrive.url,
+        year: targetForDrive.year,
+        citation: targetForDrive.citation,
+      });
+      if (res.ok) {
+        setToastMsg(`드라이브 ${res.boxName}에 자료가 저장되었습니다.`);
+        setTargetForDrive(null);
+      } else {
+        setToastMsg(res.error || "드라이브 저장에 실패했습니다.");
+      }
+    } catch (cause: unknown) {
+      setToastMsg(cause instanceof Error ? cause.message : "저장에 실패했습니다.");
+    } finally {
+      setDriveSaving(false);
       setTimeout(() => setToastMsg(null), 2500);
     }
   };
@@ -289,21 +374,45 @@ export function ResearcherScreen({
                   {result.snippet}
                 </div>
 
-                {/* 하단 유틸리티 동작: 과제용 참고문헌 인용 복사 */}
-                <div className="mt-3 flex items-center justify-between border-t border-line-subtle pt-2.5">
-                  <button
-                    type="button"
-                    onClick={() => copyCitation(result)}
-                    className="inline-flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-1 text-[12px] font-medium text-txt hover:bg-fill-hover active:scale-[0.98] transition-all"
-                    aria-label="참고문헌 인용 표기 복사"
-                  >
-                    <Icon
-                      name={copiedId === result.id ? "check" : "copy"}
-                      size={12}
-                      className={copiedId === result.id ? "text-ok" : "text-txt-muted"}
-                    />
-                    <span>{copiedId === result.id ? "인용 복사됨" : "인용 복사"}</span>
-                  </button>
+                {/* 하단 협업 및 유틸리티 동작 */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-1.5 border-t border-line-subtle pt-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => copyCitation(result)}
+                      className="inline-flex items-center gap-1 rounded-[8px] bg-fill px-2 py-1 text-[12px] font-medium text-txt hover:bg-fill-hover active:scale-[0.98] transition-all"
+                      aria-label="참고문헌 인용 표기 복사"
+                    >
+                      <Icon
+                        name={copiedId === result.id ? "check" : "copy"}
+                        size={12}
+                        className={copiedId === result.id ? "text-ok" : "text-txt-muted"}
+                      />
+                      <span>{copiedId === result.id ? "인용 복사됨" : "인용 복사"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => shareToChat(result)}
+                      disabled={sharingId === result.id}
+                      className="inline-flex items-center gap-1 rounded-[8px] bg-fill px-2 py-1 text-[12px] font-medium text-txt hover:bg-fill-hover active:scale-[0.98] transition-all disabled:opacity-50"
+                      aria-label="팀 단톡방에 공유"
+                    >
+                      <Icon name="messages-square" size={12} className="text-txt-muted" />
+                      <span>{sharingId === result.id ? "공유 중…" : "팀에 공유"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openDriveSheet(result)}
+                      className="inline-flex items-center gap-1 rounded-[8px] bg-fill px-2 py-1 text-[12px] font-medium text-txt hover:bg-fill-hover active:scale-[0.98] transition-all"
+                      aria-label="드라이브에 저장"
+                    >
+                      <Icon name="folder-open" size={12} className="text-txt-muted" />
+                      <span>드라이브 저장</span>
+                    </button>
+                  </div>
+
                   <span className="text-[11px] text-txt-faint">
                     {result.url ? "원문 검증 완료" : "데모 예시"}
                   </span>
@@ -322,9 +431,78 @@ export function ResearcherScreen({
           **원문 링크는 항상 보여 주고, 출처가 없는 결과는 아예 보여 주지 않는다**(적합도 점수도
           만들지 않는다 — 점수를 매기면 사람이 그 표지를 믿게 된다). 남은 과제였던 **최신성(발행
           연도)**과 **출처 성격(학술·통계·언론·웹)**을 객관적 속성으로 노출하고, **표준 참고문헌 인용
-          복사**를 제공해 과제 작성 효율을 높였습니다.
+          복사**, **팀 단톡방 공유**, **드라이브 제출함 저장**을 연결해 팀 협업 생태계와 통합했습니다.
         </Undecided>
       </Body>
+
+      {/* 드라이브 제출함 선택 Sheet */}
+      <Sheet
+        open={Boolean(targetForDrive)}
+        title="드라이브에 저장"
+        onClose={() => setTargetForDrive(null)}
+        footer={
+          <div className="flex items-center gap-2">
+            <Btn
+              v="outline"
+              className="flex-1"
+              onClick={() => setTargetForDrive(null)}
+              disabled={driveSaving}
+            >
+              취소
+            </Btn>
+            <Btn
+              className="flex-1"
+              icon="folder-open"
+              onClick={saveToDrive}
+              disabled={!selectedBoxId || driveSaving}
+            >
+              {driveSaving ? "저장 중…" : "제출함에 저장"}
+            </Btn>
+          </div>
+        }
+      >
+        <div className="space-y-3 py-1">
+          <div className="keep-all rounded-control bg-fill p-3 text-[13px] leading-[1.5] text-txt-muted">
+            <span className="font-semibold text-txt-strong">선택한 자료:</span>{" "}
+            {targetForDrive?.title} ({targetForDrive?.source})
+          </div>
+
+          <div className="text-[13.5px] font-bold text-txt-strong">저장할 제출함 선택</div>
+
+          {boxes.length === 0 ? (
+            <div className="rounded-control border border-dashed border-line p-4 text-center text-[13px] text-txt-muted">
+              등록된 제출함이 없습니다. 팀 드라이브에서 제출함을 먼저 만들어 주세요.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {boxes.map((box) => (
+                <button
+                  key={box.id}
+                  type="button"
+                  onClick={() => setSelectedBoxId(box.id)}
+                  className={`flex items-center justify-between rounded-control border p-3 text-left transition-colors ${
+                    selectedBoxId === box.id
+                      ? "border-line-strong bg-fill-strong text-txt-strong"
+                      : "border-line bg-card text-txt hover:bg-fill"
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-[14px] leading-[1.4]">{box.name}</div>
+                    <div className="text-[12px] text-txt-muted">역할: {box.role}</div>
+                  </div>
+                  <div className="flex-none pl-2">
+                    <Icon
+                      name={selectedBoxId === box.id ? "circle-check" : "circle"}
+                      size={18}
+                      className={selectedBoxId === box.id ? "text-primary" : "text-line"}
+                    />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </Sheet>
 
       <Toast msg={toastMsg} />
     </>

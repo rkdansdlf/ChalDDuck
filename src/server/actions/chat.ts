@@ -271,6 +271,54 @@ export async function shareVersionToChat(
   return { ok: true, label: version.label, fileName: version.file.name };
 }
 
+/**
+ * AI 리서치 결과를 팀 단톡방에 공유한다.
+ *
+ * 팀원들에게 자료 카드 형태로 핵심 내용, 출처, 원문 링크를 전달한다.
+ */
+export async function shareResearchToChat(input: {
+  title: string;
+  source: string;
+  snippet: string;
+  url?: string | null;
+  year?: string | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const me = await requireSessionMember();
+
+    const lines = [
+      `[자료 추천] ${input.title.trim()}`,
+      `• 출처: ${input.source.trim()}${input.year ? ` (${input.year.trim()})` : ""}`,
+    ];
+    if (input.snippet.trim()) {
+      lines.push(`• 요약: ${input.snippet.trim()}`);
+    }
+    if (input.url?.trim()) {
+      lines.push(`• 원문 링크: ${input.url.trim()}`);
+    }
+
+    const body = lines.join("\n").slice(0, MAX_MESSAGE);
+
+    await db.message.create({
+      data: {
+        teamId: me.teamId,
+        threadKey: "team",
+        authorId: me.id,
+        text: body,
+        whenLabel: nowLabel(),
+      },
+    });
+
+    revalidatePath("/chat", "layout");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "단톡방 공유에 실패했습니다.",
+    };
+  }
+}
+
 /** 위로 스크롤해 더 불러오기. `threadId` 가 실제로 내 방인지는 `resolveThread` 가 확인한다. */
 export async function loadOlderMessages(threadId: string, cursor: string): Promise<MessagePage> {
   const me = await requireSessionMember();
