@@ -131,8 +131,11 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
         </Btn>
 
         <Undecided>
-          근거 파일의 형식·용량 제한이 기획안에 없어 드라이브와 같은 규칙(문서·이미지·PPT·PDF, 50MB)을
-          따릅니다. 팀 드라이브 용량(2GB)에 근거 파일을 포함할지도 정해지지 않았습니다.
+          근거 파일의 한 장당 규칙(문서·이미지·PPT·PDF, 50MB)은 드라이브와 같습니다. **다만 팀 저장
+          용량 2GB 은 근거 파일을 세지 않습니다** — 용량을 세는 곳(`teamUsedBytes`)이 제출함의
+          버전을 합산하기 때문입니다(`server/drive/usage.ts`). 즉 지금 **2GB 는 「제출함 파일의
+          한도」 이고 근거 파일은 팀 전체로 무제한**입니다. 그것을 그대로 둘지 2GB 안에 묶을지는
+          팀 확인이 필요합니다.
         </Undecided>
       </Body>
     </>

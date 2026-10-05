@@ -4522,7 +4522,7 @@ checkProductLanguage();
 console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
 {
   /**
-   * **한글 옆에 붙은 `�` 는 깨진 글자다.**
+   * **한글 옆에 붙은 `` 는 깨진 글자다.**
    *
    * 편집 도구가 한국어 한 글자를 중간에서 잘라 저장하면 그 자리에 U+FFFD 가 남고, **아무도
    * 모른다** — 주석이면 읽다가 뜻이 이상한 걸 넘어가고, 문서면 그 줄만 뒤틀린다. 실제로
@@ -4532,8 +4532,8 @@ console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
    * 잡는다** — 실제로 이 주석을 처음 쓸 때 그렇게 걸렸다. 인용은 "핵" 뒤가 깨졌다는 설명으로
    * 대신한다.
    *
-   * **일부러 쓴 `�` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
-   * 화면에 `�` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
+   * **일부러 쓴 `` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
+   * 화면에 `` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
    * "있느냐"가 아니라 **"한글 옆에 붙어 있느냐"** 로 본다 — 저 뜻으로 지우면 설명이 사라진다.
    */
   const root = new URL("../", import.meta.url);
@@ -6018,6 +6018,17 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(research), true);
   // 화면에 그대로 보이는 문구까지 확인한다 — 주석만 고쳐지고 화면은 옛말이면 그게 거짓말이다.
   check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(readCode("../src/features/tools/researcher-screen.tsx")), true);
+
+  // ⑤ 2GB — **근거 파일을 세지 않는다.** 목록이 "포함할지 정해지지 않았다" 고 적혀 있었는데,
+  // 용량을 세는 곳이 제출함 버전만 합산하므로 이미 **정해져 있었다**(읽는 쪽에는 안 보인다).
+  // "팀 저장 용량" 이라는 이름과 실제 범위가 다르다는 사실을 그대로 적어야 한다.
+  const usage = readCode("../src/server/drive/usage.ts");
+  check("용량은 제출함 버전에만 합산한다", /file: \{ box: \{ teamId \} \}/.test(usage), true);
+  const evidence = readCode("../src/server/actions/contrib.ts");
+  check("근거 파일은 용량 계산에 들어가지 않는다", /teamUsedBytes/.test(evidence), false);
+  check("근거 파일의 경로는 따로다", /evidence/.test(evidence), true);
+  const addScreen = readCode("../src/features/contrib/contrib-add-screen.tsx");
+  check("목록이 '세지 않는다' 고 적는다", addScreen.includes("근거 파일을 세지 않습니다"), true);
 
   // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
   const dm = readCode("../src/features/chat/dm-list-screen.tsx");
