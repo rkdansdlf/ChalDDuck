@@ -4,6 +4,7 @@ import { describePurification, purificationStats } from "@/server/ai/purify-stat
 import { aiCallStats, describeAiCalls, detectAiAnomalies, sweepAiCalls } from "@/server/ai/call-stats";
 import { db } from "@/server/db";
 import { sweepAiUsage } from "@/server/ai/limit";
+import { sweepExpiredRejoins } from "@/server/invite/expire";
 import { confirmDueMeetings } from "@/server/meetings/confirm-due";
 
 /**
@@ -51,7 +52,7 @@ export async function GET(request: Request) {
   // 같이 치우는 두 가지. 셋 다 "하루 한 번이면 충분하고, 안 해도 틀리지는 않는" 일이라
   // 예약 작업이 이미 있는 이 자리에 붙인다. 회의 확정이 실패하면 여기까지 오지 않지만,
   // 그때는 치우는 일이 하루 밀리는 것뿐이다.
-  const [attempts, aiUsage, aiCalls] = await Promise.all([
+  const [attempts, aiUsage, aiCalls, rejoins] = await Promise.all([
     // 창이 지난 재입장 시도 기록.
     sweepAttempts(),
     // 보관 기간이 지난 AI 사용 기록 — 화면이 "N일 뒤 삭제"라고 적고 있으므로 실제로 지운다.
@@ -59,6 +60,9 @@ export async function GET(request: Request) {
     // 계측도 **같은 기간**으로 지운다. 기간이 다르면 하나는 지워지고 하나는 남아,
     // "기록은 언제 지워지는가" 의 답이 두 개가 된다.
     sweepAiCalls(),
+    // **3일 넘은 재입장 요청을 끝낸다** — 2026-10-03 결정. 팀장이 무응답이면 요청자는
+    // "확인하는 중…"에서 영영 못 빠져나오는데, 이 작업이 그 무한 대기를 끊는다.
+    sweepExpiredRejoins(),
   ]);
 
   /**
@@ -104,5 +108,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ confirmed, swept: { attempts, aiUsage, aiCalls }, purification: purifications, aiCalls: calls });
+  return Response.json({ confirmed, swept: { attempts, aiUsage, aiCalls, rejoins: rejoins.expired }, purification: purifications, aiCalls: calls });
 }

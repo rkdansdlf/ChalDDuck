@@ -311,11 +311,15 @@ export type CushionLevel = {
   desc: string;
 };
 
+/** 27 상황별 문장 변환의 모드 키 */
+export type SentenceModeKey = "summary" | "email" | "peer_request" | "notice";
+
 /** 27 상황별 문장 변환의 모드. 쿠션 번역기(말투)와는 다른 기능이다. */
 export type SentenceMode = {
-  key: string;
+  key: SentenceModeKey | string;
   name: string;
   desc: string;
+  icon?: string;
 };
 
 /** AI 서기가 회의 메모에서 뽑은 할 일 후보. **초안일 뿐 그대로 반영되지 않는다.** */

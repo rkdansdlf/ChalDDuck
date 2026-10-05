@@ -19,12 +19,18 @@ import { todayInSeoul } from "@/features/schedule/week";
 /** 홈 탭 — 11 홈. */
 export default async function HomePage() {
   const team = await getCurrentTeam();
-  const [roles, roster, recent, aiTools, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread, boxDeadlines] =
+  // **오른쪽 기둥(최근 자료·AI 도구·마감 임박 추천)은 await 하지 않는다.** 왼쪽은 "지금 나를
+  // 기다리는 일"이라 먼저 그려야 하고, 이쪽은 늦게 와도 된다. Promise 를 그대로 내려
+  // 가장 느린 읽기가 홈 전체를 붙잡지 않게 한다. 먼저 시작해 두므로 병렬성은 그대로다.
+  const recent = getRecentItems(team.id);
+  const aiTools = getAiTools();
+  // 마감 임박 추천용 — **역할과 마감 시각만** 읽는다(파일·버전 전체는 필요 없다).
+  const boxDeadlines = getBoxDeadlines(team.id);
+
+  const [roles, roster, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread] =
     await Promise.all([
       getRoles(),
       getRoster(team.id),
-      getRecentItems(team.id),
-      getAiTools(),
       getTasks(team.id),
       getRoleNegotiation(team.id),
       getMeetingProposal(team.id),
@@ -32,8 +38,6 @@ export default async function HomePage() {
       getJoinRequests(team.id),
       getTeamCheck(team.id),
       getUnreadNotificationCount(),
-      // 마감 임박 추천용 — **역할과 마감 시각만** 읽는다(파일·버전 전체는 필요 없다).
-      getBoxDeadlines(team.id),
     ]);
 
   return (

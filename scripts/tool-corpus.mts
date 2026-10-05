@@ -24,7 +24,7 @@
  * 약속 하나씩만 고정한다 — 늘리는 방법은 "실제로 헷갈린 입력 하나" 를 그대로 넣는 것이다.
  */
 
-import type { PresentMode } from "../src/lib/types";
+import type { PresentMode, SentenceModeKey } from "../src/lib/types";
 
 /** 입력 유형. 유형별로 통과율을 따로 봐야 "적대적 입력에서만 무너지는 모델"이 보인다. */
 export type CaseKind = "normal" | "ambiguous" | "adversarial" | "edge";
@@ -353,7 +353,7 @@ export type SentenceCase = {
   /** 입력 유형 태그 — 벤치가 유형별 통과율을 낸다(`normal` · `ambiguous` · `adversarial` · `edge`). */
   kind?: CaseKind;
   text: string;
-  mode: "summary" | "email";
+  mode: SentenceModeKey | "summary" | "email" | "peer_request" | "notice";
   /** 바꾸어도 **반드시 살아남아야 하는 것**(정해진 것·담당자·날짜). */
   keep: string[];
   /** 나오면 안 되는 것. */
@@ -400,6 +400,20 @@ export const SENTENCE_CORPUS: SentenceCase[] = [
     mode: "summary",
     keep: ["목요일", "7시", "3개"],
     invent: ["월요일", "완료"],
+  },
+  {
+    id: "peer_request-1",
+    text: "민우야 너 맡은 자료조사 오늘 18시까지 주기로 했잖아 언제 줄 수 있어? 내일 발표 ppt 만들어야 돼서 급해.",
+    mode: "peer_request",
+    keep: ["18시", "자료조사", "ppt"],
+    invent: ["다음 주", "완료"],
+  },
+  {
+    id: "notice-1",
+    text: "내일 14시에 중앙도서관 3층 스터디룸에서 회의할게. PPT 피드백하고 대본 맞춰볼 거니까 각자 노트북이랑 대본 출력해와.",
+    mode: "notice",
+    keep: ["14시", "중앙도서관", "노트북", "대본"],
+    invent: ["금요일", "취소"],
   },
   {
     id: "injection-1",

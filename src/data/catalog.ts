@@ -258,7 +258,14 @@ export const CLERK_SAMPLE_DRAFT: ClerkDraft = {
   ],
 };
 
-export const RESEARCH_SAMPLE_QUERY = "MBTI와 팀 프로젝트 만족도 관련 자료 있어?";
+/**
+ * 예시 질문은 **역할 분담·협업 운영** 쪽에 둔다.
+ *
+ * 예전에는 "MBTI와 팀 프로젝트 만족도" 였는데, 이 저장소는 MBTI 를 **역할 배정의 근거로 쓰지
+ * 않는다**(README·온보딩 03 화면). 리서처 첫 화면이 MBTI 로 팀 성적을 설명하듯 보이면 그
+ * 정책과 정면으로 어긋난다. 그래서 팀플 사용자가 실제로 물을 만한 질문으로 바꿨다.
+ */
+export const RESEARCH_SAMPLE_QUERY = "팀 프로젝트에서 무임승차를 줄이는 방법에 대한 연구 자료 있어?";
 
 /**
  * 리서처 초기 진입 시 보여 주는 대학생 팀플 핵심 추천 검색어.
@@ -274,8 +281,8 @@ export const RESEARCH_CURATED_SUGGESTIONS: ResearchCuratedSuggestion[] = [
     query: "팀 프로젝트 역할 분담과 협업 만족도 실증 연구",
   },
   {
-    tag: "무임승차 완화",
-    query: "대학생 팀 프로젝트 무임승차(free rider) 완화 전략",
+    tag: "갈등 해결",
+    query: "대학생 팀 프로젝트에서 발생하는 갈등의 유형과 해결 전략 연구",
   },
   {
     tag: "청년 주거 통계",
@@ -290,17 +297,17 @@ export const RESEARCH_CURATED_SUGGESTIONS: ResearchCuratedSuggestion[] = [
 export const RESEARCH_SAMPLE_RESULTS: ResearchResult[] = [
   {
     id: "r1",
-    title: "MBTI 유형과 팀 협업 만족도의 관계",
+    title: "팀 프로젝트 무임승차 완화를 위한 역할 분담 연구",
     source: "한국심리학회지",
     snippet:
-      "MBTI 유형보다 역할 명확성이 팀 협업 만족도에 더 큰 영향을 보였다는 연구 결과입니다.",
+      "역할 분담을 미리 합의하고 진행 상황을 함께 확인할수록 무임승차 인식이 낮아졌다는 연구 결과입니다.",
     url: null,
     year: "2021",
     kind: "academic",
-    citation: '김민수 외 (2021). "MBTI 유형과 팀 협업 만족도의 관계", 한국심리학회지.',
+    citation: '김민수 외 (2021). "팀 프로젝트 무임승차 완화를 위한 역할 분담 연구", 한국심리학회지.',
     relatedQueries: [
-      "MBTI와 팀 커뮤니케이션 스타일 비교 연구",
-      "대학생 협동학습 갈등 해결 전략",
+      "협업 상황에서 발생하는 역할 불균형 실증 분석",
+      "대학생 팀 프로젝트 갈등 해결 전략",
       "팀 성과와 역할 명확성 실증 분석",
     ],
   },
@@ -361,20 +368,50 @@ export const PRESENT_SAMPLE_DRAFT: PresentDraft = {
 };
 
 export const SENTENCE_MODES: SentenceMode[] = [
-  { key: "summary", name: "핵심 요약 모드", desc: "긴 글을 짧게 줄입니다" },
-  { key: "email", name: "교수님 질문 메일 모드", desc: "질문을 격식 있는 메일로 바꿉니다" },
+  {
+    key: "email",
+    name: "교수님 메일 모드",
+    desc: "질문·면담을 격식 있는 메일로 바꿉니다",
+    icon: "mail",
+  },
+  {
+    key: "peer_request",
+    name: "팀원 요청·독려 모드",
+    desc: "기한과 요구를 부담 없는 정중한 톤으로 전달합니다",
+    icon: "message-square-heart",
+  },
+  {
+    key: "notice",
+    name: "단톡방 공지 모드",
+    desc: "일정·장소·안건을 보기 편한 공지문으로 정돈합니다",
+    icon: "bell",
+  },
+  {
+    key: "summary",
+    name: "핵심 요약 모드",
+    desc: "긴 글을 결정 사항 위주로 압축합니다",
+    icon: "file-text",
+  },
 ];
 
 export const SENTENCE_SAMPLE_INPUT: Record<string, string> = {
   summary:
     "회의에서는 표지 시안 3개, 설문 분석 표, 발표 대본 초안 담당을 정했고 다음 회의는 목요일 15시로 잡았습니다. 자료조사 마감은 이미 지켰습니다.",
   email: "교수님 저희 조 발표 순서 언제 정해지나요?",
+  peer_request:
+    "민우야 너 맡은 자료조사 오늘까지 주기로 했잖아 언제 줄 수 있어? 내일 ppt 만들어야 돼서 급해",
+  notice:
+    "내일 14시에 중앙도서관 3층 스터디룸에서 만나서 PPT 마무리하자 각자 노트북이랑 자료조사 정리본 챙겨와 지각하지 말기",
 };
 
 export const SENTENCE_SAMPLE_OUTPUT: Record<string, string> = {
   summary: "표지·설문표·대본 담당 확정, 다음 회의 목 15시.",
   email:
-    "교수님, 안녕하세요. 디지털콘텐츠기획 3조 김민준입니다. 발표 순서가 언제 공지되는지 여쭙고자 메일 드립니다. 바쁘신 중에 확인 부탁드립니다.",
+    "제목: [디지털콘텐츠기획 3조] 발표 순서 관련 문의의 건\n\n교수님, 안녕하세요. 디지털콘텐츠기획 3조 김민준입니다.\n발표 순서가 언제 공지되는지 여쭙고자 메일 드립니다.\n바쁘신 중에 확인 부탁드립니다. 감사합니다.",
+  peer_request:
+    "민우 님, 안녕하세요! 내일 PPT 제작을 진행할 예정이라, 맡아주신 자료조사 파트를 오늘 중으로 공유해 주실 수 있을까요? 바쁘시겠지만 확인 부탁드립니다!",
+  notice:
+    "[팀 프로젝트 회의 공지]\n• 일시: 내일 14:00\n• 장소: 중앙도서관 3층 스터디룸\n• 안건: PPT 제작 마무리\n• 준비물: 개인 노트북, 자료조사 정리본\n\n시간 맞춰 참석 부탁드립니다!",
 };
 
 export const CONTRIB_KINDS: ContribKind[] = [

@@ -192,6 +192,9 @@ import {
   WITHDRAWN_DISPUTE,
 } from "../src/features/contrib/resolution.js";
 import { getPublicReport } from "../src/server/contrib/report.js";
+import { REJOIN_EXPIRED, REJOIN_EXPIRED_AFTER_DAYS } from "../src/lib/rejoin-expire.js";
+import { sweepExpiredRejoins } from "../src/server/invite/expire.js";
+import { randomUUID } from "node:crypto";
 
 /**
  * 낮 투표의 적용 로직은 액션 밖 모듈에 있다(2026-09-30).
@@ -2017,6 +2020,88 @@ console.log("\nDM 나가기 (내 목록에서만 뺀다)");
   await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
   await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
   check("없는 것을 지워도 조용히 지난다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 0);
+}
+
+console.log("\n재입장 요청은 3일이 지나면 끝난다");
+{
+  /**
+   * **무한 대기를 끊는 것이 이 기능의 전부다.** 팀장이 무응답이면 요청자는 폴링을 계속하면서
+   * "확인하는 중…"에서 빠져나오지 못했다.
+   *
+   * 세 가지를 따로 본다. **끝난다** · **거절과 다르다** · **끝나도 재신청이 된다.**
+   * 셋 중 하나라도 놓이면 사람은 여전히 갇히거나, 엉뚱한 말을 듣게 된다.
+   */
+  check("며칠로 정했다", REJOIN_EXPIRED_AFTER_DAYS, 3);
+
+  const { team, members } = await makeIsolatedTeam("재입장 만료");
+  const member = members[0]!;
+  const threeDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+  // 오래된 대기 요청 하나, 최근 대기 요청 하나, 이미 정리된 것 하나.
+  const stale = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo },
+  });
+  const fresh = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: oneHourAgo },
+  });
+  const approved = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo, status: "approved", resolvedAt: threeDaysAgo },
+  });
+  const rejected = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo, status: "rejected", resolvedAt: threeDaysAgo },
+  });
+
+  const swept = await sweepExpiredRejoins();
+  check("오래된 대기 요청 하나만 끝난다", swept.expired, 1);
+
+  const after = await db.memberClaim.findMany({ where: { id: { in: [stale.id, fresh.id, approved.id, rejected.id] } } });
+  const byId = new Map(after.map((c) => [c.id, c.status]));
+  check("오래된 대기는 expired 다", byId.get(stale.id), REJOIN_EXPIRED);
+  check("최근 대기는 그대로다", byId.get(fresh.id), "pending");
+  // **이미 정리된 것을 건드리면 감사 근거가 사라진다** — 거절과 승인이 남는 것이 근거다.
+  check("승인된 것을 건드리지 않는다", byId.get(approved.id), "approved");
+  check("거절된 것을 건드리지 않는다", byId.get(rejected.id), "rejected");
+
+  // **지우지 않는다** — 만료가 "이 사람 혼자 오지 않았다" 가 아니라 "무엇이 있었는지" 를
+  // 남겨야 팀장이 다음에 판단할 수 있다.
+  check("요청 자체는 남는다", await db.memberClaim.count({ where: { id: stale.id } }), 1);
+
+  // **끝나도 재신청이 된다** — 이것이 사람이 갇히지 않게 하는 핵심이다.
+  const again = await db.memberClaim.create({ data: { memberId: member.id, token: randomUUID() } });
+  check("같은 사람이 다시 요청할 수 있다", again.status, "pending");
+  // **토큰이 다르다** — 끝난 요청의 토큰을 다시 쓰는 길이 있으면 만료가 아니다.
+  check("새 요청은 새 토큰이다", again.token !== stale.token, true);
+
+  // 두 번 돌려도 같은 것을 두 번 끝내지 않는다 — 예약 작업이 겹칠 수 있다.
+  await sweepExpiredRejoins();
+  check("돌아도 같은 것을 다시 끝내지 않는다", (await db.memberClaim.findUniqueOrThrow({ where: { id: stale.id } })).status, REJOIN_EXPIRED);
+  // 이번엔 오래된 대기 요청이 하나도 없어야 한다.
+  check("남은 오래된 대기는 없다", (await sweepExpiredRejoins()).expired, 0);
+
+  await db.memberClaim.deleteMany({ where: { memberId: member.id } });
+  await db.team.delete({ where: { id: team.id } });
+}
+
+console.log("\n재입장 만료: 거절과 다르다");
+{
+  // **잘못 말하면 되돌릴 수 없다.** 화면에 "거절" 이 떴다가 나중에 "만료" 로 고치면, 그 사이에
+  // 사용자는 팀장을 의심하고 팀장을 바꾼다.
+  const action = readCode("../src/server/actions/rejoin.ts");
+  const fn = action.slice(action.indexOf("export async function checkRejoinApproval"));
+  truthy("만료를 따로 돌려준다", fn.includes(REJOIN_EXPIRED));
+  check("만료와 거절을 나누어 말한다", /claim\.status === REJOIN_EXPIRED[\s\S]{0,200}?"expired"/.test(fn), true);
+  // **만료는 확정된 결과가 아니다** — 세션이 심어지지 않는다.
+  check("만료에 세션을 심지 않는다", fn.indexOf('"expired"') < fn.indexOf("startSession"), true);
+
+  const screen = readCode("../src/features/onboarding/rejoin-screen.tsx");
+  // **거절과 같은 길을 열면 안 된다** — 만료를 거절로 안내하면 팀장에게 따지러 가게 된다.
+  check("만료를 다르게 말한다", screen.includes('result === "expired"'), true);
+  check("만료 뒤에 다시 눌러 달라 말한다", screen.includes("rejoinExpiredText"), true);
+
+  // **무한 대기는 끊어져야 한다** — 예약 작업이 이 일을 한다. 앱을 열지 않아도 돌아야 한다.
+  const cron = readCode("../src/app/api/cron/meetings/route.ts");
+  truthy("하루 한 번의 예약 작업이 끝낸다", cron.includes("sweepExpiredRejoins("));
 }
 
 console.log("\nDM 나가기: 뺀 것은 내 것뿐이다");
