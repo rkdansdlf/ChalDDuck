@@ -492,6 +492,12 @@ export async function saveChatAttachmentToDrive(
     // 파일이므로, 거절은 "드라이브에 못 넣는다"까지만이다.
     if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) return { status: "over-quota" };
 
+    /**
+     * ⚠️ **이 재확인은 같은 순간에 눌렀을 때만 일한다** — 2026-09-28 에 확인했다. 순차로 두 번
+     * 누르면 **여기 위의 첫 검사**(`message.savedVersionId`)가 잡아서, 이 줄을 지워도 아무 일도
+     * 드러나지 않는다. 그래서 `test:drive` 는 **동시에** 두 번 보낸다 — 이 줄을 빼면 버전이
+     * **2 개** 생긴다.
+     */
     // 잠금 안에서 다시 본다 — 두 번 눌렀을 때 두 버전이 생기면 용량에 두 번 세어진다.
     const fresh = await tx.message.findUnique({ where: { id: message.id }, select: { savedVersionId: true } });
     if (fresh?.savedVersionId) return { status: "already-saved" };

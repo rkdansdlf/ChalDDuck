@@ -191,7 +191,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     db.fileVersion.findMany({
       where: { fileId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, label: true, bytes: true, restoredFromId: true, storagePath: true, fileId: true },
+      select: {
+        id: true,
+        label: true,
+        bytes: true,
+        restoredFromId: true,
+        storagePath: true,
+        fileId: true,
+        authorId: true,
+      },
     });
 
   /** 큰 버전을 **DB 에만** 심는다 — 팀 사용량은 여기서 나온다(저장소가 아니다). */
@@ -476,6 +484,132 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const stillThere = await storage().info(mustPath(cappedRow));
     check("이미 올라간 객체는 사라지지 않는다", stillThere.error === null && Boolean(stillThere.data), true);
     check("미리보기가 여전히 열린다", typeof (await as(E.asLeader, () => actions.getPreviewUrl(cappedRow.id))), "string");
+    /* ⑮ 단톡방 첨부를 드라이브로 ────────────────────────────── */
+    console.log("\n단톡방 첨부를 드라이브로 옮긴다");
+    const chat = await import("../../src/server/actions/chat.js");
+    // 이 블록은 다른 블록의 팀을 빌리지 않는다 — 팀을 빌리던 방식이inspection을 가렸듯이.
+    const CH = await makeTeam("첨부");
+
+    // **실제 첨부 경로로** 만든다 — 경로를 손으로 만들면 "파일이 이미 있다" 는 상태가 되지 않는다.
+    const attachName = "사진.png";
+    const preparedAttach = await as(CH.asMate, () =>
+      chat.prepareChatAttachment({ name: attachName, size: CONTENT.byteLength, type: PNG }),
+    );
+    check("첨부 주소를 발급한다", preparedAttach.status, "ok");
+    let messageId = "";
+    let attachPath = "";
+    if (preparedAttach.status === "ok") {
+      await putObject(preparedAttach.signedUrl, CONTENT, preparedAttach.contentType);
+      attachPath = preparedAttach.path;
+      const sent = await as(CH.asMate, () =>
+        chat.sendChatMessage("team", "사진 같이 봅니다", {
+          attachment: { path: preparedAttach.path, name: attachName },
+        }),
+      );
+      messageId = sent.ok ? sent.message.id : "";
+      check("첨부가 달린 말이 간다", sent.ok, true);
+    }
+
+    const saved = await as(CH.asLeader, () => actions.saveChatAttachmentToDrive(messageId, CH.box.id));
+    check("드라이브로 저장된다", saved.status, "ok");
+    check("버전 이름이 v1 이다", saved.status === "ok" ? saved.label : null, "v1");
+
+    // **원래 올린 사람이 작성자다** — 팀장이 받아도 그 사람의 파일이다.
+    // 저장 결과에는 **파일 id 가 없다** — 이름으로 찾는다(그것이 화면이 말하는 것도 이름이다).
+    const savedFile = await db.submittedFile.findFirstOrThrow({
+      where: { boxId: CH.box.id, name: attachName },
+      select: { id: true },
+    });
+    const fileB2 = savedFile.id;
+    const versionsB = await versionsOf(fileB2);
+    check("작성자는 단톡방에 올린 사람이다", versionsB[0]?.authorId, CH.mate.id);
+
+    // **같은 저장소 객체를 가리킨다** — 복사하지 않는다. 그래서 그 경로로 열린다.
+    const previewB = await as(CH.asLeader, () => actions.getPreviewUrl(versionsB[0]!.id));
+    check("저장한 버전이 미리보기로 열린다", typeof previewB, "string");
+    const opened = typeof previewB === "string" ? await fetch(previewB) : null;
+    check("내용이 올린 바이트 그대로다", (await opened?.arrayBuffer())?.byteLength, CONTENT.byteLength);
+
+    // 순차로 다시 눌러도 이미 저장됐다고 말한다(잠금 밖의 첫 검사).
+    const againSave = await as(CH.asLeader, () =>
+      actions.saveChatAttachmentToDrive(messageId, CH.box.id),
+    );
+    check("두 번 저장해도 이미 저장됐다고 말한다", againSave.status, "already-saved");
+    check("버전은 하나뿐이다", (await versionsOf(fileB2)).length, 1);
+
+    // **같은 순간에** 두 번 저장한다 — 잠금 안의 "다시 보기"는 **동시에** 눌렀을 때만
+    // 일한다. 순차로 두 번 누르면 **잠금 밖**의 첫 검사(`savedVersionId`)가 잡아서, 아무리
+    // 잠금 안의 재확인을 지워도 통과한다(2026-09-28 에 그렇게 한 번 확인했다).
+    const twin = await as(CH.asMate, () => upload(CH.asMate, CH.box2.id, "첨부 경합용.png"));
+    check("경합용 파일을 먼저 하나 만든다", twin.finished?.status, "ok");
+    const raceFile = await db.submittedFile.findFirstOrThrow({
+      where: { boxId: CH.box2.id, name: "첨부 경합용.png" },
+      select: { id: true },
+    });
+    // 첫 첨부의 말은 **지우지 않는다** — 위 순차 검사가 그 말을 다시 본다.
+    const raceMsg = await as(CH.asMate, () => {
+      const prep = { name: "경합.png", size: CONTENT.byteLength, type: PNG };
+      return chat.prepareChatAttachment(prep);
+    });
+    let raceMessageId = "";
+    if (raceMsg.status === "ok") {
+      await putObject(raceMsg.signedUrl, CONTENT, raceMsg.contentType);
+      const sent = await as(CH.asMate, () =>
+        chat.sendChatMessage("team", "동시에 저장합니다", {
+          attachment: { path: raceMsg.path, name: "경합.png" },
+        }),
+      );
+      raceMessageId = sent.ok ? sent.message.id : "";
+    }
+    const [r1, r2] = await Promise.all([
+      as(CH.asLeader, () => actions.saveChatAttachmentToDrive(raceMessageId, CH.box.id)),
+      as(CH.asMate, () => actions.saveChatAttachmentToDrive(raceMessageId, CH.box.id)),
+    ]);
+    const raceStatuses = [r1.status, r2.status].sort();
+    check("동시에 두 번 저장해도 하나만 된다", raceStatuses, ["already-saved", "ok"]);
+    const raceVersions = await db.submittedFile.findFirstOrThrow({
+      where: { boxId: CH.box.id, name: "경합.png" },
+      select: { id: true },
+    });
+    check("경합 파일의 버전은 하나뿐이다", (await versionsOf(raceVersions.id)).length, 1);
+    void raceFile;
+
+
+    // **용량을 한 번만 센다** — 같은 객체를 가리키는데 두 번 세면 2GB 가 빨리 찬다.
+    const usedAfterSave = await teamUsedBytes(CH.id);
+    check("용량은 그 파일 크기만큼만 찬다", usedAfterSave >= CONTENT.byteLength, true);
+
+    // **거절해도 저장소 객체를 지우지 않는다** — 드라이브 올리기와 **반대**다. 이건 단톡방에 이미
+    // 붙어 있는 파일이므로 지우면 대화에서 사라진다.
+    const full = await makeTeam("첨부 용량");
+    const fullAttach = await as(full.asMate, () =>
+      chat.prepareChatAttachment({ name: "꽉 찬 팀.png", size: CONTENT.byteLength, type: PNG }),
+    );
+    if (fullAttach.status === "ok") {
+      await putObject(fullAttach.signedUrl, CONTENT, fullAttach.contentType);
+      const fullMsg = await as(full.asMate, () =>
+        chat.sendChatMessage("team", "용량 확인", {
+          attachment: { path: fullAttach.path, name: "꽉 찬 팀.png" },
+        }),
+      );
+      // ⚠️ **`TEAM_CAP_BYTES` 그대로 심을 수 없다.** 2GiB = 2,147,483,648 이고 `bytes` 열은
+      // `Int`(4바이트)이므로 최댓값보다 **1 바이트 크다** — 심는 순간 DB 가 거절한다(실제로
+      // 거절당했다). 한 바이트 적게 심어도 `(CAP-1) + size > CAP` 이므로 한도 경계는 그대로،
+      // 그리고 이 열이 무엇인지 모르면 또 걸린다.
+      await seedBytes(full.id, full.box.id, TEAM_CAP_BYTES - 1, "꽉 찬 팀");
+      const rejected = await as(full.asLeader, () =>
+        actions.saveChatAttachmentToDrive(
+          fullMsg.ok ? fullMsg.message.id : "",
+          full.box.id,
+        ),
+      );
+      check("용량이 차면 거절한다", rejected.status, "over-quota");
+      // **이 차이가 이 경로의 성격이다.** 드라이브 올리기는 거절하면 객체를 지운다(이미 쓰이지
+      // 않은 객체이니까). 여기는 지우면 **단톡방에 붙은 파일이 사라진다.**
+      const still = await storage().info(fullAttach.path);
+      check("거절해도 단톡방의 파일은 지워지지 않는다", still.error === null && Boolean(still.data), true);
+    }
+
   } finally {
     // 저장소 객체부터 지운다 — 안 지우면 개발 버킷에 쓰레기가 남는다.
     for (const teamId of teamIds) {
