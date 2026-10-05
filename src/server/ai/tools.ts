@@ -11,6 +11,7 @@ import type { ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/li
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
 import { levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "@/lib/ai-draft-shape";
+import { renderTeamContext, type TeamToolContext } from "@/lib/team-tool-context";
 import type { CushionLevelKey } from "@/lib/types";
 import { askShape, askText, askTextStreaming, askWithSearch, isAiConfigured } from "./model";
 import { defaultProvider, type CushionProvider } from "./cushion-provider";
@@ -219,22 +220,28 @@ ${hasContext ? BEFORE_GUIDE : NO_CONTEXT_GUIDE}
 /* ── 20 AI 서기 ─────────────────────────────────────────────── */
 
 /**
- * 회의 메모에서 요약과 할 일 **후보**를 뽑는다.
+ * AI 서기의 지시. **문맥이 있을 때만 달라진다** — 그래서 부르는 자리와 지시를 한 곳에서
+ * 만든다(쿠션 번역기·문장 변환과 같은 방식). 문맥을 **따로** 붙이면 언젠가 한쪽만 고쳐진다.
  *
- * **담당자는 회의에서 실제로 정해진 경우에만 채운다.** AI 가 추측으로 채우면
- * 아무도 책임지지 않는 업무가 생긴다. 근거(`basis`)도 메모에 적힌 말이어야 한다.
+ * ## 문맥을 줬다고 추측이 늘어난다 — 그래서 두 겹으로 막는다
+ *
+ * 실측: 팀 문맥을 주지 않았을 때 담당자 미정인 메모에 이름을 안 넣더니, **명단을 주니
+ * 문맥에서 이름을 집어와서 채웠다.** 이름을 주지 않으면 모델은 이름 전체를 지어내고 그러면
+ * 매칭이 0건이라 사용자는 아무것도 못 받습니다. 주면 매칭은 되지만 **추측이 늘어납니다.**
+ *
+ * 그래서 ① **지시로** "목록에 있는 이름만" 이라고 말하고, ② **코드로** 모델의 이름을 다시
+ * 확인합니다(`shapeClerkDraft` → `tool-assignee.ts`). 어느 이름이 통과하는지는 지시가 아니라
+ * 코드가 결정합니다.
+ *
+ * ## 성을 뗀 이름을 허용하는 이유
+ *
+ * 명단은 `김민준` 이고 사람들은 `민준` 이라고 말합니다. **완전 일치만 요구하면 정상 매칭의
+ * 대부분이 실패**하고, 실패한 이름은 규칙대로 지워져 아무것도 안 남습니다. 그래서 성을 뗀
+ * 형태를 허용하되, **같은 이름이 둘이면 그대로 비우라고** 지시합니다(임의로 고르면 아무도
+ * 책임질 사람이 없습니다).
  */
-export async function summarizeMeeting(raw: string, model?: string): Promise<ClerkDraft> {
-  if (!isAiConfigured()) return CLERK_SAMPLE_DRAFT;
-
-  return shapeClerkDraft(
-    await askShape<{
-      summary: string;
-      candidates: Array<{ title: string; assignee: string | null; basis: string; due: string }>;
-    }>({
-      tool: "clerk",
-      ...(model ? { model } : {}),
-      system: `${BASE}
+function clerkPrompt(context?: TeamToolContext): string {
+  const head = `${BASE}
 
 너는 AI 서기다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
 
@@ -245,7 +252,51 @@ export async function summarizeMeeting(raw: string, model?: string): Promise<Cle
 - basis 는 왜 그 후보를 넣었는지를 메모에 적힌 말로 짧게 적는다.
   담당자가 null 이면 "담당 미정 — 직접 정해 주세요" 처럼 정해지지 않았다고 적는다.
 - due 는 메모에 날짜가 있을 때만 "9/22" 형식으로 넣고, 없으면 "미정" 으로 둔다.
-- 할 일이 아닌 것(다음 회의 일정, 잡담)은 후보에 넣지 않는다.`,
+- 할 일이 아닌 것(다음 회의 일정, 잡담)은 후보에 넣지 않는다.`;
+
+  if (!context) return head;
+
+  return `${head}
+
+${renderTeamContext(context, "할 일 후보")}
+
+추가 지시:
+- assignee 에는 **위 팀원 이름 목록에 있는 이름만** 쓴다. 목록에 없는 이름을 만들어 쓰지 않는다.
+- "민준" 처럼 성을 뺀 이름을 적어도 된다. 다만 **같은 이름이 둘이면** 누구인지 모르므로
+  그대로 비워 둔다 — 아무도 책임지지 않는 업무를 만드는 것보다 "담당 미정" 이 낫다.
+
+⚠️ **담당자를 넣는 유일한 근거는 그 사람이 "맡겠다"고 한 말이다.**
+메모에 **맡겠다는 말이 없으면 반드시 null 이다.** 아래는 전부 **담당자가 아니다**:
+- "나는 자료 다 봤다" · "자료 봤어요" → **봤다는 건 맡겠다는 뜻이 아니다**
+- "이번엔 조용했다" · "그래서 다음 주까지 하자고 하자" → **합의이지 배정이 아니다**
+- "ZZ 가 정리한다고 했는데" → 그 사람이 **우리 팀이 아니면** 담당자가 아니다
+- 숫자나 파일명 옆에 이름이 있다 → 그 이름이 **그 일을 맡았다는 뜻은 아니다**
+
+⛔ **명단이 있어도 이름을 지어내지 마라.** 위 목록은 **읽을 재료**이지 "이 사람에게 배정해도
+된다" 는 뜻이 아니다. 맡겠다는 말 없이 이름이 들어간 후보는 **전부 버려라.**`;
+}
+
+/**
+ * 회의 메모에서 요약과 할 일 **후보**를 뽑는다.
+ *
+ * **담당자는 회의에서 실제로 정해진 경우에만 채운다.** AI 가 추측으로 채우면
+ * 아무도 책임지지 않는 업무가 생긴다. 근거(`basis`)도 메모에 적힌 말이어야 한다.
+ */
+export async function summarizeMeeting(
+  raw: string,
+  model?: string,
+  context?: TeamToolContext,
+): Promise<ClerkDraft> {
+  if (!isAiConfigured()) return CLERK_SAMPLE_DRAFT;
+
+  return shapeClerkDraft(
+    await askShape<{
+      summary: string;
+      candidates: Array<{ title: string; assignee: string | null; basis: string; due: string }>;
+    }>({
+      tool: "clerk",
+      ...(model ? { model } : {}),
+      system: clerkPrompt(context),
       user: raw,
       shapeName: "meeting_draft",
       shapeDescription: "회의 메모에서 뽑은 요약과 할 일 후보",
@@ -273,6 +324,8 @@ export async function summarizeMeeting(raw: string, model?: string): Promise<Cle
         required: ["summary", "candidates"],
       },
     }),
+    // **이름을 매칭한다.** 명단이 있으면 모델의 이름을 팀원으로 바꾸거나 지운다(2단계-a).
+    context?.members,
   );
 }
 

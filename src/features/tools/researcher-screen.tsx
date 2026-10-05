@@ -19,6 +19,9 @@ import {
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { runAiResearch } from "./ai-stream-client";
 import { DraftSourceChip } from "./draft-source-chip";
+// ⚠️ **양쪽 다 필요하다.** main 은 리서처에 "공유하기/드라이브로 저장" 과 출처 종류
+// (`ResearchSourceKind`) 를 붙였고, 2단계-c 는 팀 문맥에서 뽑은 검색어 후보(`QuerySuggestion`)를
+// 붙였다. **같은 import 자리를 서로 쓰고 있었다** — 어느 한쪽을 고르면 그 기능이 조용히 사라진다.
 import { RESEARCH_CURATED_SUGGESTIONS } from "@/data/catalog";
 import { shareResearchToChat } from "@/server/actions/chat";
 import {
@@ -26,6 +29,7 @@ import {
   saveResearchToDrive,
 } from "@/server/actions/drive";
 import type { AiAnswerSource, ResearchResult, ResearchSourceKind } from "@/lib/types";
+import type { QuerySuggestion } from "./research-query";
 
 /**
  * 25 AI 리서처.
@@ -60,10 +64,21 @@ export function ResearcherScreen({
   sampleQuery,
   initialResults,
   aiReady,
+  suggestions,
 }: {
   sampleQuery: string;
   initialResults: ResearchResult[];
   aiReady: boolean;
+  /**
+   * 팀 문맥에서 뽑은 **검색어 후보**(2단계-c). **입력창을 채우지 않는다.**
+   *
+   * 리서처 결과는 그대로 주소로 쓰이므로 "왜 이 결과가 나왔지" 를 물으면 **뭘 넣었는지가
+   * 답**이다. 프로그램이 대신 정하면 그 답이 사라진다. 그래서 칩을 보여 주고 **누가 누른다**.
+   *
+   * ⚠️ **빈 배열일 수 있다** — 팀 이름도 역할도 없는 경우다. 그때 아무것도 그리지 않는다
+   * ("추천이 없습니다" 를 보여 주는 것은 답이 없다는 뜻처럼 들린다).
+   */
+  suggestions: readonly QuerySuggestion[];
 }) {
   const router = useRouter();
 
@@ -222,6 +237,29 @@ export function ResearcherScreen({
       <Body dense>
         {aiReady ? null : <SampleNote className="mb-3.5" />}
         {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}
+
+        {suggestions.length > 0 ? (
+          /**
+           * **추천 검색어** — 누르면 칸에 **넣기만 하고** 검색은 하지 않는다.
+           *
+           * 검색까지 해버리면 사람이 고르기 전에 결과가 나오고, 그 결과가 화면을 차지해서
+           * 다른 후보를 못 보게 된다. **넣기만 하는 것이 초안의 전부다.**
+           */
+          <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+            <span className="t-cap-strong mr-0.5 font-bold text-txt-muted">이 팀에서 찾아볼 것</span>
+            {suggestions.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => setQuery(s.text)}
+                aria-label={`검색어에 넣기: ${s.text}`}
+                className="cursor-pointer rounded-full border border-line bg-card px-2.5 py-1 font-medium text-[12px] text-txt-strong select-none transition-colors duration-150 hover:bg-cr-50 active:scale-95"
+              >
+                {s.text}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <form
           onSubmit={(e) => {

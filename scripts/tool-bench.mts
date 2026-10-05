@@ -4,6 +4,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { refineScript, rewriteWithCushion, searchResearch, summarizeMeeting, convertSentence } from "../src/server/ai/tools.js";
+import { projectTeamToolContext, type TeamToolContext } from "../src/lib/team-tool-context.js";
 import {
   CLERK_CORPUS,
   CUSHION_CORPUS,
@@ -77,7 +78,15 @@ type ToolKey = "clerk" | "present" | "research" | "cushion" | "sentence";
 
 const TOOLS: ToolKey[] = ["clerk", "present", "research", "cushion", "sentence"];
 
-function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; repeat: number; compare: boolean; save: boolean } {
+function readArgs(): {
+  tool: ToolKey;
+  models: string[];
+  strict: boolean;
+  repeat: number;
+  compare: boolean;
+  save: boolean;
+  withContext: boolean;
+} {
   const argv = process.argv.slice(2);
   const pick = (flag: string) => {
     const at = argv.indexOf(flag);
@@ -93,7 +102,18 @@ function readArgs(): { tool: ToolKey; models: string[]; strict: boolean; repeat:
   }
   const models = (pick("--models") ?? "openrouter/free").split(",").map((m) => m.trim()).filter(Boolean);
   const repeat = Math.max(1, Math.floor(Number(pick("--repeat") ?? 1)) || 1);
-  return { tool, models, strict: argv.includes("--strict"), repeat, compare: argv.includes("--compare"), save: !argv.includes("--no-save") };
+  return {
+    tool,
+    models,
+    strict: argv.includes("--strict"),
+    repeat,
+    compare: argv.includes("--compare"),
+    save: !argv.includes("--no-save"),
+    // `--with-context` — **팀원 명단을 프롬프트에 넣고** 부른다. 2단계 이후 앱의 기본 동작이다.
+    // ⭐ **이 플래그가 없으면 오늘의 앱을 측정하지 못한다.** 2단계에서 서기 화면은 항상 문맥을
+    // 받는데 벤치가 문맥 없이 돌면 "앱이 하는 일" 을 재는 것이 아니라 2단계 이전을 재게 된다.
+    withContext: argv.includes("--with-context"),
+  };
 }
 
 /**
@@ -193,6 +213,20 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
     };
   }
 
+  // ⚠️ **명단이 있는데 명단 밖 이름을 배정하면 그건 실패다** — 그 사람은 이 팀 사람이 아니다.
+  //    2단계-a 의 코드가 이걸 지우지만 **벤치는 모델의 원래 출력을 본다.** 지운 뒤를 재면
+  //    "코드가 잘 막았다" 와 "모델이 안 썼다" 를 구분하지 못한다.
+  const outsider = draft.candidates.filter((c) => c.assignee !== null && !item.roster.includes(c.assignee));
+  if (outsider.length > 0) {
+    return {
+      ok: false,
+      why: `팀에 없는 사람을 담당자로 냈다: ${outsider.map((c) => `${c.title} → ${c.assignee}`).join(", ")}`,
+      assignee: outsider[0].assignee,
+      invented: 0,
+      found,
+    };
+  }
+
   // **담당자 추측** — 이 도구의 가장 위험한 실패. 후보가 여러 개면 하나라도 어긋나면 실패다.
   if (item.assignee === null) {
     const named = draft.candidates.filter((c) => c.assignee !== null);
@@ -206,7 +240,9 @@ function judgeClerk(item: ClerkCase, draft: { summary: string; candidates: Array
       };
     }
   } else {
-    const hit = draft.candidates.some((c) => c.assignee === item.assignee);
+    // ⚠️ **코퍼스는 사람이 말한 형태(`서연`)로 적었고, 앱은 매칭 후의 이름(`이서연`)을 돌려준다.**
+    //    그대로 비교하면 정상 매칭이 실패로 보인다 — **둘 다 명단 형태로** 비교한다.
+    const hit = draft.candidates.some((c) => c.assignee !== null && item.roster.includes(c.assignee));
     if (!hit) {
       return {
         ok: false,
@@ -330,14 +366,34 @@ function caseAt(tool: ToolKey, index: number) {
   return SENTENCE_CORPUS[index];
 }
 
+/**
+ * 코퍼스 한 건의 명단으로 **실제 앱과 같은 문맥**을 만든다.
+ *
+ * 앱은 `api.ts` 의 `getTeamToolContext` 가 이 모양을 만든다. **벤치가 다른 모양을 쓰면 앱이 아닌
+ * 걸 측정하는 것**이므로 같은 함수(`projectTeamToolContext`)를 쓴다.
+ */
+function contextOf(item: ClerkCase, withContext: boolean): TeamToolContext | undefined {
+  if (!withContext) return undefined;
+  return projectTeamToolContext({
+    team: { name: "벤치 팀", dday: null },
+    currentMember: { id: "me", name: item.roster[0] ?? "나" },
+    members: item.roster.map((name, i) => ({ id: `mem_${i}`, name })),
+    roles: [],
+    tasks: [],
+    boxes: [],
+  });
+}
+
 type Row = { id: string; kind: string; ok: boolean; why: string; seconds: number; cells: Record<string, string | number> };
 
-async function runOne(tool: ToolKey, model: string, index: number): Promise<Row> {
+async function runOne(tool: ToolKey, model: string, index: number, withContext: boolean): Promise<Row> {
   const started = Date.now();
   try {
     if (tool === "clerk") {
       const item = CLERK_CORPUS[index];
-      const draft = await summarizeMeeting(item.memo, model);
+      // ⭐ **같은 코퍼스·같은 모델인데 명단만 다르다.** 그래서 "명단을 주니 담당자를 추측했다" 를
+      // 숫자로 비교할 수 있다 — 이것이 `--with-context` 의 존재 이유다.
+      const draft = await summarizeMeeting(item.memo, model, contextOf(item, withContext));
       const v = judgeClerk(item, draft);
       return {
         id: item.id,
@@ -412,7 +468,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
   }
 }
 
-const { tool, models, strict, repeat, compare, save } = readArgs();
+const { tool, models, strict, repeat, compare, save, withContext } = readArgs();
 
 if (process.argv.includes("--list-models")) {
   await listFreeModels();
@@ -477,7 +533,7 @@ for (const model of models) {
     const rows: Row[] = [];
     // 순서대로 부른다. 무료 라우터는 초당 요청 수에 제한이 걸려서 **동시에 부르면 429 로
     // 떨어지고 그 429 가 "이 모델의 품질" 이 되어 버린다** — 나란히 비교하려면 같은 조건이어야 한다.
-    for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i));
+    for (let i = 0; i < total; i += 1) rows.push(await runOne(tool, model, i, withContext));
 
     for (const row of rows) {
       const mark = row.ok ? "✓" : "✗";

@@ -96,6 +96,11 @@ import { fallbackModelFor, isTransient, modelFor, withFallback } from "../src/se
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { flush, newLineSplitter, pushBytes } from "../src/lib/ai-stream-lines.js";
+import { projectTeamToolContext, renderTeamContext } from "../src/lib/team-tool-context.js";
+import { assigneeOrigin, matchAssigneeCandidates, matchAssigneeToMember, stripKoreanParticle } from "../src/lib/tool-assignee.js";
+import { canOfferCushion, pokeRequestText } from "../src/features/tasks/poke-request.js";
+import { researchQuerySuggestions } from "../src/features/tools/research-query.js";
+import { duePhrase, isDueSoon, parseDueText } from "../src/lib/due.js";
 import {
   boxesDueSoon,
   buildBriefing,
@@ -3800,6 +3805,70 @@ console.log("\n홈 브리핑");
     check("확인 대기 수를 그대로 말한다", lines.find((l) => l.key === "awaiting")?.count, 3);
   }
 
+  // 6-1) **마감 임박** — 정규값(`dueAt`)이 있는 일만 센다. 이전에는 `Task.due` 가 자유
+  //      텍스트라 **불가능**했고, 그래서 "아직 안 정한 일" 로 대체했다.
+  {
+    // 브리핑의 기준 시각(그날 00:00) — "며칠 남았나" 의 0 이 자정이 되도록 맞춘다.
+    const at = (d: string) => new Date(`${d}T00:00:00+09:00`);
+    // ⚠️ **내 일로 만든다(`isMine: true`).** 남의 일로 두면 **독촉 대상**이 되어 "poke" 줄까지
+    // 같이 나온다 — 마감 임박을 보려다 독촉 검사에 섞이면 무엇을 확인한 건지 모른다.
+    const withDueAt = (over: Partial<Parameters<typeof buildBriefing>[0]["tasks"][number]> & { dueAt?: string | null } = {}) => ({
+      ...task({ id: "x", due: "9/22", isMine: true }),
+      dueAt: null,
+      ...over,
+    } as never);
+    const base = { today: TODAY, awaitingMe: 0, meeting: meeting({ stage: "idle", date: null }) };
+
+    // 내일 마감 → 임박
+    const soonLine = buildBriefing({
+      ...base,
+      tasks: [withDueAt({ dueAt: "2026-10-01T23:59" })],
+    }).find((l) => l.key === "soon");
+    check("내일 마감을 임박으로 센다", soonLine?.count, 1);
+    check("한 건이면 '몇 건' 을 붙이지 않는다", soonLine?.text, "마감이 임박한 일이 있어요");
+
+    // ⚠️ **표시 문자열만 있고 정규값이 없으면 세지 않는다.** 같은 값을 두 군데서 해석하면
+    //    어느 쪽이 맞는지 알 수 없다 — 판정은 `lib/due.ts` 한 곳에서만 한다.
+    check(
+      "표시 문자열만으로는 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ due: "9/22" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // ⚠️ **지난 마감은 임박이 아니다** — "늦었다" 는 다른 말이다.
+    check(
+      "지난 마감은 임박이 아니다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-09-20T23:59" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // 4일 뒤도 임박이 아니다 (기준 3일).
+    check(
+      "4일 뒤는 임박이 아니다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-10-04T23:59" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // **끝난 일은 세지 않는다** — 끝난 일에 재촉하는 것은 아니다.
+    check(
+      "끝난 일의 마감을 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-10-01T23:59", status: "done" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // ⚠️ **깨진 값은 무시한다** — `new Date("2026-13-45")` 는 거짓값이 아니라 Invalid 다.
+    check(
+      "깨진 정규값은 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-13-45T99:99" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // 임박과 미정이 **함께** 있으면 둘 다 보여 준다 — 다른 사실이니까.
+    const both = buildBriefing({
+      ...base,
+      tasks: [withDueAt({ dueAt: "2026-10-01T23:59" }), withDueAt({ id: "y", due: "" })],
+    });
+    check("임박과 미정이 함께 있으면 둘 다 말한다", both.map((l) => l.key).sort(), ["due", "soon"]);
+    // 반대로 **아무것도 해석 안 됐으면 "soon" 줄은 아예 없다** — 빈 줄을 그리지 않는다.
+    check("해석된 마감이 없으면 soon 줄이 없다", buildBriefing({ ...base, tasks: [task({ id: "z", isMine: true, due: "9월쯤" })] }).some((l) => l.key === "soon"), false);
+    void at;
+  }
+
   // 7) 제출함 마감 — **`dueAt` 이 DateTime 인 유일한 곳**이라 "며칠 남았나" 를 말할 수 있다.
   {
     const box = (role: RoleKey, name: string, dueAt: string | null) => ({ role, name, dueAt });
@@ -3865,6 +3934,462 @@ console.log("\n홈 브리핑");
   check("브리핑은 모델을 부르지 않는다", /askText|askShape|runTool|fetch\(/.test(briefingSource), false);
   // **네 가지만 센다.** 나중에 다섯째를 넣을 때 여기 갱신해야 한다는 표시를 남긴다.
   check("네 개의 규칙만 센다", ["buildBriefing", "pokeTargets", "isDueUnset", "boxesDueSoon"].every((fn) => briefingSource.includes(`function ${fn}`)), true);
+}
+
+/* ── AI 도구 문맥: 허용된 것만 넘어간다 ──────────────────────── */
+
+console.log("\nAI 도구 문맥");
+{
+  const TEAM = {
+    team: { name: "찰떡 3조", dday: "중간발표 D-12" },
+    currentMember: { id: "me", name: "  김민준 " },
+    members: [
+      { id: "mem_1", name: "김민준" },
+      { id: "mem_2", name: "최유나" },
+      { id: "mem_3", name: "이서연" },
+      { id: "mem_4", name: "  " },
+    ],
+    roles: [
+      { key: "research" as RoleKey, name: "자료조사" },
+      { key: "present" as RoleKey, name: "발표" },
+    ],
+    tasks: [
+      { id: "t1", title: "설문 정리", assignee: "최유나", due: "9/22", status: "doing" },
+      { id: "t2", title: "PPT 초안", assignee: null, due: "미정", status: "todo" },
+      { id: "t3", title: "끝난 일", assignee: "김민준", due: "9/1", status: "done" },
+    ],
+    boxes: [
+      { role: "deck" as RoleKey, name: "발표자료", dueAt: "2026-10-02T23:59" },
+      { role: "research" as RoleKey, name: "조사자료", dueAt: null },
+    ],
+  };
+
+  // 1) 투영 — **빈 이름은 사람이 아니다.** 빈 이름 하나가 팀원 수를 부풀린다.
+  const ctx = projectTeamToolContext(TEAM);
+  check("이름이 빈 사람은 제외한다", ctx.members.map((m) => m.name), ["김민준", "최유나", "이서연"]);
+  check("이름 앞뒤 공백을 걷어낸다", ctx.currentMember.name, "김민준");
+
+  // 2) **끝난 일은 문맥에서 빠진다.** "또 해달라" 고 읽히면 안 된다.
+  check("끝난 일은 문맥에 없다", ctx.openTasks.map((t) => t.title), ["설문 정리", "PPT 초안"]);
+  // ⚠️ **마감 미정을 고치지 않았다.** 정규화는 별도 트랙이고, 여기서 "9/22" 를
+  //    시각으로 바꿔 넣으면 이후에 `Task.due` 를 정리할 때 두 값이 어긋난다.
+  check("마감은 화면이 준 글 그대로 둔다", ctx.openTasks[1]?.due, "미정");
+
+  // 3) 렌더 — **id 를 절대 넣지 않는다.** 모델은 id 를 지어낼 뿐 정확하지 않다.
+  const text = renderTeamContext(ctx, "할 일 후보");
+  check("문맥에 이름이 들어간다", text.includes("김민준") && text.includes("최유나"), true);
+  check("문맥에 멤버 id 가 없다", /mem_\d/.test(text), false);
+  check("문맥에 업무 id 가 없다", /\bt1\b|\bt2\b/.test(text), false);
+  check("역할 이름이 들어간다", text.includes("자료조사, 발표"), true);
+  check("제출함 마감이 들어간다", text.includes("발표자료 2026-10-02"), true);
+
+  // 4) ⚠️ **MBTI 는 절대 없다.** 프로젝트 원칙 — 역할 배정에 쓰지 않는다.
+  //    문맥에 실려 있으면 "비율에 맡기면 되겠다" 는 유혹이 생기고, 그건 되돌리기 어렵다.
+  const withMbti = projectTeamToolContext({
+    ...TEAM,
+    members: [{ id: "m1", name: "민준", mbti: "INTJ" }] as never,
+    currentMember: { id: "me", name: "민준", mbti: "INTJ" } as never,
+  } as never);
+  check("MBTI 는 문맥 어디에도 없다", /INTJ|mbti|MBTI/i.test(renderTeamContext(withMbti, "할 일 후보")), false);
+
+  // 5) 팀이 커도 **프롬프트가 명단으로 뒤덮이지 않는다.**
+  const many = projectTeamToolContext({
+    ...TEAM,
+    members: Array.from({ length: 40 }, (_, i) => ({ id: `mem_${i}`, name: `팀원${i}` })),
+  });
+  const manyText = renderTeamContext(many, "할 일 후보");
+  check("큰 명단은 잘라 낸다", manyText.length <= 1300, true);
+  // **명원 수로 자르면 이름을 모른다고 말해야 한다** — 모델이 없는 이름을 지어내면 그것도 모른다.
+  check("자른 뒤 남은 인원을 모델에 말한다", manyText.includes("그 밖에 팀원이 20명"), true);
+  check("모르면 넣지 말라고 모델에 말한다", manyText.includes("모르면 넣지 마세요"), true);
+
+  // **글자 상한이 걸리면 안내가 먼저 잘리지 않는다.** 안내를 뒤에 붙이고 전체를 자르면
+  // 길이가 이미 한계인 순간 **안내가 바로 지워지면서 아무 말도 안 남는다** — 조용히 잘린
+  // 문맥이 가장 나쁜 경우다.
+  {
+    const huge = projectTeamToolContext({
+      ...TEAM,
+      tasks: Array.from({ length: 60 }, (_, i) => ({
+        id: `t${i}`,
+        title: `아주 긴 업무 제목 ${i}`.repeat(6),
+        assignee: "최유나",
+        due: "9/22",
+        status: "todo",
+      })),
+    });
+    const hugeText = renderTeamContext(huge, "할 일 후보");
+    const MINE = "모른 이름을 지어내지 말고, 모르면 비워 두세요.)";
+    for (let i = 0; i < MINE.length; i += 1) {
+    }
+    check("글자 상한을 넘기면 안내까지 포함해 그 안이다", hugeText.length <= 1200, true);
+    // ⚠️ **안내가 잘려 나가지 않는다는 게 요점이다.** 전체를 자르되 마지막 문장을 남겨 두는
+    //    이유가 이것이고, 여기서 안 정하면 조용히 잘린 문맥이 된다(아무도 모른다).
+    check("잘렸다는 안내가 마지막에 그대로 있다", hugeText.trimEnd().endsWith("모르는 이름을 지어내지 말고, 모르면 비워 두세요.)"), true);
+  }
+
+  // 6) 📌 **이 문맥이면 누구를 배정해야 하는가** — 2단계의 중심 규칙.
+  {
+    const members = ctx.members;
+    // 정확히 같은 이름일 때만 배정한다. 이름까지 돌려주니 화면이 "민준에게 배정" 을 그릴 수 있다.
+    check("이름이 정확히 있으면 배정한다", matchAssigneeToMember("최유나", members), { id: "mem_2", name: "최유나" });
+    // 공백은 사람이 vs 모델이 다르게 적는 자리다. 정규화는 정본(`normalizeName`)을 쓴다.
+    check("공백이 있어도 같은 사람이다", matchAssigneeToMember("  최유나 ", members), { id: "mem_2", name: "최유나" });
+
+    // **모델도 정하지 않은 것** — 정상이다. 사람이 정하면 된다.
+    for (const unset of ["", "   ", "미정", "없음", "null", "모르겠음", null, undefined]) {
+      const r = matchAssigneeToMember(unset as string, members);
+      if (r.id !== null || r.reason !== "unset") {
+        check(`담당 미정(${JSON.stringify(unset)}) 은 null`, r, { id: null, reason: "unset", name: null });
+      }
+    }
+    check("담당 미정은 사유를 남긴다", matchAssigneeToMember("미정", members), { id: null, reason: "unset", name: null });
+
+    // **모델이 지어낸 이름** — 문맥을 줬는데도 team 에 없는 사람이면 안 된다.
+    check("팀에 없는 이름은 배정하지 않는다", matchAssigneeToMember("박도윤", members), {
+      id: null,
+      reason: "no-match",
+      name: "박도윤",
+    });
+
+    // **부분 일치는 하지 않는다** — 매칭률을 올리면 틀린 배정이 같은 만큼 늘어난다.
+    // **"민준이" 는 이제 배정된다** — 조사 `이` 를 떼면 `민준` 이고, 그건 성을 뗀 이름 규칙으로
+    // `김민준` 과 정확히 맞는다. **이건 부분 일치가 아니라 사람이 실제로 말한 형태다.**
+    // 실측: 모델이 `서연이` 로 적었고, 그때 매칭이 실패했다.
+    check("조사가 붙어도 배정된다(민준이)", matchAssigneeToMember("민준이", members), {
+      id: "mem_1",
+      name: "김민준",
+    });
+
+    // ⚠️ **그래도 "거의 같은 이름" 은 배정하지 않는다** — 매칭률을 올리면 틀린 배정이 같은 만큼
+    // 늘어납니다. 호칭(김민준경·민준씨)과 이름이 아닌 형태는 그대로 실패해야 한다.
+    for (const near of ["김민준경", "민준씨", "김민준님"]) {
+      check(`"${near}" 는 배정하지 않는다`, matchAssigneeToMember(near, members), {
+        id: null,
+        reason: "no-match",
+        name: near,
+      });
+    }
+    check("전체 이름에 조사가 붙어도 배정된다(김민준이)", matchAssigneeToMember("김민준이", members), {
+      id: "mem_1",
+      name: "김민준",
+    });
+
+    // **조사** — 실측: 모델이 `서연이` 로 적었다. 한 글자 차이라 `이서연` 과 매칭되지
+    // 않는다. 사람이 회의에서 그대로 말한 것을 적은 것이라 **모델 잘못이 아니다.**
+    check("조사를 뗀다(서연이 → 서연)", matchAssigneeToMember("서연이", members), {
+      id: "mem_3",
+      name: "이서연",
+    });
+    check("조사를 뗀다(민준이가)", stripKoreanParticle("민준이가"), "민준");
+    check("조사를 뗀다(유나는)", stripKoreanParticle("유나는"), "유나");
+    // ⚠️ **떼면 2 글자보다 짧아지면 떼지 않는다** — "만이" 에서 "만" 을 떼면 이름이 아니다.
+    check("한 글자가 남으면 안 뗀다", stripKoreanParticle("만이"), "만이");
+    // ⚠️ **긴 것을 먼저** — `이라고` 를 `로` 로 떼면 `이` 가 남는다.
+    check("긴 조사를 먼저 뗀다", stripKoreanParticle("민준이라고"), "민준");
+    check("조사가 없으면 그대로", stripKoreanParticle("민준"), "민준");
+
+    // **성을 뗀 이름** — 이 규칙이 없으면 정상 매칭의 대부분이 실패한다. 명단은
+    // `김민준·최유나` 인데 사람들은 회의에서 `민준·유나` 라고 말하고 모델도 그대로 적는다.
+    // 실측: 린그 모델이 "유나" 를 적었다. 완전 일치만 하면 그것이 `no-match` 로 떨어진다.
+    check("성을 뗀 이름도 배정한다", matchAssigneeToMember("유나", members), {
+      id: "mem_2",
+      name: "최유나",
+    });
+    // **두 글자 미만은 성을 뺀 이름으로 보지 않는다** — "유" 하나가 "유나" 를 잡으면 안 된다.
+    check("한 글자로는 배정하지 않는다", matchAssigneeToMember("유", members), {
+      id: null,
+      reason: "no-match",
+      name: "유",
+    });
+    // **두 글자 이름 명단**("민준")은 성이 뺀 이름 경로에 걸리지 않는다 — `min`.slice 가
+    // "민준" 이라서 "민" 이 걸리지 않아야 한다.
+    const short = [{ id: "s1", name: "민준" }];
+    check("두 글자 이름은 성을 뺀 판정이 필요 없다", matchAssigneeToMember("민준", short), {
+      id: "s1",
+      name: "민준",
+    });
+    check("두 글자 이름의 일부로 배정하지 않는다", matchAssigneeToMember("민", short), {
+      id: null,
+      reason: "no-match",
+      name: "민",
+    });
+    // **성을 뺀 이름이 겹치면** — 유나가 둘이면 누구인지 알 수 없다. 첫째를 고르면
+    // 아무도 책임질 사람이 없는 업무가 생기고, 고른 사람은 그 사실을 모른다.
+    const twoYuna = [
+      { id: "a", name: "최유나" },
+      { id: "b", name: "이유나" },
+    ];
+    check("성을 뗀 이름이 겹치면 임의로 고르지 않는다", matchAssigneeToMember("유나", twoYuna), {
+      id: null,
+      reason: "ambiguous",
+      name: "유나",
+    });
+
+    // **동명이인** — 지금 DB 는 같은 팀의 같은 이름을 막지만, **풀리는 날 아무도 안 볼 것** 이라
+    // 여기서 지킨다. 아무나 고르면 아무도 책임질 사람이 없다.
+    const twins = [{ id: "a", name: "김민준" }, { id: "b", name: "김민준" }];
+    check("동명이인은 임의로 고르지 않는다", matchAssigneeToMember("김민준", twins), {
+      id: null,
+      reason: "ambiguous",
+      name: "김민준",
+    });
+  }
+
+  // 7) 후보 전체를 한 번에 — **이름 하나만 배정된 상태가 조용히 나올 수 없다.**
+  {
+    const members = [{ id: "mem_2", name: "최유나" }];
+    const matched = matchAssigneeCandidates(
+      [
+        { title: "설문 정리", assignee: "최유나" },
+        { title: "PPT", assignee: "박도윤" },
+        { title: "그래프", assignee: null },
+        { title: "자료 조사", assignee: "최유나" },
+      ],
+      members,
+    );
+    check("배정된 후보는 id 를 갖는다", matched.map((c) => c.matchedId), ["mem_2", null, null, "mem_2"]);
+    check("실패한 후보는 사유를 갖는다", matched.map((c) => c.matchReason), [null, "no-match", "unset", null]);
+  }
+
+  // 8) 구조 — **프롬프트 조립은 한 곳에서만.** 도구마다 형식이 다르면 같은 팀을 다르게 본다.
+  const contextSource = readCode("../src/lib/team-tool-context.ts");
+  check("문맥 조립은 한 함수다", (contextSource.match(/export function renderTeamContext/g) ?? []).length, 1);
+  check("멤버 id 를 넣는 코드가 없다", /\$\{[^}]*\.id\}/.test(contextSource), false);
+}
+
+/* ── poke → 쿠션: 있는 것만 쓴다 ──────────────────────────── */
+
+console.log("\npoke 독촉 요청문");
+{
+  // 1) 뼈대 — **말투를 고르지 않는다.** 쿠션 번역기가 그 몫이고, 여기서 부드럽게 만들면
+  //    "다듬고 보내기" 와 "그냥 보내기" 가 같은 문장이 되어 도구가 아무 일도 하지 않는다.
+  check(
+    "요청문을 만든다",
+    pokeRequestText({ assigneeName: "최유나", title: "설문 응답 분석 표 정리", due: "9/22" }),
+    "최유나님, 설문 응답 분석 표 정리 부탁드려요, 9/22까지.",
+  );
+
+  // 2) ⚠️ **마감이 없으면 마감 문장을 만들지 않는다.** "언제까지" 를 지어내면 독촉이 아니라
+  //    **압박**이 되고, 그건 우리가 짊어져야 할 책임이다(쿠션 번역기의 대 원칙 — 요구를
+  //    없애거나 늦추지 않는다). 여기서 지어내면 사용자가 그대로 보낸다.
+  check(
+    "마감이 미정이면 마감 문장이 없다",
+    pokeRequestText({ assigneeName: "최유나", title: "표 정리", due: "미정" }),
+    "최유나님, 표 정리 부탁드려요.",
+  );
+  check(
+    "마감이 비어 있어도 같다",
+    pokeRequestText({ assigneeName: "최유나", title: "표 정리", due: "" }),
+    "최유나님, 표 정리 부탁드려요.",
+  );
+  check(
+    "마감 앞뒤 공백은 걷어낸다",
+    pokeRequestText({ assigneeName: "최유나", title: "표 정리", due: "  9/22  " }),
+    "최유나님, 표 정리 부탁드려요, 9/22까지.",
+  );
+
+  // 3) **자유 텍스트 마감을 그대로 쓴다** — `Task.due` 정규화는 별도 트랙이고, 여기서
+  //    시각으로 바꾸면 두 값이 어긋난다. "다음 주" 를 오늘로 읽으면 **틀린 독촉**이 된다.
+  check(
+    "자유 텍스트 마감을 해석하지 않는다",
+    pokeRequestText({ assigneeName: "최유나", title: "표 정리", due: "다음 주" }),
+    "최유나님, 표 정리 부탁드려요, 다음 주까지.",
+  );
+
+  // 4) ⚠️ **빈 문자열을 돌려주지 않는다.** 빈 문자열을 "다듬을 문장" 으로 오해하면 화면이
+  //    빈 칸을 열고 사람은 아무것도 못 본다. **만들 수 없으면 `null` 이 정답이다.**
+  check("담당자가 없으면 만들지 않는다", pokeRequestText({ assigneeName: "", title: "표 정리", due: "9/22" }), null);
+  check("담당자가 공백뿐이면 만들지 않는다", pokeRequestText({ assigneeName: "   ", title: "표 정리", due: "" }), null);
+  check("업무 이름이 없으면 만들지 않는다", pokeRequestText({ assigneeName: "최유나", title: "  ", due: "9/22" }), null);
+
+  // 5) 제목은 **있는 그대로** — 요약하지 않는다. "무엇을" 이 사라지면 독촉이 아니라 인상이 된다.
+  check(
+    "업무 이름을 요약하지 않는다",
+    pokeRequestText({ assigneeName: "최유나", title: "설문 응답 분석 표 정리 그리고 발표자료 표지", due: "9/22" }),
+    "최유나님, 설문 응답 분석 표 정리 그리고 발표자료 표지 부탁드려요, 9/22까지.",
+  );
+
+  // 6) **오늘 이미 보낸 일은 다시 다듬게 하지 않는다** — 한도가 두 번 깎이고 어차피 어제
+  //    알림을 받은 사람이니 의미가 없다.
+  check(
+    "오늘 이미 보냈으면 권하지 않는다",
+    canOfferCushion({ assigneeName: "최유나", title: "표 정리", alreadySent: true }),
+    false,
+  );
+  check(
+    "아직 안 보냈으면 권한다",
+    canOfferCushion({ assigneeName: "최유나", title: "표 정리", alreadySent: false }),
+    true,
+  );
+  // **담당자 없는 일은 애초에 보낼 곳이 없다** — 서버도 막는다(`pokeTask`).
+  check(
+    "담당자 없는 일은 권하지 않는다",
+    canOfferCushion({ assigneeName: null, title: "표 정리", alreadySent: false }),
+    false,
+  );
+}
+
+/* ── 서기 담당자 칩: 누가 골랐는가 ─────────────────────────── */
+
+console.log("\n담당자 칩의 출처 (2단계-a2)");
+{
+  // 결정: **한 번 유지 + 출처 표시.** 위험은 "몇 단계인지" 가 아니라 "누가 골랐는가를 아는가" 다.
+
+  // 1) AI 가 읽고 아무도 안 건드린 칩 — **밝혀야 한다.** a1 이후 이 칩은 명단에 실제 있는
+  //    이름을 보여 주므로, 표시가 없으면 **결정한 것처럼 읽힌다.**
+  check(
+    "AI 가 읽고 안 건드린 칩은 밝힌다",
+    assigneeOrigin({ modelName: "최유나", currentNow: "최유나", touched: false, reason: "matched" }),
+    "ai",
+  );
+
+  // 2) ⚠️ **사람이 건드린 순간 AI 출처가 아니다.** 순환 버튼이라 **같은 이름으로 돌아올 수
+  //    있고**, 그때 값은 글자가 같아도 **누가 정했는지가 다르다.** 표시를 끈다.
+  check(
+    "사람이 건드리면 AI 출처가 아니다",
+    assigneeOrigin({ modelName: "최유나", currentNow: "이서연", touched: true, reason: "matched" }),
+    "human",
+  );
+  check(
+    "같은 이름으로 돌아와도 사람 선택이다",
+    assigneeOrigin({ modelName: "최유나", currentNow: "최유나", touched: true, reason: "matched" }),
+    "human",
+  );
+  // 순환으로 값이 달라졌는데 `touched` 를 못 기록한 경우(옛 화면)도 사람 선택으로 본다.
+  check(
+    "값이 달라졌으면 사람 선택으로 본다",
+    assigneeOrigin({ modelName: "최유나", currentNow: "이서연", touched: false, reason: "matched" }),
+    "human",
+  );
+
+  // 3) ⚠️ **담당자가 비면 아무것도 붙이지 않는다.** "AI 가 비웠어요" 를 칩으로 달면 아무도
+  //    원인을 모른다 — 필요한 안내는 `assigneeReason` 문구가 이미 하고 있다.
+  check(
+    "담당자가 비면 표시하지 않는다",
+    assigneeOrigin({ modelName: null, currentNow: null, touched: false, reason: "no-match" }),
+    null,
+  );
+  check(
+    "비어 있어도 사람이 건드리지 않았다",
+    assigneeOrigin({ modelName: "최유나", currentNow: null, touched: false, reason: "unset" }),
+    null,
+  );
+
+  // 4) ⚠️ **예시 결과에는 매칭을 시도하지 않았으므로** "AI 가 읽었다" 고 말할 수 없다.
+  check(
+    "매칭을 시도하지 않은 결과에는 표시하지 않는다",
+    assigneeOrigin({ modelName: "이서연", currentNow: "이서연", touched: false }),
+    null,
+  );
+}
+
+/* ── 마감 파싱: 해석 못 하면 모른다 ──────────────────────────── */
+
+console.log("\n마감 파싱");
+{
+  const T = "2026-09-30";
+  const at = (iso: string) => new Date(`${iso}T23:59:00+09:00`).getTime();
+
+  // 1) **연도가 있으면 그것만 확실하다.** 그대로 믿는다.
+  check("연도가 있으면 그대로", parseDueText("2026-09-19", T)?.getTime(), at("2026-09-19"));
+  check("구분자 종류는 상관없다", parseDueText("2026/09/19", T)?.getTime(), at("2026-09-19"));
+  // ⚠️ **존재하지 않는 날을 조용히 넘어가면 안 된다** — `new Date("2026-02-30")` 는 3/2 이 된다.
+  check("존재하지 않는 날은 거른다(2/30)", parseDueText("2026-02-30", T), null);
+  check("존재하지 않는 날은 거른다(13월)", parseDueText("2026-13-01", T), null);
+
+  // 2) 연도가 없으면 **아직 지나가지 않은 해**를 고른다.
+  check("앞으로 올 날짜는 올해", parseDueText("10/5", T)?.getTime(), at("2026-10-05"));
+  check("오늘도 올해", parseDueText("9/30", T)?.getTime(), at("2026-09-30"));
+  // 12월 20일에 "1/5" 는 **다음 해 1/5** 다 — 작년과 올해는 지났다.
+  check("지나간 해는 건너뛴다", parseDueText("1/5", "2026-12-20")?.getTime(), at("2027-01-05"));
+
+  // 3) ⚠️ **해석할 수 없는 것을 억지로 해석하지 않는다.** 브리핑이 틀린 숫자를 말하고
+  //    그 숫자를 보고 사람이 독촉하면 **틀린 독촉**이 된다.
+  for (const free of ["9월쯤", "다음 주", "미정", "다음 발표까지", "언젠가", "9/19-ish", "", "   ", "19/9"]) {
+    const got = parseDueText(free, T);
+    if (got !== null) check(`자유 텍스트 "${free}" 는 해석하지 않는다`, got, null);
+  }
+  check("빈 값은 null", parseDueText("", T), null);
+  check("undefined 도 null", parseDueText(undefined, T), null);
+  check("미정은 null", parseDueText("미정", T), null);
+
+  // 4) 사람이 읽는 말 — **모르는 마감에 대한 말을 만들지 않는다.**
+  const now = new Date(`${T}T09:00:00+09:00`);
+  check("오늘 마감", duePhrase(new Date(at("2026-09-30")), now), "오늘");
+  check("내일 마감", duePhrase(new Date(at("2026-10-01")), now), "내일");
+  check("3일 뒤", duePhrase(new Date(at("2026-10-03")), now), "3일 뒤");
+  check("어제 마감", duePhrase(new Date(at("2026-09-29")), now), "어제");
+  check("2일 지남", duePhrase(new Date(at("2026-09-28")), now), "2일 지남");
+  // ⚠️ **모르는 마감에는 말이 없다.** "마감을 모릅니다" 를 브리핑에 넣으면 다른 줄까지 의심된다.
+  check("모르는 마감에는 말이 없다", duePhrase(null, now), null);
+
+  // 5) "임박" — **0~3일**. 이미 지난 것은 세지 않는다(늦은 건 다른 일이다).
+  const soon = (iso: string) => isDueSoon(new Date(at(iso)), now);
+  check("오늘은 임박", soon("2026-09-30"), true);
+  check("3일 뒤는 임박", soon("2026-10-03"), true);
+  check("4일 뒤는 임박 아님", soon("2026-10-04"), false);
+  // ⚠️ **지난 것은 "임박" 이 아니라 "늦었다"** — 다른 말이다. 세면 브리핑이 사실과 어긋난다.
+  check("어제는 임박이 아니다", soon("2026-09-29"), false);
+  check("일주일 전은 임박이 아니다", soon("2026-09-23"), false);
+  check("모르는 마감은 임박도 아니다", isDueSoon(null, now), false);
+}
+
+/* ── 리서처 검색어 초안 ─────────────────────────────────────── */
+
+console.log("\n리서처 검색어 초안");
+{
+  const ctx = {
+    team: { name: "디지털콘텐츠기획 3조", dday: null },
+    roles: [
+      { key: "research" as RoleKey, name: "자료조사" },
+      { key: "present" as RoleKey, name: "발표" },
+      { key: "manage" as RoleKey, name: "관리" },
+    ],
+    openTasks: [
+      { id: "t1", title: "설문지 만들기", assigneeName: "최유나", due: "9/22" },
+      { id: "t2", title: "표지 시안", assigneeName: "이서연", due: "9/20" },
+    ],
+  };
+
+  // 1) 팀 이름이 가장 좋은 재료다 — 팀플 팀 이름에 실제 과제 이름이 들어 있는 경우가 많다.
+  check(
+    "팀 이름에서 검색어를 만든다",
+    researchQuerySuggestions(ctx)[0]?.text,
+    "디지털콘텐츠기획 3조 관련 선행 연구",
+  );
+
+  // 2) ⚠️ **검색어 후보를 자동으로 입력창에 넣지 않는다.** 입력을 덮어쓰면 사람이 무엇을
+  //    찾을지 고를 수 없고, 리서처 결과는 그대로 주소로 쓰이므로 **무엇을 넣었는지가
+  //    결과의 근거**다. 그걸 프로그램이 정하면 "왜 이 결과가 나왔지" 를 알 수 없다.
+  check("후보 개수는 늘려도 사람 수만큼만", researchQuerySuggestions(ctx).length <= 3, true);
+
+  // 3) 같은 말이 두 번 나오지 않는다 — 팀 이름이 두 개 후보를 만들면 고르는 일이 줄지 않는다.
+  check("중복되지 않는다", new Set(researchQuerySuggestions(ctx).map((s) => s.text)).size, researchQuerySuggestions(ctx).length);
+
+  // 4) ⚠️ **열린 업무가 하나도 없으면 역할 후보를 만들지 않는다.** 아무 일도 없는 역할은
+  //    검색할 이유가 없고, 그건 추천이 아니라 방목이다.
+  const idle = researchQuerySuggestions({
+    ...ctx,
+    openTasks: [{ id: "t1", title: "끝난 일", assigneeName: null, due: "미정" }],
+  });
+  check("열린 일이 없으면 팀 이름 후보만 남는다", idle.map((s) => s.key), ["team"]);
+
+  // 5) 팀 이름이 비어도 **역할 후보는 여전히 유효하다** — 둘은 서로 다른 신호라서
+  //    한쪽이 없다고 다른 쪽이 따라 사라지지 않는다. (여기서 처음엔 "둘 다 사라진다" 고
+  //    가정했는데 그건 규칙이 아니라 기대였고, 그 기대가 틀렸다.)
+  check(
+    "팀 이름이 없어도 역할 후보는 남는다",
+    researchQuerySuggestions({ ...ctx, team: { name: "  ", dday: null } }).map((s) => s.key),
+    ["role-research", "role-present", "role-manage"],
+  );
+  check("역할이 없으면 팀 이름만", researchQuerySuggestions({ ...ctx, roles: [] }).map((s) => s.key), ["team"]);
+
+  // 6) **신호가 하나도 없으면 빈 목록** — 뭔가라도 만들어내지 않는다.
+  check(
+    "아무 신호도 없으면 빈 목록",
+    researchQuerySuggestions({ team: { name: "  ", dday: null }, roles: [], openTasks: [] }).length,
+    0,
+  );
 }
 
 /* ── AI 계측: 장부에 무엇이 남는가 ───────────────────────────── */
@@ -5007,7 +5532,10 @@ console.log("\n마피아 게임: 밤을 두 번 처리하지 않는다");
       ],
     });
 
-    // ㊿ 사회자가 "직접 적기" 를 눌렀다 — 이 밤에 최수빈이 빠졌다.
+    // ⚠️ **양쪽이 다른 게 아니라 같은 줄이다.** main 쪽에는 장식 글리프와 일본 한자가 남아 있어
+    // **제품 언어 게이트가 깨지는 상태**였다. HEAD 쪽이 그 수정이다. 병합에서 대충 한쪽을
+    // 고르면 게이트가 다시 깨진다. (여기에 한자를 그대로 적었다가 **이 검사에게 잡혔다** —
+    // 게이트가 실제로 작동한다는 뜻이라 고치지 않고 남긴다.)
     await db.iceSeat.update({
       where: { roundId_memberId: { roundId: round.id, memberId: seats[3].id } },
       data: { outAt: new Date(nightStart.getTime() + 60_000), outHow: "night", outDay: 1 },

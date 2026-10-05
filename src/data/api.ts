@@ -12,6 +12,7 @@ import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/wh
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
 import { canEditTask, taskEditBlock } from "@/lib/task-permission";
+import { projectTeamToolContext, type TeamToolContext } from "@/lib/team-tool-context";
 import { countUnresolved } from "@/server/rate-limit/join-throttle";
 import { isJoinCapped } from "@/server/rate-limit/policy";
 import type {
@@ -858,6 +859,68 @@ export async function getSubmissionBoxes(teamId: string): Promise<SubmissionBox[
  *(`briefing.ts` 의 `boxesDueSoon`), 제출함 화면이 `dueAt` 을 읽을 때도 같은 문자열을
  * 쓴다 — 다른 곳에서 `new Date(dueAt)` 를 직접 파싱하면 기준이 어긋난다.
  */
+/**
+ * AI 도구 하나에 넘길 **팀 문맥**(허용된 필드만 — `lib/team-tool-context.ts`).
+ *
+ * ## 왜 여기서 만들고, 도구가 아니라 화면에서 찾는가
+ *
+ * 세션이 있는 곳(서버 액션)이 **유일하게** 팀과 팀원을 함께 알고 있다. 화면이 각자 조합해서
+ * 넘기면 도구마다 다른 명단이 들어가고, **AI 가 본 팀이 사람마다 달라진다.**
+ *
+ * ## 나간 팀원은 넣지 않는다
+ *
+ * `leftAt` 이 있는 사람은 알림이 안 닿는다(`notify` 가 recipient 에서 뺀다) — 즉 **담당자로
+ * 잡아도 아무도 알지 못한다.** 조용히 배정된 책임이므로 명단에서 뺀다.
+ *
+ * **재입장 대기 중인 사람(`memberClaim`)도 넣지 않는다** — 아직 팀원이 아니라 "누군가
+ * 들어오려는 상태" 다. AI 가 그 이름을 담당자로 잡으면 팀원이 아닌 사람에게 일이 배정된다.
+ */
+export async function getTeamToolContext(teamId: string): Promise<TeamToolContext> {
+  // main 의 관례대로 `getSessionMember` 를 쓴다(`requireSessionMember` 는 여기서 쓰이지 않는다).
+  const session = await getSessionMember();
+  if (!session) throw new Error("로그인이 필요합니다.");
+  const [team, roster, boxes, openTasks] = await Promise.all([
+    db.team.findUnique({ where: { id: teamId }, select: { name: true, dday: true } }),
+    db.member.findMany({
+      where: { teamId, ...ACTIVE },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.submissionBox.findMany({
+      where: { teamId },
+      select: { role: true, name: true, dueAt: true },
+      orderBy: { id: "asc" },
+    }),
+    db.task.findMany({
+      where: { teamId, status: { not: "done" } },
+      select: { id: true, title: true, assignee: { select: { name: true } }, due: true, dueAt: true, status: true },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    }),
+  ]);
+
+  if (!team) throw new Error("팀을 찾을 수 없습니다.");
+
+  return projectTeamToolContext({
+    team: { name: team.name, dday: team.dday },
+    currentMember: { id: session.id, name: session.name },
+    members: roster,
+    roles: ROLES.map((r) => ({ key: r.key, name: r.name })),
+    tasks: openTasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      assignee: t.assignee?.name ?? null,
+      due: t.due,
+      status: t.status,
+    })),
+    boxes: boxes.map((b) => ({
+      role: b.role as RoleKey,
+      name: b.name,
+      dueAt: b.dueAt ? toKstInputValue(b.dueAt) : null,
+    })),
+  });
+}
+
 export async function getBoxDeadlines(
   teamId: string,
 ): Promise<Array<{ role: RoleKey; name: string; dueAt: string | null }>> {
@@ -1469,6 +1532,10 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     assigneeLeft: t.assignee?.leftAt != null,
     isMine: t.assigneeId != null && t.assigneeId === session?.id,
     due: t.due,
+    // ⚠️ **비교는 이 값.** `due` 는 사람이 쓴 글이라 "9월쯤" 도 들어 있다. 브리핑이
+    // **"마감이 임박했다" 고 말하려면** 해석된 시각이 필요한데, 해석 못 한 값은 `null` 이다.
+    // **모르는 마감은 세지 않는다** — 틀린 숫자를 보고 사람이 독촉하는 일을 막기 위해서다.
+    dueAt: t.dueAt ? toKstInputValue(t.dueAt) : null,
     status: toTaskStatus(t.status),
     source: t.source as Task["source"],
     // **판정은 `canEditTask` 한 곳에서만 한다.** 화면이 같은 규칙을 다시 짜면 어느 쪽이

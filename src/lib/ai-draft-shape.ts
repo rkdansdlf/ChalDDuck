@@ -1,3 +1,6 @@
+// ⚠️ **양쪽 다 필요하다.** 2단계-a 의 담당자 매칭(`tool-assignee`)과 main 이 추가한
+// 발표 지원(예상 질문 분류·말하기 시간 추정)의 import 가 같은 자리를 썼다 — 어느 한쪽을
+// 고르면 다른 쪽이 조용히 사라진다.
 import type {
   ClerkDraft,
   PresentDraft,
@@ -5,6 +8,7 @@ import type {
   PresentQuestion,
   QuestionCategory,
 } from "@/lib/types";
+import { matchAssigneeToMember, type ToolMember } from "@/lib/tool-assignee";
 import { estimateSpeechSeconds } from "./present-pacing";
 
 /**
@@ -62,6 +66,18 @@ type RawCandidate = {
   due?: string | null;
 };
 
+/**
+ * 팀원 명단이 있었을 때만 채워지는 값.
+ *
+ * **모델이 추정하지 않았다는 근거**다. 이름이 `null` 인 후보가 **왜** `null` 인지가
+ * 여기서 결정된다 — 사람이 매번 같은 실수를 되풀이하지 않게 하는 값이다.
+ *
+ * **명단이 없으면 필드가 아예 없다.** 예시 결과에는 매칭을 시도하지 않았으므로 채울 이유가
+ * 없다. `undefined` 는 "모르겠다" 가 아니라 **"시도하지 않았다"** 다 — 그래서
+ * 예시 화면이 "이름을 못 찾았다" 고 말하지 않는다.
+ */
+export type AssigneeReason = "matched" | "unset" | "no-match" | "ambiguous";
+
 type RawClerkDraft = {
   summary?: string | null;
   candidates?: RawCandidate[] | null;
@@ -86,7 +102,11 @@ type RawClerkDraft = {
  * 모델이 두 후보에 같은 번호를 주면 한 줄이 두 번 다루어진다. **여기서 다시 매겨 순서를
  * 고정한다.**
  */
-export function shapeClerkDraft(raw: RawClerkDraft | null | undefined): ClerkDraft {
+export function shapeClerkDraft(
+  raw: RawClerkDraft | null | undefined,
+  /** 팀원 명단. **있을 때만** 담당자를 매칭한다 — 없으면 이름만 걸러 낸다(예시 경로). */
+  members?: readonly ToolMember[],
+): ClerkDraft {
   const summary = (raw?.summary ?? "").trim();
   // **배열이 아니면 빈 목록으로 본다.** 모델이 함수의 인자를 이상한 모양으로 주면(실제로
   // `"candidates": "x"` 같은 것이 가능하다) 여기서 `.filter` 가 터져 도구 전체가 죽는다.
@@ -97,15 +117,38 @@ export function shapeClerkDraft(raw: RawClerkDraft | null | undefined): ClerkDra
     candidates: candidates
       // 제목 없는 후보는 화면에서 빈 줄이 된다.
       .filter((c) => orNull(c?.title) !== null)
-      .map((c, index) => ({
-        id: `c${index + 1}`,
-        title: (c.title ?? "").trim(),
-        // 담당자는 **정해졌을 때만** 이름이다. 빈 문자열이 넘어오면 정해진 것처럼 보여
-        // 아무도 책임지지 않는 업무가 생긴다.
-        assignee: orNull(c?.assignee),
-        basis: orNull(c?.basis) ?? "담당 미정 — 직접 정해 주세요",
-        due: orNull(c?.due) ?? "미정",
-      })),
+      .map((c, index) => {
+        const said = orNull(c?.assignee);
+        // **명단이 없으면 매칭을 시도하지 않는다.** 지어낸 이름을 "확인된 이름" 처럼
+        // 다듬어 주는 일도 없어야 하고, 사람이 고칠 때 쓸 근거도 없다.
+        if (!members) {
+          return {
+            id: `c${index + 1}`,
+            title: (c.title ?? "").trim(),
+            assignee: said,
+            basis: orNull(c?.basis) ?? "담당 미정 — 직접 정해 주세요",
+            due: orNull(c?.due) ?? "미정",
+          };
+        }
+
+        /**
+         * ⚠️ **이 자리에서 이름이 바뀐다.** 모델이 적은 이름을 **우리 팀에 있는 사람으로
+         * 바꿔 넣거나, 없으면 지운다.**
+         *
+         * 이게 2단계-a 의 전부다. 팀 문맥을 준다고 추측이 늘어날 수 있어서(실측: 문맥에서
+         * 이름을 집어왔다) **모델의 이름은 신뢰하지 않고 코드가 다시 확인한다.** 지워진 이름은
+         * 화면이 `assigneeReason` 으로 "왜 없었나" 를 말한다.
+         */
+        const match = matchAssigneeToMember(said, members);
+        return {
+          id: `c${index + 1}`,
+          title: (c.title ?? "").trim(),
+          assignee: match.id === null ? null : match.name,
+          assigneeReason: match.id === null ? ((match as { reason: AssigneeReason }).reason) : "matched",
+          basis: orNull(c?.basis) ?? "담당 미정 — 직접 정해 주세요",
+          due: orNull(c?.due) ?? "미정",
+        };
+      }),
   };
 }
 

@@ -1,4 +1,5 @@
 import type { IconName } from "@/components/ui/icon";
+import { isDueSoon } from "@/lib/due";
 import type { MeetingProposal, SubmissionBox, Task } from "@/lib/types";
 
 /**
@@ -35,6 +36,23 @@ import type { MeetingProposal, SubmissionBox, Task } from "@/lib/types";
  * 지워버린 게 아니라 **세지 않는다는 사실을 코드에 남긴다.** 다음 사람이 "브리핑에 마감이
  * 임박한 일도 넣자" 고 하면 여기서 왜 안 되는지 읽으면 된다.
  */
+
+/**
+ * 정규 마감 문자열 → 시각. **해석은 `lib/due.ts` 한 곳에서만** 한다.
+ *
+ * ⚠️ 여기서 `new Date(...)` 로 직접 파싱하면 **두 개의 기준**이 생긴다 — 하나는 느리고
+ * 하나는 빠른 것이 화면마다 다른 말을 하게 된다. 변환만 하고 **판정은 하지 않는다.**
+ */
+function parseDueAt(value: string | null | undefined, today: string): Date | null {
+  if (!value) return null;
+  const at = new Date(`${value}:00+09:00`);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** 기준 시각(그날 00:00). "며칠 남았나" 의 0 은 자정이 되도록 맞춘다. */
+function nowOf(today: string): Date {
+  return new Date(`${today}T00:00:00+09:00`);
+}
 
 /** 카드의 한 줄. **숫자는 여기서만 만들어진다** — 화면이 개수를 세지 않는다. */
 export type BriefingLine = {
@@ -164,6 +182,34 @@ export function buildBriefing(input: {
       text: time ? `오늘 ${time}에 회의가 있어요` : "오늘 회의가 확정돼 있어요",
       count: 1,
       href: "/schedule/slots",
+      tone: "warn",
+    });
+  }
+
+  /**
+   * **마감 임박** — 정규값(`dueAt`)이 있는 일만 센다.
+   *
+   * 이전에는 **불가능했다.** `Task.due` 가 자유 텍스트("9월쯤", "다음 주")라 비교할 대상이
+   * 없었고, 그래서 "아직 안 정한 일" 로 대체했다. `dueAt` 이 생겼으니 이제 진짜로 셀 수 있다.
+   *
+   * ⚠️ **세지 않는 것이 대부분이다** — 기존 행은 백필하지 않았고(`lib/due.ts`), 앞으로
+   * 사람이 `2026-09-19` 처럼 **연도가 있는 값**을 적어야 채워진다. 그래서 이 줄이 rare하다.
+   * **드문 줄이어도 괜찮다** — 있는 숫자만 말하는 것이 이 카드의 전부다.
+   */
+  const soon = input.tasks.filter(
+    (t) =>
+      t.status !== "done" &&
+      // ⚠️ **정규값이 없으면 세지 않는다.** 표시 문자열을 여기서 다시 해석하면
+      // `lib/due.ts` 와 **두 개의 기준**이 생기고 어느 쪽이 맞는지 알 수 없다.
+      isDueSoon(parseDueAt(t.dueAt, input.today), nowOf(input.today)),
+  );
+  if (soon.length > 0) {
+    lines.push({
+      key: "soon",
+      icon: "alarm-clock",
+      text: soon.length === 1 ? "마감이 임박한 일이 있어요" : `마감이 임박한 일이 ${soon.length}건이에요`,
+      count: soon.length,
+      href: "/home/tasks",
       tone: "warn",
     });
   }
