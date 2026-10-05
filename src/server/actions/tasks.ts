@@ -9,6 +9,7 @@ import type { Task, TaskKindKey } from "@/lib/types";
 // **아무 일도 없던 쪽**).
 import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "@/lib/task-permission";
 import { matchAssigneeToMember } from "@/lib/tool-assignee";
+import { parseDueText } from "@/lib/due";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
@@ -125,6 +126,7 @@ export async function addTask(
       kind,
       assigneeId: await assigneeIdOf(me.teamId, fields.assignee),
       due: dueOf(fields.due),
+      dueAt: dueAtOf(fields.due, todayInSeoul()),
       status: "todo",
       source: "manual",
       // **주인을 남긴다** — 이것이 없으면 `canEditTask` 가 "누구나"로 되돌아간다
@@ -183,6 +185,10 @@ export async function updateTask(
       title,
       assigneeId: nextAssigneeId,
       due: dueOf(fields.due),
+      // ⚠️ **마감 문구를 고치면 정규값도 함께 고쳐야 한다.** 여기서 빠뜨리면 `dueAt` 이 옛
+      // 값을 남아 "마감이 3일 뒤" 같은 말이 **거짓말**이 된다 — 사람이 고친 값과 화면이
+      // 말하는 값이 어긋난다. 그래서 **한 곳에서 둘을 같이 만든다.**
+      dueAt: dueAtOf(fields.due, todayInSeoul()),
       // **주인이 없던 업무는 지금 고치는 사람이 주인이 된다**(2026-09-28).
       //
       // 넣기 전에 있던 할 일이라 주인이 `null` 이고, 팀장만 고칠 수 있었다. 그런데 그 상태로
@@ -253,6 +259,24 @@ function dueOf(due: string | null | undefined): string {
 }
 
 /**
+ * 사람이 쓴 마감 → **기계가 비교할 값**.
+ *
+ * ⚠️ **해석 못 하면 `null` 이고, 그건 정상이다.** `lib/due.ts` 의 규칙:
+ * `"2026-09-19"` 만 확실하고, `"9/19"` 는 **아직 지나가지 않은 해** 로 읽으며,
+ * `"9월쯤"`·`"다음 주"`·`"미정"` 은 **해석하지 않는다.** 사람의 뜻을 대신 정하지 않는다.
+ *
+ * **여기서 추측해 채우면 안 되는 이유** — 채워진 값은 **사실처럼 보인다.** 브리핑의
+ * "마감 임박 N건"이 그 위에서 돌아가고, 사람이 그 숫자를 보고 독촉한다. **틀린 독촉**이 된다.
+ * 모르는 것은 세지 않는 편이 낫다.
+ *
+ * `due` 문자열은 **그대로 둔다** — 사람이 쓴 것을 그대로 보여 주는 게 맞고, 기계만
+ * `dueAt` 을 본다.
+ */
+function dueAtOf(due: string | null | undefined, today: string): Date | null {
+  return parseDueText(dueOf(due), today);
+}
+
+/**
  * AI 서기(20)가 확인받은 후보를 업무로 반영한다.
  *
  * 담당자는 **사람이 확인한 이름**만 쓴다 — AI 가 추측한 값이 아니다. 우리 팀에 없는
@@ -296,6 +320,9 @@ export async function addTasksFromClerk(
         // `addTask`·`updateTask` 가 같은 40자 상한을 지킨 것과 어긋났다 — 한쪽은 잘리고
         // 다른 쪽은 그대로 들어간다.
         due: dueOf(c.due),
+        // AI 서기가 뽑은 마감도 **같은 규칙**을 지난다. 서기가 "9/22" 라고 썼다고 그대로
+        // 믿지 않는다 — 동일한 파서를 쓰므로 사람이 넣은 값과 서기가 만든 값의 오차가 없다.
+        dueAt: dueAtOf(c.due, todayInSeoul()),
         status: "todo",
         source: "clerk",
         // AI 가 만든 것도 **확인한 사람**의 소유다. 사람이 누르고 확인한 목록이니까

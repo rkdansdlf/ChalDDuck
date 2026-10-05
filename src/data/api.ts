@@ -893,7 +893,7 @@ export async function getTeamToolContext(teamId: string): Promise<TeamToolContex
     }),
     db.task.findMany({
       where: { teamId, status: { not: "done" } },
-      select: { id: true, title: true, assignee: { select: { name: true } }, due: true, status: true },
+      select: { id: true, title: true, assignee: { select: { name: true } }, due: true, dueAt: true, status: true },
       orderBy: { createdAt: "asc" },
       take: 50,
     }),
@@ -1517,6 +1517,10 @@ export async function getTasks(teamId: string): Promise<Task[]> {
     assigneeLeft: t.assignee?.leftAt != null,
     isMine: t.assigneeId != null && t.assigneeId === session?.id,
     due: t.due,
+    // ⚠️ **비교는 이 값.** `due` 는 사람이 쓴 글이라 "9월쯤" 도 들어 있다. 브리핑이
+    // **"마감이 임박했다" 고 말하려면** 해석된 시각이 필요한데, 해석 못 한 값은 `null` 이다.
+    // **모르는 마감은 세지 않는다** — 틀린 숫자를 보고 사람이 독촉하는 일을 막기 위해서다.
+    dueAt: t.dueAt ? toKstInputValue(t.dueAt) : null,
     status: toTaskStatus(t.status),
     source: t.source as Task["source"],
     // **판정은 `canEditTask` 한 곳에서만 한다.** 화면이 같은 규칙을 다시 짜면 어느 쪽이

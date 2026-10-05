@@ -101,6 +101,7 @@ import { projectTeamToolContext, renderTeamContext } from "../src/lib/team-tool-
 import { assigneeOrigin, matchAssigneeCandidates, matchAssigneeToMember, stripKoreanParticle } from "../src/lib/tool-assignee.js";
 import { canOfferCushion, pokeRequestText } from "../src/features/tasks/poke-request.js";
 import { researchQuerySuggestions } from "../src/features/tools/research-query.js";
+import { duePhrase, isDueSoon, parseDueText } from "../src/lib/due.js";
 import {
   boxesDueSoon,
   buildBriefing,
@@ -3431,6 +3432,70 @@ console.log("\n홈 브리핑");
     check("확인 대기 수를 그대로 말한다", lines.find((l) => l.key === "awaiting")?.count, 3);
   }
 
+  // 6-1) **마감 임박** — 정규값(`dueAt`)이 있는 일만 센다. 이전에는 `Task.due` 가 자유
+  //      텍스트라 **불가능**했고, 그래서 "아직 안 정한 일" 로 대체했다.
+  {
+    // 브리핑의 기준 시각(그날 00:00) — "며칠 남았나" 의 0 이 자정이 되도록 맞춘다.
+    const at = (d: string) => new Date(`${d}T00:00:00+09:00`);
+    // ⚠️ **내 일로 만든다(`isMine: true`).** 남의 일로 두면 **독촉 대상**이 되어 "poke" 줄까지
+    // 같이 나온다 — 마감 임박을 보려다 독촉 검사에 섞이면 무엇을 확인한 건지 모른다.
+    const withDueAt = (over: Partial<Parameters<typeof buildBriefing>[0]["tasks"][number]> & { dueAt?: string | null } = {}) => ({
+      ...task({ id: "x", due: "9/22", isMine: true }),
+      dueAt: null,
+      ...over,
+    } as never);
+    const base = { today: TODAY, awaitingMe: 0, meeting: meeting({ stage: "idle", date: null }) };
+
+    // 내일 마감 → 임박
+    const soonLine = buildBriefing({
+      ...base,
+      tasks: [withDueAt({ dueAt: "2026-10-01T23:59" })],
+    }).find((l) => l.key === "soon");
+    check("내일 마감을 임박으로 센다", soonLine?.count, 1);
+    check("한 건이면 '몇 건' 을 붙이지 않는다", soonLine?.text, "마감이 임박한 일이 있어요");
+
+    // ⚠️ **표시 문자열만 있고 정규값이 없으면 세지 않는다.** 같은 값을 두 군데서 해석하면
+    //    어느 쪽이 맞는지 알 수 없다 — 판정은 `lib/due.ts` 한 곳에서만 한다.
+    check(
+      "표시 문자열만으로는 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ due: "9/22" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // ⚠️ **지난 마감은 임박이 아니다** — "늦었다" 는 다른 말이다.
+    check(
+      "지난 마감은 임박이 아니다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-09-20T23:59" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // 4일 뒤도 임박이 아니다 (기준 3일).
+    check(
+      "4일 뒤는 임박이 아니다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-10-04T23:59" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // **끝난 일은 세지 않는다** — 끝난 일에 재촉하는 것은 아니다.
+    check(
+      "끝난 일의 마감을 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-10-01T23:59", status: "done" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // ⚠️ **깨진 값은 무시한다** — `new Date("2026-13-45")` 는 거짓값이 아니라 Invalid 다.
+    check(
+      "깨진 정규값은 세지 않는다",
+      buildBriefing({ ...base, tasks: [withDueAt({ dueAt: "2026-13-45T99:99" })] }).find((l) => l.key === "soon"),
+      undefined,
+    );
+    // 임박과 미정이 **함께** 있으면 둘 다 보여 준다 — 다른 사실이니까.
+    const both = buildBriefing({
+      ...base,
+      tasks: [withDueAt({ dueAt: "2026-10-01T23:59" }), withDueAt({ id: "y", due: "" })],
+    });
+    check("임박과 미정이 함께 있으면 둘 다 말한다", both.map((l) => l.key).sort(), ["due", "soon"]);
+    // 반대로 **아무것도 해석 안 됐으면 "soon" 줄은 아예 없다** — 빈 줄을 그리지 않는다.
+    check("해석된 마감이 없으면 soon 줄이 없다", buildBriefing({ ...base, tasks: [task({ id: "z", isMine: true, due: "9월쯤" })] }).some((l) => l.key === "soon"), false);
+    void at;
+  }
+
   // 7) 제출함 마감 — **`dueAt` 이 DateTime 인 유일한 곳**이라 "며칠 남았나" 를 말할 수 있다.
   {
     const box = (role: RoleKey, name: string, dueAt: string | null) => ({ role, name, dueAt });
@@ -3843,6 +3908,57 @@ console.log("\n담당자 칩의 출처 (2단계-a2)");
     assigneeOrigin({ modelName: "이서연", currentNow: "이서연", touched: false }),
     null,
   );
+}
+
+/* ── 마감 파싱: 해석 못 하면 모른다 ──────────────────────────── */
+
+console.log("\n마감 파싱");
+{
+  const T = "2026-09-30";
+  const at = (iso: string) => new Date(`${iso}T23:59:00+09:00`).getTime();
+
+  // 1) **연도가 있으면 그것만 확실하다.** 그대로 믿는다.
+  check("연도가 있으면 그대로", parseDueText("2026-09-19", T)?.getTime(), at("2026-09-19"));
+  check("구분자 종류는 상관없다", parseDueText("2026/09/19", T)?.getTime(), at("2026-09-19"));
+  // ⚠️ **존재하지 않는 날을 조용히 넘어가면 안 된다** — `new Date("2026-02-30")` 는 3/2 이 된다.
+  check("존재하지 않는 날은 거른다(2/30)", parseDueText("2026-02-30", T), null);
+  check("존재하지 않는 날은 거른다(13월)", parseDueText("2026-13-01", T), null);
+
+  // 2) 연도가 없으면 **아직 지나가지 않은 해**를 고른다.
+  check("앞으로 올 날짜는 올해", parseDueText("10/5", T)?.getTime(), at("2026-10-05"));
+  check("오늘도 올해", parseDueText("9/30", T)?.getTime(), at("2026-09-30"));
+  // 12월 20일에 "1/5" 는 **다음 해 1/5** 다 — 작년과 올해는 지났다.
+  check("지나간 해는 건너뛴다", parseDueText("1/5", "2026-12-20")?.getTime(), at("2027-01-05"));
+
+  // 3) ⚠️ **해석할 수 없는 것을 억지로 해석하지 않는다.** 브리핑이 틀린 숫자를 말하고
+  //    그 숫자를 보고 사람이 독촉하면 **틀린 독촉**이 된다.
+  for (const free of ["9월쯤", "다음 주", "미정", "다음 발표까지", "언젠가", "9/19-ish", "", "   ", "19/9"]) {
+    const got = parseDueText(free, T);
+    if (got !== null) check(`자유 텍스트 "${free}" 는 해석하지 않는다`, got, null);
+  }
+  check("빈 값은 null", parseDueText("", T), null);
+  check("undefined 도 null", parseDueText(undefined, T), null);
+  check("미정은 null", parseDueText("미정", T), null);
+
+  // 4) 사람이 읽는 말 — **모르는 마감에 대한 말을 만들지 않는다.**
+  const now = new Date(`${T}T09:00:00+09:00`);
+  check("오늘 마감", duePhrase(new Date(at("2026-09-30")), now), "오늘");
+  check("내일 마감", duePhrase(new Date(at("2026-10-01")), now), "내일");
+  check("3일 뒤", duePhrase(new Date(at("2026-10-03")), now), "3일 뒤");
+  check("어제 마감", duePhrase(new Date(at("2026-09-29")), now), "어제");
+  check("2일 지남", duePhrase(new Date(at("2026-09-28")), now), "2일 지남");
+  // ⚠️ **모르는 마감에는 말이 없다.** "마감을 모릅니다" 를 브리핑에 넣으면 다른 줄까지 의심된다.
+  check("모르는 마감에는 말이 없다", duePhrase(null, now), null);
+
+  // 5) "임박" — **0~3일**. 이미 지난 것은 세지 않는다(늦은 건 다른 일이다).
+  const soon = (iso: string) => isDueSoon(new Date(at(iso)), now);
+  check("오늘은 임박", soon("2026-09-30"), true);
+  check("3일 뒤는 임박", soon("2026-10-03"), true);
+  check("4일 뒤는 임박 아님", soon("2026-10-04"), false);
+  // ⚠️ **지난 것은 "임박" 이 아니라 "늦었다"** — 다른 말이다. 세면 브리핑이 사실과 어긋난다.
+  check("어제는 임박이 아니다", soon("2026-09-29"), false);
+  check("일주일 전은 임박이 아니다", soon("2026-09-23"), false);
+  check("모르는 마감은 임박도 아니다", isDueSoon(null, now), false);
 }
 
 /* ── 리서처 검색어 초안 ─────────────────────────────────────── */
