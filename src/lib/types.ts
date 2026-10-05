@@ -359,10 +359,30 @@ export type ResearchResult = {
   relatedQueries?: string[];
 };
 
+/** 26 발표 지원의 발표 목적/상황별 정제 모드. */
+export type PresentMode = "academic" | "conversational" | "concise";
+
+/** 질문의 성격/의도 카테고리 (학생의 답변 준비 방향 가이드). */
+export type QuestionCategory = "data" | "method" | "practical" | "general";
+
+/** 구조화된 예상 질문. 답을 대신 쓰지 않고 질문 의도와 카테고리만 제공한다. */
+export type PresentQuestion = {
+  id: string;
+  question: string;
+  category?: QuestionCategory;
+  intent?: string; // 질문 의도 (예: "표본의 대표성 검증", "현실적 적용 가능성")
+};
+
 /** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */
 export type PresentDraft = {
   refined: string;
   questions: string[];
+  /** 질문 의도 및 카테고리가 구조화된 예상 질문 목록 */
+  structuredQuestions?: PresentQuestion[];
+  /** 다듬은 대본의 예상 발표 소요 시간(초 단위). */
+  estimatedSeconds?: number;
+  /** 적용된 발표 정제 모드. */
+  mode?: PresentMode;
 };
 
 /**

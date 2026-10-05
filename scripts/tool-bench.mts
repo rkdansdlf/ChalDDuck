@@ -350,7 +350,7 @@ async function runOne(tool: ToolKey, model: string, index: number): Promise<Row>
     }
     if (tool === "present") {
       const item = PRESENT_CORPUS[index];
-      const draft = await refineScript(item.script, model);
+      const draft = await refineScript(item.script, item.mode ?? "academic", model);
       const v = judgePresent(item, draft);
       return {
         id: item.id,

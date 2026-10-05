@@ -7,7 +7,7 @@ import {
   RESEARCH_SAMPLE_RESULTS,
   SENTENCE_SAMPLE_OUTPUT,
 } from "@/data/catalog";
-import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
+import type { ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
 import { levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "@/lib/ai-draft-shape";
@@ -466,46 +466,82 @@ function hostOf(url: string): string {
 
 /* ── 26 발표 지원 ───────────────────────────────────────────── */
 
+/** 발표 정제 모드별 가이드 */
+const PRESENT_MODE_GUIDE: Record<PresentMode, string> = {
+  academic: `학술·정중형: 교수님 평가 및 연구/과제 보고서 발표에 적합한 격식체(~하고자 합니다, ~습니다). 논리적 인과관계를 명확히 하고 신뢰감 있는 어조를 유지합니다.`,
+  conversational: `청중 소통형: 학우 및 일반 청중의 주의를 집중시키는 자연스러운 구어체. 청중과의 공감과 호흡을 살리고 전달력 있는 친근한 어조를 사용합니다.`,
+  concise: `시간 엄수형: 제한 시간이 촉박할 때 군더더기 없이 핵심만 전달하는 어조. 불필요한 수식어와 잉여 접속사를 걷어내고 결론과 핵심 근거를 명료하게 전달합니다.`,
+};
+
 /**
  * 발표 대본의 **표현만** 다듬고 예상 질문을 뽑는다.
  *
  * 내용을 새로 지어내지 않는다 — 대본에 없는 수치나 사례가 들어가면 발표자가
  * 무대에서 모르는 말을 읽게 된다.
  */
-export async function refineScript(raw: string, model?: string): Promise<PresentDraft> {
-  if (!isAiConfigured()) return PRESENT_SAMPLE_DRAFT;
+export async function refineScript(
+  raw: string,
+  modeOrModel: PresentMode | string = "academic",
+  model?: string,
+): Promise<PresentDraft> {
+  const isMode =
+    modeOrModel === "academic" || modeOrModel === "conversational" || modeOrModel === "concise";
+  const mode: PresentMode = isMode ? (modeOrModel as PresentMode) : "academic";
+  const actualModel = isMode ? model : (modeOrModel as string | undefined);
+
+  if (!isAiConfigured()) return { ...PRESENT_SAMPLE_DRAFT, mode };
+
+  const modeGuide = PRESENT_MODE_GUIDE[mode] ?? PRESENT_MODE_GUIDE.academic;
 
   return shapePresentDraft(
     await askShape<{ refined: string; questions: string[] }>({
       tool: "present",
-      ...(model ? { model } : {}),
+      ...(actualModel ? { model: actualModel } : {}),
       system: `${BASE}
 
 너는 발표 지원 도구다. 발표 대본의 표현을 다듬고, 나올 만한 질문을 뽑는다.
 
+이번 발표 모드:
+- ${modeGuide}
+
 지켜야 할 것:
 - refined 는 **원문에 있는 내용만** 쓴다. 없던 수치·사례·주장을 넣지 않는다.
   말로 했을 때 걸리는 문장을 고르고, 문장을 짧게 끊고, 어색한 표현을 바꾸는 선까지다.
-- 원문과 비슷한 길이를 유지한다. 요약하지 않는다.
+- 원문과 비슷한 길이를 유지한다. 요약하지 않는다(시간 엄수형에서도 내용 생략 없이 어휘 군더더기만 다듬는다).
 - questions 는 청중이나 교수가 물을 법한 질문 3~5개. 대본 내용에서 나오는 것만 적는다.
-  질문만 적고 답은 적지 않는다.`,
+  - 질문만 적고 답은 절대 적지 않는다 (학생이 스스로 팀원과 답변을 생각해야 함).
+  - category: "data"(데이터·수치 근거), "method"(조사·방법론), "practical"(실효성·한계점), "general"(일반) 중 하나.
+  - intent: 질문의 핵심 의도 한 줄 (예: "표본 수의 대표성 검증", "제안한 해결책의 현실 적용성").`,
       user: raw,
       shapeName: "present_draft",
-      shapeDescription: "다듬은 대본과 예상 질문",
+      shapeDescription: "다듬은 대본과 구조화된 예상 질문",
       schema: {
         type: "object",
         properties: {
           refined: { type: "string", description: "표현만 다듬은 대본" },
           questions: {
             type: "array",
-            items: { type: "string" },
-            description: "예상 질문 3~5개",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string", description: "예상 질문 문장" },
+                category: {
+                  type: "string",
+                  enum: ["data", "method", "practical", "general"],
+                  description: "질문 성격 카테고리",
+                },
+                intent: { type: "string", description: "질문 의도 요약" },
+              },
+              required: ["question"],
+            },
+            description: "예상 질문 3~5개 (의도와 카테고리 포함)",
           },
         },
         required: ["refined", "questions"],
       },
       maxTokens: 3000,
     }),
+    mode,
   );
 }
 

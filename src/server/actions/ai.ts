@@ -1,7 +1,7 @@
 "use server";
 
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
-import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
+import type { AiResult, ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
 import { aiUsageCsv, aiUsageToday, type AiUsageToday } from "@/server/ai/limit";
 import { teamAiWeeklySummary, type TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { runTool } from "@/server/ai/run";
@@ -41,8 +41,11 @@ export async function searchResearch(query: string): Promise<AiResult<ResearchRe
 }
 
 /** 표현만 다듬고 내용을 새로 지어내지 않는다. */
-export async function refineScript(raw: string): Promise<AiResult<PresentDraft>> {
-  return runTool("present", () => ai.refineScript(raw));
+export async function refineScript(
+  raw: string,
+  mode: PresentMode = "academic",
+): Promise<AiResult<PresentDraft>> {
+  return runTool("present", () => ai.refineScript(raw, mode));
 }
 
 /**

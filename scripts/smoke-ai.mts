@@ -2,6 +2,8 @@ import { check, finish, readCode } from "./db-test-base.mjs";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { detectAiAnomalies } from "../src/server/ai/call-stats.js";
 import { withFallback } from "../src/server/ai/model.js";
+import { estimateSpeechSeconds, formatSpeechSeconds, getSpeechPacingInfo } from "../src/lib/present-pacing.js";
+import { shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 
 async function main() {
   console.log("=== AI 고도화 검증 스위트 ===");
@@ -94,6 +96,55 @@ async function main() {
   const restoreFn = draftHook.slice(draftHook.indexOf("restore = useCallback("));
   check("restore는 run()/execute() 안 부름", !restoreFn.includes("run(") && !restoreFn.includes("execute("), true);
   check("restore는 로컬 state만 갱신", restoreFn.includes("setResult(") && restoreFn.includes("setHistory("), true);
+
+  // 5. Present Pacing & Structured Questions contract
+  check("발화시간: 빈 문자열 0초", estimateSpeechSeconds(""), 0);
+  check("발화시간: 공백만 0초", estimateSpeechSeconds("   \n\t "), 0);
+  check("발화시간: 11음절 약 2초", estimateSpeechSeconds("가나다라마바사아자차카"), 2);
+  check("발화시간: 33음절 약 6초", estimateSpeechSeconds("가나다라마바사아자차카가나다라마바사아자차카가나다라마바사아자차카"), 6);
+
+  check("발화시간 포맷: 0초", formatSpeechSeconds(0), "0초");
+  check("발화시간 포맷: 25초", formatSpeechSeconds(25), "약 25초");
+  check("발화시간 포맷: 60초", formatSpeechSeconds(60), "약 1분");
+  check("발화시간 포맷: 145초", formatSpeechSeconds(145), "약 2분 25초");
+
+  const pacingInfo = getSpeechPacingInfo("안녕하세요 저희는 발표 지원 팀입니다");
+  check("페이싱 정보: 음절 수(공백 제외 16자)", pacingInfo.syllables, 16);
+  check("페이싱 정보: 초 계산(16/5.5 ≈ 3초)", pacingInfo.seconds, 3);
+  check("페이싱 정보: 포맷 문자열", pacingInfo.formatted, "약 3초");
+
+  // shapePresentDraft 구조화 및 모드 계약
+  const shapedLegacy = shapePresentDraft({
+    refined: "다듬은 대본입니다.",
+    questions: ["질문 1", "질문 2"],
+  }, "conversational");
+  check("대본 다듬기 모드 보존", shapedLegacy.mode, "conversational");
+  check("기존 문자열 질문 목록 보존", shapedLegacy.questions, ["질문 1", "질문 2"]);
+  check("구조화 질문 목록 자동 변환", shapedLegacy.structuredQuestions?.length, 2);
+  check("구조화 기본 카테고리는 general", shapedLegacy.structuredQuestions?.[0]?.category, "general");
+  check("대본 발화시간 자동 산출", shapedLegacy.estimatedSeconds, estimateSpeechSeconds("다듬은 대본입니다."));
+
+  const shapedStructured = shapePresentDraft({
+    refined: "핵심 결론입니다.",
+    questions: [
+      { question: "통계 데이터 출처는 어디인가요?", category: "data", intent: "데이터 근거 확인" },
+      { question: "실제 적용 시 한계점은?", category: "practical", intent: "실효성 검토" },
+    ],
+  }, "concise");
+  check("구조화 질문 카테고리 보존", shapedStructured.structuredQuestions?.[0]?.category, "data");
+  check("구조화 질문 의도 보존", shapedStructured.structuredQuestions?.[0]?.intent, "데이터 근거 확인");
+  check("문자열 질문 호환 리스트 생성", shapedStructured.questions, [
+    "통계 데이터 출처는 어디인가요?",
+    "실제 적용 시 한계점은?",
+  ]);
+
+  // 프롬프트 및 단톡방 공유 계약
+  const toolsCode = readCode("../src/server/ai/tools.ts");
+  check("발표 정제 모드 3종 정의", /academic[\s\S]*conversational[\s\S]*concise/.test(toolsCode), true);
+  check("답변은 적지 않고 질문만 뽑는 규칙 유지", /질문만 적고 답은.*적지 않는다/.test(toolsCode), true);
+
+  const chatCode = readCode("../src/server/actions/chat.ts");
+  check("예상 질문 단톡방 공유 액션 존재", /shareQuestionsToChat/.test(chatCode), true);
 
   await finish();
 }

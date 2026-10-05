@@ -336,6 +336,28 @@ export const PRESENT_SAMPLE_DRAFT: PresentDraft = {
     "표본 수가 적은데 결과를 일반화할 수 있나요?",
     "다음 연구에서 보완하고 싶은 점은 무엇인가요?",
   ],
+  structuredQuestions: [
+    {
+      id: "q-sample-1",
+      question: "조사 대상을 이렇게 정한 근거는 무엇인가요?",
+      category: "method",
+      intent: "조사 대상 선정의 타당성 및 방법론 검증",
+    },
+    {
+      id: "q-sample-2",
+      question: "표본 수가 적은데 결과를 일반화할 수 있나요?",
+      category: "data",
+      intent: "표본 크기의 통계적 신뢰도와 일반화 한계 검토",
+    },
+    {
+      id: "q-sample-3",
+      question: "다음 연구에서 보완하고 싶은 점은 무엇인가요?",
+      category: "practical",
+      intent: "프로젝트 한계점 인식 및 향후 발전 가능성",
+    },
+  ],
+  estimatedSeconds: 8,
+  mode: "academic",
 };
 
 export const SENTENCE_MODES: SentenceMode[] = [

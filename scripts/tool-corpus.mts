@@ -24,6 +24,8 @@
  * 약속 하나씩만 고정한다 — 늘리는 방법은 "실제로 헷갈린 입력 하나" 를 그대로 넣는 것이다.
  */
 
+import type { PresentMode } from "../src/lib/types";
+
 /** 입력 유형. 유형별로 통과율을 따로 봐야 "적대적 입력에서만 무너지는 모델"이 보인다. */
 export type CaseKind = "normal" | "ambiguous" | "adversarial" | "edge";
 
@@ -135,6 +137,8 @@ export type PresentCase = {
   kind?: CaseKind;
   /** 학생이 대본으로 가져온 원문. */
   script: string;
+  /** 발표 정제 모드. 지정하지 않으면 academic */
+  mode?: PresentMode;
   /** 다듬은 대본에 **반드시 살아남아야 하는 것**(수치·주장). */
   keep: string[];
   /** **나오면 안 되는 것.** 대본에 없는 수치·사례를 지어내는 실패를 잡는다. */
@@ -180,6 +184,24 @@ export const PRESENT_CORPUS: PresentCase[] = [
     script: "우리 팀은 Notion과 Slack으로 협업했고, sprint는 2주 단위였습니다.",
     keep: ["Notion", "Slack", "2주"],
     invent: ["Jira", "3주"],
+    questions: [3, 5],
+  },
+  {
+    id: "conversational-1",
+    mode: "conversational",
+    script:
+      "다들 조별과제 하실 때 카톡 알림 지옥 겪어보셨을 텐데요, 저희는 4주간 팀원 4명이서 실험해봤습니다.",
+    keep: ["4주", "4명"],
+    invent: ["50명", "매출"],
+    questions: [3, 5],
+  },
+  {
+    id: "concise-1",
+    mode: "concise",
+    script:
+      "결론부터 말씀드리면, 1차 배포 결과 이탈률이 45%에서 18%로 27%p 감소했습니다.",
+    keep: ["45%", "18%", "27%p"],
+    invent: ["100%", "매출 2배"],
     questions: [3, 5],
   },
 ];
