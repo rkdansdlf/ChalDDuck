@@ -7,7 +7,7 @@ import {
   RESEARCH_SAMPLE_RESULTS,
   SENTENCE_SAMPLE_OUTPUT,
 } from "@/data/catalog";
-import type { ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
+import type { ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
 import { levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "@/lib/ai-draft-shape";
@@ -383,7 +383,16 @@ export async function searchResearch(
 
   onPhase?.("shaping");
   const shaped = await askShape<{
-    results: Array<{ title: string; source: string; snippet: string; url: string }>;
+    results: Array<{
+      title: string;
+      source: string;
+      snippet: string;
+      url: string;
+      year?: string | null;
+      kind?: "academic" | "stats" | "news" | "web" | null;
+      citation?: string | null;
+    }>;
+    relatedQueries?: string[];
   }>({
     tool: "research",
     // **카드 정리도 같은 모델로** 한다. 검색한 모델과 정리하는 모델이 다르면 앞 model's
@@ -395,8 +404,12 @@ export async function searchResearch(
 
 지켜야 할 것:
 - url 은 **출처 목록에 있는 주소 그대로만** 쓴다. 다른 주소를 쓰거나 만들어 내지 않는다.
-- source 는 어디서 나온 자료인지를 짧게 적는다(매체·기관 이름, 연도를 알면 함께).
+- source 는 어디서 나온 자료인지를 짧게 적는다(매체·기관·학회지 이름).
+- year 는 자료의 발행 연도나 시점(예: "2024", "2023.11")을 적는다. 알 수 없으면 null.
+- kind 는 자료의 성격이다: 학술 논문·연구는 "academic", 통계·조사 보고서는 "stats", 언론 보도·기사는 "news", 일반 웹문서는 "web".
+- citation 은 과제·보고서에 넣을 수 있는 표준 참고문헌 형식이다(예: 발행처 (연도), "자료명", URL).
 - snippet 은 그 자료가 무엇을 말하는지 한두 문장으로 적는다.
+- relatedQueries 는 이 주제와 관련해 팀플 발표·보고서 준비를 위해 더 깊이 찾아볼 만한 구체적인 연관 검색어 2~3개를 적는다.
 - 검색 내용에 근거가 없는 카드는 만들지 않는다.`,
     // 모델이 본문을 한 글자도 안 돌려주는 일이 있어(무료 모델에서 겪었다) 페이지 발췌를
     // 함께 넘긴다. 발췌는 검색이 가져온 실제 본문이라 이것만으로도 카드를 만들 수 있다.
@@ -407,7 +420,7 @@ ${answer.citations
   .map((c) => `- ${c.title} :: ${c.url}\n  ${c.excerpt.slice(0, 900) || "(발췌 없음)"}`)
   .join("\n")}`,
     shapeName: "research_results",
-    shapeDescription: "출처가 붙은 자료 카드 목록",
+    shapeDescription: "출처가 붙은 자료 카드 목록과 연관 검색어",
     schema: {
       type: "object",
       properties: {
@@ -417,29 +430,82 @@ ${answer.citations
             type: "object",
             properties: {
               title: { type: "string" },
-              source: { type: "string", description: "매체·기관 이름 (연도를 알면 함께)" },
+              source: { type: "string", description: "매체·기관·학회지 이름" },
+              year: { type: ["string", "null"], description: '발행 연도 (예: "2024") 또는 null' },
+              kind: {
+                type: "string",
+                enum: ["academic", "stats", "news", "web"],
+                description: "자료의 성격",
+              },
+              citation: { type: ["string", "null"], description: "표준 참고문헌 표기" },
               snippet: { type: "string", description: "무엇을 다루는 자료인지 한두 문장" },
               url: { type: "string", description: "출처 목록에 있는 주소 그대로" },
             },
             required: ["title", "source", "snippet", "url"],
           },
         },
+        relatedQueries: {
+          type: "array",
+          items: { type: "string" },
+          description: "더 깊이 찾아볼 만한 구체적인 연관 검색어 2~3개",
+        },
       },
       required: ["results"],
     },
   });
 
+  const relatedQueries = (shaped.relatedQueries ?? [])
+    .map((q) => q.trim())
+    .filter((q) => q.length > 0)
+    .slice(0, 3);
+
   // 마지막 문 — 인용되지 않은 주소가 붙은 카드는 버린다. 프롬프트가 아니라 여기가 규칙이다.
   return (shaped.results ?? [])
     .filter((r) => allowed.has(r.url) && orNull(r.title) !== null)
-    .map((r, index) => ({
-      id: `r${index + 1}`,
-      title: r.title.trim(),
-      // 출처 이름을 못 적으면 주소의 도메인이라도 보여 준다 — 빈 칸보다 낫다.
-      source: orNull(r.source) ?? hostOf(r.url),
-      snippet: orNull(r.snippet) ?? "",
-      url: r.url,
-    }));
+    .map((r, index) => {
+      const src = orNull(r.source) ?? hostOf(r.url);
+      const title = r.title.trim();
+      const year = cleanYear(r.year);
+      const kind = cleanKind(r.kind, src);
+      const citation = orNull(r.citation) ?? makeCitation(src, title, year, r.url);
+      return {
+        id: `r${index + 1}`,
+        title,
+        source: src,
+        snippet: orNull(r.snippet) ?? "",
+        url: r.url,
+        year,
+        kind,
+        citation,
+        ...(index === 0 && relatedQueries.length > 0 ? { relatedQueries } : {}),
+      };
+    });
+}
+
+function cleanYear(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const match = raw.match(/\b(19\d\d|20\d\d)\b/);
+  return match ? match[1] : orNull(raw);
+}
+
+function cleanKind(
+  raw: string | null | undefined,
+  source: string,
+): "academic" | "stats" | "news" | "web" {
+  if (raw === "academic" || raw === "stats" || raw === "news" || raw === "web") return raw;
+  if (/학회|논문|학술|연구|journal|kci|riss|dbpia/i.test(source)) return "academic";
+  if (/통계|kosis|조사|statista|보고서/i.test(source)) return "stats";
+  if (/뉴스|일보|신문|news|times|press/i.test(source)) return "news";
+  return "web";
+}
+
+function makeCitation(source: string, title: string, year: string | null, url: string): string {
+  const parts: string[] = [];
+  if (source) parts.push(source);
+  if (year) parts.push(`(${year})`);
+  parts.push(`"${title}"`);
+  if (url) parts.push(url);
+  return parts.join(", ");
 }
 
 /** 주소에서 보여 줄 만한 이름만 뽑는다. */
@@ -453,46 +519,82 @@ function hostOf(url: string): string {
 
 /* ── 26 발표 지원 ───────────────────────────────────────────── */
 
+/** 발표 정제 모드별 가이드 */
+const PRESENT_MODE_GUIDE: Record<PresentMode, string> = {
+  academic: `학술·정중형: 교수님 평가 및 연구/과제 보고서 발표에 적합한 격식체(~하고자 합니다, ~습니다). 논리적 인과관계를 명확히 하고 신뢰감 있는 어조를 유지합니다.`,
+  conversational: `청중 소통형: 학우 및 일반 청중의 주의를 집중시키는 자연스러운 구어체. 청중과의 공감과 호흡을 살리고 전달력 있는 친근한 어조를 사용합니다.`,
+  concise: `시간 엄수형: 제한 시간이 촉박할 때 군더더기 없이 핵심만 전달하는 어조. 불필요한 수식어와 잉여 접속사를 걷어내고 결론과 핵심 근거를 명료하게 전달합니다.`,
+};
+
 /**
  * 발표 대본의 **표현만** 다듬고 예상 질문을 뽑는다.
  *
  * 내용을 새로 지어내지 않는다 — 대본에 없는 수치나 사례가 들어가면 발표자가
  * 무대에서 모르는 말을 읽게 된다.
  */
-export async function refineScript(raw: string, model?: string): Promise<PresentDraft> {
-  if (!isAiConfigured()) return PRESENT_SAMPLE_DRAFT;
+export async function refineScript(
+  raw: string,
+  modeOrModel: PresentMode | string = "academic",
+  model?: string,
+): Promise<PresentDraft> {
+  const isMode =
+    modeOrModel === "academic" || modeOrModel === "conversational" || modeOrModel === "concise";
+  const mode: PresentMode = isMode ? (modeOrModel as PresentMode) : "academic";
+  const actualModel = isMode ? model : (modeOrModel as string | undefined);
+
+  if (!isAiConfigured()) return { ...PRESENT_SAMPLE_DRAFT, mode };
+
+  const modeGuide = PRESENT_MODE_GUIDE[mode] ?? PRESENT_MODE_GUIDE.academic;
 
   return shapePresentDraft(
     await askShape<{ refined: string; questions: string[] }>({
       tool: "present",
-      ...(model ? { model } : {}),
+      ...(actualModel ? { model: actualModel } : {}),
       system: `${BASE}
 
 너는 발표 지원 도구다. 발표 대본의 표현을 다듬고, 나올 만한 질문을 뽑는다.
 
+이번 발표 모드:
+- ${modeGuide}
+
 지켜야 할 것:
 - refined 는 **원문에 있는 내용만** 쓴다. 없던 수치·사례·주장을 넣지 않는다.
   말로 했을 때 걸리는 문장을 고르고, 문장을 짧게 끊고, 어색한 표현을 바꾸는 선까지다.
-- 원문과 비슷한 길이를 유지한다. 요약하지 않는다.
+- 원문과 비슷한 길이를 유지한다. 요약하지 않는다(시간 엄수형에서도 내용 생략 없이 어휘 군더더기만 다듬는다).
 - questions 는 청중이나 교수가 물을 법한 질문 3~5개. 대본 내용에서 나오는 것만 적는다.
-  질문만 적고 답은 적지 않는다.`,
+  - 질문만 적고 답은 절대 적지 않는다 (학생이 스스로 팀원과 답변을 생각해야 함).
+  - category: "data"(데이터·수치 근거), "method"(조사·방법론), "practical"(실효성·한계점), "general"(일반) 중 하나.
+  - intent: 질문의 핵심 의도 한 줄 (예: "표본 수의 대표성 검증", "제안한 해결책의 현실 적용성").`,
       user: raw,
       shapeName: "present_draft",
-      shapeDescription: "다듬은 대본과 예상 질문",
+      shapeDescription: "다듬은 대본과 구조화된 예상 질문",
       schema: {
         type: "object",
         properties: {
           refined: { type: "string", description: "표현만 다듬은 대본" },
           questions: {
             type: "array",
-            items: { type: "string" },
-            description: "예상 질문 3~5개",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string", description: "예상 질문 문장" },
+                category: {
+                  type: "string",
+                  enum: ["data", "method", "practical", "general"],
+                  description: "질문 성격 카테고리",
+                },
+                intent: { type: "string", description: "질문 의도 요약" },
+              },
+              required: ["question"],
+            },
+            description: "예상 질문 3~5개 (의도와 카테고리 포함)",
           },
         },
         required: ["refined", "questions"],
       },
       maxTokens: 3000,
     }),
+    mode,
   );
 }
 
@@ -503,9 +605,17 @@ const MODE_GUIDE: Record<string, string> = {
 - 빠뜨리면 안 되는 것: 정해진 것, 담당자, 날짜.
 - 원문의 3분의 1 이하로 줄인다. 없던 내용을 넣지 않는다.`,
   email: `교수님께 보낼 질문 메일로 바꾼다.
-- 인사 → 소속과 이름 → 용건 → 맺음 순서로 적는다.
+- 맨 첫 줄에 "제목: [소속/팀명] 용건 요약" 형식으로 제목을 붙인다.
+- 본문은 인사 → 소속과 이름 → 용건 → 정중한 맺음 순서로 적는다.
 - 소속·이름을 모르면 "[소속]", "[이름]" 처럼 채울 자리를 남긴다. 지어내지 않는다.
 - 묻고 싶은 내용 자체는 바꾸지 않는다.`,
+  peer_request: `팀원에게 자료 제출이나 피드백을 요청/독려하는 문장으로 바꾼다.
+- 원문의 요청 내용, 기한(시각), 대상자를 절대 빠뜨리거나 미루지 않는다.
+- 감정 소모를 줄이고, 부담스럽지 않으면서도 기한과 요구가 분명한 정중한 협업 어조로 다듬는다.
+- 없던 마감이나 추가 요구를 지어내지 않는다.`,
+  notice: `단톡방에 올릴 팀 공지문으로 바꾼다.
+- [팀 프로젝트 공지] 머리말과 함께 일시, 장소, 안건, 준비물 등 핵심 정보를 불릿(•) 기호와 줄바꿈으로 가독성 높게 구조화한다.
+- 원문에 언급된 사실만 담고, 없는 정보를 지어내지 않는다.`,
 };
 
 /** 문장 변환의 지시. 쿠션 번역기와 같은 이유로 **한 곳에만** 둔다. */

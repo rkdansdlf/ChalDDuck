@@ -1,8 +1,11 @@
 "use server";
 
 import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
+// ⚠️ **양쪽 다 필요하다.** 2단계-a1 의 팀 문맥 조회와 main 이 추가한 `PresentMode` 가 같은
+// 자리를 썼다. 하나를 고르면 다른 쪽이 조용히 사라진다 — 특히 팀 문맥을 잃으면 **담당자
+// 매칭이 무의미해진다**(매칭할 명단이 없으므로 전부 `null` 이 된다).
 import { getCurrentTeam, getTeamToolContext } from "@/data/api";
-import type { AiResult, ClerkDraft, PresentDraft, ResearchResult } from "@/lib/types";
+import type { AiResult, ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
 import { aiUsageCsv, aiUsageToday, type AiUsageToday } from "@/server/ai/limit";
 import { teamAiWeeklySummary, type TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { runTool } from "@/server/ai/run";
@@ -67,8 +70,11 @@ export async function searchResearch(query: string): Promise<AiResult<ResearchRe
 }
 
 /** 표현만 다듬고 내용을 새로 지어내지 않는다. */
-export async function refineScript(raw: string): Promise<AiResult<PresentDraft>> {
-  return runTool("present", () => ai.refineScript(raw));
+export async function refineScript(
+  raw: string,
+  mode: PresentMode = "academic",
+): Promise<AiResult<PresentDraft>> {
+  return runTool("present", () => ai.refineScript(raw, mode));
 }
 
 /**

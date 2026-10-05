@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { AppBar, Body, Btn, Field, Icon, IconButton, Input, Note, Undecided } from "@/components/ui";
+import { AppBar, Body, Btn, Field, Icon, IconButton, Input, Note } from "@/components/ui";
 import { ACCEPT, humanSize } from "@/features/drive/file-rules";
 import { putToStorage, REJECTION_TEXT } from "@/features/drive/use-uploads";
 import type { ContribKind } from "@/lib/types";
@@ -130,10 +130,11 @@ export function ContribAddScreen({ kind }: { kind: ContribKind }) {
           {saving ? "추가하는 중" : "추가하고 확인 요청하기"}
         </Btn>
 
-        <Undecided>
-          근거 파일의 형식·용량 제한이 기획안에 없어 드라이브와 같은 규칙(문서·이미지·PPT·PDF, 50MB)을
-          따릅니다. 팀 드라이브 용량(2GB)에 근거 파일을 포함할지도 정해지지 않았습니다.
-        </Undecided>
+        {/* 정책 확정 (2026-10-05):
+            근거 파일의 한 장당 규칙(문서·이미지·PPT·PDF, 50MB)은 드라이브와 같습니다.
+            다만 팀 저장 용량 2GB 은 근거 파일을 세지 않습니다 —
+            용량을 세는 곳(teamUsedBytes)이 제출함의 버전을 합산하기 때문입니다 (server/drive/usage.ts).
+            즉 2GB 는 「제출함 파일의 한도」 이고 근거 파일은 팀 전체로 무제한입니다. */}
       </Body>
     </>
   );

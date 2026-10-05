@@ -1,7 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { canConfirm, isResolutionWay, RESOLUTION_WAYS } from "@/features/contrib/resolution";
+import {
+  canConfirm,
+  canWithdrawDispute,
+  isResolutionWay,
+  RESOLUTION_WAYS,
+  WITHDRAWN_DISPUTE,
+} from "@/features/contrib/resolution";
 import type { ContribKindKey, TeamCheckRecord } from "@/lib/types";
 import {
   canResolveContrib,
@@ -208,6 +214,12 @@ export async function disputeContribRecord(
    * 것은 잠깐 동안일 뿐이고(커밋과 동시에 풀린다), 아무것도 읽지 않은 채로 되돌아가므로
    * 정보가 새어 나가지 않는다.
    */
+  /**
+   * ⚠️ **이 잠금은 실제로 그 일을 한다** — 2026-09-28 에 확인했다. 이 줄을 지우고 같은 검사를
+   * 돌리면 **두 사람이 동시에 달아 의견이 2 개 붙는다**(`npm run test:contrib`). `ContribDispute`
+   * 에 유니크 제약이 없으므로 **이 잠금이 유일한 방어선**이고, 없으면 코드가 막으려는 상황이 그대로
+   * 열린다. 주석으로만 알고 있었을 때는 이 사실을 확인할 방법이 없었다.
+   */
   const outcome = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "ContribRecord" WHERE "id" = ${recordId} FOR UPDATE`;
 
@@ -251,6 +263,89 @@ export async function disputeContribRecord(
     to: [outcome.memberId],
     kind: "contrib-dispute",
     title: `${me.name}님이 기록에 의견을 남겼습니다`,
+    body: outcome.title,
+    href: "/team/contrib/members",
+    actorId: me.id,
+  });
+
+  revalidatePath("/team", "layout");
+  revalidatePath("/home");
+  return "ok";
+}
+
+/**
+ * 내가 남긴 반대를 철회한다 — 2026-10-03 결정.
+ *
+ * ## 왜 이 길이 없었는지, 그리고 무엇이 갇혔는지
+ *
+ * 예전에는 반대를 남길 수는 있고 거두는 길은 없었다. 그래서 사람이 마음이 바뀌어도 **영영
+ * "의견 차이" 에 묶였다** — 기록 주인과 정리하기 전까지, 그리고 **의견이 오염된 채로 남는다.**
+ * "정정할 수 있는 길은 있는데 반대표철은 없다" 는 것이 가장 먼저 나온 지적이었다 — 그래서
+ * 그대로 믿고 만들었다.
+ *
+ * ## 철회도 **흔적을 남긴다** — 지우지 않는다
+ *
+ * 반대는 지우지 않는다. 철회까지 지우면 "한 말이었다가 거뒀다" 와 "한 말이 없었다" 가 팀
+ * 입장에서 같은 것이 되어 **남긴 사람의 책임을 없애는 것**이다. 그래서 이력에
+ * `WITHDRAWN_DISPUTE` 한 줄을 남기고 **지금 떠 있는 의견만** 비운다.
+ *
+ * 그 한 줄은 **사람이 보낸 값을 쓰지 않는다.** 서버가 고정값을 적는다 — 사람이 "철회"라고
+ * 적은 것과 시스템이 남긴 것을 구분할 수 있어야 하기 때문이다.
+ *
+ * ## 철회할 수 있는 사람은 **남긴 사람만**이다
+ *
+ * 기록 주인은 정리를 함께 하지만 철회는 하지 않는다. 주인이 반대를 대신 거두면 그건 철회가
+ * 아니라 정리다 — **`canWithdrawDispute`** 가 이 구분을 한 곳에 둔다.
+ *
+ * ## 같은 모양으로 잠근다
+ *
+ * 반대를 남길 때와 똑같이 **기록 행을 잠근 안에서** 판단하고 적는다. 잠그지 않으면 철회와
+ * 정리가 겹쳐 한쪽이 조용히 지워진다 — 그때 사라진 쪽은 복구할 수 없다.
+ */
+export async function withdrawContribDispute(
+  recordId: string,
+): Promise<"ok" | "gone" | "notYours" | "nothing"> {
+  const me = await requireSessionMember();
+
+  const outcome = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "ContribRecord" WHERE "id" = ${recordId} FOR UPDATE`;
+
+    const record = await tx.contribRecord.findFirst({
+      where: { id: recordId, member: { teamId: me.teamId } },
+      select: { id: true, memberId: true, title: true, dispute: true, disputedById: true, resolution: true },
+    });
+    if (!record) return { status: "gone" as const };
+    // **지금 떠 있는 의견이 없다** — 철회할 것도 없다. 정리된 뒤에 남은 옛 반대를 다시 거둘
+    // 수는 없다(그래서 그건 정리이지 철회가 아니다).
+    if (!record.dispute || record.resolution) return { status: "nothing" as const };
+    if (!canWithdrawDispute({ disputedById: record.disputedById, meId: me.id })) {
+      return { status: "notYours" as const };
+    }
+
+    // 흔적을 남긴다 — 사람의 문장이 아니라 **고정된 값**이다.
+    await tx.contribDispute.create({ data: { recordId: record.id, byId: me.id, text: WITHDRAWN_DISPUTE } });
+    // 결론도 함께 비운다 — 반대가 없는데 정리가 남아 있으면, 그 정리는 무엇을 정리한 것인지
+    // 알 수 없다.
+    await tx.contribRecord.update({
+      where: { id: record.id },
+      data: { dispute: null, disputedById: null, resolution: null },
+    });
+    // **상태도 같은 안에서 맞춘다.** 밖에서 다시 읽으면 그 사이에 다른 사람이 새 반대를 달아
+    // 그게 지워질 수 있다.
+    await refreshContribState(record.id, tx);
+
+    return { status: "ok" as const, title: record.title, memberId: record.memberId };
+  });
+
+  if (outcome.status === "gone") throw new Error("기록을 찾을 수 없습니다.");
+  if (outcome.status !== "ok") return outcome.status;
+
+  // **남긴 사람이 거뒀다**는 것은 기록 주인이 알아야 한다 — 정리와 달리 상대가 스스로 물러선
+  // 것이고, 그 사람이 "의견 차이" 가 닫힌 이유를 알 수 있어야 한다.
+  await notify({
+    to: [outcome.memberId],
+    kind: "contrib-dispute",
+    title: `${me.name}님이 남기신 반대를 철회했습니다`,
     body: outcome.title,
     href: "/team/contrib/members",
     actorId: me.id,

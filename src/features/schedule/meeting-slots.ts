@@ -77,6 +77,36 @@ function blockedMap(members: SlotSource[], week: WeekKey) {
   return blockedAt;
 }
 
+/**
+ * 못 오는 사람을 **사유로만** 말한다. 이름을 붙이지 않는다.
+ *
+ * ## 왜 이름을 뺐나 — 2026-10-03 결정
+ *
+ * 후보는 **팀 전체가 보는 화면**이다. 여기서 "박지호 · 시험" 이라고 적히면 두 사람이 함께
+ * 알게 되는 정보가 있다. 직접 입력 사유는 이미 `CUSTOM_BUSY_KIND` 로 "개인 일정" 을 내보내고
+ * 있었는데, **기본 사유만 이름이 붙어 새고 있었다** — 같은 규칙의 절반만 적용된 상태였다.
+ *
+ * "수업" 은 드러낼 만하고 "시험" 은 그렇지 않다. **사유를 고르는 사람이 고른 값이지, 알릴
+ * 대상이 아니기 때문에** 사유는 보되 이름은 뺀다.
+ *
+ * ## 인원이 있으면 같이 말한다
+ *
+ * 이름을 빼면 "못 오는 사람" 의 **몇 명인지** 가 사라져 후보의 쓸모가 줄어든다. 그래서 같은
+ * 사유는 모아서 **명수** 를 붙인다 — `수업 2, 시험 1`. 이름을 알지 못해도 몇 명을 빼야 하는지는
+ * 알아야 그 시간에 회의를 잡을지 결정할 수 있다.
+ */
+export function blockedByReason(blocked: Array<{ kind: string }>): string | null {
+  if (blocked.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const x of blocked) {
+    const label = BUSY_LABEL.get(x.kind) ?? x.kind;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([label, n]) => (n > 1 ? `${label} ${n}` : label))
+    .join(", ");
+}
+
 /** 칸 하나를 후보 모양으로. 목록 후보와 팀 겹쳐보기에서 직접 고른 칸이 같은 모양이어야 한다. */
 function toSlot(day: number, hour: number, total: number, blocked: Array<{ name: string; kind: string }>) {
   // "9:00" 이 아니라 "09:00" — 목록에서 자릿수가 흔들리면 줄이 들쭉날쭉해 보인다.
@@ -87,9 +117,7 @@ function toSlot(day: number, hour: number, total: number, blocked: Array<{ name:
     time: `${at(start)} – ${at(start + 1)}`,
     available: total - blocked.length,
     total,
-    blockedBy: blocked.length
-      ? blocked.map((x) => `${x.name} · ${BUSY_LABEL.get(x.kind) ?? x.kind}`).join(", ")
-      : null,
+    blockedBy: blockedByReason(blocked),
   };
 }
 
@@ -157,9 +185,10 @@ export function computeMeetingSlots(
 /**
  * 후보 한 칸에 못 오는 사람들.
  *
- * 후보 행에는 못 오는 사람이 문장으로만 남아 있어(`blockedBy`) 사람을 가리킬 수 없다.
+ * 후보 행에는 **사유만** 남아 있어(`blockedBy`) 사람을 가리킬 수 없다. 그게 의도다 —
+ * 사유는 팀 전체가 보지만 **누구 때문인지는 팀 전체가 알 필요가 없다**(위 `blockedByReason`).
  * 알림처럼 **누구에게** 보낼지가 필요할 때는 시간표에서 다시 센다 — `computeMeetingSlots`
- * 와 같은 규칙(그 주의 요일·시간대 칸 하나에 걸친 안 되는 시간)이다.
+ * 와 같은 규칙(그 주의 요일·시간대 칸 하나에 걸친 안 되는 시간)이다. 이름은 여기서 다시 쓴다.
  */
 export function membersBlockedAt<M extends SlotSource>(
   members: M[],

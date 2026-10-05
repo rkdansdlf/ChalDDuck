@@ -122,7 +122,12 @@ export type MeetingSlot = {
   available: number;
   /** 팀 전체 인원. */
   total: number;
-  /** 못 오는 사람과 사유("박지호 · 아르바이트"). 전원 가능하면 `null`. */
+  /**
+   * 못 오는 **사유**와 몇 명인지("수업 2, 시험 기간"). 전원 가능하면 `null`.
+   *
+   * **이름은 없다** — 2026-10-03 결정. 후보는 팀 전체가 보는 화면이라 누구·무엇인지가 함께
+   * 새는 정보가 된다. 누군가 몇 명을 빼는지(가용 인원)와 왜 빼는지(사유)만 남긴다.
+   */
   blockedBy: string | null;
 };
 
@@ -306,11 +311,15 @@ export type CushionLevel = {
   desc: string;
 };
 
+/** 27 상황별 문장 변환의 모드 키 */
+export type SentenceModeKey = "summary" | "email" | "peer_request" | "notice";
+
 /** 27 상황별 문장 변환의 모드. 쿠션 번역기(말투)와는 다른 기능이다. */
 export type SentenceMode = {
-  key: string;
+  key: SentenceModeKey | string;
   name: string;
   desc: string;
+  icon?: string;
 };
 
 /** AI 서기가 회의 메모에서 뽑은 할 일 후보. **초안일 뿐 그대로 반영되지 않는다.** */
@@ -344,6 +353,9 @@ export type ClerkDraft = {
   candidates: ClerkCandidate[];
 };
 
+/** 출처의 객관적 성격 (점수가 아닌 분류 속성). */
+export type ResearchSourceKind = "academic" | "stats" | "news" | "web";
+
 /** 리서처 결과. **출처가 없는 결과는 보여주지 않는다.** 적합도 점수는 만들지 않는다. */
 export type ResearchResult = {
   id: string;
@@ -356,12 +368,40 @@ export type ResearchResult = {
    * 샘플 결과에는 없어서 `null` 이 될 수 있다 — 화면은 그때 링크를 만들지 않는다.
    */
   url: string | null;
+  /** 발행 연도 또는 시점 (예: "2024", "2023.11"). 알 수 없으면 null. */
+  year?: string | null;
+  /** 출처 성격 분류 (학술·통계·언론·웹). */
+  kind?: ResearchSourceKind;
+  /** 과제·보고서용 표준 참고문헌 인용 표기. */
+  citation?: string | null;
+  /** 이어서 탐색할 만한 연관 주제/질의어 목록. */
+  relatedQueries?: string[];
+};
+
+/** 26 발표 지원의 발표 목적/상황별 정제 모드. */
+export type PresentMode = "academic" | "conversational" | "concise";
+
+/** 질문의 성격/의도 카테고리 (학생의 답변 준비 방향 가이드). */
+export type QuestionCategory = "data" | "method" | "practical" | "general";
+
+/** 구조화된 예상 질문. 답을 대신 쓰지 않고 질문 의도와 카테고리만 제공한다. */
+export type PresentQuestion = {
+  id: string;
+  question: string;
+  category?: QuestionCategory;
+  intent?: string; // 질문 의도 (예: "표본의 대표성 검증", "현실적 적용 가능성")
 };
 
 /** 발표 지원 결과 — 표현만 다듬고 내용을 새로 지어내지 않는다. */
 export type PresentDraft = {
   refined: string;
   questions: string[];
+  /** 질문 의도 및 카테고리가 구조화된 예상 질문 목록 */
+  structuredQuestions?: PresentQuestion[];
+  /** 다듬은 대본의 예상 발표 소요 시간(초 단위). */
+  estimatedSeconds?: number;
+  /** 적용된 발표 정제 모드. */
+  mode?: PresentMode;
 };
 
 /**
@@ -702,6 +742,16 @@ export type TeamCheckRecord = {
    * 거치지 않고 POST 로 바로 불릴 수 있다.
    */
   iCanResolve: boolean;
+  /**
+   * **내가 지금 떠 있는 반대를 남긴 사람인가** — 철회 버튼의 조건(`canWithdrawDispute`).
+   *
+   * `iCanResolve` 로 알 수 없다. 그 값은 기록 주인과 반대한 사람 **둘 다** true라, 그걸로
+   * 철회 버튼을 켜면 주인이 남의 반대를 대신 거두게 된다 — 그건 철회가 아니라 정리다.
+   *
+   * `disputedById` 를 그대로 주지 않고 판정 결과를 주는 이유가 이것이다. 화면이 두 id 를
+   * 비교해 규칙을 다시 짜면 **어느 쪽이 사실인지 알 수 없다.**
+   */
+  iFiledDispute: boolean;
   /** 확인 상태를 사람 말로 적은 것("3명 확인", "이서연 확인 대기"). */
   by: string;
   /** 확인할 때 열어 볼 근거 파일. 없으면 null. */

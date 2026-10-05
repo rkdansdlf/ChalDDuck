@@ -1,0 +1,201 @@
+/**
+ * 기여 의견 동시성 검사 — **같은 순간에 두 사람이 달라도 하나만 붙어야 한다.**
+ *
+ * ## 왜 이게 필요한가
+ *
+ * `contrib.ts` 의 주석은 이 버그의 모양을 서술한다 —
+ *
+ * > "아직 정리되지 않은 의견이 있으면 기다린다" 는 판단을 읽기만 하고, 6줄 뒤 트랜잭션에서 적었다.
+ * > 그 사이가 구멍이었다 — **두 사람이 동시에 달라고 하면 둘 다 "비어 있다" 를 보고 둘 다 적고.**
+ * > `ContribDispute` 에 유니크 제약이 없어서 의견 두 개가 붙는다.
+ *
+ * **유니크 제약이 없다**는 것이 이 규칙의 전부다. 즉 `ContribRecord` 행의 `FOR UPDATE` 가
+ * **유일한 방어선**이고, 그 잠금이 실제로 그 일을 하는지 아무도 확인하지 않았다.
+ *
+ * 오늘 하루에 같은 모양을 세 번 봤다 — 드라이브 팀 잠금(실제로 버그가 났고), AI 한도 잠금
+ * (괜찮았지만 근거를 잘못 읽을 뻔했다), 팀장 선출 잠금(경합은 실재하나 한계가 우회해 지웠다).
+ * **주석이 아니라 검사로 확인해야 한다는 것을 세 번 배웠다.**
+ *
+ * ## 검사하는 것
+ *
+ * 1. **두 명이 같은 순간에 달라도 하나만 붙는다** — 그리고 막힌 쪽은 `taken` 이라고 말한다.
+ * 2. `ContribDispute` 행이 **정확히 하나**다 — 유니크 제약이 없으므로 이것이 곧 잠금의 증거다.
+ * 3. 남의 팀 기록에는 손대지 못한다 · 자기 기록에는 달 수 없다.
+ * 4. **덮어쓰지 않는다** — 앞선 의견과 이미 합의된 정정 내용을 지우지 않는다(17 화면이 말하는
+ *    "한쪽 말로 덮지 않고 둘 다 남깁니다").
+ *
+ *   npm run test:contrib
+ */
+import { randomUUID } from "node:crypto";
+
+type Session = {
+  as(token: string): void;
+  nobody(): void;
+  reset(): void;
+  clearAll(): void;
+};
+
+export async function run({ session }: { session: Session }): Promise<boolean> {
+  const { db } = await import("../../src/server/db.js");
+  const contrib = await import("../../src/server/actions/contrib.js");
+
+  let failed = 0;
+  let passed = 0;
+  function check(what: string, got: unknown, want: unknown): void {
+    const same = JSON.stringify(got) === JSON.stringify(want);
+    passed += 1;
+    if (same) console.log(`  ✓ ${what}`);
+    else {
+      failed += 1;
+      console.log(`  ✗ ${what}\n      기대 ${JSON.stringify(want)}\n      실제 ${JSON.stringify(got)}`);
+    }
+  }
+
+  const suffix = randomUUID().slice(0, 6).toUpperCase();
+  const teamIds: string[] = [];
+
+  async function makeTeam(label: string) {
+    session.reset();
+    const team = await db.team.create({
+      data: {
+        name: `기여 검사 ${label} ${suffix}`,
+        course: "검증",
+        code: `CD-${randomUUID().slice(0, 6).toUpperCase()}`,
+      },
+    });
+    teamIds.push(team.id);
+    const owner = await db.member.create({
+      data: { teamId: team.id, name: `김민준${suffix}`, isLeader: true },
+    });
+    const other = await db.member.create({ data: { teamId: team.id, name: `이서연${suffix}` } });
+    const third = await db.member.create({ data: { teamId: team.id, name: `박도윤${suffix}` } });
+    const token = async (memberId: string) => {
+      const t = randomUUID();
+      await db.session.create({
+        data: { token: t, memberId, expiresAt: new Date(Date.now() + 3600_000) },
+      });
+      return t;
+    };
+    return {
+      id: team.id,
+      owner,
+      other,
+      third,
+      ownerToken: await token(owner.id),
+      otherToken: await token(other.id),
+      thirdToken: await token(third.id),
+    };
+  }
+
+  /** 다른 팀원이 쓴 기여 기록 하나. */
+  async function makeRecord(teamId: string, ownerId: string, title: string) {
+    return db.contribRecord.create({
+      data: { memberId: ownerId, kind: "self", title, detail: "내용", source: "self" },
+    });
+  }
+
+  const disputeCount = (recordId: string) =>
+    db.contribDispute.count({ where: { recordId } });
+
+  async function as<T>(token: string, work: () => Promise<T>): Promise<T> {
+    session.as(token);
+    try {
+      return await work();
+    } finally {
+      session.nobody();
+    }
+  }
+
+  try {
+    console.log("\n기여 의견 동시성 검사 (실제 DB · 실제 잠금)");
+
+    /* ── 1) 두 명이 같은 순간에 달라도 하나만 ────────────────── */
+    console.log("\n두 사람이 같은 순간에 달라도 하나만 붙는다");
+    const A = await makeTeam("경합");
+    const recA = await makeRecord(A.id, A.owner.id, `논문 하나 ${suffix}`);
+
+    // **같은 순간에** 두 사람이 서로 다른 의견으로 달라고 한다.
+    const racers = await Promise.all([
+      as(A.otherToken, () => contrib.disputeContribRecord(recA.id, "결과가 틀렸어요")),
+      as(A.thirdToken, () => contrib.disputeContribRecord(recA.id, "출처를 못 찾겠어요")),
+    ]);
+    const oks = racers.filter((r) => r === "ok").length;
+    const takens = racers.filter((r) => r === "taken").length;
+    check("하나만 붙는다", oks, 1);
+    check("나머지는 'taken' 이라고 말한다", takens, 1);
+    // ⚠️ **이 한 줄이 이 규칙의 전부다.** `ContribDispute` 에 유니크 제약이 없으므로
+    // 잠금이 없으면 **행이 둘**이 되고, 어느 것도 막지 못한다.
+    check("의견이 정확히 하나 남는다", await disputeCount(recA.id), 1);
+
+    const row = await db.contribRecord.findFirstOrThrow({
+      where: { id: recA.id },
+      select: { dispute: true, disputedById: true, resolution: true, state: true },
+    });
+    truthyCheck(check, "기록에는 붙은 의견이 남는다", Boolean(row.dispute));
+    check("아직 정리되지 않았다", row.resolution, null);
+    check("상태는 의견 차이(disputed) 다", row.state, "disputed");
+
+    /* ── 2) 자기 기록에는 달 수 없다 ─────────────────────────── */
+    console.log("\n자기 기록에는 달 수 없다");
+    const mine = await as(A.ownerToken, () => contrib.disputeContribRecord(recA.id, "제 생각엔"));
+    check("자기 기록은 'mine' 이다", mine, "mine");
+
+    /* ── 3) 남의 팀 기록 ─────────────────────────────────────── */
+    console.log("\n남의 팀 기록에는 손대지 못한다");
+    const B = await makeTeam("타 팀");
+    const recB = await makeRecord(B.id, B.owner.id, `남의 논문 ${suffix}`);
+    let thrown = "";
+    try {
+      await as(A.otherToken, () => contrib.disputeContribRecord(recB.id, "의견"));
+      thrown = "(막지 않음)";
+    } catch (e) {
+      thrown = (e as Error).message;
+    }
+    check("남의 팀 기록은 막힌다", thrown.includes("기록을 찾을 수 없습니다"), true);
+    check("남의 기록에 의견이 붙지 않는다", await disputeCount(recB.id), 0);
+
+    /* ── 4) 덮어쓰지 않는다 ─────────────────────────────────── */
+    console.log("\n정리된 뒤 다시 달아도 앞선 것을 지우지 않는다");
+    const C = await makeTeam("덮어쓰기");
+    const recC = await makeRecord(C.id, C.owner.id, `정리할 논문 ${suffix}`);
+    await as(C.otherToken, () => contrib.disputeContribRecord(recC.id, "첫 의견"));
+    // 팀장이 정리한다 — 그러면 다시 달 수 있다.
+    // 기록의 주인이 정리한다 — 결론을 고를 수 있는 사람이어야 한다.
+    const resolved = await as(C.ownerToken, () =>
+      contrib.resolveContribDispute(recC.id, "accept"),
+    );
+    check("정리가 된다", resolved, "ok");
+    const afterResolve = await db.contribRecord.findFirstOrThrow({
+      where: { id: recC.id },
+      select: { dispute: true, resolution: true },
+    });
+    check("정리되었다", Boolean(afterResolve.resolution), true);
+    const second = await as(C.thirdToken, () => contrib.disputeContribRecord(recC.id, "두 번째 의견"));
+    check("정리된 뒤 다시 달 수 있다", second, "ok");
+    const recNow = await db.contribRecord.findFirstOrThrow({
+      where: { id: recC.id },
+      select: { dispute: true, disputedById: true },
+    });
+    // **앞선 의견은 지워지지 않는다** — `ContribDispute` 행으로 남아 있다.
+    check("앞선 의견이 행으로 남는다", await disputeCount(recC.id), 2);
+    check("기록의 dispute 칸은 뒤 것이 남는다", recNow.dispute, "두 번째 의견");
+  } finally {
+    for (const teamId of teamIds) {
+      await db.member.deleteMany({ where: { teamId } });
+      await db.team.delete({ where: { id: teamId } });
+    }
+    await db.$disconnect();
+  }
+
+  console.log(
+    failed === 0
+      ? `\n모두 통과 — ${passed}건 통과, 0건 실패\n`
+      : `\n${failed}건 실패 / ${passed}건 중\n`,
+  );
+  return failed === 0;
+}
+
+/** 참/거짓을 사람이 읽는 문장으로 확인한다. */
+function truthyCheck(check: (w: string, g: unknown, e: unknown) => void, what: string, got: boolean) {
+  check(what, got, true);
+}

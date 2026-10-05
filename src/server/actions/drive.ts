@@ -738,3 +738,149 @@ export async function getPreviewUrl(versionId: string, fileId?: string): Promise
   }
   return data?.signedUrl ?? null;
 }
+
+/**
+ * 리서처 등 도구에서 저장할 대상 제출함 목록을 조회한다.
+ */
+export async function getMyTeamSubmissionBoxesForSelect(): Promise<
+  Array<{ id: string; name: string; role: string }>
+> {
+  const me = await requireSessionMember();
+  const boxes = await db.submissionBox.findMany({
+    where: { teamId: me.teamId },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" },
+  });
+  return boxes;
+}
+
+/**
+ * AI 리서치 결과를 선택한 제출함에 PDF 문서로 저장한다.
+ */
+export async function saveResearchToDrive(
+  boxId: string,
+  research: {
+    title: string;
+    source: string;
+    snippet: string;
+    url?: string | null;
+    year?: string | null;
+    citation?: string | null;
+  },
+): Promise<
+  | { ok: true; fileName: string; boxName: string; boxId: string }
+  | { ok: false; error: string }
+> {
+  try {
+    const me = await requireSessionMember();
+
+    const box = await db.submissionBox.findFirst({
+      where: { id: boxId, teamId: me.teamId },
+      select: { id: true, name: true },
+    });
+    if (!box) return { ok: false, error: "제출함을 찾을 수 없습니다." };
+
+    const cleanTitle = research.title.replace(/[\\/:*?"<>|]/g, " ").trim().slice(0, 30) || "자료";
+    const fileName = `[자료] ${cleanTitle}.pdf`;
+    const mimeType = "application/pdf";
+    const kind = "pdf";
+
+    const pdfBody = makeMinimalPdfText(
+      `${research.title}\n출처: ${research.source}${research.year ? ` (${research.year})` : ""}\n${research.snippet}\n${research.url ?? ""}`,
+    );
+    const bytes = pdfBody.length;
+
+    const result = await withTeamBoxLock(me.teamId, box.id, async (tx) => {
+      const target = await tx.submittedFile.findFirst({ where: { boxId: box.id, name: fileName } });
+      const file =
+        target ?? (await tx.submittedFile.create({ data: { boxId: box.id, name: fileName, kind } }));
+      const versions = await tx.fileVersion.findMany({ where: { fileId: file.id }, select: { label: true } });
+      const label = nextVersionLabel(versions);
+
+      const versionId = randomUUID();
+      const storagePath = `${me.teamId}/${file.id}/${versionId}`;
+
+      if (isStorageConfigured()) {
+        const { error: uploadError } = await storage().upload(storagePath, pdfBody, {
+          contentType: mimeType,
+          upsert: true,
+        });
+        if (uploadError) {
+          console.error("[drive] 리서치 PDF 업로드 실패:", uploadError);
+        }
+      }
+
+      const version = await tx.fileVersion.create({
+        data: {
+          id: versionId,
+          fileId: file.id,
+          label,
+          authorId: me.id,
+          note: `AI 리서처에서 저장한 참고자료 (${research.source})`,
+          size: humanSize(bytes),
+          kind,
+          storagePath: isStorageConfigured() ? storagePath : null,
+          bytes,
+          mimeType,
+        },
+      });
+
+      await recordDriveVersionContrib(tx, {
+        versionId: version.id,
+        fileName: file.name,
+        versionLabel: label,
+        authorId: me.id,
+        bytes,
+        storagePath: version.storagePath ?? undefined,
+        mimeType,
+      });
+
+      return { fileName: file.name, boxName: box.name, boxId: box.id };
+    });
+
+    await notify({
+      to: await teamMemberIds(me.teamId),
+      actorId: me.id,
+      kind: "drive",
+      title: `${me.name}님이 참고자료를 드라이브에 저장했습니다`,
+      body: `${result.boxName} · ${result.fileName}`,
+      href: `/drive/${box.id}`,
+    });
+
+    revalidatePath("/drive", "layout");
+    return { ok: true, fileName: result.fileName, boxName: result.boxName, boxId: result.boxId };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "드라이브 저장에 실패했습니다.",
+    };
+  }
+}
+
+function makeMinimalPdfText(text: string): Buffer {
+  const safeText = text.replace(/[()\\\r\n]/g, " ").slice(0, 200);
+  const stream = `BT /F1 12 Tf 50 700 Td (${safeText}) Tj ET`;
+  const pdf = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length ${stream.length} >>
+stream
+${stream}
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000244 00000 n 
+0000000318 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+${400 + stream.length}
+%%EOF`;
+  return Buffer.from(pdf, "utf-8");
+}

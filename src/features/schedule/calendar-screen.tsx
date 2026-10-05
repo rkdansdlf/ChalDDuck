@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import {
   AppBar,
   Body,
-  Btn,
   Chip,
   Icon,
   Panel,
@@ -414,7 +413,6 @@ function EventCard({
 }) {
   const isMeeting = event.type === "meeting";
   const isBox = event.type === "box";
-  const isTask = event.type === "task";
 
   const typeLabel = isMeeting ? "회의" : isBox ? "제출함" : "할 일";
   const typeTone = isMeeting ? "ok" : isBox ? "warn" : "n";

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { db, check, truthy, fail, readCode, finish } from "./db-test-base.mjs";
+import { check, db, fail, finish, makeIsolatedTeam, readCode, truthy } from "./db-test-base.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { stripComments } from "../scripts/strip-comments.mjs";
@@ -26,7 +26,6 @@ import {
   voidedText,
 } from "../src/features/roles/roster-model.js";
 import {
-  AI_POLICY,
   CUSHION_DEFAULT_MODE,
   CUSHION_LEVELS,
   AI_TOOLS,
@@ -76,7 +75,7 @@ import {
   todayInSeoul,
   weekName,
 } from "../src/features/schedule/week.js";
-import { computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
+import { blockedByReason, computeMeetingSlots } from "../src/features/schedule/meeting-slots.js";
 import { effectiveStage, isPastDeadline } from "../src/features/schedule/meeting-model.js";
 import { softenProfanity } from "../src/lib/profanity.js";
 import {
@@ -190,11 +189,17 @@ import {
 import {
   RESOLUTION_WAYS,
   canConfirm,
+  canWithdrawDispute,
   confirmBlockReason,
   isResolutionWay,
+  isWithdrawnDispute,
   unresolvedAfter,
+  WITHDRAWN_DISPUTE,
 } from "../src/features/contrib/resolution.js";
 import { getPublicReport } from "../src/server/contrib/report.js";
+import { REJOIN_EXPIRED, REJOIN_EXPIRED_AFTER_DAYS } from "../src/lib/rejoin-expire.js";
+import { sweepExpiredRejoins } from "../src/server/invite/expire.js";
+import { randomUUID } from "node:crypto";
 
 /**
  * 낮 투표의 적용 로직은 액션 밖 모듈에 있다(2026-09-30).
@@ -417,9 +422,7 @@ console.log("\n한자 인코딩");
  * (`docs/product-language.md`). 역할 쪽만 `안 받기` 로 바꿨으므로, 전역 금지로 두면
  * 엉뚱한 화면까지 망가뜨리는 검사가 된다. 예외가 있다는 사실이 곧 raw grep 이 못 가는 이유다.
  */
-const LEGACY_PRODUCT_COPY = [
-  { legacy: "기여도", canonical: "기여 기록" },
-  { legacy: "합의한 역할", canonical: "확정된 역할" },
+const LEGACY_PRODUCT_COPY: { legacy: string; canonical: string; comments?: true }[] = [
   { legacy: "수락하기", canonical: "받기" },
   { legacy: "순화해서 읽기", canonical: "읽기 도움" },
   { legacy: "읽기 순화 설정", canonical: "읽기 도움 설정" },
@@ -429,6 +432,21 @@ const LEGACY_PRODUCT_COPY = [
   // `거절하기` 와 `반대하기` 는 둘 다 넣지 않는다 — 재입장 승인이 `거절`, 팀 동의가
   // `반대` 로 **각각 맞는 용어**다. 전역 금지로 두면 다른 화면을 망가뜨리는 검사가 된다.
   // 역할 쪽만 `안 받기` 로 바꿨고, 그 옆의 `수락하기` 만 금지한다.
+
+  // ── 주석에서도 못 쓰는 말 ────────────────────────────────────
+  //
+  // **사용자 노출 검사만으로는 주석이 방치된다.** 화면 문구와 주석이 다른 말을 하게 되면
+  // 어느 쪽이 옳은지 알 수 없고, 어느 쪽을 믿어야 할지도 모른다 — 2026-10-03 에 주석만
+  // 옛말이 남아 있는 상태가 실제로 있었다(205줄을 고쳤다).
+  //
+  // **`순화` 계열은 여기에도 넣지 않는다.** 내부 식별자는 아직 `purify` 다
+  // (`purify-policy.ts` · `purify-stats.ts`). "내부 이름은 purify 인데 화면 이름은 읽기 도움"
+  // 을 설명하는 주석은 `순화` 라고 쓰는 것이 맞다. 금지하면 그럴 말할 곳이 없어진다.
+  //
+  // `거절` 도 넣지 않는다 — HTTP 401 이나 저장 실패를 "거절"이라고 부르는 곳이 있고,
+  // 그것을 `안 받기` 로 바꾸면 오독이다.
+  { legacy: "기여도", canonical: "기여 기록", comments: true },
+  { legacy: "합의한 역할", canonical: "확정된 역할", comments: true },
 ] as const;
 
 /**
@@ -478,19 +496,39 @@ function checkProductLanguage() {
     // 원문을 따로 읽어야 줄을 그대로 인용할 수 있다 — 지운 뒤엔 빈칸만 남는다.
     const original = readFileSync(file, "utf8");
     const stripped = stripComments(original);
-    for (const { legacy, canonical } of LEGACY_PRODUCT_COPY) {
-      let at = stripped.indexOf(legacy);
-      while (at !== -1) {
-        const line = stripped.slice(0, at).split("\n").length;
-        found.push({
+
+    /**
+     * `haystack` 에서 `term` 을 전부 찾아 낸다. 같은 말은 한 번만 기록한다.
+     *
+     * **앞에 한글이 붙은 경우는 건너뛴다.** `쓰기여도 다시`(`src/server/db.ts`) 의 일부가
+     * `기여도` 다. 주석을 원문에서 찾기 시작하면서 이 가짜양성이 생겼고, 그대로 두면
+     * 첫날부터 무력화된다 — 오탐이 있는 검사는 아무도 지키지 않는다.
+     */
+    const scan = (haystack: string, { legacy, canonical }: (typeof LEGACY_PRODUCT_COPY)[number]) => {
+      // `RegExp` 로 만든다 — `indexOf` 에는 앞 글자를 보는 방법이 없다.
+      const re = new RegExp(`(?<![가-힣])${legacy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g");
+      for (;;) {
+        const m = re.exec(haystack);
+        if (m === null) break;
+        const line = haystack.slice(0, m.index).split("\n").length;
+        const entry = {
           at: file.pathname.slice(root.pathname.length),
           line,
           text: original.split("\n")[line - 1]?.trim() ?? "",
           legacy,
           canonical,
-        });
-        at = stripped.indexOf(legacy, at + legacy.length);
+        };
+        if (!found.some((f) => f.at === entry.at && f.line === entry.line && f.legacy === legacy)) {
+          found.push(entry);
+        }
       }
+    };
+
+    for (const rule of LEGACY_PRODUCT_COPY) {
+      // 화면에 보이는 곳 — 주석을 지운 판에서 찾는다.
+      scan(stripped, rule);
+      // 주석 — 지우지 않은 판에서 찾는다. `comments` 가 켜진 말만.
+      if (rule.comments) scan(original, rule);
     }
   }
 
@@ -1054,6 +1092,57 @@ console.log("\n회의 후보 기간");
   check("후보는 후보 기간 안의 요일만 쓴다", new Set(slots.map((s) => s.day)).size <= 7, true);
 }
 
+console.log("\n회의 후보: 못 오는 사람은 사유로만 말한다");
+{
+  /**
+   * **이름을 뺀 것은 2026-10-03 결정이다.** 후보는 팀 전체가 보는 화면이라 "누구 · 시험"
+   * 이 함께 새는 정보가 된다. 직접 입력 사유는 이미 "개인 일정" 으로 가리고 있었는데 기본
+   * 사유만 이름이 붙어 있었다 — 같은 규칙의 절반만 적용된 상태였다.
+   *
+   * 이름을 빼면 **몇 명인지** 가 사라지므로 그 자리를 명수가 대신 찬다. 이름을 모르는 상태로도
+   * "수업 2" 라는 사실은 그 시간에 회의를 잡을지 결정하는 데 충분하다.
+   */
+  check("아무도 안 막으면 사유가 없다", blockedByReason([]), null);
+  check("한 명은 사유 하나만 말한다", blockedByReason([{ kind: "class" }]), "수업");
+  check("두 명이 다른 사유면 둘 다 말한다", blockedByReason([{ kind: "class" }, { kind: "exam" }]), "수업, 시험 기간");
+  // 같은 사유는 **명수로** — "수업, 수업" 은 사람이 아니다.
+  check("같은 사유는 명수로 합친다", blockedByReason([{ kind: "class" }, { kind: "class" }]), "수업 2");
+  check("세 명·두 사유", blockedByReason([{ kind: "class" }, { kind: "class" }, { kind: "exam" }]), "수업 2, 시험 기간");
+  // 모르는 사유 값도 숨기지 않는다 — 이름 대신 보이는 것이 낫다.
+  check("모르는 사유도 그대로 말한다", blockedByReason([{ kind: "unknown-kind" }]), "unknown-kind");
+
+  // 계산 경로에서도 이름이 새지 않는다 — 여기 안에서 새면 아래 순수 검사를 통과해도 화면이 새고,
+  // **어느 쪽이 놓였는지 알 수 없다.**
+  //
+  // 조심할 것이 셋이다. `startHour` 는 **인덱스**다(0 = 9시 … 9 = 18시). **오늘 날짜는 지나간
+  // 시간이 걸린다** — 지금 몇 시인지에 따라 막힌 칸이 사라진다. 그리고 **후보는 많이 되는
+  // 시간부터 5개만** 고른다 — 두 시간만 막으면 그 칸이 가용 인원이 적어서 **끝에 밀린다.**
+  // 그래서 아래는 **하루 종일** 막아 이 칸이 후보로 올라오게 한다. 하나라도 틀리면 검사가
+  // 조용히 통과해 버린다.
+  const later = candidateDates()[2];
+  truthy("후보 기간 안에 그 날짜가 있다", later !== undefined);
+  const at = later ? later.day : 0;
+  const allDay = (kind: string) => [{ day: at, startHour: 0, hours: 10, kind, weekOf: null }];
+  const withNames = later
+    ? computeMeetingSlots(
+        [
+          { name: "박지호", busyBlocks: allDay("exam") },
+          { name: "김민준", busyBlocks: allDay("class") },
+          { name: "이서준", busyBlocks: [] },
+          { name: "최하은", busyBlocks: [] },
+        ],
+        [later],
+      )
+    : [];
+  const blockedSlot = withNames.find((s) => s.blockedBy);
+  truthy("막힌 칸이 나온다", blockedSlot !== undefined);
+  check("계산 결과에 첫째 이름이 없다", blockedSlot?.blockedBy?.includes("박지호"), false);
+  check("계산 결과에 둘째 이름이 없다", blockedSlot?.blockedBy?.includes("김민준"), false);
+  // **명수는 남는다** — 이름을 빼면서 몇 명인지까지 지우면 후보의 쓸모가 없어진다.
+  check("막힌 사람이 몇 명인지는 남는다", blockedSlot?.available, 2);
+  check("두 사유가 사유로만 보인다", blockedSlot?.blockedBy, "시험 기간, 수업");
+}
+
 /* ── 기록 확정 기준 ────────────────────────────────────────── */
 
 console.log("\n기록 확정 기준 (팀이 정한다)");
@@ -1177,7 +1266,7 @@ console.log("\n회의 참여 표시 (팀장이 직접 찍는다)");
   check("아무것도 없으면 0건", currentParticipations([cleared]).length, 0);
 
   // DB 규칙 — 한 기록에 표시가 두 개일 수 없다.
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("회의 참여 표시");
   if (team) {
     const leader = await db.member.findFirstOrThrow({ where: { teamId: team.id, isLeader: true, leftAt: null } });
     const owner = await db.member.findFirstOrThrow({
@@ -1288,7 +1377,7 @@ console.log("\n회의 표식 (08 · 팀 겹쳐보기가 같이 쓴다)");
 
 console.log("\n회의 제안 (DB)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("회의 제안");
   if (!team) {
     console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
@@ -1331,7 +1420,7 @@ console.log("\n회의 제안 (DB)");
 
 console.log("\n회의 확정 예약 작업 (같은 일을 두 번 불러도 알림은 한 번이다)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("회의 확정 예약 작업");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id, leftAt: null } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -1460,7 +1549,7 @@ console.log("\n도구와 게임: 전부 열려 있다 (비활성화 상태는 �
 console.log("\n누가 하지");
 {
   truthy("메뉴가 하나 이상 있다", MENU_OPTIONS.length > 0);
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("누가 하지");
   if (team) {
     const before = team.menuPick;
     await db.team.update({ where: { id: team.id }, data: { menuPick: "라멘" } });
@@ -1486,7 +1575,7 @@ console.log("\n누가 하지 · 추첨 도구");
 
   // 이름이 겹치면 서버의 `RANDOM_TOOLS` 검색이 어느 쪽을 골랐는지 몰라 "무엇으로 정했는지"가
   // 팀마다 갈린다 — 도구는 결과의 짝이라 이름이 곧 값이다.
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("누가 하지 · 추첨 도구");
   if (team) {
     const before = await db.team.findUniqueOrThrow({
       where: { id: team.id },
@@ -1520,7 +1609,7 @@ console.log("\n누가 하지 · 추첨 도구");
 
 console.log("\n확정 역할 배정 (DB)");
 {
-  const seed = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team: seed } = await makeIsolatedTeam("확정 역할 배정");
   if (!seed) {
     console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
@@ -1644,7 +1733,7 @@ console.log("\n기여도 의견: 하나만 붙는다는 판정이 잠금 안에 
 
 console.log("\n리포트 집계: 어느 기록이 어느 칸에 들어가는가");
 {
-  const seed = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team: seed } = await makeIsolatedTeam("리포트 집계");
   if (!seed) {
     console.log("  · 팀이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
   } else {
@@ -1730,7 +1819,7 @@ console.log("\n리포트 집계: 어느 기록이 어느 칸에 들어가는가"
 
 console.log("\n기여도 의견 (DB)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("기여도 의견");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -1760,6 +1849,290 @@ console.log("\n기여도 의견 (DB)");
     await db.contribRecord.delete({ where: { id: record.id } });
     check("확인용 기록을 지우면 이력도 함께 간다", await db.contribDispute.count({ where: { recordId: record.id } }), 0);
   }
+}
+
+console.log("\n반대표철 (되돌리되 흔적을 남긴다)");
+{
+  /**
+   * ## 왜 철회가 지우는 쪽이 아닌지
+   *
+   * 반대는 지우지 않는다 — 사람이 한 말을 서버가 조용히 없애는 일이다. 철회까지 지우면
+   * **"한 말이었다가 거뒀다" 와 "한 말이 없었다" 가 같아져** 남긴 사람의 책임이 사라진다.
+   * 그래서 이력에 한 줄을 남기고 **지금 떠 있는 의견만** 비운다.
+   *
+   * 아래는 **판정**과 **이력**을 함께 본다. 어느 쪽이든 놓이면 사용자는 다시 "의견 차이" 에
+   * 묶인다 — 기록이 오염된 채로 남는 것이므로 조용한 실패가 가장 나쁜 실패다.
+   */
+  // **남긴 사람만** 철회할 수 있다. 주인은 정리를 함께 하지만 철회하지 않는다 — 주인이 대신
+  // 거두면 그건 철회가 아니라 정리다.
+  check("남긴 사람이 철회할 수 있다", canWithdrawDispute({ disputedById: "b", meId: "b" }), true);
+  check("다른 사람은 철회할 수 없다", canWithdrawDispute({ disputedById: "b", meId: "a" }), false);
+  // **정리된 뒤에는 철회할 것이 없다** — 옛 반대를 다시 거두는 길은 없다.
+  check("떠 있는 반대가 없으면 철회할 수 없다", canWithdrawDispute({ disputedById: null, meId: "b" }), false);
+
+  // 철회 문구는 **사람이 보낸 값이 아니다** — 사람이 "철회"라고 쓴 것과 구분되어야 한다.
+  check("철회 문구는 고정값이다", isWithdrawnDispute(WITHDRAWN_DISPUTE), true);
+  check("사람이 쓴 글은 철회가 아니다", isWithdrawnDispute("저는 이 말이 틀렸다고 생각해요"), false);
+  check("결론 문구도 철회가 아니다", isWithdrawnDispute(RESOLUTION_WAYS.accept), false);
+
+  const { team } = await makeIsolatedTeam("정정 결론");
+  const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
+  if (!team || !member) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
+  } else {
+    const record = await db.contribRecord.create({
+      data: { memberId: member.id, kind: "task", title: "철회 확인용", detail: "d", source: "self" },
+    });
+    await db.contribDispute.create({ data: { recordId: record.id, byId: member.id, text: "이렇게 고쳐 주세요" } });
+    await db.contribRecord.update({
+      where: { id: record.id },
+      data: { dispute: "이렇게 고쳐 주세요", disputedById: member.id, resolution: null, state: "disputed" },
+    });
+
+    // **액션과 같은 순서**: 흔적을 남기고 → 떠 있는 반대와 결론을 비우고 → 상태를 맞춘다.
+    await db.contribDispute.create({ data: { recordId: record.id, byId: member.id, text: WITHDRAWN_DISPUTE } });
+    await db.contribRecord.update({
+      where: { id: record.id },
+      data: { dispute: null, disputedById: null, resolution: null },
+    });
+
+    const after = await db.contribRecord.findUniqueOrThrow({
+      where: { id: record.id },
+      select: { dispute: true, disputedById: true, resolution: true },
+    });
+    check("떠 있는 반대가 비었다", after.dispute, null);
+    check("누가 달았는지도 비었다", after.disputedById, null);
+    // **결론도 함께 비워야 한다** — 반대가 없는데 정리가 남아 있으면 그 정리는 무엇을 정리한
+    // 것인지 알 수 없다.
+    check("결론도 함께 비었다", after.resolution, null);
+
+    const history = await db.contribDispute.findMany({
+      where: { recordId: record.id },
+      orderBy: { createdAt: "asc" },
+      select: { text: true },
+    });
+    check("원래 반대는 이력에 남는다", history.length, 2);
+    check("그 뒤 철회 한 줄이 남는다", isWithdrawnDispute(history[1].text), true);
+    // **사람이 쓴 말로 철회하지 않는다** — 값이 서버의 상수와 정확히 같다.
+    check("철회 줄은 사람이 보낼 수 있는 값이 아니다", history[1].text, WITHDRAWN_DISPUTE);
+
+    await db.contribDispute.deleteMany({ where: { recordId: record.id } });
+    await db.contribRecord.delete({ where: { id: record.id } });
+  }
+}
+
+console.log("\n반대표철: 남길 길이 코드에 있다");
+{
+  const src = readCode("../src/server/actions/contrib.ts");
+  const from = src.indexOf("export async function withdrawContribDispute");
+  truthy("액션이 있다", from >= 0);
+  const fn = src.slice(from);
+  check("기록을 잠그고 판단한다", fn.indexOf("FOR UPDATE") > 0, true);
+  // **흔적을 남긴다** — 이 줄이 사라지면 철회가 "한 말이 없었다" 가 된다.
+  check("이력에 철회를 남긴다", fn.indexOf("WITHDRAWN_DISPUTE") > 0, true);
+  // **사람이 보낸 값을 그대로 적지 않는다** — 철회 문구를 클라이언트가 정하게 두면 사람이
+  // 아무 말이나 이력에 심을 수 있다.
+  check("철회 문구는 서버 상수다", /text: WITHDRAWN_DISPUTE/.test(fn), true);
+  check("떠 있는 반대를 비운다", /dispute: null/.test(fn) && /disputedById: null/.test(fn), true);
+  check("남긴 사람만 철회한다", fn.indexOf("canWithdrawDispute") > 0, true);
+  check("같은 잠금 안에서 판단과 적기를 한다", fn.indexOf("refreshContribState(record.id, tx)") > fn.indexOf("FOR UPDATE"), true);
+  check("기록 주인이 알 수 있다", fn.indexOf("notify(") > 0, true);
+}
+
+console.log("\n반대표철: 버튼은 남긴 사람에게만 보인다");
+{
+  /**
+   * 액션이 있어도 **버튼이 없으면 아무도 철회할 수 없다** — 2026-10-03 에 처음 액션만 넣었을
+   * 때가 그 상태였다. 그래서 화면에도 계약을 둔다.
+   *
+   * 판정은 **`iFiledDispute` 하나**로 한다. `iCanResolve` 로 켜면 주인에게도 보인다 — 그건
+   * 철회가 아니라 정리이고, 정리 버튼은 이미 따로 있다.
+   */
+  const screen = readCode("../src/features/contrib/contrib-team-screen.tsx");
+  check("철회 액션을 부른다", screen.includes("withdrawContribDispute("), true);
+  check("남긴 사람에게만 보인다", /\{record\.iFiledDispute \?/.test(screen), true);
+  // **주인이 대신 철회하는 길이 화면에 없다는 것** — 한쪽 말로 덮지 않는다는 원칙이 여기서
+  // 깨지면 철회가 정리로 둔갑한다.
+  check("iCanResolve 로 철회 버튼을 켜지 않는다", /iCanResolve[^\n]{0,80}철회/.test(screen), false);
+  // 철회 문구는 서버가 만든다 — 화면이 문구를 보내지 않는다.
+  check("화면이 철회 문구를 만들지 않는다", screen.includes("WITHDRAWN_DISPUTE"), false);
+
+  // **흔적이 남는다는 사실을 철회할 사람에게 먼저 말한다.** 남지 않는다면 이 버튼은 사람이
+  // 자기 말을 지우는 버튼이 되어 되돌릴 수 없다.
+  truthy("철회하면 무엇이 남는지 말한다", screen.includes("이력에는 흔적이 남습니다"));
+
+  // 조회는 **판정 결과를 준다** — `disputedById` 를 그대로 노출하지 않는다. 화면이 두 id 를
+  // 비교해 규칙을 다시 짜면 어느 쪽이 사실인지 알 수 없다.
+  const query = readCode("../src/server/contrib/team-check.ts");
+  check("조회가 판정 결과를 준다", query.includes("iFiledDispute: canWithdrawDispute("), true);
+}
+
+console.log("\nDM 나가기 (내 목록에서만 뺀다)");
+{
+  /**
+   * ## 왜 이 검사가 필요한가
+   *
+   * "나가기" 라는 이름은 **지우는 것**처럼 들린다. 그런데 대화는 두 사람의 것이므로 나 혼자
+   * 나간다고 **상대의 말까지 지워질 수는 없다.** 그래서 이건 지우기가 아니라 **빼기**여야 하고,
+   * 그 차이가 실수로 깨질 수 있는 곳이 세 군데다:
+   *
+   * 1. **말이 살아 있는가** — 빼기로 지워지면 복구할 수 없다.
+   * 2. **상대에게는 아무 변화가 없는가** — 상대가 조용히 사라지면 그 사람은 "왜 안 오지" 한다.
+   * 3. **뺀 방을 다시 열 수 있는가** — 되살아나길이 없으면 영영 못 본다.
+   */
+  const { team, members } = await makeIsolatedTeam("DM 나가기");
+  const me = members[0]!;
+  const other = members[1]!;
+  // **키를 여기서 직접 만든다.** `dmThreadKey` 를 불러 오면(`src/data/api.ts`) 그 모듈이
+  // `next/navigation` 을 끌어와 tsx 아래에서 깨진다. 이 검사는 **표의 불변식**이 대상이라
+  // 키의 모양만 맞으면 되고, **키를 한 곳에서만 만드는 규칙**은 아래 소스 검사가 지킨다.
+  const threadKey = `dm:${[me.id, other.id].sort().join(":")}`;
+
+  // **먼저 대화가 있어야 한다** — 빼기가 말과 무관하게 동작하는지 보려면 말이 있는 방이
+  // 있어야 하고, 말 없는 방에서는 아무 효과가 없어 아무것도 증명하지 못한다.
+  const said = await db.message.create({
+    data: { teamId: team.id, threadKey, authorId: other.id, text: "안녕하세요", whenLabel: "09:00" },
+  });
+  check("대화가 있다", said.threadKey, threadKey);
+
+  // 빼기 = 숨김 한 줄. **`upsert` 로 두 번 넣어도 두 줄이 되지 않아야 한다.**
+  await db.dmThreadHide.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    create: { memberId: me.id, threadKey },
+    update: {},
+  });
+  await db.dmThreadHide.upsert({
+    where: { memberId_threadKey: { memberId: me.id, threadKey } },
+    create: { memberId: me.id, threadKey },
+    update: {},
+  });
+  check("두 번 넣어도 한 줄이다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 1);
+
+  // **1. 말이 살아 있는가.** 이것이 이 기능의 전부다.
+  check("말은 지워지지 않는다", await db.message.count({ where: { threadKey } }), 1);
+  check("상대의 말도 그대로다", (await db.message.findUniqueOrThrow({ where: { id: said.id } })).text, "안녕하세요");
+
+  // **2. 상대에게는 아무 변화가 없는가.** 상대 목록에 아직 있다 — **빼기는 내 것만** 빼야 한다.
+  check("상대의 자리에는 아무 변화가 없다", await db.dmThreadHide.count({ where: { memberId: other.id, threadKey } }), 0);
+  check("상대에게는 숨긴 행이 없다", await db.dmThreadHide.count({ where: { threadKey, memberId: other.id } }), 0);
+
+  // **3. 다시 열 수 있는가.** 숨김만 지우면 지난 말이 그대로 돌아온다.
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  check("숨김만 풀리면 다시 보인다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 0);
+  check("다시 열어도 지난 말은 그대로다", await db.message.count({ where: { threadKey } }), 1);
+
+  // **없는 것을 지워도 조용히 지나야 한다** — 나갔다 오는 길에서 흔들리면 안 된다.
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  await db.dmThreadHide.deleteMany({ where: { memberId: me.id, threadKey } });
+  check("없는 것을 지워도 조용히 지난다", await db.dmThreadHide.count({ where: { memberId: me.id, threadKey } }), 0);
+}
+
+console.log("\n재입장 요청은 3일이 지나면 끝난다");
+{
+  /**
+   * **무한 대기를 끊는 것이 이 기능의 전부다.** 팀장이 무응답이면 요청자는 폴링을 계속하면서
+   * "확인하는 중…"에서 빠져나오지 못했다.
+   *
+   * 세 가지를 따로 본다. **끝난다** · **거절과 다르다** · **끝나도 재신청이 된다.**
+   * 셋 중 하나라도 놓이면 사람은 여전히 갇히거나, 엉뚱한 말을 듣게 된다.
+   */
+  check("며칠로 정했다", REJOIN_EXPIRED_AFTER_DAYS, 3);
+
+  const { team, members } = await makeIsolatedTeam("재입장 만료");
+  const member = members[0]!;
+  const threeDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+  // 오래된 대기 요청 하나, 최근 대기 요청 하나, 이미 정리된 것 하나.
+  const stale = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo },
+  });
+  const fresh = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: oneHourAgo },
+  });
+  const approved = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo, status: "approved", resolvedAt: threeDaysAgo },
+  });
+  const rejected = await db.memberClaim.create({
+    data: { memberId: member.id, token: randomUUID(), createdAt: threeDaysAgo, status: "rejected", resolvedAt: threeDaysAgo },
+  });
+
+  const swept = await sweepExpiredRejoins();
+  check("오래된 대기 요청 하나만 끝난다", swept.expired, 1);
+
+  const after = await db.memberClaim.findMany({ where: { id: { in: [stale.id, fresh.id, approved.id, rejected.id] } } });
+  const byId = new Map(after.map((c) => [c.id, c.status]));
+  check("오래된 대기는 expired 다", byId.get(stale.id), REJOIN_EXPIRED);
+  check("최근 대기는 그대로다", byId.get(fresh.id), "pending");
+  // **이미 정리된 것을 건드리면 감사 근거가 사라진다** — 거절과 승인이 남는 것이 근거다.
+  check("승인된 것을 건드리지 않는다", byId.get(approved.id), "approved");
+  check("거절된 것을 건드리지 않는다", byId.get(rejected.id), "rejected");
+
+  // **지우지 않는다** — 만료가 "이 사람 혼자 오지 않았다" 가 아니라 "무엇이 있었는지" 를
+  // 남겨야 팀장이 다음에 판단할 수 있다.
+  check("요청 자체는 남는다", await db.memberClaim.count({ where: { id: stale.id } }), 1);
+
+  // **끝나도 재신청이 된다** — 이것이 사람이 갇히지 않게 하는 핵심이다.
+  const again = await db.memberClaim.create({ data: { memberId: member.id, token: randomUUID() } });
+  check("같은 사람이 다시 요청할 수 있다", again.status, "pending");
+  // **토큰이 다르다** — 끝난 요청의 토큰을 다시 쓰는 길이 있으면 만료가 아니다.
+  check("새 요청은 새 토큰이다", again.token !== stale.token, true);
+
+  // 두 번 돌려도 같은 것을 두 번 끝내지 않는다 — 예약 작업이 겹칠 수 있다.
+  await sweepExpiredRejoins();
+  check("돌아도 같은 것을 다시 끝내지 않는다", (await db.memberClaim.findUniqueOrThrow({ where: { id: stale.id } })).status, REJOIN_EXPIRED);
+  // 이번엔 오래된 대기 요청이 하나도 없어야 한다.
+  check("남은 오래된 대기는 없다", (await sweepExpiredRejoins()).expired, 0);
+
+  await db.memberClaim.deleteMany({ where: { memberId: member.id } });
+  await db.team.delete({ where: { id: team.id } });
+}
+
+console.log("\n재입장 만료: 거절과 다르다");
+{
+  // **잘못 말하면 되돌릴 수 없다.** 화면에 "거절" 이 떴다가 나중에 "만료" 로 고치면, 그 사이에
+  // 사용자는 팀장을 의심하고 팀장을 바꾼다.
+  const action = readCode("../src/server/actions/rejoin.ts");
+  const fn = action.slice(action.indexOf("export async function checkRejoinApproval"));
+  truthy("만료를 따로 돌려준다", fn.includes(REJOIN_EXPIRED));
+  check("만료와 거절을 나누어 말한다", /claim\.status === REJOIN_EXPIRED[\s\S]{0,200}?"expired"/.test(fn), true);
+  // **만료는 확정된 결과가 아니다** — 세션이 심어지지 않는다.
+  check("만료에 세션을 심지 않는다", fn.indexOf('"expired"') < fn.indexOf("startSession"), true);
+
+  const screen = readCode("../src/features/onboarding/rejoin-screen.tsx");
+  // **거절과 같은 길을 열면 안 된다** — 만료를 거절로 안내하면 팀장에게 따지러 가게 된다.
+  check("만료를 다르게 말한다", screen.includes('result === "expired"'), true);
+  check("만료 뒤에 다시 눌러 달라 말한다", screen.includes("rejoinExpiredText"), true);
+
+  // **무한 대기는 끊어져야 한다** — 예약 작업이 이 일을 한다. 앱을 열지 않아도 돌아야 한다.
+  const cron = readCode("../src/app/api/cron/meetings/route.ts");
+  truthy("하루 한 번의 예약 작업이 끝낸다", cron.includes("sweepExpiredRejoins("));
+}
+
+console.log("\nDM 나가기: 뺀 것은 내 것뿐이다");
+{
+  const src = readCode("../src/data/api.ts");
+  const listFn = src.slice(src.indexOf("export async function getDmThreads"));
+  // **목록만** 뺀다. 한 방을 찾는 쪽이 걸러 버리면 되살아나길이 사라진다.
+  truthy("목록이 숨긴 것을 가린다", listFn.includes("dmThreadHide.findMany"));
+  truthy("가린 뒤에 걸러 낸다", listFn.includes("hidden.has("));
+
+  const oneFn = src.slice(src.indexOf("export async function getDmThread("));
+  // `getDmThread` 은 목록을 재사용하므로 숨긴 방을 **못 찾는다.** 그럼 팀원 목록에서 눌렀을 때
+  // 열리지 않는다 — 되살아나길이 이 끊긴 곳이다. 여기서 드러나야 고칠 수 있다.
+  truthy(
+    "한 방을 찾을 때는 숨김과 상관없이 열어 준다",
+    oneFn.includes("getDmThreads") === false || oneFn.includes("hidden") === false,
+  );
+
+  const action = readCode("../src/server/actions/dm.ts");
+  // **메시지를 지우는 구분이 없어야 한다** — "나가기" 라는 이름에 끌려 지우면 복구할 수 없다.
+  check("메시지를 지우지 않는다", /message\.delete|message\.deleteMany/.test(action), false);
+  // 방의 키는 **서버가 만든다** — 클라이언트가 만들면 두 사람이 다른 키를 만들어 같은 방이
+  // 두 개가 되고, 숨긴 자리와 실제 대화가 어긋난다.
+  truthy("방의 키를 서버가 만든다", action.includes("dmThreadKey("));
+  // **같은 팀인지 먼저 본다** — 없으면 남의 팀 사람으로 방을 만들고 숨길 자리를 만든다.
+  truthy("같은 팀인지 먼저 본다", action.includes("teamId: me.teamId"));
 }
 
 console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
@@ -1899,7 +2272,7 @@ console.log("\n정정 결론 (동시에 눌러도 하나만 반영된다)");
    * 잠금을 얻은 시점에 이미 `state !== "disputed"` 이고 0행을 고친다. 이건 **갱신과 상태
    * 재계산이 한 트랜잭션에 있을 때만** 성립한다.
    */
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("읽기 순화");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -2395,7 +2768,7 @@ console.log("\n읽기 순화: 회귀 코퍼스(모델 없이 검사하는 부분
 
 console.log("\n읽기 순화 (DB)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("푸시 구독");
   const viewer = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !viewer) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -2775,7 +3148,7 @@ console.log("\n푸시 알림 (구독과 본문)");
 
 console.log("\n푸시 구독 (DB)");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("푸시 구독 · 기기");
   const members = team
     ? await db.member.findMany({ where: { teamId: team.id, leftAt: null }, take: 2 })
     : [];
@@ -2827,7 +3200,7 @@ console.log("\n푸시 구독 (기기는 따로)");
    * 규칙은 하나다. **"이 기기가 켜졌는가"는 이 기기만 답한다.** 서버는 "내 기기가 몇 개나
    * 켜져 있는가"를 답할 뿐, 그 값을 이 기기의 상태로 쓰지 않는다.
    */
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("AI 사용량");
   const members = team
     ? await db.member.findMany({ where: { teamId: team.id, leftAt: null }, take: 2 })
     : [];
@@ -2959,7 +3332,7 @@ console.log("\n이메일 발송 실패 (운영 로그에 인증번호가 남지 
 
 console.log("\nAI 사용량");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("AI 사용량 · 실패 시");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -2995,7 +3368,7 @@ console.log("\nAI 사용량");
 
 console.log("\nAI 사용량: 실패하면 되돌아온다");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("AI 계측");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -4023,7 +4396,7 @@ console.log("\n리서처 검색어 초안");
 
 console.log("\nAI 계측");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("DM 목록 조회 비용");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -4152,7 +4525,7 @@ console.log("\nAI 결과의 출처");
 
 console.log("\nDM 목록 조회 비용");
 {
-  const team = await db.team.findFirst({ orderBy: { createdAt: "asc" } });
+  const { team } = await makeIsolatedTeam("간단 브리핑");
   const member = team ? await db.member.findFirst({ where: { teamId: team.id } }) : null;
   if (!team || !member) {
     console.log("  · 팀원이 없어 이 항목을 건너뜁니다 (npm run db:seed 후 다시 돌리세요)");
@@ -4175,7 +4548,18 @@ console.log("\nDM 목록 조회 비용");
     // "액션을 우회한다"는 금지는 **쿠키를 만들어 부는** 경우를 말한 것).
     const lastPerThread = (keys: string[]) => lastMessagePerThread(db, team.id, keys);
 
-    const existing = await db.message.count({ where: { threadKey: key } });
+    // ⚠️ **팀을 함께 센다.** 팀 채널의 `threadKey` 는 그냥 `"team"` 이고 `dm:<a>:<b>` 는
+    // **멤버 id** 로 만들어지므로 — 팀이 여러 개여도 **키가 겹친다.** 예전에 이 검사는 팀을 빌려
+    // 썼고 팀이 하나뿐이어서 그것이 드러나지 않았다. 팀을 만들자 즉시 surfaced 됐다(2026-09-28).
+    const countOf = () => db.message.count({ where: { threadKey: key, teamId: team.id } });
+
+    // **스레드를 먼저 하나 만들어 둔다.** 이 검사의 질문은 "말이 늘어 폴링이 읽는 **행의 수**가
+    // 늘지 않는가" 이고, 그것이 의미 있으려면 읽을 스레드가 **이미 있어야** 한다.
+    // 예전에는 시드 팀에 이미 메시지가 있어서 그것이 성립했다 — 팀을 만들자 드러났다.
+    await db.message.create({
+      data: { teamId: team.id, threadKey: key, authorId: member.id, text: "첫 말", whenLabel: "00:00" },
+    });
+    const existing = await countOf();
     const before = await lastPerThread([key]);
 
     // 메시지를 30개 쌓는다 — 실제로 늘어나는 비용을 흉내낸다.
@@ -4184,7 +4568,7 @@ console.log("\nDM 목록 조회 비용");
         data: { teamId: team.id, threadKey: key, authorId: member.id, text: `비용 확인 ${i}`, whenLabel: "00:00" },
       });
     }
-    const grown = await db.message.count({ where: { threadKey: key } });
+    const grown = await countOf();
     const after = await lastPerThread([key]);
 
     check("메시지가 늘어 폴링이 읽는 행은 늘지 않는다", after.length, before.length);
@@ -4243,7 +4627,13 @@ console.log("\nDM 목록 조회 비용");
     // **누가 부르는지**를 함께 고정해야 한다.
     const api = readCode("../src/data/api.ts");
     const body = api.slice(api.indexOf("export async function getDmThreads("), api.indexOf("export async function getDmThreads(") + 2600);
-    check("getDmThreads 가 이 함수를 부른다", /lastMessagePerThread\(db, teamId, threadKeys\)/.test(body), true);
+    // **변수 이름이 아니라 행위를 고정한다.** 숨긴 대화까지 걸러 낸 뒤에는 쓰이는 키 목록이
+    // 달라지고(`threadKeys` 에서 보이는 것만으로), 이름을 박아 두면 뜻도 아닌 곳에서 깨진다.
+    check(
+      "getDmThreads 가 이 함수를 부른다",
+      /lastMessagePerThread\(db, teamId, [A-Za-z]+\)/.test(body),
+      true,
+    );
     check("getDmThreads 가 Prisma distinct 로 직접 읽지 않는다", /distinct: \["threadKey"\]/.test(body), false);
     console.log(`      (전체 메시지 ${existing} → ${grown}건, 조회 행은 ${after.length}행)`);
 
@@ -4742,7 +5132,7 @@ checkProductLanguage();
 console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
 {
   /**
-   * **한글 옆에 붙은 `�` 는 깨진 글자다.**
+   * **한글 옆에 붙은 `` 는 깨진 글자다.**
    *
    * 편집 도구가 한국어 한 글자를 중간에서 잘라 저장하면 그 자리에 U+FFFD 가 남고, **아무도
    * 모른다** — 주석이면 읽다가 뜻이 이상한 걸 넘어가고, 문서면 그 줄만 뒤틀린다. 실제로
@@ -4752,8 +5142,8 @@ console.log("\n깨진 글자 (한글 옆의 U+FFFD)");
    * 잡는다** — 실제로 이 주석을 처음 쓸 때 그렇게 걸렸다. 인용은 "핵" 뒤가 깨졌다는 설명으로
    * 대신한다.
    *
-   * **일부러 쓴 `�` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
-   * 화면에 `�` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
+   * **일부러 쓴 `` 는 허용한다.** `lib/ai-stream-lines.ts` 와 README 는 "바이트 경계에서 잘리면
+   * 화면에 `` 가 난다" 고 **설명**하므로, 백틱으로 감싼 그 표기는 남아 있어야 한다. 그래서
    * "있느냐"가 아니라 **"한글 옆에 붙어 있느냐"** 로 본다 — 저 뜻으로 지우면 설명이 사라진다.
    */
   const root = new URL("../", import.meta.url);
@@ -5476,11 +5866,6 @@ console.log("\n마피아 게임: 구버전이 던진 표를 신버전이 센다"
     await db.iceSeat.update({ where: { roundId_memberId: { roundId: round.id, memberId: seats[1].id } }, data: { voteForId: seats[1].id } });
     check("신버전 기록에는 아직 표가 없다", await db.iceBallot.count({ where: { roundId: round.id } }), 0);
 
-    const rows0 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
-      memberId: s.memberId,
-      voteForId: s.voteForId,
-    }));
-    const ballots0 = await db.iceBallot.findMany({ where: { roundId: round.id, seq: 1 } });
     const rows2 = (await db.iceSeat.findMany({ where: { roundId: round.id } })).map((s) => ({
       memberId: s.memberId,
       voteForId: s.voteForId,
@@ -6227,7 +6612,6 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   //
   // 틀린 정본은 아무것도 고치지 않은 채 다음 사람을 그 방향으로 엉뚱하게wyn다. 특히 원문 링크
   // 항목은 **안전과 관련된 쪽**이 틀려 있었다 — "출처를 안 보여 준다" 고 읽으면 문제가 있다.
-  const readAt = (file: string, needle: string) => readCode(file).includes(needle);
   const decision = readCode("../src/app/onboarding/name/page.tsx");
 
   // ① 동명이인 — **막는** 것이 맞다.
@@ -6241,17 +6625,31 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   const tools = readCode("../src/server/ai/tools.ts");
   check("정말 자료에서 뽑는다", /질문을 뽑는다/.test(tools), true);
 
-  // ③ 원문 링크 — **보여 준다**고 적어야 한다.
+  const readRaw = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  // ③ 원문 링크 — **보여 준다**고 적어야 한다 (정책 주석 및 화면 노출).
   const research = readCode("../src/features/tools/researcher-screen.tsx");
+  const researchRaw = readRaw("../src/features/tools/researcher-screen.tsx");
   check("원문 링크를 '다루지 않았다' 고 하지 않는다", research.includes("원문 링크를 그대로"), false);
-  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(research), true);
+  check("출처 없는 결과를 가린다고 적는다", /출처가 없는 결과는 아예 보여 주지 않는다/.test(researchRaw), true);
   // 화면에 그대로 보이는 문구까지 확인한다 — 주석만 고쳐지고 화면은 옛말이면 그게 거짓말이다.
-  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(readCode("../src/features/tools/researcher-screen.tsx")), true);
+  check("화면에도 그대로 보인다", /출처가 없는 결과는 보여주지 않습니다/.test(research), true);
+
+  // ⑤ 2GB — **근거 파일을 세지 않는다.** 목록이 "포함할지 정해지지 않았다" 고 적혀 있었는데,
+  // 용량을 세는 곳이 제출함 버전만 합산하므로 이미 **정해져 있었다**(읽는 쪽에는 안 보인다).
+  // "팀 저장 용량" 이라는 이름과 실제 범위가 다르다는 사실을 그대로 적어야 한다.
+  const usage = readCode("../src/server/drive/usage.ts");
+  check("용량은 제출함 버전에만 합산한다", /file: \{ box: \{ teamId \} \}/.test(usage), true);
+  const evidence = readCode("../src/server/actions/contrib.ts");
+  check("근거 파일은 용량 계산에 들어가지 않는다", /teamUsedBytes/.test(evidence), false);
+  check("근거 파일의 경로는 따로다", /evidence/.test(evidence), true);
+  const addScreenRaw = readRaw("../src/features/contrib/contrib-add-screen.tsx");
+  check("목록이 '세지 않는다' 고 적는다", addScreenRaw.includes("근거 파일을 세지 않습니다"), true);
 
   // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
-  const dm = readCode("../src/features/chat/dm-list-screen.tsx");
-  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dm), true);
-  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dm), true);
+  const dmRaw = readRaw("../src/features/chat/dm-list-screen.tsx");
+  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dmRaw), true);
+  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dmRaw), true);
 }
 
 await finish();

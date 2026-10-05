@@ -8,6 +8,7 @@ import { attemptKey, clearAttempts, countFailure, isLocked } from "@/server/auth
 import { issueRejoinCode } from "@/server/auth/issue";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
+import { REJOIN_EXPIRED } from "@/lib/rejoin-expire";
 import { settleJoinRequest } from "@/server/invite/settle";
 import { leaderIds, notify } from "@/server/notify/create";
 import { describeDevice, deviceIdOf, requireLeader, requireSessionMember, startSession } from "@/server/session";
@@ -147,7 +148,9 @@ export async function requestRejoinApproval(
  * 승인됐으면 그 자리에서 세션을 만든다. 세션 쿠키를 심을 수 있는 것은 **요청한
  * 브라우저 자신**뿐이라, 팀장이 승인하는 순간이 아니라 여기서 완성된다.
  */
-export async function checkRejoinApproval(): Promise<"approved" | "pending" | "rejected" | "none"> {
+export async function checkRejoinApproval(): Promise<
+  "approved" | "pending" | "rejected" | "expired" | "none"
+> {
   const store = await cookies();
   const token = store.get(CLAIM_COOKIE)?.value;
   if (!token) return "none";
@@ -155,6 +158,17 @@ export async function checkRejoinApproval(): Promise<"approved" | "pending" | "r
   const claim = await db.memberClaim.findUnique({ where: { token } });
   if (!claim) return "none";
   if (claim.status === "pending") return "pending";
+
+  // **만료는 거절이 아니다 — 2026-10-03.** 예전에는 `pending` 도 `approved` 도 아닌 무엇이든
+  // "거절" 로 돌려줬다. 그 안에 `expired` 가 들어오면 사용자는 **거절당한 것**으로 안내되고
+  // 팀장에게 따지러 간다 — 실제로는 팀장이 3일 동안 안 본 것이고, 다시 요청하면 된다.
+  //
+  // **잘못 말하면 되돌릴 수 없다.** 화면에 "거절" 이라고 떴다가 나중에 "만료였습니다" 로
+  // 고치면, 그 사이에 사용자가 팀장을 의심하고 팀장을 바꾼 것이다.
+  if (claim.status === REJOIN_EXPIRED) {
+    store.delete(CLAIM_COOKIE);
+    return "expired";
+  }
 
   if (claim.status !== "approved") {
     store.delete(CLAIM_COOKIE);

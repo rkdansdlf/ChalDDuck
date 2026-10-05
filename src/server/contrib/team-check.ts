@@ -6,6 +6,7 @@ import type { ConfirmsPolicy, ContribEvidence, TeamCheckRecord } from "@/lib/typ
 import { isMarked, type Participation } from "@/features/contrib/participation";
 import { confirmBlockReason, unresolvedAfter } from "@/features/contrib/resolution";
 import { db } from "@/server/db";
+import { canWithdrawDispute } from "@/features/contrib/resolution";
 import { canResolveContrib, contribByLabel, maxConfirmsNeeded } from "@/server/contrib/state";
 import { getSessionMember } from "@/server/session";
 
@@ -96,6 +97,13 @@ export async function teamCheckRecords(teamId: string, meId: string | null): Pro
         disputedById: r.disputedById,
         meId: meId ?? "",
       }),
+      // **내가 지금 떠 있는 반대를 남긴 사람인가.** `iCanResolve` 로 알 수 없다 — 그 값은
+      // 기록 주인과 반대한 사람 **둘 다** true라, 철회 버튼을 그 값으로 켜면 주인이 남의
+      // 반대를 대신 거두는 버튼이 생긴다(그건 철회가 아니라 정리다).
+      //
+      // 그래서 `disputedById` 를 그대로 노출하지 않고 **판정 결과를** 준다. 화면이 두 id 를
+      // 비교해 규칙을 다시 짜는 길을 남기지 않기 위해다 — 규칙은 `canWithdrawDispute` 한 곳.
+      iFiledDispute: canWithdrawDispute({ disputedById: r.disputedById, meId: meId ?? "" }),
       // 표시 문구는 저장하지 않고 그때그때 만든다 — 저장해 두면 확인 수와 어긋난다.
       by: contribByLabel({
         state,

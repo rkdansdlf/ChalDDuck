@@ -271,6 +271,111 @@ export async function shareVersionToChat(
   return { ok: true, label: version.label, fileName: version.file.name };
 }
 
+/**
+ * AI 리서치 결과를 팀 단톡방에 공유한다.
+ *
+ * 팀원들에게 자료 카드 형태로 핵심 내용, 출처, 원문 링크를 전달한다.
+ */
+export async function shareResearchToChat(input: {
+  title: string;
+  source: string;
+  snippet: string;
+  url?: string | null;
+  year?: string | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const me = await requireSessionMember();
+
+    const lines = [
+      `[자료 추천] ${input.title.trim()}`,
+      `• 출처: ${input.source.trim()}${input.year ? ` (${input.year.trim()})` : ""}`,
+    ];
+    if (input.snippet.trim()) {
+      lines.push(`• 요약: ${input.snippet.trim()}`);
+    }
+    if (input.url?.trim()) {
+      lines.push(`• 원문 링크: ${input.url.trim()}`);
+    }
+
+    const body = lines.join("\n").slice(0, MAX_MESSAGE);
+
+    await db.message.create({
+      data: {
+        teamId: me.teamId,
+        threadKey: "team",
+        authorId: me.id,
+        text: body,
+        whenLabel: nowLabel(),
+      },
+    });
+
+    revalidatePath("/chat", "layout");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "단톡방 공유에 실패했습니다.",
+    };
+  }
+}
+
+/**
+ * 26 발표 지원 — 예상 질문 목록을 팀 단톡방에 공유한다.
+ *
+ * 발표자 혼자 질의응답을 떠안지 않고 팀원들과 함께 Q&A를 준비하고 역할 분담을 할 수 있도록
+ * 예상 질문 목록을 단톡방 카드 형태로 전송한다.
+ */
+export async function shareQuestionsToChat(input: {
+  modeName?: string;
+  questions: Array<{ question: string; intent?: string; category?: string }>;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const me = await requireSessionMember();
+
+    if (!input.questions || input.questions.length === 0) {
+      return { ok: false, error: "공유할 질문이 없습니다." };
+    }
+
+    const categoryNames: Record<string, string> = {
+      data: "데이터 근거",
+      method: "방법론",
+      practical: "실효성·한계",
+      general: "일반",
+    };
+
+    const lines = [
+      `[발표 대비] 예상 질문 목록${input.modeName ? ` (${input.modeName})` : ""}`,
+      "팀원들과 함께 발표 질의응답을 준비해 보세요:",
+    ];
+
+    input.questions.forEach((q, idx) => {
+      const catLabel = q.category && categoryNames[q.category] ? `[${categoryNames[q.category]}] ` : "";
+      const intentNote = q.intent ? ` — ${q.intent}` : "";
+      lines.push(`${idx + 1}. ${catLabel}${q.question}${intentNote}`);
+    });
+
+    const body = lines.join("\n").slice(0, MAX_MESSAGE);
+
+    await db.message.create({
+      data: {
+        teamId: me.teamId,
+        threadKey: "team",
+        authorId: me.id,
+        text: body,
+        whenLabel: nowLabel(),
+      },
+    });
+
+    revalidatePath("/chat", "layout");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "단톡방 공유에 실패했습니다.",
+    };
+  }
+}
+
 /** 위로 스크롤해 더 불러오기. `threadId` 가 실제로 내 방인지는 `resolveThread` 가 확인한다. */
 export async function loadOlderMessages(threadId: string, cursor: string): Promise<MessagePage> {
   const me = await requireSessionMember();

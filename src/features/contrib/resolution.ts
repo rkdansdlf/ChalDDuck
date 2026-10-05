@@ -101,3 +101,37 @@ export function confirmBlockReason(input: {
   }
   return null;
 }
+
+/**
+ * 이력이 "철회"라는 것을 알리는 한 줄 — 2026-10-03 결정.
+ *
+ * ## 왜 지우지 않고 한 줄을 남기는가
+ *
+ * 반대도 지우지 않는다. **철회까지 지우면 그건 의견이 아니라 지워진 것이 된다** — "이 사람이
+ * 한 말이었다가 되돌렸다"와 "이 사람이 한 말이 없다"는 팀 입장에서 전혀 다른 사실이다. 그래서
+ * 철회도 이력에 남기고 **현재 떠 있는 의견**만 비운다.
+ *
+ * ## 왜 사람이 쓴 문장이 아니라 **고정된 값**인가
+ *
+ * 이 줄을 사람이 쓴 의견과 구분할 수 있어야 한다. 사람이 "철회"라고 적은 것과 이 상수가
+ * 적힌 것은 **다른 사실**이다 — 전자는 사람이 그 말을 한 것이고, 후자는 시스템이 남긴 것이다.
+ * 그래서 철회 문구는 여기로 고정하고 **클라이언트가 이 값을 그대로 보낼 수 없다** — 서버는
+ * 이 상수로 적는다.
+ */
+export const WITHDRAWN_DISPUTE = "이 사람은 이 기회를 정정하는 것이 아니라, 남긴 반대를 철회했습니다.";
+
+/** 이력이 철회인지 — 화면이 그 줄을 다르게 말할 때 쓴다. */
+export function isWithdrawnDispute(text: string): boolean {
+  return text === WITHDRAWN_DISPUTE;
+}
+
+/**
+ * 이 사람이 **지금 떠 있는 반대를 철회할 수 있는가.**
+ *
+ * **적을 수 있는 사람과 철회할 수 있는 사람은 다르다.** 반대를 적을 수 있는 사람은 기록의
+ * 주인이 아니고, 정리를 함께 하는 사람은 **주인이기도 하다**. 철회는 자기 생각을 거두는
+ * 행위이므로 **남긴 사람만** 할 수 있다 — 주인이 대신 철회하면 그건 철회가 아니라 정리다.
+ */
+export function canWithdrawDispute(input: { disputedById: string | null; meId: string }): boolean {
+  return input.disputedById !== null && input.disputedById === input.meId;
+}

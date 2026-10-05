@@ -1,5 +1,15 @@
-import type { ClerkDraft, PresentDraft } from "@/lib/types";
+// ⚠️ **양쪽 다 필요하다.** 2단계-a 의 담당자 매칭(`tool-assignee`)과 main 이 추가한
+// 발표 지원(예상 질문 분류·말하기 시간 추정)의 import 가 같은 자리를 썼다 — 어느 한쪽을
+// 고르면 다른 쪽이 조용히 사라진다.
+import type {
+  ClerkDraft,
+  PresentDraft,
+  PresentMode,
+  PresentQuestion,
+  QuestionCategory,
+} from "@/lib/types";
 import { matchAssigneeToMember, type ToolMember } from "@/lib/tool-assignee";
+import { estimateSpeechSeconds } from "./present-pacing";
 
 /**
  * 모델이 돌려준 초안을 **화면에 올릴 수 있는 모양으로 정리한다.**
@@ -142,9 +152,31 @@ export function shapeClerkDraft(
   };
 }
 
+const VALID_QUESTION_CATEGORIES = new Set<QuestionCategory>(["data", "method", "practical", "general"]);
+
+function normalizeQuestionCategory(cat?: string | null): QuestionCategory {
+  if (cat && VALID_QUESTION_CATEGORIES.has(cat as QuestionCategory)) {
+    return cat as QuestionCategory;
+  }
+  return "general";
+}
+
+type RawQuestionItem =
+  | string
+  | {
+      id?: string | null;
+      question?: string | null;
+      category?: string | null;
+      intent?: string | null;
+    }
+  | null;
+
 type RawPresentDraft = {
   refined?: string | null;
-  questions?: (string | null)[] | null;
+  questions?: RawQuestionItem[] | null;
+  structuredQuestions?: RawQuestionItem[] | null;
+  estimatedSeconds?: number | null;
+  mode?: PresentMode | null;
 };
 
 /**
@@ -153,10 +185,60 @@ type RawPresentDraft = {
  * **질문만 남긴다.** 답을 적으면 "발표자가 모르는 답"이 초안으로 들어가는 길이 생긴다 —
  * 질문 뽑기가 목적인 도구가 아니라 그 답을 쓰는 도구가 된다.
  */
-export function shapePresentDraft(raw: RawPresentDraft | null | undefined): PresentDraft {
-  const questions = Array.isArray(raw?.questions) ? raw.questions : [];
+export function shapePresentDraft(
+  raw: RawPresentDraft | null | undefined,
+  mode?: PresentMode,
+): PresentDraft {
+  const refined = (raw?.refined ?? "").trim();
+  const rawList =
+    Array.isArray(raw?.structuredQuestions) && raw.structuredQuestions.length > 0
+      ? raw.structuredQuestions
+      : Array.isArray(raw?.questions)
+      ? raw.questions
+      : [];
+
+  const stringQuestions: string[] = [];
+  const structuredQuestions: PresentQuestion[] = [];
+
+  rawList.forEach((item, index) => {
+    if (!item) return;
+    if (typeof item === "string") {
+      const qText = item.trim();
+      if (qText) {
+        stringQuestions.push(qText);
+        structuredQuestions.push({
+          id: `q-${index + 1}`,
+          question: qText,
+          category: "general",
+        });
+      }
+    } else if (typeof item === "object") {
+      const qText = (item.question ?? "").trim();
+      if (qText) {
+        stringQuestions.push(qText);
+        structuredQuestions.push({
+          id: (item.id ?? `q-${index + 1}`).trim(),
+          question: qText,
+          category: normalizeQuestionCategory(item.category),
+          ...(item.intent?.trim() ? { intent: item.intent.trim() } : {}),
+        });
+      }
+    }
+  });
+
+  const chosenMode = mode ?? (raw?.mode as PresentMode | undefined);
+  const estimated =
+    raw?.estimatedSeconds !== undefined && raw?.estimatedSeconds !== null
+      ? raw.estimatedSeconds
+      : refined
+      ? estimateSpeechSeconds(refined)
+      : undefined;
+
   return {
-    refined: (raw?.refined ?? "").trim(),
-    questions: questions.map((q) => (q ?? "").trim()).filter(Boolean),
+    refined,
+    questions: stringQuestions,
+    ...(structuredQuestions.length > 0 ? { structuredQuestions } : {}),
+    ...(estimated !== undefined ? { estimatedSeconds: estimated } : {}),
+    ...(chosenMode ? { mode: chosenMode } : {}),
   };
 }

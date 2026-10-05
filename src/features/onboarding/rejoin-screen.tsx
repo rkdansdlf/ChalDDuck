@@ -13,13 +13,13 @@ import {
   Input,
   Note,
   Panel,
-  Undecided,
 } from "@/components/ui";
 import {
   checkRejoinApproval,
   rejoinWithCode,
   requestRejoinApproval,
 } from "@/server/actions/rejoin";
+import { rejoinExpiredText, REJOIN_EXPIRED_AFTER_DAYS } from "@/lib/rejoin-expire";
 
 /**
  * 재입장 — 이미 있는 이름으로 새 기기에서 들어오는 화면.
@@ -62,6 +62,14 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
         } else if (result === "rejected") {
           setPhase("code");
           setError("팀장이 요청을 거절했습니다. 본인이 맞다면 팀장에게 직접 확인해 주세요.");
+        } else if (result === "expired") {
+          // **만료는 거절이 아니다** — 팀장이 3일 동안 안 본 것이고 다시 요청하면 된다.
+          // 거절과 같은 말로 하면 팀장을 의심하게 하고, 그러면 다시 안 누른다.
+          //
+          // 여기서 **대기 화면으로 되돌린다** — 이미 안다는 뜻이니 처음부터 다시 하라고
+          // 하지 않는다. 누르면 곧바로 새 요청이 된다.
+          setPhase("waiting");
+          setError(rejoinExpiredText(REJOIN_EXPIRED_AFTER_DAYS));
         } else if (result === "none") {
           setPhase("code");
         }
@@ -213,10 +221,11 @@ export function RejoinScreen({ teamCode, name }: { teamCode: string; name: strin
               코드가 없어요 — 팀장에게 승인 요청
             </Btn>
 
-            <Undecided>
-              팀장이 오래 응답하지 않을 때 어떻게 할지는 기획안에 없습니다. 지금은 계속 기다리거나
-              코드를 찾는 두 길만 둡니다.
-            </Undecided>
+            <Note tone="info" icon="clock" className="mt-3.5">
+              팀장에게 <b>{REJOIN_EXPIRED_AFTER_DAYS}일 안에 확인되지 않으면</b> 요청이 끝납니다.
+              그때는 다시 누르면 됩니다 — 지워지지 않으므로 같은 이름으로 다시 들어올 수 있고,
+              끝난 뒤에도 팀장 화면에 <b>무엇이 있었는지</b>는 남습니다.
+            </Note>
           </>
         )}
       </Body>

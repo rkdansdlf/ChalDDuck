@@ -55,8 +55,12 @@
  *    | 상태 변경(`todo·doing·done`) | **담당자 + 팀장** | 닫음 (남의 업무를 남이 닫지 못함) |
  *    | 기여도 이견 미합의 기재 | **양쪽 의견 보존 · 합의 없음 표기** | 닫음 (`features/contrib/resolution.ts`, `smoke.mts`) |
  *    | 최초 생성자 팀장 권한 | **창작자 쿠키 기반 첫 팀장 + 위임** | 닫음 (`server/actions/onboarding.ts`, `join.mts`) |
+ *    | DM 나가기/삭제 | **내 목록에서 숨김 (`DmThreadHide`)** | 닫음 (`server/actions/dm.ts`, `dm-list-screen.tsx`) |
+ *    | 드라이브 2GB 한도 | **제출함 버전만 합산, 근거 파일 무제한** | 닫음 (`server/drive/usage.ts`, `contrib-add-screen.tsx`) |
+ *    | AI 발표 지원 예상 질문 | **대본 분석 기반 추출** | 닫음 (`server/ai/tools.ts`, `present-screen.tsx`) |
+ *    | AI 리서처 결과 및 출처 | **출처 없는 결과 제외 + 메타데이터/공유/인용** | 닫음 (`tools/researcher-screen.tsx`, `smoke.mts`) |
  *
- *    남의 상태를 바꿀 수 있는 주요 권한과 기여도/생성자 규칙을 모두 정돈하고 하네스로 고정했다.
+ *    남의 상태를 바꿀 수 있는 주요 권한과 기여도/생성자/DM/스토리지/AI 도구 규칙을 모두 정돈하고 하네스로 고정했다.
  * 3. **재입장 때 사람을 어떻게 구분하는가 — 여기는 설명이 사실과 달랐다**(2026-09-28 정정).
  *
  *    예전 이 목록은 "동명이인이면 **기록이 하나가 된다**" 고 적었다. **틀렸다.** 기록은
