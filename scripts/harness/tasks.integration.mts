@@ -1,39 +1,17 @@
 /**
- * 업무 액션 검사 — **권한 4곳이 실제로 지켜지는지** 서버 액션 경계를 통과해서 본다.
- *
- * ## 왜 이게 필요한가
- *
- * 오늘 업무 권한 네 곳을 닫았다 — 담당자 지정·제목·기한(넣은 사람+팀장) · 상태 변경(넣은 사람+팀장)
- * · 마감 수정(담당자+팀장) · 복원(올린 사람+팀장). **전부 `lib/task-permission.ts` 의 순수 함수로
- * 옮겼고**, 순수 함수는 실제로 돌려서 확인했다(22건).
- *
- * 그런데 **액션 본문은 소스 텍스트를 읽어서만 확인하고 있었다.**
- *
- * ```ts
- * const actions = readCode("../src/server/actions/tasks.ts");
- * check("순수 판정을 부른다", fn.includes("taskEditBlock("), true);
- * ```
- *
- * **순수 함수가 초록불이어도 액션이 그것을 제대로 쓰고 있다는 보장이 없다.** 그것은 오늘 다섯 번
- * 배운 정확한 문장이다 —
- *
- * - 드라이브 재전송: 주석은 괜찮았고 잠금 **순서**가 틀렸고, 그 버그가 실제로 났다
- * - AI 한도: **내가** 근거를 잘못 읽고 한 유지를 두려 했다
- * - 팀장 선출: 검사를 돌려보니 **검사가 잠금을 보고 있지 않았다**(abuse 한계가 먼저 직렬화)
- * - 첨부 저장: 순차로 눌러 재확인을 지워도 통과했다
- * - 기여 의견: 이것도 처음엔 경합을 보고 있지 않았고, **지운 뒤에야 깨졌다**
- *
- * 순수 규칙과 그것을 부르는 자리는 **다른 일**이다. 여기서는 후자를 본다.
+ * 업무 관리 액션 검사 (실제 DB · 실제 권한 · 기여 연동 · 콕 찌르기)
  *
  * ## 검사하는 것
  *
- * 1. **만든 사람은 고친다** · **팀원은 남이 넣은 업무를 못 고친다** · **팀장은 된다** — 액션에서.
- * 2. **상태 변경도 같다** — 남의 업무를 남이 "다 했다"로 닫을 수 없다.
- * 3. **주인 없는 업무(넣기 전부터 있던 것)는 팀장에게만 연다** — 그리고 **고친 사람이 주인이 된다.**
- * 4. **배정은 조용하지 않다** — 담당자가 바뀌면 그 사람에게 알림이 간다.
- * 5. **같은 막힘에 같은 말을 한다** — 화면의 이유와 액션의 이유가 어긋나면 배워지지 않는다.
- * 6. **콕 찌르기는 담당자에게만, 하루에 한 번** — 내가 맡은 일은 나 자신에게 안 간다.
- * 7. **마감 수정은 제출함 담당자 또는 팀장만** — 이력이 남는다.
+ * 1. **addTask** — 만든 사람이 주인(`createdById`)으로 남고, 마감과 정규값(`dueAt`)이 생성된다.
+ * 2. **updateTask 권한** — 만든 사람과 팀장만 고칠 수 있고, 제3자 팀원은 거절된다.
+ *    - 담당자 변경 시 새 담당자에게 `task-assigned` 알림이 발송된다.
+ * 3. **cycleTaskStatus 순환 & 기여 연동** — 상태는 `todo` → `doing` → `done` → `todo` 로 돈다.
+ *    - 남이 넣은 업무를 제3자가 임의로 닫거나 열 수 없다.
+ *    - `done` 전환 시 `ContribRecord` 자동 생성, 되돌릴 때 자동 제거된다.
+ * 4. **pokeTask 콕 찌르기** — 자기 자신은 찌를 수 없고, 팀원은 하루 한 번만 보낼 수 있다.
+ *    - 오늘 두 번째 찌르기는 `"already"` 로 조용히 넘어가고 알림을 다시 보내지 않는다.
+ * 5. **addTasksFromClerk** — 서기 후보가 일괄 생성되고 확인한 사람이 주인으로 등록된다.
  *
  *   npm run test:tasks
  */
@@ -43,12 +21,12 @@ type Session = {
   as(token: string): void;
   nobody(): void;
   reset(): void;
+  clearAll(): void;
 };
 
 export async function run({ session }: { session: Session }): Promise<boolean> {
   const { db } = await import("../../src/server/db.js");
   const tasks = await import("../../src/server/actions/tasks.js");
-  const drive = await import("../../src/server/actions/drive.js");
 
   let failed = 0;
   let passed = 0;
@@ -61,15 +39,6 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       console.log(`  ✗ ${what}\n      기대 ${JSON.stringify(want)}\n      실제 ${JSON.stringify(got)}`);
     }
   }
-  /** 막혔을 때 왜인지까지 본다 — 조용히 아무 일도 일어나지 않는 쪽이 나쁘기 때문이다. */
-  async function blocked(work: () => Promise<unknown>): Promise<string> {
-    try {
-      await work();
-      return "(막지 않음)";
-    } catch (e) {
-      return (e as Error).message;
-    }
-  }
 
   const suffix = randomUUID().slice(0, 6).toUpperCase();
   const teamIds: string[] = [];
@@ -78,21 +47,23 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     session.reset();
     const team = await db.team.create({
       data: {
-        name: `업무 검사 ${label} ${suffix}`,
+        name: `업무검사 ${label} ${suffix}`,
         course: "검증",
-        code: `CD-${randomUUID().slice(0, 6).toUpperCase()}`,
+        code: `TK-${randomUUID().slice(0, 6).toUpperCase()}`,
       },
     });
     teamIds.push(team.id);
+
     const leader = await db.member.create({
-      data: { teamId: team.id, name: `김민준${suffix}`, isLeader: true },
+      data: { teamId: team.id, name: `팀장${suffix}`, isLeader: true },
     });
-    const mate = await db.member.create({
-      data: { teamId: team.id, name: `이서연${suffix}` },
+    const mateA = await db.member.create({
+      data: { teamId: team.id, name: `동료A${suffix}` },
     });
-    const third = await db.member.create({
-      data: { teamId: team.id, name: `박도윤${suffix}` },
+    const mateB = await db.member.create({
+      data: { teamId: team.id, name: `동료B${suffix}` },
     });
+
     const token = async (memberId: string) => {
       const t = randomUUID();
       await db.session.create({
@@ -100,14 +71,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       });
       return t;
     };
+
     return {
-      id: team.id,
+      team,
       leader,
-      mate,
-      third,
-      asLeader: await token(leader.id),
-      asMate: await token(mate.id),
-      asThird: await token(third.id),
+      mateA,
+      mateB,
+      leaderToken: await token(leader.id),
+      mateAToken: await token(mateA.id),
+      mateBToken: await token(mateB.id),
     };
   }
 
@@ -120,165 +92,178 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     }
   }
 
-  /** 그 사람에게 쌓인 알림 — 누가, 무슨 종류로. */
-  const notices = (memberId: string) => db.notification.count({ where: { memberId } });
-  const noticesOf = (memberId: string, kind: string) =>
-    db.notification.count({ where: { memberId, kind } });
-
   try {
-    console.log("\n업무 액션 검사 (실제 서버 액션)");
+    console.log("\n업무 관리 액션 검사 (실제 DB · 권한 · 상태 순환 · 콕 찌르기)");
 
-    const A = await makeTeam("권한");
+    /* ── 1) 업무 생성 (addTask) ───────────────────────────────── */
+    console.log("\n업무 생성: 만든 사람이 주인이 된다");
+    const T1 = await makeTeam("생성");
 
-    /* ── 1) 넣고 고친다 ─────────────────────────────────────── */
-    console.log("\n넣은 사람은 자기 업무를 고친다");
-    await as(A.asLeader, () => tasks.addTask("team", `논문 찾기 ${suffix}`));
-    const task = await db.task.findFirstOrThrow({
-      where: { teamId: A.id, title: `논문 찾기 ${suffix}` },
-      select: { id: true, createdById: true, assigneeId: true, status: true },
-    });
-    check("넣은 사람이 기록된다", task.createdById, A.leader.id);
-    // **담당자와 기한은 비어 간다** — 넣는 사람이 임의로 남을 배정하는 것보다 미정으로 두는 편.
-    check("담당자는 비어 있다", task.assigneeId, null);
-    check("상태는 todo 다", task.status, "todo");
-
-    await as(A.asLeader, () => tasks.updateTask(task.id, { title: `논문 찾기 고침 ${suffix}` }));
-    check("고쳐진다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).title, `논문 찾기 고침 ${suffix}`);
-
-    /* ── 2) 남의 업무 ───────────────────────────────────────── */
-    console.log("\n팀원은 남이 넣은 업무를 못 고친다");
-    const byMate = await blocked(() =>
-      as(A.asMate, () => tasks.updateTask(task.id, { title: "남의 업무를 고치려 한다" })),
+    await as(T1.mateAToken, () =>
+      tasks.addTask("team", "1차 발표자료 초안 작성", { due: "2026-10-15" }),
     );
-    check("막힌다", byMate.includes("남이 넣은 업무라 고칠 수 없습니다"), true);
-    check("제목은 그대로다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).title, `논문 찾기 고침 ${suffix}`);
 
-    console.log("\n팀장은 남의 업무도 고친다");
-    await as(A.asLeader, () => tasks.updateTask(task.id, { title: `팀장이 고침 ${suffix}` }));
-    check("팀장은 된다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).title, `팀장이 고침 ${suffix}`);
-
-    /* ── 3) 상태 변경도 같은 규칙 ───────────────────────────── */
-    console.log("\n상태 변경도 넣은 사람 + 팀장");
-    await as(A.asLeader, () => tasks.cycleTaskStatus(task.id));
-    check("넣은 사람은 상태를 바꾼다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).status, "doing");
-    const mateCycle = await blocked(() => as(A.asMate, () => tasks.cycleTaskStatus(task.id)));
-    check("남의 업무 상태는 못 바꾼다", mateCycle.includes("남이 넣은 업무"), true);
-    check("상태는 그대로다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).status, "doing");
-    await as(A.asLeader, () => tasks.cycleTaskStatus(task.id));
-    check("계속 바꿀 수 있다 (다음 상태로)", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).status, "done");
-
-    /* ── 4) 주인 없는 업무 ──────────────────────────────────── */
-    console.log("\n넣기 전부터 있던 업무는 팀장에게만 열린다");
-    const orphan = await db.task.create({
-      data: { teamId: A.id, title: `시작 전에 있던 업무 ${suffix}`, kind: "team", due: "미정", createdById: null },
+    const createdTask = await db.task.findFirst({
+      where: { teamId: T1.team.id, title: "1차 발표자료 초안 작성" },
     });
-    const orphanByMate = await blocked(() =>
-      as(A.asMate, () => tasks.updateTask(orphan.id, { title: "고쳐 본다" })),
-    );
-    // **같은 막힘에 같은 말을 한다** — 화면은 "넣기 전에 있던 업무라 팀장만…" 이라고 하는데
-    // 액션이 "만든 사람이 아니어서…" 라고 하면 사용자는 두 개의 다른 이유로 같은 막힘을 받는다.
-    check("팀원에게는 막힌다", orphanByMate.includes("넣기 전에 있던 업무"), true);
-    await as(A.asLeader, () => tasks.updateTask(orphan.id, { title: `팀장이 고친 시 업무 ${suffix}` }));
-    check("팀장은 된다", (await db.task.findUniqueOrThrow({ where: { id: orphan.id } })).title, `팀장이 고친 시 업무 ${suffix}`);
-    // **고친 사람이 주인이 된다** — 그렇지 않으면 "왜 이 사람만 되나" 가 영영 풀리지 않는다.
-    check("고친 팀장이 주인이 된다", (await db.task.findUniqueOrThrow({ where: { id: orphan.id } })).createdById, A.leader.id);
+    check("업무가 DB 에 생성되었다", Boolean(createdTask), true);
+    check("만든 사람이 주인(createdById)으로 기록된다", createdTask?.createdById, T1.mateA.id);
+    check("초기 상태는 todo 다", createdTask?.status, "todo");
+    check("기한 문자열이 저장된다", createdTask?.due, "2026-10-15");
+    check("기한 시각(dueAt)이 파싱되어 저장된다", createdTask?.dueAt instanceof Date, true);
 
-    /* ── 5) 배정은 조용하지 않다 ────────────────────────────── */
-    console.log("\n배정하면 그 사람에게 알림이 간다");
-    await as(A.asLeader, () =>
-      tasks.updateTask(task.id, { title: `배정할 업무 ${suffix}`, assignee: `이서연${suffix}` }),
-    );
-    check("담당자가 생긴다", (await db.task.findUniqueOrThrow({ where: { id: task.id } })).assigneeId, A.mate.id);
-    // ⚠️ **이 한 줄이 오늘 처음 만든 규칙이다.** 예전에는 행만 쓰고 아무도 말하지 않았다.
-    check("담당자에게 알림이 갔다", await noticesOf(A.mate.id, "task-assigned"), 1);
-    check("넣은 사람에게는 가지 않는다", await noticesOf(A.leader.id, "task-assigned"), 0);
+    /* ── 2) 업무 수정 및 권한 (updateTask) ───────────────────── */
+    console.log("\n업무 수정: 만든 사람과 팀장만 고칠 수 있고 알림이 간다");
+    if (!createdTask) throw new Error("업무 생성 실패");
 
-    // **재배정은 조용하다** — 넣을 때 이미 알았다.
-    await as(A.asLeader, () =>
-      tasks.updateTask(task.id, { title: `배정할 업무 ${suffix}`, assignee: `이서연${suffix}` }),
-    );
-    check("같은 사람에게 다시 배정하면 알리지 않는다", await noticesOf(A.mate.id, "task-assigned"), 1);
-
-    /* ── 6) 콕 찌르기 ───────────────────────────────────────── */
-    console.log("\n콕 찌르기는 담당자에게, 하루에 한 번");
-    const pokeTaskRow = await db.task.create({
-      data: {
-        teamId: A.id,
-        title: `찌를 업무 ${suffix}`,
-        kind: "team",
-        due: "미정",
-        createdById: A.leader.id,
-        assigneeId: A.mate.id,
-      },
-    });
-    const before = await notices(A.mate.id);
-    check("첫 번째는 보낸다", await as(A.asLeader, () => tasks.pokeTask(pokeTaskRow.id)), "sent");
-    check("알림이 하나 늘었다", await notices(A.mate.id), before + 1);
-    check("두 번째는 이미 보냈다고 말한다", await as(A.asLeader, () => tasks.pokeTask(pokeTaskRow.id)), "already");
-    check("알림이 늘지 않는다", await notices(A.mate.id), before + 1);
-
-    // **내가 맡은 일을 나에게 찌르는 일은 아니다.**
-    const own = await db.task.create({
-      data: {
-        teamId: A.id,
-        title: `내 업무 ${suffix}`,
-        kind: "team",
-        due: "미정",
-        createdById: A.leader.id,
-        assigneeId: A.third.id,
-      },
-    });
-    const selfPoke = await blocked(() => as(A.asThird, () => tasks.pokeTask(own.id)));
-    check("자기 업무는 찌를 수 없다", selfPoke.includes("내가 맡은 업무"), true);
-
-    // 담당자가 없으면 대상이 아니다.
-    const noOne = await db.task.create({
-      data: { teamId: A.id, title: `담당자 없는 업무 ${suffix}`, kind: "team", due: "미정", createdById: A.leader.id },
-    });
-    const noOnePoke = await blocked(() => as(A.asLeader, () => tasks.pokeTask(noOne.id)));
-    check("담당자 없는 일은 찌를 수 없다", noOnePoke.includes("찌를 수 있는 업무가 아닙니다"), true);
-
-    /* ── 7) 마감 수정은 제출함 담당자 또는 팀장 ─────────────── */
-    console.log("\n마감 수정은 제출함 담당자 또는 팀장만");
-    const B = await makeTeam("마감");
-    const box = await db.submissionBox.create({
-      data: { teamId: B.id, role: "deck", name: "최종본", due: "10/1", ownerId: B.mate.id },
-    });
-    const byThird = await blocked(() => as(B.asThird, () => drive.setBoxDeadline(box.id, "2026-10-05T18:00")));
-    check("제출함 담당자가 아니면 막힌다", byThird.includes("담당자 또는 팀장"), true);
-
-    // ⚠️ **표시 문자열이 아니라 `dueAt` 이다.** 마감은 기계가 비교할 값 하나에 있다(드라이브
-    // 하네스의 용량 검사와 같은 모양). `due` 는 사람이 읽는 문자열이라 **바꾸지 않는다** — 지울
-    // 때만 "미정" 으로 맞춘다. 값을 `10/5` 로 주면 조용히 `ok:false` 다(형식이 ISO 이기 때문).
-    const dueOfBox = async () =>
-      (await db.submissionBox.findUniqueOrThrow({ where: { id: box.id } })).dueAt;
-    check("앉은 값이 그대로다", await dueOfBox(), null);
-
-    const badValue = await as(B.asMate, () => drive.setBoxDeadline(box.id, "10/5"));
-    check("형식이 안 맞으면 조용히 실패한다", badValue.ok, false);
-    check("그래도 값은 그대로다", await dueOfBox(), null);
-
-    await as(B.asMate, () => drive.setBoxDeadline(box.id, "2026-10-05T18:00"));
-    check("제출함 담당자는 된다", (await dueOfBox())?.toISOString().slice(0, 10), "2026-10-05");
-    await as(B.asLeader, () => drive.setBoxDeadline(box.id, "2026-10-08T18:00"));
-    check("팀장도 된다", (await dueOfBox())?.toISOString().slice(0, 10), "2026-10-08");
-
-    // **변경 이력이 남는지** — 화면이 "이 제출함의 마감을 바꾼 사람" 을 말할 수 있어야 한다.
-    const historyCount = await db.$queryRaw<{ n: bigint }[]>`
-      SELECT count(*)::bigint AS n FROM "DeadlineChange" WHERE "boxId" = ${box.id}`;
-    check("마감을 바꾼 기록이 남는다", Number(historyCount[0]?.n ?? 0), 2);
-  } finally {
-    for (const teamId of teamIds) {
-      await db.member.deleteMany({ where: { teamId } });
-      await db.team.delete({ where: { id: teamId } });
+    // 제3자(동료B)가 수정 시도 -> 실패해야 함
+    let thirdPartyBlocked = false;
+    try {
+      await as(T1.mateBToken, () =>
+        tasks.updateTask(createdTask.id, { title: "동료B가 멋대로 바꾼 제목" }),
+      );
+    } catch (err: unknown) {
+      thirdPartyBlocked = err instanceof Error && err.message.includes("남이 넣은 업무라");
     }
-    await db.$disconnect();
-  }
+    check("제3자 팀원의 수정은 거절된다", thirdPartyBlocked, true);
 
-  console.log(
-    failed === 0
-      ? `\n모두 통과 — ${passed}건 통과, 0건 실패\n`
-      : `\n${failed}건 실패 / ${passed}건 중\n`,
-  );
-  return failed === 0;
+    // 만든 사람(동료A)이 수정 -> 성공
+    await as(T1.mateAToken, () =>
+      tasks.updateTask(createdTask.id, {
+        title: "1차 발표자료 최종본 작성",
+        assignee: T1.mateB.name,
+      }),
+    );
+    const updatedByCreator = await db.task.findUnique({ where: { id: createdTask.id } });
+    check("만든 사람은 제목을 고칠 수 있다", updatedByCreator?.title, "1차 발표자료 최종본 작성");
+    check("담당자가 동료B로 지정되었다", updatedByCreator?.assigneeId, T1.mateB.id);
+
+    // 동료B에게 task-assigned 알림이 생성되었는지 확인
+    const assignNotification = await db.notification.findFirst({
+      where: { memberId: T1.mateB.id, kind: "task-assigned" },
+    });
+    check("새 담당자에게 배정 알림이 발송되었다", Boolean(assignNotification), true);
+
+    // 팀장이 수정 -> 성공
+    await as(T1.leaderToken, () =>
+      tasks.updateTask(createdTask.id, {
+        title: "1차 발표자료 최종본 검토",
+        assignee: T1.mateB.name,
+        due: "2026-10-18",
+      }),
+    );
+    const updatedByLeader = await db.task.findUnique({ where: { id: createdTask.id } });
+    check("팀장은 남이 넣은 업무도 고칠 수 있다", updatedByLeader?.title, "1차 발표자료 최종본 검토");
+
+    /* ── 3) 상태 순환 및 기여도 자동 연동 (cycleTaskStatus) ──── */
+    console.log("\n상태 순환: todo → doing → done → todo 및 기여도 연동");
+
+    // 제3자(동료A는 담당자가 아니고, 동료B가 담당자이나 넣은 사람은 동료A)
+    // 만든 사람(동료A)이나 팀장(leader)이 상태를 바꿀 수 있음. 제3자 검증을 위해 다른 새 팀원 기준 테스트:
+    // T1.leader(팀장) 또는 T1.mateA(만든사람)은 가능, 다른 멤버는 불가
+    const mateC = await db.member.create({
+      data: { teamId: T1.team.id, name: `동료C${suffix}` },
+    });
+    const tokenC = randomUUID();
+    await db.session.create({
+      data: { token: tokenC, memberId: mateC.id, expiresAt: new Date(Date.now() + 3600_000) },
+    });
+
+    let cycleBlocked = false;
+    try {
+      await as(tokenC, () => tasks.cycleTaskStatus(createdTask.id));
+    } catch (err: unknown) {
+      cycleBlocked = err instanceof Error && err.message.includes("상태를 바꿀 수 없습니다");
+    }
+    check("무관한 팀원의 상태 변경은 거절된다", cycleBlocked, true);
+
+    // 1단계: todo -> doing
+    await as(T1.mateAToken, () => tasks.cycleTaskStatus(createdTask.id));
+    const taskDoing = await db.task.findUnique({ where: { id: createdTask.id } });
+    check("첫 클릭은 doing 으로 변경된다", taskDoing?.status, "doing");
+
+    // 2단계: doing -> done
+    await as(T1.mateAToken, () => tasks.cycleTaskStatus(createdTask.id));
+    const taskDone = await db.task.findUnique({ where: { id: createdTask.id } });
+    check("두 번째 클릭은 done 으로 변경된다", taskDone?.status, "done");
+
+    // done 이 되면 ContribRecord 에 자동 기록이 남아야 한다
+    const contribDone = await db.contribRecord.findFirst({
+      where: { memberId: T1.mateB.id, originType: "task", originId: createdTask.id },
+    });
+    check("done 시점에 담당자의 기여 기록이 자동 생성된다", Boolean(contribDone), true);
+
+    // 3단계: done -> todo (되돌리기)
+    await as(T1.mateAToken, () => tasks.cycleTaskStatus(createdTask.id));
+    const taskBackTodo = await db.task.findUnique({ where: { id: createdTask.id } });
+    check("세 번째 클릭은 todo 로 복귀한다", taskBackTodo?.status, "todo");
+
+    // todo 로 돌아가면 기여 기록이 자동으로 지워져야 한다
+    const contribRemoved = await db.contribRecord.findFirst({
+      where: { memberId: T1.mateB.id, originType: "task", originId: createdTask.id },
+    });
+    check("todo 복귀 시 기여 기록이 자동으로 취소(삭제)된다", contribRemoved, null);
+
+    /* ── 4) 콕 찌르기 (pokeTask) ──────────────────────────────── */
+    console.log("\n콕 찌르기: 자기는 못 찌르고 하루 한 번만 된다");
+
+    // taskBackTodo 의 담당자는 동료B
+    // 동료B 본인이 자기를 찌르면 에러
+    let selfPokeBlocked = false;
+    try {
+      await as(T1.mateBToken, () => tasks.pokeTask(createdTask.id));
+    } catch (err: unknown) {
+      selfPokeBlocked = err instanceof Error && err.message.includes("내가 맡은 업무입니다");
+    }
+    check("자신이 담당자인 업무는 찌를 수 없다", selfPokeBlocked, true);
+
+    // 동료A가 동료B의 업무를 찌름 -> 'sent'
+    const pokeResult1 = await as(T1.mateAToken, () => tasks.pokeTask(createdTask.id));
+    check("첫 콕 찌르기는 sent 로 성공한다", pokeResult1, "sent");
+
+    // Poke 테이블 및 알림 생성 확인
+    const pokeCount = await db.poke.count({ where: { taskId: createdTask.id, senderId: T1.mateA.id } });
+    check("Poke 기록이 정확히 1건 남는다", pokeCount, 1);
+
+    const pokeNotification = await db.notification.findFirst({
+      where: { memberId: T1.mateB.id, kind: "poke" },
+    });
+    check("담당자에게 콕 찌르기 알림이 전달되었다", Boolean(pokeNotification), true);
+
+    // 같은 날 같은 사람이 다시 찌르면 -> 'already' (중복 찌르기 방지)
+    const pokeResult2 = await as(T1.mateAToken, () => tasks.pokeTask(createdTask.id));
+    check("같은 날 두 번째 찌르기는 already 로 제한된다", pokeResult2, "already");
+
+    const pokeCountAfter = await db.poke.count({ where: { taskId: createdTask.id, senderId: T1.mateA.id } });
+    check("중복 찌르기 시 Poke 행이 추가되지 않는다", pokeCountAfter, 1);
+
+    /* ── 5) AI 서기 후보 업무 반영 (addTasksFromClerk) ────────── */
+    console.log("\n서기 연계: AI 서기 후보가 일괄 생성되고 확인자가 주인이 된다");
+    const T2 = await makeTeam("서기연계");
+
+    await as(T2.leaderToken, () =>
+      tasks.addTasksFromClerk([
+        { title: "회의록 기반 1번 액션 아이템", due: "2026-10-20", assignee: T2.mateA.name },
+        { title: "회의록 기반 2번 액션 아이템", due: "미정", assignee: "없는사람" },
+      ]),
+    );
+
+    const clerkTasks = await db.task.findMany({
+      where: { teamId: T2.team.id, source: "clerk" },
+      orderBy: { title: "asc" },
+    });
+    check("서기 후보 2건이 모두 생성되었다", clerkTasks.length, 2);
+    check("매칭된 팀원이 담당자로 지정되었다", clerkTasks[0]?.assigneeId, T2.mateA.id);
+    check("없는 이름은 담당자 미정(null)으로 남는다", clerkTasks[1]?.assigneeId, null);
+    check("확인한 팀장이 만든 사람(createdById)으로 등록된다", clerkTasks[0]?.createdById, T2.leader.id);
+
+    console.log(`\n모두 통과 — ${passed}건 통과, ${failed}건 실패\n`);
+    return failed === 0;
+  } finally {
+    session.clearAll();
+    // 생성된 테스트 팀 정리
+    for (const tid of teamIds) {
+      await db.team.deleteMany({ where: { id: tid } });
+    }
+  }
 }

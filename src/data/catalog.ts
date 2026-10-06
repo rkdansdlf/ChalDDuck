@@ -268,7 +268,12 @@ export const CLERK_SAMPLE_DRAFT: ClerkDraft = {
 export const RESEARCH_SAMPLE_QUERY = "팀 프로젝트에서 무임승차를 줄이는 방법에 대한 연구 자료 있어?";
 
 /**
- * 리서처 초기 진입 시 보여 주는 대학생 팀플 핵심 추천 검색어.
+ * 리서처 초기 진입 시 보여 주는 핵심 추천 검색어.
+ *
+ * **추천 칩은 예시 질문·연관 주제와 겹치지 않게 둔다.** 겹치면 같은 말을 두 번 시키는 셈이
+ * 되어, 칩이 있어야 할 자리가 대신 칩의 존재 이유를 흐리게 한다. 그래서 여기에는 MBTI 나
+ * 개인 사정(청년 주거 같은 것)이 아니라 **팀플 운영** 쪽만 둔다 — 리서처는 팀플 자료
+ * 도구이지 개인 생활 검색창이 아니다.
  */
 export type ResearchCuratedSuggestion = {
   tag: string;
@@ -277,20 +282,16 @@ export type ResearchCuratedSuggestion = {
 
 export const RESEARCH_CURATED_SUGGESTIONS: ResearchCuratedSuggestion[] = [
   {
-    tag: "역할 분담 연구",
-    query: "팀 프로젝트 역할 분담과 협업 만족도 실증 연구",
+    tag: "비대면 소통",
+    query: "비대면 팀 프로젝트에서 메신저 소통이 만드는 오해와 그 완화 방법 연구",
   },
   {
-    tag: "갈등 해결",
-    query: "대학생 팀 프로젝트에서 발생하는 갈등의 유형과 해결 전략 연구",
+    tag: "발표 질문 대응",
+    query: "학술 프레젠테이션 발표에서 질문에 답하는 효과적인 방법에 대한 연구",
   },
   {
-    tag: "청년 주거 통계",
-    query: "통계청 20대 청년 1인 가구 주거 및 생활 실태 조사 보고서",
-  },
-  {
-    tag: "발표 슬라이드 원칙",
-    query: "멀티미디어 학습 원리와 프레젠테이션 슬라이드 디자인 연구",
+    tag: "협업 도구 효과",
+    query: "팀 프로젝트에서 협업 도구 사용이 성과와 만족도에 미치는 영향 실증 연구",
   },
 ];
 

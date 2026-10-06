@@ -23,6 +23,7 @@
     "test:contrib": "tsx --conditions=react-server scripts/harness/contrib.mts",
     "test:cron": "tsx --conditions=react-server scripts/harness/cron.mts",
     "test:tasks": "tsx --conditions=react-server scripts/harness/tasks.mts",
+    "test:meetings": "tsx --conditions=react-server scripts/harness/meetings.mts",
     "cushion:bench": "tsx --conditions=react-server scripts/cushion-bench.mts",
     "decisions": "node scripts/list-open-decisions.mjs",
     "audit:actions": "node scripts/list-untested-actions.mjs",
@@ -32,7 +33,7 @@
     "storage:check": "node scripts/check-storage.mjs",
     "storage:check:gate": "node scripts/check-storage.mjs --if-configured",
     "deploy:why": "node scripts/why-deploy-failed.mjs",
-    "verify:code": "npm run test && npm run test:drive && npm run test:ai && npm run test:join && npm run test:contrib && npm run test:cron && npm run test:tasks && npm run build && npx tsc --noEmit && npm run lint",
+    "verify:code": "npm run test && npm run test:drive && npm run test:ai && npm run test:join && npm run test:contrib && npm run test:cron && npm run test:tasks && npm run test:meetings && npm run build && npx tsc --noEmit && npm run lint",
     "verify": "npm run db:check && npm run db:migrations && npm run storage:check:gate && npm run verify:code",
     "tool:bench": "tsx --conditions=react-server scripts/tool-bench.mts"
   },

@@ -1,5 +1,5 @@
 /**
- * 업무 액션 검사 진입점 — 드라이브·AI·가입·기여·크론 과 **같은 하네스**를 쓴다.
+ * 회의 검사 진입점 — 나머지 하네스와 **같은 심기와 같은 문**을 쓴다.
  */
 import "../load-env.mjs";
 
@@ -10,7 +10,7 @@ assertLocalOnly();
 
 installRequestContext();
 
-const { run } = await import("./tasks.integration.mjs");
+const { run } = await import("./meetings.integration.mjs");
 
 const okAll = await run({ session });
 process.exit(okAll ? 0 : 1);

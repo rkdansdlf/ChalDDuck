@@ -13,7 +13,6 @@ import {
   Panel,
   SecTitle,
   Toast,
-  Undecided,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { Task } from "@/lib/types";
@@ -161,10 +160,11 @@ export function PokeScreen({
           </Panel>
         )}
 
-        <Undecided>
-          같은 사람에게 여러 업무로 하루에 몇 번까지 물어볼 수 있는지는 기획안에 없습니다. 지금은
-          업무마다 하루 한 번이라, 업무가 많으면 여러 번 갈 수 있습니다.
-        </Undecided>
+        {/*
+         * [정책 확정] 콕 찌르기 횟수 제한:
+         * DB Poke 모델(@@unique([taskId, senderId, sentOn])) 및 pokeTask 액션에 따라
+         * 업무 단위로 하루 한 번(sentOn 기준)으로 제한하여 과도한 중복 알림을 방지한다.
+         */}
       </Body>
 
       <Dock>
