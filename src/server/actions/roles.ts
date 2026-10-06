@@ -307,6 +307,10 @@ export async function rejectRoleDraw(role: RoleKey): Promise<AnswerResult> {
   const rejected = await db.$transaction(async (tx) => {
     // 이미 수락된 결과는 거절로 뒤집지 않는다 — 거절은 "다시 뽑아 달라" 는 뜻이지
     // 확정된 것을 빼아내라는 뜻이 아니다.
+    // ⚠️ `accepted: false` 는 **앞선 `myPendingDraw` 이 이미 걸러내므로 지금은 도달하지 않는다.**
+    // (확정분은 거기서 `draw: null` + `"gone"` 이 된다.) 그래도 **남겨 둔다** — 앞단 조건이
+    // 바뀌어도 여기서 확정된 결과가 지워지지 않아야 한다. 하네스로는 이 줄을 **끊을 수 없다**:
+    // 앞에서 이미 막히므로. 앞단을 고쳐야 이 줄이 드러난다.
     const removed = await tx.roleDraw.deleteMany({
       where: { id: draw.id, winnerId: me.id, accepted: false },
     });

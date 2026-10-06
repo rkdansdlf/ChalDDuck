@@ -44,7 +44,6 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   const roles = await import("../../src/server/actions/roles.js");
   const { ROLES, RANDOM_TOOLS } = await import("../../src/data/catalog.js");
   // 액션이 쓰는 두 집합을 **같은 곳에서** 가져온다 — 순서를 바꿔 쓰면 검사가 제품을 안 따라간다.
-  const ROLE_KEYS = new Set<string>(ROLES.map((r) => r.key));
   const TOOL_NAMES = new Set<string>(RANDOM_TOOLS.map((t) => t.name));
   // 타입을 좁힌다 — 실제 키 집합에서 고르는데도 타입은 `string` 이라서다.
   const role = ROLES[0]!.key as Parameters<typeof roles.proposeRoleDraw>[0];
@@ -148,6 +147,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
   const consentOf = (teamId: string) =>
     db.roleDrawConsent.findFirst({ where: { teamId }, select: { id: true, tool: true } });
+
+  const rejectionOf = async (teamId: string, role: string, memberId: string) =>
+    (await db.roleRejection.findUnique({
+      where: { teamId_role_memberId: { teamId, role: role as Parameters<typeof roles.claimSoleRole>[0], memberId } },
+    })) !== null;
 
   const drawOf = (teamId: string) =>
     db.roleDraw.findFirst({
@@ -263,6 +267,76 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       data: { leftAt: new Date() },
     });
     check("자리 비워지고 다시 제안할 수 있다", await as(D.asLeader, () => roles.proposeRoleDraw(role, tool)), "ok");
+
+    /* ── 9) 당사자가 거절하면 다시 비운다 ────────────────────── */
+    console.log("\n당사자가 거절하면 결과가 지워지고 다시 비운다");
+    const E = await makeTeam("거절");
+    await as(E.asLeader, () => roles.proposeRoleDraw(role, tool));
+    await db.roleDrawConsent.updateMany({
+      where: { teamId: E.id },
+      data: { respondBy: new Date(Date.now() - 60_000) },
+    });
+    check("뽑힌다", (await as(E.asLeader, () => roles.drawForRole(role, tool))).status, "ok");
+    const eDrawn = await drawOf(E.id);
+    const eWinnerId = eDrawn?.winnerId ?? "";
+    check("아직 확정되지 않았다", eDrawn?.accepted, false);
+    const eWinnerToken = eWinnerId === E.leader.id ? E.asLeader : eWinnerId === E.mate.id ? E.asMate : E.asThird;
+    check("당사자가 거절한다", await as(eWinnerToken, () => roles.rejectRoleDraw(role)), "ok");
+    check("결과가 지워진다", await drawOf(E.id), null);
+    check("거절이 남는다", await rejectionOf(E.id, role, eWinnerId), true);
+
+    /* ── 10) 남이 대신 거절할 수는 없다 ─────────────────────── */
+    console.log("\n남이 대신 거절할 수는 없다");
+    const F = await makeTeam("타인거절");
+    await as(F.asLeader, () => roles.proposeRoleDraw(role, tool));
+    await db.roleDrawConsent.updateMany({
+      where: { teamId: F.id },
+      data: { respondBy: new Date(Date.now() - 60_000) },
+    });
+    await as(F.asLeader, () => roles.drawForRole(role, tool));
+    const fWinnerId = (await drawOf(F.id))?.winnerId ?? "";
+    const fOther = fWinnerId === F.leader.id ? F.asMate : F.asLeader;
+    check("다른 사람은 거절할 수 없다", await as(fOther, () => roles.rejectRoleDraw(role)), "not-yours");
+    check("결과는 그대로다", (await drawOf(F.id))?.accepted, false);
+
+    /* ── 11) 이미 확정한 것은 거절로 뒤집지 않는다 ──────────── */
+    // ⚠️ **이 검사는 앞단 `myPendingDraw` 을 간다.** 아래 `deleteMany` 의 `accepted: false`
+    // 를 끊어도 이건 깨지지 않는다 — 앞에서 확정분을 이미 "gone" 으로 돌려보냈기 때문이다.
+    // 그래서 이 검사는 **뒤의 줄이 아니라 앞단을 지킨다.**
+    console.log("\n이미 확정한 것은 거절로 뒤집지 않는다");
+    const G = await makeTeam("확정후거절");
+    await as(G.asLeader, () => roles.proposeRoleDraw(role, tool));
+    await db.roleDrawConsent.updateMany({
+      where: { teamId: G.id },
+      data: { respondBy: new Date(Date.now() - 60_000) },
+    });
+    await as(G.asLeader, () => roles.drawForRole(role, tool));
+    const gWinnerId = (await drawOf(G.id))?.winnerId ?? "";
+    const gWinnerToken = gWinnerId === G.leader.id ? G.asLeader : gWinnerId === G.mate.id ? G.asMate : G.asThird;
+    check("당사자가 받는다", await as(gWinnerToken, () => roles.acceptRoleDraw(role)), "ok");
+    check("확정된 뒤에는 거절해도 안 돌아간다", await as(gWinnerToken, () => roles.rejectRoleDraw(role)), "gone");
+    check("확정은 그대로다", (await drawOf(G.id))?.accepted, true);
+
+    /* ── 12) 혼자 인 경우에만 그 역할을 맡는다 ──────────────── */
+    console.log("\n혼자 인 경우에만 그 역할을 맡는다");
+    const H = await makeTeam("혼자");
+    await db.member.updateMany({ where: { teamId: H.id }, data: { wantRole: null } });
+    await db.member.update({ where: { id: H.mate.id }, data: { wantRole: role } });
+    check("혼자 고르면 맡는다", await as(H.asMate, () => roles.claimSoleRole(role)), "ok");
+    check("확정된 자리로 남는다", (await drawOf(H.id))?.accepted, true);
+    check("도구는 '담당' 이다", (await drawOf(H.id))?.tool, "담당");
+    check("한 번만 맡는다", await as(H.asThird, () => roles.claimSoleRole(role)), "settled");
+
+    /* ── 13) 겹치는 사람이 있으면 그건 추첨 몫 ──────────────── */
+    console.log("\n겹치는 사람이 있으면 그건 추첨 몫");
+    const I = await makeTeam("겹침");
+    check("나만 고른 게 아니면 안 된다", await as(I.asThird, () => roles.claimSoleRole(role)), "not-yours");
+
+    /* ── 14) 아무도 안 고르면 아무도 못 맡는다 ──────────────── */
+    console.log("\n아무도 안 고르면 아무도 못 맡는다");
+    const J = await makeTeam("아무도");
+    await db.member.updateMany({ where: { teamId: J.id }, data: { wantRole: null } });
+    check("고른 사람이 없으면 안 된다", await as(J.asLeader, () => roles.claimSoleRole(role)), "not-yours");
 
     /* ── 9) 모르는 값 ────────────────────────────────────────── */
     console.log("\n모르는 역할과 도구는 거절한다");

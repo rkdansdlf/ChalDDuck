@@ -53,7 +53,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   const { db } = await import("../../src/server/db.js");
   const rejoin = await import("../../src/server/actions/rejoin.js");
   const { issueRejoinCode } = await import("../../src/server/auth/issue.js");
-  const { hashRejoinCode, normalizeRejoinCode } = await import(
+  const { hashRejoinCode } = await import(
     "../../src/server/auth/rejoin-code.js"
   );
   const { attemptKey: keyOf } = await import("../../src/server/auth/attempts.js");
@@ -195,7 +195,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     session.asBrowser(randomUUID());
     check("이전 코드는 더 이상 안 통한다", await rejoin.rejoinWithCode(D.code, `이서연${suffix}`, D.coded!), "wrong");
     check("새 코드는 통한다", await rejoin.rejoinWithCode(D.code, `이서연${suffix}`, fresh), "ok");
-    truthy("새 코드가 해시로도 들어갔다", await db.member.findUniqueOrThrow({ where: { id: D.mate.id }, select: { rejoinCodeHash: true } }).then((r) => normalizeRejoinCode(fresh) !== ""));
+    truthy("새 코드가 해시로도 들어갔다", await db.member.findUniqueOrThrow({ where: { id: D.mate.id }, select: { rejoinCodeHash: true } }).then((r) => r.rejoinCodeHash !== null && r.rejoinCodeHash !== ""));
 
     /* ── 8) 기기 지우기는 내 것만 ───────────────────────────── */
     console.log("\n기기를 지우는 것은 내 것만");
