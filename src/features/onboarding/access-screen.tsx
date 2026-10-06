@@ -569,7 +569,7 @@ export function AccessScreen({
           아니라 팀원들의 기록까지 없어집니다.
         </Note>
         <p className="text-pretty-keep m-0 mb-2 text-[14.5px] leading-[1.6] text-txt">
-          맞다면 팀 이름 <b>{teamName}</b> 을(를) 그대로 적어 주세요.
+          맞다면 팀 이름을 <b>{teamName}</b> 그대로 적어 주세요.
         </p>
         <Input
           value={confirmName}

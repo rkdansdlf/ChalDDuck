@@ -43,15 +43,28 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   const { db } = await import("../../src/server/db.js");
   const meetings = await import("../../src/server/actions/meetings.js");
   const { SCHEDULE_DAYS, SCHEDULE_HOURS } = await import("../../src/data/catalog.js");
-  const { mondayOf, todayInSeoul } = await import("../../src/features/schedule/week.js");
+  const { candidateDates, shortDate } = await import("../../src/features/schedule/week.js");
 
   /**
    * **주 키는 "this" 가 아니라 그 주 월요일의 날짜다**(`YYYY-MM-DD`).
    *
    * 처음에 `"this"` 로 불렀다가 "시간표 밖의 시간입니다" 로 떨어졌다. 화면이 넘기는 값의 모양을
    * 먼저 읽어야 한다 — `"this"` 라고 착각한 것은 **검사만 잘못**이고 제품은 문제가 없었다.
+   *
+   * ⚠️ **그리고 이 검사는 시각에 의존하면 안 된다**(2026-09-28 에 실제로 깨졌다). 처음에는
+   * `mondayOf(todayInSeoul())` + day 1 + hour 3 을 썼는데, 오늘이 화요일이고 그 시간이 이미
+   * 지났으면 액션이 "이미 지나간 시간입니다" 로 거절한다 — **아침에는 통과하고 오후에 깨지는**
+   * 검사였다.
+   *
+   * 그래서 **후보 기간의 마지막 날, 시간표의 마지막 칸**을 쓴다. 그 칸은 지금이 몇 시든 지나가지
+   * 않는다. 날짜 필터와 시간 필터가 **둘 다 개입하지 않게** — `smoke.mts` 가 "모레" 를 쓰는 것과
+   * 같은 이유다.
    */
-  const week = mondayOf(todayInSeoul());
+  const candidates = candidateDates();
+  const last = candidates[candidates.length - 1]!;
+  const week = last.week;
+  const day = last.day;
+  const hour = SCHEDULE_HOURS.length - 1;
 
   let failed = 0;
   let passed = 0;
@@ -83,7 +96,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
         name: `회의 검사 ${label} ${suffix}`,
         course: "검증",
         code: `CD-${randomUUID().slice(0, 6).toUpperCase()}`,
-        candidatesFrom: todayInSeoul(),
+        candidatesFrom: shortDate(week),
       },
     });
     teamIds.push(team.id);
@@ -150,7 +163,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
     /* ── 1) 제안하면 제안자가 자동 찬성 ───────────────────────── */
     console.log("\n제안하면 제안자는 자동으로 찬성한다");
-    await as(A.asLeader, () => meetings.proposeMeetingAt(week, 1, 3, { location: "=D실" }));
+    await as(A.asLeader, () => meetings.proposeMeetingAt(week, day, hour, { location: "=D실" }));
     const proposed = await current(A.id);
     check("제안이 올라온다", proposed?.stage, "proposed");
     check("제안자가 제안했다", proposed?.proposedById, A.leader.id);
@@ -170,7 +183,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
     /* ── 2) 진행 중인 결정 위에서 다시 제안할 수 없다 ────────── */
     console.log("\n진행 중인 결정 위에서 다시 제안할 수 없다");
-    const second = await blocked(() => as(A.asMate, () => meetings.proposeMeetingAt(week, 2, 5)));
+    const second = await blocked(() => as(A.asMate, () => meetings.proposeMeetingAt(week, day, hour)));
     // **서로 다른 두 메시지**가 있다 — 이미 올라온 제안(순차)과 동시에 올린 경우(경합)다.
     // 같은 상황이 같은 말로 도착해야 배워지는데, **지금 서로 다르다**(2026-09-28 확인).
     check("막힌다", second.includes("이미 올라온 회의 제안"), true);
@@ -180,8 +193,8 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     console.log("\n두 명이 같은 순간에 제안하면 하나만 된다");
     const B = await makeTeam("경합");
     const racers = await Promise.all([
-      blocked(() => as(B.asLeader, () => meetings.proposeMeetingAt(week, 1, 3))),
-      blocked(() => as(B.asMate, () => meetings.proposeMeetingAt(week, 2, 4))),
+      blocked(() => as(B.asLeader, () => meetings.proposeMeetingAt(week, day, hour))),
+      blocked(() => as(B.asMate, () => meetings.proposeMeetingAt(week, day, hour))),
     ]);
     /**
      * **막는 메시지는 둘 중 하나다** — 어느 것이 나오느냐는 **타이밍**에 달렸다(2026-09-28 확인).
@@ -227,7 +240,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ── 5) 마감 뒤의 반대는 받지 않는다 ────────────────────── */
     console.log("\n마감 뒤의 반대는 받지 않는다");
     const C = await makeTeam("마감");
-    await as(C.asLeader, () => meetings.proposeMeetingAt(week, 1, 3));
+    await as(C.asLeader, () => meetings.proposeMeetingAt(week, day, hour));
     const cProposal = await current(C.id);
     check("제안이 올라왔다", cProposal?.stage, "proposed");
     // 시계만 앞으로 돌린다 — 확정 여부는 규칙이 정한다.
@@ -250,7 +263,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ── 7) 화면이 숨긴 이월도 서버가 막는다 ─────────────────── */
     console.log("\n화면이 숨긴 이월도 서버가 막는다");
     const E = await makeTeam("숨긴");
-    await as(E.asLeader, () => meetings.proposeMeetingAt(week, 1, 3));
+    await as(E.asLeader, () => meetings.proposeMeetingAt(week, day, hour));
     const hidden = await blocked(() => as(E.asLeader, () => meetings.carryOverMeeting()));
     check("진행 중인 결정 위의 이월은 막힌다", hidden.includes("이미 올라온 회의 제안"), true);
     check("제안은 그대로다", (await current(E.id))?.stage, "proposed");
@@ -258,7 +271,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ── 8) 시간표 밖의 시간 ────────────────────────────────── */
     console.log("\n시간표 밖의 시간은 거절된다");
     const F = await makeTeam("시간");
-    const tooLate = await blocked(() => as(F.asLeader, () => meetings.proposeMeetingAt(week, 9, 3)));
+    const tooLate = await blocked(() => as(F.asLeader, () => meetings.proposeMeetingAt(week, 9, hour)));
     check("요일 범위를 넘으면 거절한다", tooLate.includes("시간표 밖"), true);
     const badHour = await blocked(() => as(F.asLeader, () => meetings.proposeMeetingAt(week, 1, 99)));
     check("시간 범위를 넘으면 거절한다", badHour.includes("시간표 밖"), true);

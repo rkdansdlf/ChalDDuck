@@ -229,7 +229,7 @@ export function EmailLoginSheet({
       {step === "otp" && (
         <div className="flex flex-col gap-3">
           <p className="t-body keep-all m-0 text-txt-muted">
-            <b>{email}</b>(으)로 6자리 인증번호를 전송했습니다.
+            <b>{email}</b> 주소로 6자리 인증번호를 전송했습니다.
           </p>
 
           {previewCode ? (
