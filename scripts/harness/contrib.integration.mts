@@ -21,8 +21,10 @@
  * 1. **두 명이 같은 순간에 달라도 하나만 붙는다** — 그리고 막힌 쪽은 `taken` 이라고 말한다.
  * 2. `ContribDispute` 행이 **정확히 하나**다 — 유니크 제약이 없으므로 이것이 곧 잠금의 증거다.
  * 3. 남의 팀 기록에는 손대지 못한다 · 자기 기록에는 달 수 없다.
- * 4. **덮어쓰지 않는다** — 앞선 의견과 이미 합의된 정정 내용을 지우지 않는다(17 화면이 말하는
- *    "한쪽 말로 덮지 않고 둘 다 남깁니다").
+ *
+ * **"덮어쓰지 않는다"는 여기서 보지 않는다** — 그건 `contrib-dispute.integration.mts`
+ * (`npm run test:contrib-dispute`)가 본다. 둘을 나누어 둔 것은 의도다: 잠금이 깨지면 여기가,
+ * 이력 보존이 깨지면 거기가 잡는다. 두 약속이 한 파일에 있으면 어느 쪽이 깨졌는지 숨겨진다.
  *
  *   npm run test:contrib
  */
@@ -153,32 +155,6 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     }
     check("남의 팀 기록은 막힌다", thrown.includes("기록을 찾을 수 없습니다"), true);
     check("남의 기록에 의견이 붙지 않는다", await disputeCount(recB.id), 0);
-
-    /* ── 4) 덮어쓰지 않는다 ─────────────────────────────────── */
-    console.log("\n정리된 뒤 다시 달아도 앞선 것을 지우지 않는다");
-    const C = await makeTeam("덮어쓰기");
-    const recC = await makeRecord(C.id, C.owner.id, `정리할 논문 ${suffix}`);
-    await as(C.otherToken, () => contrib.disputeContribRecord(recC.id, "첫 의견"));
-    // 팀장이 정리한다 — 그러면 다시 달 수 있다.
-    // 기록의 주인이 정리한다 — 결론을 고를 수 있는 사람이어야 한다.
-    const resolved = await as(C.ownerToken, () =>
-      contrib.resolveContribDispute(recC.id, "accept"),
-    );
-    check("정리가 된다", resolved, "ok");
-    const afterResolve = await db.contribRecord.findFirstOrThrow({
-      where: { id: recC.id },
-      select: { dispute: true, resolution: true },
-    });
-    check("정리되었다", Boolean(afterResolve.resolution), true);
-    const second = await as(C.thirdToken, () => contrib.disputeContribRecord(recC.id, "두 번째 의견"));
-    check("정리된 뒤 다시 달 수 있다", second, "ok");
-    const recNow = await db.contribRecord.findFirstOrThrow({
-      where: { id: recC.id },
-      select: { dispute: true, disputedById: true },
-    });
-    // **앞선 의견은 지워지지 않는다** — `ContribDispute` 행으로 남아 있다.
-    check("앞선 의견이 행으로 남는다", await disputeCount(recC.id), 2);
-    check("기록의 dispute 칸은 뒤 것이 남는다", recNow.dispute, "두 번째 의견");
   } finally {
     for (const teamId of teamIds) {
       await db.member.deleteMany({ where: { teamId } });
