@@ -8,6 +8,7 @@ import type { ChatMessage, CushionLevel, CushionTone, DmThread, Member } from "@
 import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
 import { useMe } from "@/features/onboarding/use-me";
+import { hideDmThread } from "@/server/actions/dm";
 import { markThreadRead, setReadCushion } from "@/server/actions/chat";
 import { getMbtiMeta } from "@/lib/mbti";
 import { Composer } from "./composer";
@@ -48,6 +49,7 @@ export function DmScreen({
   const me = useMe(fromRoster);
   const [cushionSheetOpen, setCushionSheetOpen] = useState(false);
   const [tipSheetOpen, setTipSheetOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const otherMeta = getMbtiMeta(thread.mbti);
   const { flash, run } = useAction();
   const [cushion, setCushion] = useState<ReadCushionSetting>(cushionFromServer);
@@ -125,6 +127,27 @@ export function DmScreen({
   // 때는 움직이지 않는다.
   const { stick } = useStickToBottom(scrollRef, bottomRef, messages.at(-1)?.id);
 
+  /**
+   * 이 대화를 **내 목록에서 뺀다.** 삭제가 아니다 — 말은 남고 상대 화면에는 아무 변화가 없다.
+   *
+   * 되돌릴 수 있으므로 **기다리지 않는다.** 지우는 것처럼 한 번 더 확인할 필요가 없고,
+   * 되살아나길이 있다는 사실은 시트에서 이미 말했다.
+   */
+  const leave = async () => {
+    setLeaveOpen(false);
+    await run(
+      "dm-leave",
+      async () => {
+        const result = await hideDmThread(thread.id);
+        if (result === "gone") return "이미 없는 대화입니다";
+        router.push("/chat/dm");
+        router.refresh();
+        return "목록에서 뺐습니다. 지난 말은 지워지지 않았습니다";
+      },
+      "빼지 못했습니다. 다시 시도해 주세요",
+    );
+  };
+
   return (
     <>
       <AppBar
@@ -166,6 +189,16 @@ export function DmScreen({
                 <Icon name="sparkles" size={19} className="text-yellow-700" />
               </button>
             ) : null}
+            {/* 나가기 — 삭제가 아니라 내 목록에서 빼는 것이다. */}
+            <button
+              type="button"
+              onClick={() => setLeaveOpen(true)}
+              aria-label="이 대화를 목록에서 빼기"
+              title="이 대화를 목록에서 빼기"
+              className="grid size-10 flex-none cursor-pointer place-items-center rounded-xl border-none bg-transparent text-txt-muted select-none transition-all duration-150 hover:bg-fill hover:text-txt active:scale-90"
+            >
+              <Icon name="log-out" size={19} />
+            </button>
           </>
         }
       />
@@ -226,6 +259,30 @@ export function DmScreen({
         onTone={(key) => void changeCushion({ tone: key })}
         onRetry={retryPurify}
       />
+
+      {/* 나가기 — **삭제가 아니라 내 목록에서 뺀다.**
+          1:1 대화에는 두 사람이 있다. 나 혼자 나간다고 상대의 말을 지울 수는 없으므로,
+          여기서 하는 일은 `DmThreadHide` 에 한 줄을 두고 내 목록에서만 사라지는 것이다.
+          되돌릴 수 있다 — 팀원 목록에서 다시 열면 지난 말이 그대로 있다. */}
+      <Sheet open={leaveOpen} title="이 대화를 목록에서 뺄까요?" onClose={() => setLeaveOpen(false)}>
+        <div className="space-y-3 p-4">
+          <p className="m-0 text-[13.5px] leading-relaxed text-txt">
+            <b>{thread.name}님과의 대화가 내 1:1 목록에서 사라집니다.</b>
+          </p>
+          <ul className="m-0 space-y-1.5 pl-4 text-[13px] leading-relaxed text-txt">
+            <li>지난 말은 <b>지워지지 않습니다</b> — 대화는 두 사람의 것이기 때문입니다.</li>
+            <li>상대방 화면에는 아무 변화가 없습니다.</li>
+            <li>다시 얘기하고 싶으면 팀원 목록에서 다시 열 수 있습니다 — 지난 말이 그대로 있습니다.</li>
+          </ul>
+          <button
+            type="button"
+            onClick={leave}
+            className="w-full cursor-pointer rounded-xl bg-err px-4 py-3 font-bold text-[14px] text-white transition active:scale-[0.98]"
+          >
+            목록에서 빼기
+          </button>
+        </div>
+      </Sheet>
 
       {otherMeta ? (
         <Sheet

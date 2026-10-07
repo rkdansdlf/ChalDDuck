@@ -2167,6 +2167,29 @@ console.log("\nDM 나가기: 뺀 것은 내 것뿐이다");
   truthy("같은 팀인지 먼저 본다", action.includes("teamId: me.teamId"));
 }
 
+console.log("\nDM 나가기: 버튼은 방에서 나간다");
+{
+  /**
+   * 액션이 있어도 **버튼이 없으면 아무도 나갈 수 없다** — 2026-10-03 에 액션만 넣었을 때가
+   * 그 상태였고, dm-list 의 안내는 이미 "숨김으로 처리한다" 라고 말하고 있었다. 기록된 결정이
+   * 사용자에게 거짓말을 하고 있었다.
+   */
+  const screen = readCode("../src/features/chat/dm-screen.tsx");
+  truthy("숨김 액션을 부른다", screen.includes("hideDmThread("));
+  truthy("방 안에 빼는 버튼이 있다", screen.includes("setLeaveOpen(true)"));
+  // **지우지 않는다는 사실을 먼저 말한다.** "나가기" 라는 이름이 지우기처럼 들리므로,
+  // 누르기 전에 뭐가 지워지지 않는지 말해 주지 않으면 사람이 되돌릴 수 없다고 두려워한다.
+  truthy("지우지 않는다고 말한다", screen.includes("지워지지 않습니다"));
+  truthy("상대 화면에는 변화가 없다고 말한다", screen.includes("아무 변화가 없습니다"));
+
+  const roster = readCode("../src/features/roles/roster-screen.tsx");
+  // **숨긴 대화는 먼저 되돌린다.** 그러지 않으면 열어도 목록에 되돌아오지 않는다.
+  truthy("방을 열기 전에 숨김을 푼다", roster.includes("unhideDmThread("));
+  check("숨김을 풀고 나서 방을 연다",
+    roster.indexOf("unhideDmThread(") < roster.indexOf('router.push(`/chat/dm/'),
+    true);
+}
+
 console.log("\n기여 기록 공유 토큰 (ReportShareToken)");
 {
   const testTeam = await db.team.create({
@@ -6684,10 +6707,13 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   const addScreenRaw = readRaw("../src/features/contrib/contrib-add-screen.tsx");
   check("목록이 '세지 않는다' 고 적는다", addScreenRaw.includes("근거 파일을 세지 않습니다"), true);
 
-  // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다.
+  // ④ DM — **개설 단계가 없다**는 것이 "다루지 않았다" 와 다르다. 나가기는 **있다** —
+  // 삭제가 아니라 내 목록에서 빼는 것으로 2026-10-03 결정됐다.
   const dmRaw = readRaw("../src/features/chat/dm-list-screen.tsx");
-  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설[^가]*가 없다/.test(dmRaw), true);
-  check("삭제·나가기가 없다고 분명히 적는다", /삭제·나가기는/.test(dmRaw), true);
+  check("DM 을 '다루지 않았다' 고 하지 않는다", /개설 단계는 없습니다/.test(dmRaw), true);
+  // "없다" 라고 거짓말하면 안 된다 — 있다고 말하고 **무엇이 지워지지 않는지**를 같이 말한다.
+  check("뺄 수 있다고 적는다", /뺄 수는 있습니다/.test(dmRaw), true);
+  check("삭제가 아니라고 말한다", /지워지지 않고/.test(dmRaw), true);
 }
 
 await finish();

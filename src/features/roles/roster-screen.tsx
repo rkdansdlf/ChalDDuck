@@ -26,6 +26,7 @@ import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { createInviteLink, disableInviteLink } from "@/server/actions/invite";
 import { acceptRoleDraw, claimSoleRole, drawForRole, proposeRoleDraw, rejectRoleDraw, respondRoleDraw } from "@/server/actions/roles";
+import { unhideDmThread } from "@/server/actions/dm";
 import { EXPIRY_CHOICES, USE_CHOICES } from "@/server/invite/choices";
 import {
   NO_DRAW_POOL_TEXT,
@@ -399,8 +400,12 @@ export function RosterScreen({
                 full
                 size="sm"
                 icon="messages-square"
-                onClick={() => {
+                onClick={async () => {
                   if (otherHeroMember) {
+                    // **숨긴 대화는 먼저 되돌린다.** 빼 놓은 대화는 목록에 안 보이므로,
+                    // 여기서 안 풀면 열어도 목록에 되돌아오지 않는다. 열기 자체는 되돌릴 수 없는
+                    // 일이 아니므로 **자동으로** 풀어도 된다 — 사람이 그걸 아는 채로 눌렀다.
+                    await unhideDmThread(otherHeroMember.id);
                     router.push(`/chat/dm/${otherHeroMember.id}`);
                   } else {
                     router.push("/chat/team");
