@@ -198,8 +198,8 @@ function RouletteStage({
 
   const [deg, setDeg] = useState(0);
   useEffect(() => {
-    // 라벨은 바퀴와 함께 돌아서 멈추는 각도에 따라 눕거나 뒤집힐 수 있다 —
-    // 당첨자 이름은 아래 결과 카드가 다시 upright 로 보여 준다.
+    // 각 조각의 라벨을 중심각(midAngle)에 맞춰 회전시켜 배치하므로,
+    // 당첨 조각이 상단 12시(화살표)에 안착했을 때 글자가 항상 똑바로(upright) 보인다.
     const id = requestAnimationFrame(() => setDeg(4 * 360 + (360 - centerAngle)));
     const t = setTimeout(onLanded, ROULETTE_SPIN_MS + 100);
     return () => {
@@ -226,19 +226,20 @@ function RouletteStage({
             />
           ))}
           {candidates.map((c, i) => {
-            const pos = polarToCartesian(95, 95, 62, i * step + step / 2);
+            const midAngle = i * step + step / 2;
             return (
-              <text
-                key={c.name}
-                x={pos.x}
-                y={pos.y}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                className="fill-txt-strong"
-                style={{ font: "700 11px var(--font-sans)" }}
-              >
-                {c.name.length > 4 ? `${c.name.slice(0, 4)}…` : c.name}
-              </text>
+              <g key={c.name} transform={`rotate(${midAngle}, 95, 95)`}>
+                <text
+                  x={95}
+                  y={38}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="fill-txt-strong"
+                  style={{ font: "700 11px var(--font-sans)" }}
+                >
+                  {c.name.length > 4 ? `${c.name.slice(0, 4)}…` : c.name}
+                </text>
+              </g>
             );
           })}
         </svg>
