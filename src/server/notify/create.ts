@@ -2,7 +2,7 @@ import "server-only";
 
 import { db } from "@/server/db";
 import { pushTo } from "@/server/notify/push";
-import { pushPolicy, type NotifyContext, type NotifyKind } from "@/server/notify/policy";
+import { pushDecision, pushPolicy, type NotifyContext, type NotifyKind } from "@/server/notify/policy";
 
 /**
  * 알림을 남긴다.
@@ -74,10 +74,46 @@ export async function notify(input: {
   //
   // **판정은 정책이 한다.** 호출부가 `push` 를 명시한 경우에만 그걸 따른다 — 그건 이 자리가
   // 정책이 모르는 것을 안다는 뜻이기 때문이다(보통은 "지금 보낼 자리가 남았는가").
-  if (!(input.push ?? pushPolicy(input.kind, input.context))) return;
-  await pushTo(
+  //
+  // ⚠️ **문자열을 참·거짓으로 보지 않는다.** `pushPolicy` 는 `"push" | "in-app-only"` 두 값을
+  // 돌려주고 **둘 다 참인 문자열**이다. 예전에는 `if (!(input.push ?? pushPolicy(…))) return;`
+  // 이었는데, 그 검사는 **한 번도 걸리지 않았다** — 정책이 "앱 안에만" 이라고 적어 둔 네 종류
+  // (`drive`·`icebreak`·`who-does-it`·`contrib-participation`)가 전부 앱 밖으로 나갔고,
+  // `settled` 문맥("회의가 잡혔습니다")까지 나갔다.
+  //
+  // 정책 파일에는 이유가 길게 적혀 있었다 — 잦은 알림이 "알림을 끄고 싶다"를 만들고, 끄는 순간
+  // **부르지 않아야 할 알림까지 함께 죽는다**는 것. 그 판단이 통째로 우회되고 있었다.
+  //
+  // 검사는 `pushPolicy` 의 **반환값만** 보고 있었다("함수가 올바른가"). 호출부가 그 값을 지키는지는
+  // 아무도 안 봤다 — 이 저장소가 전에 겪은 모양(`getDmThreads` 가 `distinct` 를 직접 읽던 일)과 같다.
+  const decision = pushDecision(input.kind, input.context, input.push);
+  if (decision !== "push") {
+    /**
+     * **접은 것도 한 줄 남긴다 — 다만 시끄럽지 않게.**
+     *
+     * 기기 시험에서 "알림이 안 왔다"의 원인은 셋인데 구분할 방법이 없었다: 정책이 접었는가 ·
+     * 보냈는데 못 받았는가 · 구독이 없는가. 셋째는 `npm run push:subs` 가 답하고, 나머지 둘은
+     * **서버 로그에만** 남을 수 있는데 아무것도 안 남겼다.
+     *
+     * 그래서 남기되 **종류의 기본값이 "보냄" 인데 이번에 접은 경우만** 적는다. 원래부터 앱 안에만
+     * 두기로 한 종류까지 적으면 로그가 그것으로 채워져 진짜 원인을 못 본다.
+     */
+    if (pushPolicy(input.kind) === "push") {
+      console.log(
+        `[push] ${input.kind} · 접음 (${input.push === false ? "보낼 자리 없음" : "이미 끝난 일"})`,
+      );
+    }
+    return;
+  }
+  const pushed = await pushTo(
     active.map((m) => m.id),
     { title: input.title, body: input.body, href: input.href },
+  );
+  // **시도한 것은 항상 남긴다.** 이 줄이 기기 시험의 유일한 증인이다 — 몇 통을 보려 했고
+  // 몇 통이 나갔는지. `죽은 구독` 은 지워진 404·410 이다.
+  console.log(
+    `[push] ${input.kind} · 대상 ${active.length} · 보냄 ${pushed.sent} · 실패 ${pushed.failed}` +
+      ` · 죽은 구독 ${pushed.gone}${pushed.skipped ? " · 키 없음" : ""}`,
   );
 }
 

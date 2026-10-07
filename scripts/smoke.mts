@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { check, db, fail, finish, makeIsolatedTeam, readCode, truthy } from "./db-test-base.mjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
@@ -91,7 +92,13 @@ import {
   toKstInputValue,
 } from "../src/lib/when.js";
 import { undelivery } from "../src/server/auth/undelivered.js";
-import { recordAiUsage, refundAiUsage, aiUsageToday } from "../src/server/ai/limit.js";
+import {
+  aiUsageCsv,
+  aiUsageTeamSummaryCsv,
+  aiUsageToday,
+  recordAiUsage,
+  refundAiUsage,
+} from "../src/server/ai/limit.js";
 import { fallbackModelFor, isTransient, modelFor, withFallback } from "../src/server/ai/model.js";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
@@ -110,7 +117,7 @@ import {
   suggestTools,
 } from "../src/features/home/briefing.js";
 import { aiCallStats, describeAiCalls, detectAiAnomalies, type AiCallStats } from "../src/server/ai/call-stats.js";
-import { pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
+import { pushDecision, pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
 import {
@@ -295,7 +302,7 @@ console.log("\n한자 인코딩");
 
   const isCode = (name: string) => /\.(ts|tsx|mjs|mts)$/.test(name);
   for (const root of roots)
-    walk(new URL(root, import.meta.url).pathname, skip, isCode, (full) => {
+    walk(fileURLToPath(new URL(root, import.meta.url)), skip, isCode, (full) => {
       scanned += 1;
       readFileSync(full, "utf8")
         .split("\n")
@@ -347,7 +354,7 @@ console.log("\n한자 인코딩");
    * `.md` 에는 없다.
    */
   /** 끝의 `/` 를 떼어야 아래 `slice` 에서 앞 글자가 잘리지 않는다 — `new URL("..", …)` 는 slash 로 끝난다. */
-  const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
   /** 워크트리 안에는 같은 문서가 복사되어 있어 두 번 세고, `.env` 는 서crets 다 — 둘 다 읽지 않는다. */
   const skipDocs = new Set([".git", ".next", ".vercel", "node_modules", ".claude", ".worktrees"]);
   const docFound: string[] = [];
@@ -1127,21 +1134,19 @@ console.log("\n회의 후보 기간");
 console.log("\n회의 후보: 못 오는 사람은 사유로만 말한다");
 {
   /**
-   * **이름을 뺀 것은 2026-10-03 결정이다.** 후보는 팀 전체가 보는 화면이라 "누구 · 시험"
-   * 이 함께 새는 정보가 된다. 직접 입력 사유는 이미 "개인 일정" 으로 가리고 있었는데 기본
-   * 사유만 이름이 붙어 있었다 — 같은 규칙의 절반만 적용된 상태였다.
-   *
-   * 이름을 빼면 **몇 명인지** 가 사라지므로 그 자리를 명수가 대신 찬다. 이름을 모르는 상태로도
-   * "수업 2" 라는 사실은 그 시간에 회의를 잡을지 결정하는 데 충분하다.
+   * **사유도 더는 팀에 내보내지 않는다 — 2026-10-04 결정.** 후보는 팀 전체가 보는 화면이라
+   * "박지호 · 시험" 이 함께 새는 정보가 된다. 직접 입력 사유는 이미 "개인 일정" 으로 가리고
+   * 있었는데 기본 사유만 이름이 붙어 있었다 — 같은 규칙의 절반만 적용된 상태였다. 이제
+   * 종류에 관계없이 **전부 "개인 일정"** 이라, "수업/시험" 구분도 팀에 드러나지 않는다.
    */
   check("아무도 안 막으면 사유가 없다", blockedByReason([]), null);
-  check("한 명은 사유 하나만 말한다", blockedByReason([{ kind: "class" }]), "수업");
-  check("두 명이 다른 사유면 둘 다 말한다", blockedByReason([{ kind: "class" }, { kind: "exam" }]), "수업, 시험 기간");
-  // 같은 사유는 **명수로** — "수업, 수업" 은 사람이 아니다.
-  check("같은 사유는 명수로 합친다", blockedByReason([{ kind: "class" }, { kind: "class" }]), "수업 2");
-  check("세 명·두 사유", blockedByReason([{ kind: "class" }, { kind: "class" }, { kind: "exam" }]), "수업 2, 시험 기간");
-  // 모르는 사유 값도 숨기지 않는다 — 이름 대신 보이는 것이 낫다.
-  check("모르는 사유도 그대로 말한다", blockedByReason([{ kind: "unknown-kind" }]), "unknown-kind");
+  check("한 명은 사유 하나만 말한다", blockedByReason([{ kind: "class" }]), "개인 일정");
+  check("두 명이면 모두 개인 일정으로 합친다", blockedByReason([{ kind: "class" }, { kind: "exam" }]), "개인 일정 2");
+  // 같은 사유는 **명수로** — "개인 일정, 개인 일정" 은 사람이 아니다.
+  check("같은 사유는 명수로 합친다", blockedByReason([{ kind: "class" }, { kind: "class" }]), "개인 일정 2");
+  check("세 명·두 종류도 전부 개인 일정", blockedByReason([{ kind: "class" }, { kind: "class" }, { kind: "exam" }]), "개인 일정 3");
+  // 모르는 사유 값도 이름 대신 동명의 "개인 일정" 으로만 보인다 — 어떤 인지도 새지 못하게.
+  check("모르는 사유도 개인 일정으로 합친다", blockedByReason([{ kind: "unknown-kind" }]), "개인 일정");
 
   // 계산 경로에서도 이름이 새지 않는다 — 여기 안에서 새면 아래 순수 검사를 통과해도 화면이 새고,
   // **어느 쪽이 놓였는지 알 수 없다.**
@@ -1172,7 +1177,7 @@ console.log("\n회의 후보: 못 오는 사람은 사유로만 말한다");
   check("계산 결과에 둘째 이름이 없다", blockedSlot?.blockedBy?.includes("김민준"), false);
   // **명수는 남는다** — 이름을 빼면서 몇 명인지까지 지우면 후보의 쓸모가 없어진다.
   check("막힌 사람이 몇 명인지는 남는다", blockedSlot?.available, 2);
-  check("두 사유가 사유로만 보인다", blockedSlot?.blockedBy, "시험 기간, 수업");
+  check("두 사유가 사유로만 보이되 개인 일정으로 통일된다", blockedSlot?.blockedBy, "개인 일정 2");
 }
 
 /* ── 기록 확정 기준 ────────────────────────────────────────── */
@@ -3136,6 +3141,35 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
     "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "role-consent", "drive",
   ];
   check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
+
+  /**
+   * **정책이 옳은가만 보면 부족하다 — 호출부가 그 값을 지키는가.**
+   *
+   * 2026-10-04 에 여기서 사고가 났다. `pushPolicy` 는 정확했고 위 검사도 전부 통과했는데,
+   * `notify()` 안의 판정이 `if (!(input.push ?? pushPolicy(…))) return;` 이었다. 문자열
+   * `"in-app-only"` 도 참이라 **그 검사가 한 번도 걸리지 않았고**, 앱 안에만 두기로 한 네
+   * 종류가 전부 앱 밖으로 나갔다. 아래 검사가 그 자리를 지킨다.
+   */
+  for (const kind of ["drive", "contrib-participation", "icebreak", "who-does-it"] as const) {
+    check(`호출부가 ${kind} 의 "앱 안에만" 을 지킨다`, pushDecision(kind), "in-app-only");
+  }
+  check("호출부가 회의 확정을 접는다", pushDecision("meeting", { settled: true }), "in-app-only");
+  check("보낼 것은 보낸다", pushDecision("poke"), "push");
+
+  /**
+   * **호출부가 명시하면 그쪽이 이긴다.** 그 자리는 정책이 모르는 것(예산)을 알기 때문이다 —
+   * `onboarding.ts` 가 `takePushSlot` 의 결과를 그대로 넘긴다.
+   *
+   * 다만 **이 방향은 좁게 열려 있어야 한다.** 아무 호출부나 `push: true` 를 넘기기 시작하면
+   * 정책이 다시 흩어진다 — `notify()` 의 인자 주석이 "넘길 수 있는 곳은 두 군데뿐" 이라고
+   * 적고 있는 이유다. 여기서는 그 계약의 **동작**만 고정한다.
+   */
+  check("자리가 없다고 하면 정책과 달라도 접는다", pushDecision("poke", {}, false), "in-app-only");
+  check("호출부가 보내라고 하면 정책과 달라도 보낸다", pushDecision("drive", {}, true), "push");
+  // 정책이 "접어라" 라고 한 것을 호출부가 뒤집는 것도 같은 규칙이다 — 예산은 정책이 모른다.
+  check("끝난 일이어도 호출부가 보내라고 하면 보낸다", pushDecision("meeting", { settled: true }, true), "push");
+  // **명시하지 않으면 언제나 정책이다** — 이 자리가 대부분이고, 그래서 위 버그가 컸다.
+  check("명시하지 않으면 끝난 일은 접는다", pushDecision("meeting", { settled: true }), "in-app-only");
 }
 
 /* ── 채팅 푸시: 하지 않기로 한 것을 고정한다 ──────────────────── */
@@ -3456,6 +3490,45 @@ console.log("\nAI 사용량: 실패하면 되돌아온다");
       check("실패한 호출은 기록을 되돌려 받는다", refunded, true);
       check("되돌린 뒤 기록이 원래대로다", await usage(), before);
     }
+  }
+}
+
+/* ── AI 사용 내역: 내 것은 내 것만, 팀 것은 집계만 ─────────── */
+
+console.log("\nAI 사용 내역 내려받기");
+{
+  const { team } = await makeIsolatedTeam("AI 내역", { mates: 1 });
+  const leader = await db.member.findFirst({ where: { teamId: team.id, isLeader: true } });
+  const mate = await db.member.findFirst({ where: { teamId: team.id, isLeader: false } });
+  if (!leader || !mate) {
+    console.log("  · 팀원이 없어 이 항목을 건너뜁니다");
+  } else {
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const made = await db.aiUsage.createMany({
+      data: [
+        { teamId: team.id, memberId: leader.id, tool: "cushion", day },
+        { teamId: team.id, memberId: mate.id, tool: "clerk", day },
+        { teamId: team.id, memberId: mate.id, tool: "cushion", day },
+      ],
+    });
+    truthy("검사용 기록을 만들었다", made.count === 3);
+
+    // **내 기록만** — 남의 이름이 든 줄이 한 줄도 없어야 한다. 예전에는 팀 전체 상세가
+    // 그대로 나가서, 한 사람이 남의 이름·시각을 받아 볼 수 있었다.
+    const mineCsv = await aiUsageCsv(team.id, leader.id);
+    check("내 내역에 내 이름이 있다", mineCsv.includes(leader.name), true);
+    check("내 내역에 남의 이름이 없다", mineCsv.includes(mate.name), false);
+    check("내 내역은 내 줄만 센다", mineCsv.trim().split("\r\n").length - 1, 1);
+
+    // **팀은 집계만** — 이름도 시각도 없고, 도구별 횟수만 남는다.
+    const teamCsv = await aiUsageTeamSummaryCsv(team.id);
+    check("팀 요약에 이름이 없다", teamCsv.includes(leader.name) || teamCsv.includes(mate.name), false);
+    check("팀 요약은 두 도구를 센다", teamCsv.trim().split("\r\n").length - 1, 2);
+    // 쿠션 2회(둘이 각각) · 서기 1회 — 사람이 아니라 횟수만 말한다.
+    truthy("쿠션 횟수를 합쳐 센다", /쿠션 번역기,2/.test(teamCsv));
+    truthy("서기 횟수를 센다", /AI 서기,1/.test(teamCsv));
+
+    await db.aiUsage.deleteMany({ where: { teamId: team.id } });
   }
 }
 
@@ -5276,7 +5349,7 @@ console.log("\n미결 목록 도구 (npm run decisions)");
       else if (entry.name.endsWith(".tsx")) files.push(full);
     }
   };
-  walk(new URL("../src", import.meta.url).pathname);
+  walk(fileURLToPath(new URL("../src", import.meta.url)));
 
   let inCode = 0;
   for (const file of files) {

@@ -128,3 +128,41 @@ export function pushPolicy(kind: NotifyKind, context: NotifyContext = {}): PushP
       return "in-app-only";
   }
 }
+
+/**
+ * **실제로 보낼지** — 정책과 호출부의 지정을 한 값으로 합친다.
+ *
+ * ## 왜 정책과 따로 있는가 (2026-10-04)
+ *
+ * `notify()` 안에 인라인으로 있던 판정을 떼어냈다. 이유는 하나다 — **그 판정이 틀려 있었는데
+ * 아무도 몰랐다.**
+ *
+ * 예전 코드는 `if (!(input.push ?? pushPolicy(…))) return;` 이었다. `pushPolicy` 는
+ * `"push" | "in-app-only"` 를 돌려주고 **둘 다 참인 문자열**이라 이 검사는 **한 번도 걸리지
+ * 않았다.** 정책이 "앱 안에만" 이라고 적어 둔 네 종류(`drive`·`icebreak`·`who-does-it`·
+ * `contrib-participation`)와 `settled` 문맥이 전부 앱 밖으로 나갔다.
+ *
+ * `pushPolicy` 자체는 **검사가 있었다.** 그런데 그 검사는 반환값만 봤다 — "함수가 올바른가" 는
+ * 물었지만 **"호출부가 그 값을 지키는가"** 는 아무도 안 물었다. 인라인이라 부를 수도 없었다.
+ *
+ * 그래서 순수 함수로 뗀다. 화면·검사가 **같은 함수를 부를 수 있어야** 판정이 한 곳에 있고,
+ * 두 번째 사고가 같은 모양으로 나지 않는다.
+ *
+ * ## 두 값을 한 어휘로
+ *
+ * 호출부는 `boolean | undefined` 를 주고 정책은 문자열을 준다. 둘을 여기서 **같은 어휘**
+ * (`PushPolicy`)로 합친다 — 섞인 채로 비교하면 또 참·거짓으로 문자열을 보게 된다.
+ *
+ * @param kind 알림 종류
+ * @param context 같은 종류 안에서 갈리는 것(이미 끝난 일인가)
+ * @param override 호출부가 명시한 값. `undefined` 면 정책이 정한다. **`false` 는 "보낼 자리가
+ *   없다"** 이고 정책보다 우선한다 — 그 자리는 정책이 모르는 것(예산)을 안다.
+ */
+export function pushDecision(
+  kind: NotifyKind,
+  context: NotifyContext = {},
+  override?: boolean,
+): PushPolicy {
+  if (override !== undefined) return override ? "push" : "in-app-only";
+  return pushPolicy(kind, context);
+}
