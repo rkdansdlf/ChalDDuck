@@ -32,7 +32,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { TEAM_CAP_BYTES } from "../../src/features/drive/file-rules.js";
+import { MAX_BYTES, TEAM_CAP_BYTES } from "../../src/features/drive/file-rules.js";
 import { teamUsedBytes } from "../../src/server/drive/usage.js";
 import { storage } from "../../src/server/storage/client.js";
 
@@ -202,25 +202,39 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       },
     });
 
-  /** 큰 버전을 **DB 에만** 심는다 — 팀 사용량은 여기서 나온다(저장소가 아니다). */
-  async function seedBytes(teamId: string, boxId: string, bytes: number, label: string): Promise<void> {
+  /** 큰 버전을 **DB 에만** 심는다 — 팀 사용량은 여기서 나온다(저장소가 아니다).
+   *
+   *  **목표 용량을 여러 파일로 나눠 심는다.** 한 파일에 몰아넣으면 **`MAX_BYTES`(50MB) 규칙을
+   *  우회한 불가능한 상태**가 된다 — 실제 업로드는 `MAX_BYTES`를 넘으면 거절하므로 한 파일이
+   *  용량 전부를 가질 수 없다. 팀 합산은 JS 에서 하므로 파일을 나눠도 합계는 같다.
+   *
+   *  나누는 이유는 두 겹이다. `bytes` 열은 `Int`(4바이트, 최댓값 2^31-1) 라 **나누지 않으면
+   *  한 파일이 상한을 넘겨 DB 가 거절한다.** 그런데 그것만 고치면 검사는 여전히 존재할 수 없는
+   *  상태를 가정한다 — 그게 **더 나쁜** 거짓말이다. 제품 규칙이 허용하는 모양 그대로 심어야
+   *  "이 팀이 꽉 찼다"는 주장이 참이 된다. */
+  async function seedBytes(teamId: string, boxId: string, totalBytes: number, label: string): Promise<void> {
     const author = await db.member.findFirstOrThrow({ where: { teamId } });
-    const file = await db.submittedFile.create({
-      data: { boxId, name: `${label} ${suffix}`, kind: "image" },
-    });
-    await db.fileVersion.create({
-      data: {
-        fileId: file.id,
-        label: "v1",
-        authorId: author.id,
-        note: "용량 검사용(저장소 객체 없음)",
-        size: `${bytes} B`,
-        kind: "image",
-        storagePath: `${teamId}/${boxId}/${randomUUID()}`,
-        bytes,
-        mimeType: PNG,
-      },
-    });
+    let left = totalBytes;
+    for (let i = 0; left > 0; i++) {
+      const bytes = Math.min(MAX_BYTES, left);
+      left -= bytes;
+      const file = await db.submittedFile.create({
+        data: { boxId, name: `${label} ${suffix} ${i + 1}`, kind: "image" },
+      });
+      await db.fileVersion.create({
+        data: {
+          fileId: file.id,
+          label: "v1",
+          authorId: author.id,
+          note: "용량 검사용(저장소 객체 없음)",
+          size: `${bytes} B`,
+          kind: "image",
+          storagePath: `${teamId}/${boxId}/${randomUUID()}`,
+          bytes,
+          mimeType: PNG,
+        },
+      });
+    }
   }
 
   /* ── 본편 ─────────────────────────────────────────────────── */
@@ -590,10 +604,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
           attachment: { path: fullAttach.path, name: "꽉 찬 팀.png" },
         }),
       );
-      // ⚠️ **`TEAM_CAP_BYTES` 그대로 심을 수 없다.** 2GiB = 2,147,483,648 이고 `bytes` 열은
-      // `Int`(4바이트)이므로 최댓값보다 **1 바이트 크다** — 심는 순간 DB 가 거절한다(실제로
-      // 거절당했다). 한 바이트 적게 심어도 `(CAP-1) + size > CAP` 이므로 한도 경계는 그대로،
-      // 그리고 이 열이 무엇인지 모르면 또 걸린다.
+      // ⚠️ **한 바이트를 비워둔다.** `(CAP-1) + size > CAP` 이므로 한도 경계는 그대로 —
+      // 이 경로를 보려는 것이 경계 안에서 성공하는지가 아니라 **꽉 찬 팀에서의 거절**이기
+      // 때문이다. `seedBytes` 가 이제 `MAX_BYTES` 로 나눠 심으므로 `Int`(2^31-1) 초과 문제는
+      // 여기서 더는 나지 않는다. 그래도 **딱 1 을 뺀 값**을 써야 이 테스트가 "정확히 상한"이
+      // 아니라 **"상한 직전"** 이라는 말을 실수로 하지 않는다.
       await seedBytes(full.id, full.box.id, TEAM_CAP_BYTES - 1, "꽉 찬 팀");
       const rejected = await as(full.asLeader, () =>
         actions.saveChatAttachmentToDrive(
