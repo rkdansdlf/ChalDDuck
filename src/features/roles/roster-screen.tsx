@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   AppBar,
   Body,
@@ -75,6 +76,7 @@ export function RosterScreen({
   rejoinPending,
   invites,
   isLeader,
+  inviteOrigin,
 }: {
   team: Team;
   roles: Role[];
@@ -93,6 +95,14 @@ export function RosterScreen({
   /** 팀이 나눈 초대들. 팀장이 아니면 빈 목록 — 링크를 다시 보여줄 수는 없다(아래 주석). */
   invites: InviteRow[];
   isLeader: boolean;
+  /**
+   * 초대 링크·QR에 쓸 기점 주소. 없으면 지금 페이지의 origin.
+   *
+   * 로컬 개발에서는 페이지가 `localhost`로 열릴 수 있는데, 그렇게 만든 링크/QR은
+   * 휴대폰에서 열리지 않는다 — 휴대폰의 `localhost`는 휴대폰 자신이기 때문이다.
+   * 그래서 서버가 `APP_URL`(LAN IP 등)을 넘겨 QR에는 항상 닿는 주소를 쓴다.
+   */
+  inviteOrigin?: string;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -144,8 +154,14 @@ export function RosterScreen({
    */
   const myId = roster.find((m) => m.isMe)?.id ?? null;
 
-  const inviteUrl =
-    typeof window === "undefined" ? "" : `${window.location.origin}/join?code=${team.code}`;
+  const origin =
+    inviteOrigin && inviteOrigin.length > 0
+      ? inviteOrigin.replace(/\/$/, "")
+      : typeof window === "undefined"
+        ? ""
+        : window.location.origin;
+
+  const inviteUrl = `${origin}/join?code=${team.code}`;
 
   const copyInviteCode = async () => {
     try {
@@ -797,6 +813,19 @@ export function RosterScreen({
             {team.code}
           </div>
         </Panel>
+        <Panel s="fill" pad={20} className="mb-4 text-center">
+          <div className="t-cap-strong mb-2.5 text-txt-muted" style={{ letterSpacing: ".04em" }}>
+            초대 링크 QR
+          </div>
+          <div className="flex justify-center">
+            {inviteUrl ? (
+              <QRCodeSVG value={inviteUrl} size={180} level="M" />
+            ) : null}
+          </div>
+          <p className="t-note mt-2.5 mb-0 text-txt-muted">
+            카메라로 스캔하면 팀 입장 화면이 열립니다
+          </p>
+        </Panel>
         <div className="flex flex-col gap-2">
           <Btn full icon="copy" onClick={copyInviteCode}>
             코드 복사하기
@@ -818,6 +847,7 @@ export function RosterScreen({
             freshLink={freshLink}
             onCreated={setFreshLink}
             onCleared={() => setFreshLink(null)}
+            origin={origin}
           />
         ) : null}
       </Sheet>
@@ -849,11 +879,14 @@ function InviteManager({
   freshLink,
   onCreated,
   onCleared,
+  origin,
 }: {
   invites: InviteRow[];
   freshLink: { label: string; url: string } | null;
   onCreated: (link: { label: string; url: string }) => void;
   onCleared: () => void;
+  /** 초대 링크 앞에 붙일 기점 주소 (예: http://192.168.0.10:3000). */
+  origin: string;
 }) {
   const { busy, flash, run } = useAction();
   const [label, setLabel] = useState("");
@@ -889,7 +922,6 @@ function InviteManager({
           );
           return null;
         }
-        const origin = typeof window === "undefined" ? "" : window.location.origin;
         onCreated({ label: result.label ?? "새 초대", url: `${origin}/join?t=${result.token}` });
         setLabel("");
         return "초대를 만들었습니다";
@@ -919,6 +951,9 @@ function InviteManager({
           <div className="t-cap-strong mb-1.5 text-txt-muted">{freshLink.label}</div>
           <div className="mb-3 break-all font-mono text-[13px] leading-[1.5] text-txt-strong">
             {freshLink.url}
+          </div>
+          <div className="mb-3 flex justify-center rounded-2xl bg-white p-4">
+            <QRCodeSVG value={freshLink.url} size={180} level="M" />
           </div>
           <Note tone="warn" icon="circle-alert" title="이 링크는 지금 한 번만 보입니다">
             창을 닫으면 다시 볼 수 없습니다 — 서버에는 해시만 남습니다. 나눠 쓰지 못했다면
