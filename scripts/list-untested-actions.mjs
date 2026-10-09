@@ -46,6 +46,7 @@ const TESTS = [
   "scripts/harness/report-share.integration.mts",
   "scripts/harness/email-auth.integration.mts",
   "scripts/harness/notes.integration.mts",
+  "scripts/harness/attendance.integration.mts",
 ];
 
 /** 검사 파일들을 한 덩어리로 읽는다 — 호출 여부는 '어딘가에 그 이름이 있나' 다. */

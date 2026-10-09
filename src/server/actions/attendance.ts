@@ -112,7 +112,7 @@ export async function saveMeetingAttendance(
     // 1. 체크 해제된 인원: 기여 회수 및 출석 삭제
     const toRemove = existing.filter((e) => !sanitizedAttendeeIds.includes(e.memberId));
     for (const r of toRemove) {
-      await unrecordMeetingAttendanceContrib(tx, r.id);
+      await unrecordMeetingAttendanceContrib(tx, meetingId, r.memberId);
       await tx.meetingAttendance.delete({ where: { id: r.id } });
     }
 
@@ -121,7 +121,7 @@ export async function saveMeetingAttendance(
     const toAdd = sanitizedAttendeeIds.filter((id) => !existingMemberIds.has(id));
 
     for (const memberId of toAdd) {
-      const attendance = await tx.meetingAttendance.create({
+      await tx.meetingAttendance.create({
         data: {
           meetingId,
           memberId,
@@ -130,7 +130,6 @@ export async function saveMeetingAttendance(
       });
 
       await recordMeetingAttendanceContrib(tx, {
-        attendanceId: attendance.id,
         meetingId,
         memberId,
         meetingTitle: title,
