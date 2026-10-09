@@ -62,8 +62,10 @@ const stripSql = (sql) => sql.replace(/--[^\n]*/g, "");
  */
 
 const DB = process.env.PATH_CHECK_DB ?? "chalddeok_path_check";
-const DB_URL = `postgresql://${process.env.PGUSER ?? "mac"}@localhost:5432/${DB}`;
-const ADMIN = `postgresql://${process.env.PGUSER ?? "mac"}@localhost:5432/postgres`;
+// macOS·Linux 는 `USER`, Windows 는 `USERNAME` 이 기본 환경변수다. 둘 다 없으면 예전 값.
+const DEFAULT_PGUSER = process.env.USER ?? process.env.USERNAME ?? "mac";
+const DB_URL = `postgresql://${process.env.PGUSER ?? DEFAULT_PGUSER}@localhost:5432/${DB}`;
+const ADMIN = `postgresql://${process.env.PGUSER ?? DEFAULT_PGUSER}@localhost:5432/postgres`;
 const MIGRATIONS = "prisma/migrations";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -85,8 +87,12 @@ const psql = (sql, quiet = false) => {
 };
 const _admin = (sql) => execFileSync("psql", [ADMIN, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql], { encoding: "utf8" });
 
+// Windows 에서는 `npx` 가 `.cmd` 라 execFileSync 로 바로 부를 수 없다.
+// Node 로 Prisma 엔트리를 직접 돌리면 플랫폼과 상관없이 같다.
+const PRISMA_ENTRY = "node_modules/prisma/build/index.js";
+
 const migrate = () =>
-  execFileSync("npx", ["prisma", "migrate", "deploy"], {
+  execFileSync(process.execPath, [PRISMA_ENTRY, "migrate", "deploy"], {
     env: { ...process.env, DATABASE_URL: DB_URL, DIRECT_URL: DB_URL },
     cwd: ROOT,
     stdio: "pipe",
@@ -94,7 +100,7 @@ const migrate = () =>
   });
 
 const drift = () =>
-  execFileSync("npx", ["prisma", "migrate", "diff", "--from-config-datasource", "--to-schema", "prisma/schema.prisma"], {
+  execFileSync(process.execPath, [PRISMA_ENTRY, "migrate", "diff", "--from-config-datasource", "--to-schema", "prisma/schema.prisma"], {
     env: { ...process.env, DATABASE_URL: DB_URL, DIRECT_URL: DB_URL },
     cwd: ROOT,
     stdio: "pipe",

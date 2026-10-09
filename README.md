@@ -197,6 +197,10 @@ npm run verify
 cp scripts/pre-push.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 ```
 
+Windows 는 위 두 줄을 **Git Bash** 에서 실행합니다(PowerShell·cmd 에는 `cp`·`chmod` 가
+없습니다). 훅 자체가 `sh` 스크립트라 실행도 Git Bash 가 맡습니다 — 푸시할 때 뜨는 창이
+Git Bash 면 그대로 돕니다.
+
 `verify` 를 돌립니다 — Vercel 이 하는 배포 게이트를 **더 엄격하게** 로컬에서 합니다. 순서가
 꼭 같을 필요는 없습니다. Vercel 에만 있는 것도, 로컬에만 있는 것도 있습니다.
 

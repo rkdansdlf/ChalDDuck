@@ -38,12 +38,16 @@
  */
 import { spawnSync } from "node:child_process";
 
+// Windows 에서는 `npx` 가 `.cmd` 라 shell 없이 spawnSync 로 바로 부를 수 없다.
+const IS_WIN = process.platform === "win32";
+const NPX = IS_WIN ? "npx.cmd" : "npx";
+
 const TEAM = process.env.VERCEL_TEAM ?? "rkdansdlfs-projects";
 const DEPLOY = process.argv[2];
 
 /** 이 프로젝트의 가장 최근 배포. */
 function latest() {
-  const r = spawnSync("npx", ["vercel", "ls", "--yes", "--format", "json"], { encoding: "utf8" });
+  const r = spawnSync(NPX, ["vercel", "ls", "--yes", "--format", "json"], { encoding: "utf8", shell: IS_WIN });
   const list = JSON.parse(r.stdout || "{}").deployments ?? [];
   return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
@@ -76,9 +80,9 @@ if (target.state === "READY") {
 }
 
 const inspect = spawnSync(
-  "npx",
+  NPX,
   ["vercel", "inspect", target.url, "--logs"],
-  { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, shell: IS_WIN },
 );
 const logs = `${inspect.stdout || ""}${inspect.stderr || ""}`;
 const lines = logs.split("\n").filter((l) => l.trim().length > 0);

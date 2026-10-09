@@ -31,14 +31,17 @@ import { existsSync } from "node:fs";
  * 마이그레이션이 "차이"로 보여 정상 배포가 걸린다.
  */
 
-const prisma = "node_modules/.bin/prisma";
-if (!existsSync(prisma)) {
-  throw new Error("`node_modules/.bin/prisma` 가 없습니다. 의존성을 먼저 설치해 주세요.");
+// Windows 에서는 `node_modules/.bin/prisma` 가 `.cmd` 라 spawnSync 로 바로 부를 수 없다.
+// Node 로 Prisma 엔트리를 직접 돌리면 플랫폼과 상관없이 같다.
+const prismaEntry = "node_modules/prisma/build/index.js";
+if (!existsSync(prismaEntry)) {
+  throw new Error("`node_modules/prisma` 가 없습니다. 의존성을 먼저 설치해 주세요.");
 }
 
 const result = spawnSync(
-  prisma,
+  process.execPath,
   [
+    prismaEntry,
     "migrate",
     "diff",
     "--from-config-datasource",
