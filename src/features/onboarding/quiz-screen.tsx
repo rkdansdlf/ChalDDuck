@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Icon, Progress } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { pickSide, picksToMbti, sideLetter, type QuizQuestion } from "@/lib/mbti-quiz";
 import { setPick, useOnboarding } from "./onboarding-state";
@@ -118,10 +118,9 @@ export function QuizScreen({ questions }: { questions: QuizQuestion[] }) {
           </div>
         ) : null}
 
-        <Undecided>
-          이 {total}문항의 정확도나 검증 결과는 기획안에 없습니다. 결과 화면에서 <b>&ldquo;정확한 진단&rdquo;으로
-          표현하지 않았습니다.</b>
-        </Undecided>
+        {/* 정책 확정:
+            문항의 정확도나 검증 결과는 기획안에 없다. 그래서 결과 화면에서도 "정확한 진단"이라고
+            표현하지 않는다 — 머리말의 약속이 화면 문구에도 그대로다. */}
       </Body>
 
       <Dock>

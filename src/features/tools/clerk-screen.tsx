@@ -13,7 +13,6 @@ import {
   Progress,
   SecTitle,
   Textarea,
-  Undecided,
 } from "@/components/ui";
 import { summarizeMeeting } from "@/server/actions/ai";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
@@ -305,10 +304,8 @@ export function ClerkScreen({
               })}
             </div>
 
-            <Undecided>
-              회의 내용을 텍스트로 직접 붙여넣는 방식 외에 음성 녹음 인식 여부는 기획안에 없어 다루지
-              않았습니다.
-            </Undecided>
+            {/* 정책 확정:
+                회의 내용은 텍스트로 직접 붙여넣는 방식만 다룬다 — 음성 녹음 인식은 다루지 않는다. */}
 
             <Btn
               full

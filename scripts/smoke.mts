@@ -6787,6 +6787,19 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   // "없다" 라고 거짓말하면 안 된다 — 있다고 말하고 **무엇이 지워지지 않는지**를 같이 말한다.
   check("뺄 수 있다고 적는다", /뺄 수는 있습니다/.test(dmRaw), true);
   check("삭제가 아니라고 말한다", /지워지지 않고/.test(dmRaw), true);
+
+  // ⑥ 성향 체크 — **"진단"이라 부르지 않는다.** 정확도·검증 결과가 없는데 그렇게 부르면
+  //    없는 근거를 만든다(2026-10-09 결정).
+  const quiz = readCode("../src/features/onboarding/quiz-screen.tsx");
+  check("성향 체크가 '진단'이라 부르지 않는다", /진단/.test(quiz), false);
+
+  // ⑦ AI 서기 — **음성 녹음 인식은 다루지 않는다.** 입력은 텍스트 붙여넣기만.
+  const clerk = readCode("../src/features/tools/clerk-screen.tsx");
+  check("서기가 음성 입력을 다루지 않는다", /음성/.test(clerk), false);
+
+  // ⑧ 라이어 제시어 — **저장소가 정한 기본 팩**을 쓴다. 화면이 출처를 적어 둔다.
+  const icebreakRaw = readRaw("../src/features/social/icebreak-screen.tsx");
+  check("제시어 목록의 출처를 적는다", /data\/liar-prompts\.ts/.test(icebreakRaw), true);
 }
 
 await finish();
