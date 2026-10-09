@@ -221,9 +221,11 @@ function retentionCutoffDay(): string {
  *
  * 엑셀이 한글을 깨뜨리지 않도록 BOM 을 붙인다.
  */
-export async function aiUsageCsv(teamId: string): Promise<string> {
+export async function aiUsageCsv(teamId: string, memberId?: string): Promise<string> {
   const rows = await db.aiUsage.findMany({
-    where: { teamId, day: { gte: retentionCutoffDay() } },
+    // **내 기록만** 요청하면 이 쪽으로 좁혀진다 — 한 사람이 다운받은 파일에 남의 이름이
+    // 든 채지 않게 하려면 조회 단계에서 잘라야 한다.
+    where: { teamId, day: { gte: retentionCutoffDay() }, ...(memberId ? { memberId } : {}) },
     include: { member: { select: { name: true } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
@@ -244,6 +246,31 @@ export async function aiUsageCsv(teamId: string): Promise<string> {
       row.member.name,
       toolName.get(row.tool) ?? row.tool,
     ]),
+  ];
+  return "﻿" + lines.map((cells) => cells.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+/**
+ * 팀의 AI 사용을 **도구별 집계**로만 보여 주는 CSV.
+ *
+ * 팀 전체 상세 기록은 개인의 이름·시각이 든다 — 수업 자료로 내려받기 적당하지 않다.
+ * **누가 아니라 무엇을** 묻는 경우를 위해 `도구, 횟수` 만 남긴다.
+ */
+export async function aiUsageTeamSummaryCsv(teamId: string): Promise<string> {
+  const rows = await db.aiUsage.findMany({
+    where: { teamId, day: { gte: retentionCutoffDay() } },
+    select: { tool: true },
+  });
+
+  const toolName = new Map(Object.entries(AI_TOOL_NAMES));
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    counts.set(row.tool, (counts.get(row.tool) ?? 0) + 1);
+  }
+
+  const lines = [
+    ["도구", "사용 횟수"],
+    ...[...counts.entries()].map(([tool, n]) => [toolName.get(tool) ?? tool, String(n)]),
   ];
   return "﻿" + lines.map((cells) => cells.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }

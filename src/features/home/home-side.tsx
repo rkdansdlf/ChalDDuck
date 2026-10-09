@@ -2,12 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { Suspense, use, useMemo } from "react";
-import { Icon, Rows, SecTitle, Skeleton, type IconName } from "@/components/ui";
+import { Rows, SecTitle, Skeleton, type IconName } from "@/components/ui";
 import type { AiTool, RecentItem, RoleKey, Task } from "@/lib/types";
 import { TASKS_RECENT_ID } from "@/lib/types";
 import { suggestTools, type ToolSuggestion } from "./briefing";
 import { HomeRow } from "./home-row";
-import { SuggestionChip } from "./home-parts";
+import { AiToolTile } from "./home-parts";
 
 type BoxDeadlines = Array<{ role: RoleKey; name: string; dueAt: string | null }>;
 
@@ -91,40 +91,45 @@ function HomeSideContent({
       </Rows>
 
       <SecTitle
-        note={
-          suggestions.length > 0
-            ? "지금 팀 상황에 맞는 것"
-            : "채팅·일정·팀 탭에는 없는 자리"
-        }
-        action="전체 보기"
+        note={suggestions.length > 0 ? "지금 팀 상황에 맞는 것" : "팀플에 필요한 만큼만"}
+        action={`전체 ${aiTools.length}개`}
         onAction={() => router.push("/tools")}
       >
-        {suggestions.length > 0 ? "지금 쓸 도구" : "AI 도구 바로가기"}
+        {suggestions.length > 0 ? "지금 쓸 도구" : "AI 도구"}
       </SecTitle>
-      <div className="flex flex-wrap gap-2">
-        {/*
-          추천이 있으면 그것을 먼저 보여 주고, **원래 목록으로 되돌린다.**
-          도구 다섯 개를 잘라 보여 주던 것을 네 개로 줄인 것이 아니다 — 도구는 언제나 쓸 수
-          있으므로 목록이 줄면 그만큼 **찾기 어려워진다.**
-        */}
-        {suggestions.map((s) => (
-          <SuggestionChip key={s.key} suggestion={s} onOpen={() => router.push(s.href)} />
-        ))}
+      {/*
+        추천이 있으면 그것을 먼저 보여 주고, **원래 목록으로 되돌린다.**
+        도구 다섯 개를 잘라 보여 주던 것을 네 개로 줄인 것이 아니다 — 도구는 언제나 쓸 수
+        있으므로 목록이 줄면 그만큼 **찾기 어려워진다.** 그래서 "전체 N개" 로 몇 개가 더
+        있는지 말한다.
+      */}
+      {suggestions.length > 0 ? (
+        <Rows s="yellow" className="mb-2">
+          {suggestions.map((s) => (
+            <HomeRow
+              key={s.key}
+              size="lg"
+              icon={s.icon}
+              surface="bg-coral-100 text-coral-700"
+              title={s.toolName}
+              note={s.because}
+              onOpen={() => router.push(s.href)}
+            />
+          ))}
+        </Rows>
+      ) : null}
+      <div className="grid grid-cols-2 gap-2">
         {aiTools
           .filter((tool): tool is typeof tool & { href: string } => tool.href !== null)
           .slice(0, suggestions.length > 0 ? 2 : 4)
           .map((tool) => (
-            <button
+            <AiToolTile
               key={tool.key}
-              type="button"
-              onClick={() => router.push(tool.href)}
-              className="flex min-h-[68px] flex-[1_1_100px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card px-3 py-2.5 select-none transition-all duration-150 hover:bg-cr-25 hover:shadow-xs hover:-translate-y-0.5 active:scale-95"
-            >
-              <Icon name={tool.icon as IconName} size={17} className="text-info transition-transform duration-150 hover:scale-110" />
-              <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
-                {tool.name}
-              </span>
-            </button>
+              icon={tool.icon as IconName}
+              name={tool.name}
+              note={tool.note}
+              onOpen={() => router.push(tool.href)}
+            />
           ))}
       </div>
     </>
@@ -141,10 +146,11 @@ function HomeSideSkeleton() {
         <Skeleton className="h-[52px] w-full rounded-2xl" />
       </div>
       <Skeleton className="mb-3 h-5 w-28" />
-      <div className="flex gap-2">
-        <Skeleton className="h-[68px] flex-1 rounded-2xl" />
-        <Skeleton className="h-[68px] flex-1 rounded-2xl" />
-        <Skeleton className="h-[68px] flex-1 rounded-2xl" />
+      <div className="grid grid-cols-2 gap-2">
+        <Skeleton className="h-[92px] rounded-2xl" />
+        <Skeleton className="h-[92px] rounded-2xl" />
+        <Skeleton className="h-[92px] rounded-2xl" />
+        <Skeleton className="h-[92px] rounded-2xl" />
       </div>
     </div>
   );

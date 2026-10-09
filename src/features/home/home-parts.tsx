@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { Icon, Panel } from "@/components/ui";
+import { Icon, Panel, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { BriefingLine, ToolSuggestion } from "./briefing";
+import type { BriefingLine } from "./briefing";
 
 /**
  * "오늘의 브리핑" 한 장.
@@ -65,28 +65,35 @@ export function BriefingCard({ lines, onOpen }: { lines: BriefingLine[]; onOpen:
 }
 
 /**
- * 상황별 도구 추천 한 칩.
+ * AI 도구 바로가기 한 칸 — 이름만이 아니라 **무엇을 해 주는지**(`note`)를 함께 보여 준다.
  *
- * **이유를 함께 보여 준다.** 이유 없는 추천 칩은 광고이고, 사용자는 한 번 눌러보고
- * "왜?" 하고 닫는다 — 그러면 두 번째부터는 보이지 않게 되어 추천의 값이 사라진다.
- * 짧게 한 줄로 붙인다.
+ * 이름만 있는 칸은 "쿠션 번역기" 가 뭘 하는지 모르는 사람에게 눌러볼 이유를 주지 못한다.
+ * 아이콘 색은 전체 보기(`AiHubScreen`)와 같은 코랄이다 — 같은 도구가 화면마다 다른 색이면 안 된다.
  */
-export function SuggestionChip({ suggestion, onOpen }: { suggestion: ToolSuggestion; onOpen: () => void }) {
+export function AiToolTile({
+  icon,
+  name,
+  note,
+  onOpen,
+}: {
+  icon: IconName;
+  name: string;
+  note: string;
+  onOpen: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex min-h-[68px] flex-[1_1_140px] cursor-pointer flex-col items-start gap-1 rounded-2xl border border-line bg-card px-3 py-2.5 text-left select-none transition-all duration-150 hover:bg-cr-25 hover:shadow-xs hover:-translate-y-0.5 active:scale-95"
+      className="flex min-h-[92px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card p-3 text-left select-none transition-all duration-150 hover:-translate-y-0.5 hover:bg-cr-25 active:scale-95 [&:nth-child(odd):last-child]:col-span-2"
     >
-      <span className="flex items-center gap-1.5">
-        <Icon name={suggestion.icon} size={16} className="text-info" />
-        <span className="keep-all font-bold text-[12.5px] leading-[1.3] text-txt-strong">
-          {suggestion.toolName}
+      <span className="flex items-center gap-2">
+        <span className="grid size-[30px] flex-none place-items-center rounded-[10px] bg-coral-100 text-coral-700">
+          <Icon name={icon} size={16} />
         </span>
+        <span className="keep-all font-bold text-[13.5px] leading-[1.3] text-txt-strong">{name}</span>
       </span>
-      <span className="keep-all font-medium text-[11.5px] leading-[1.35] text-txt-muted">
-        {suggestion.because}
-      </span>
+      <span className="keep-all font-medium text-[12px] leading-[1.5] text-txt-muted">{note}</span>
     </button>
   );
 }
@@ -151,6 +158,7 @@ export function UpcomingMeeting({
   pending: number;
   onOpen: () => void;
 }) {
+  const isActionable = stage === "proposed" || (stage === "confirmed" && Boolean(day && time));
   const content =
     stage === "proposed" && day && time
       ? { title: `${day}요일 ${time}`, note: `제안 대기 중 · 동의 ${agreed}명 / 미응답 ${pending}명` }
@@ -161,10 +169,19 @@ export function UpcomingMeeting({
           : { title: "아직 정해진 회의가 없습니다", note: "후보를 골라 팀에 제안해 보세요" };
 
   return (
-    <Panel s="fill" pad={14} r={16} className="mb-[18px]" onClick={onOpen}>
+    <Panel
+      s="fill"
+      pad={14}
+      r={16}
+      className={cn("heroCard mb-[18px]", isActionable && "cursor-pointer")}
+      onClick={onOpen}
+    >
       <div className="flex items-center gap-2.5">
-        <span className="flex-none text-txt-muted">
-          <Icon name="calendar-clock" size={17} />
+        <span className="relative flex-none text-txt-muted">
+          {stage === "proposed" ? (
+            <span className="heroPulse absolute -inset-1 rounded-full text-yellow-500 pointer-events-none" />
+          ) : null}
+          <Icon name="calendar-clock" size={17} className="relative z-1" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="keep-all block font-bold text-[14.5px] leading-[1.4] text-txt-strong">

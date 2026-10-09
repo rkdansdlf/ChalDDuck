@@ -104,7 +104,7 @@ export function SecTitle({
         <button
           type="button"
           onClick={onAction}
-          className="t-cap-strong group inline-flex flex-none cursor-pointer items-center gap-0.5 border-none bg-transparent py-1.5 text-link transition-colors duration-150 hover:text-link-hover active:scale-95"
+          className="t-cap-strong group -my-2 inline-flex min-h-11 flex-none cursor-pointer items-center gap-0.5 border-none bg-transparent px-1 text-link transition-colors duration-150 hover:text-link-hover active:scale-95"
         >
           {action}
           <span className="transition-transform duration-150 group-hover:translate-x-0.5">
