@@ -1,4 +1,4 @@
-import { BUSY_KINDS, CUSTOM_BUSY_KIND, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
+import { SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { nowHourInSeoul, todayInSeoul, type CandidateDate, type WeekKey } from "./week";
 
 /**
@@ -11,17 +11,6 @@ import { nowHourInSeoul, todayInSeoul, type CandidateDate, type WeekKey } from "
  * 후보는 **오늘부터 7일**(`candidateDates`)에서 찾는다. 날마다 그 날이 속한 주의
  * 시간표(매주 + 그 주에만)로 센다 — 7일이 두 주에 걸치면 날마다 다른 "이 주만" 블록이 걸린다.
  */
-
-/**
- * 사유는 시간표 화면과 같은 말로 보여 준다 — 화면마다 다른 어휘를 만들지 않는다.
- *
- * 직접 입력한 사유는 본인이 붙인 이름("병원")이 아니라 "개인 일정"으로만 나간다. 여기서 만든
- * 문구는 팀 전원이 보는 09 화면에 그대로 뜬다. 이름은 애초에 이 계산에 들어오지도 않는다
- * (`SlotSource` 에 label 이 없다).
- */
-const BUSY_LABEL = new Map<string, string>(
-  [...BUSY_KINDS, CUSTOM_BUSY_KIND].map((k) => [k.key, k.name]),
-);
 
 /** 아무도 못 오는 시간을 후보라고 부르지 않는다. 둘은 모여야 회의다. */
 export const MIN_ATTENDEES = 2;
@@ -80,31 +69,24 @@ function blockedMap(members: SlotSource[], week: WeekKey) {
 /**
  * 못 오는 사람을 **사유로만** 말한다. 이름을 붙이지 않는다.
  *
- * ## 왜 이름을 뺐나 — 2026-10-03 결정
+ * ## 사유도 보이지 않는다 — 2026-10-03 보강
  *
- * 후보는 **팀 전체가 보는 화면**이다. 여기서 "박지호 · 시험" 이라고 적히면 두 사람이 함께
- * 알게 되는 정보가 있다. 직접 입력 사유는 이미 `CUSTOM_BUSY_KIND` 로 "개인 일정" 을 내보내고
- * 있었는데, **기본 사유만 이름이 붙어 새고 있었다** — 같은 규칙의 절반만 적용된 상태였다.
+ * 이전에는 기본 사유(수업·아르바이트·시험)까지 팀에 노출됐다. 직접 입력 사유만 "개인 일정"으로
+ * 숨겨 같은 규칙의 절반만 적용된 상태였다.
  *
- * "수업" 은 드러낼 만하고 "시험" 은 그렇지 않다. **사유를 고르는 사람이 고른 값이지, 알릴
- * 대상이 아니기 때문에** 사유는 보되 이름은 뺀다.
+ * 이제 **종류를 가리지 않고 전부 "개인 일정"** 으로 만든다. 팀원이 이 칸에서 아는 것이 있어야
+ * 하는 것은 "이 시간엔 회의를 잡지 못한다" 뿐이지, 어떤 이유인지는 그 사람의 사유다.
  *
  * ## 인원이 있으면 같이 말한다
  *
  * 이름을 빼면 "못 오는 사람" 의 **몇 명인지** 가 사라져 후보의 쓸모가 줄어든다. 그래서 같은
- * 사유는 모아서 **명수** 를 붙인다 — `수업 2, 시험 1`. 이름을 알지 못해도 몇 명을 빼야 하는지는
- * 알아야 그 시간에 회의를 잡을지 결정할 수 있다.
+ * 사유는 모아서 **명수** 를 붙인다 — 종류가 하나로 합쳐진 뒤라 `개인 일정 3` 처럼 나온다.
  */
 export function blockedByReason(blocked: Array<{ kind: string }>): string | null {
   if (blocked.length === 0) return null;
-  const counts = new Map<string, number>();
-  for (const x of blocked) {
-    const label = BUSY_LABEL.get(x.kind) ?? x.kind;
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return [...counts]
-    .map(([label, n]) => (n > 1 ? `${label} ${n}` : label))
-    .join(", ");
+  // 팀에 내보내는 사유는 항상 하나다. 이름·종류를 가리지 않고 "개인 일정" 으로만 말한다.
+  // 종류별 라벨(`BUSY_LABEL`)은 본인 화면(my-time-screen)에서만 쓴다.
+  return blocked.length > 1 ? `개인 일정 ${blocked.length}` : "개인 일정";
 }
 
 /** 칸 하나를 후보 모양으로. 목록 후보와 팀 겹쳐보기에서 직접 고른 칸이 같은 모양이어야 한다. */
