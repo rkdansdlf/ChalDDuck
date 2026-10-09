@@ -129,3 +129,70 @@ export async function recordDriveVersionContrib(
     },
   });
 }
+
+/**
+ * 팀장이 회의 참석을 확인했을 때 기여 기록을 멱등하게 생성한다.
+ */
+export async function recordMeetingAttendanceContrib(
+  tx: Tx,
+  input: {
+    attendanceId: string;
+    meetingId: string;
+    memberId: string;
+    meetingTitle: string;
+    date?: string | null;
+  },
+): Promise<void> {
+  const existing = await tx.contribRecord.findUnique({
+    where: {
+      originType_originId_memberId: {
+        originType: "meeting_attendance",
+        originId: input.attendanceId,
+        memberId: input.memberId,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (existing) return;
+
+  await tx.contribRecord.create({
+    data: {
+      memberId: input.memberId,
+      kind: "meet",
+      title: input.meetingTitle,
+      detail: "회의 참석 (팀장 출석 확인)",
+      whenLabel: input.date ? `${input.date} 회의` : null,
+      source: "auto",
+      state: "pending",
+      originType: "meeting_attendance",
+      originId: input.attendanceId,
+    },
+  });
+}
+
+/**
+ * 출석 체크가 취소되었을 때 기여 기록을 회수한다.
+ *
+ * 아직 팀원 확인이나 이견이 없는 대기(`pending`) 상태일 때만 안전하게 삭제한다.
+ */
+export async function unrecordMeetingAttendanceContrib(
+  tx: Tx,
+  attendanceId: string,
+): Promise<void> {
+  const records = await tx.contribRecord.findMany({
+    where: { originType: "meeting_attendance", originId: attendanceId },
+    select: {
+      id: true,
+      state: true,
+      _count: { select: { confirms: true, disputes: true } },
+    },
+  });
+
+  for (const r of records) {
+    if (r.state === "pending" && r._count.confirms === 0 && r._count.disputes === 0) {
+      await tx.contribRecord.delete({ where: { id: r.id } });
+    }
+  }
+}
+

@@ -20,6 +20,7 @@ import { useAction } from "@/lib/use-action";
 import { whenText } from "./meeting-cell";
 import { downloadIcsFile, generateGoogleCalendarUrl, generateIcsContent } from "./calendar-export";
 import { MeetingNoteSheet } from "./meeting-note-sheet";
+import { MeetingAttendanceSheet } from "./meeting-attendance-sheet";
 import {
   carryOverMeeting,
   fastForwardMeetingDeadline,
@@ -60,6 +61,7 @@ export function SlotsScreen({
   const [location, setLocation] = useState("");
   const [agenda, setAgenda] = useState("");
   const [viewingNote, setViewingNote] = useState(false);
+  const [viewingAttendance, setViewingAttendance] = useState(false);
   const { toast, busy, flash, run } = useAction();
   const requesting = busy.request === true;
 
@@ -242,6 +244,15 @@ export function SlotsScreen({
                   {proposal.hasNote ? "AI 서기 다시 작성" : "AI 서기로 회의록 작성하기"}
                 </Btn>
               </div>
+
+              <Btn
+                v="outline"
+                icon="users-round"
+                className="w-full"
+                onClick={() => setViewingAttendance(true)}
+              >
+                참석자 출석 체크
+              </Btn>
             </div>
           </div>
         ) : stage === "proposed" && proposed ? (
@@ -394,7 +405,7 @@ export function SlotsScreen({
                   사람에게는 회의 전 <b>비대면으로 의견을 남길 기회</b>를 요청합니다. 다음 주로 넘기는 것은
                   팀이 버튼으로 직접 정합니다.
                 </Note>
-                <SecTitle className="mt-1" note="빠진 사람과 사유를 함께 표시합니다">
+                <SecTitle className="mt-1" note="빠진 사람이 몇 명인지 함께 표시합니다">
                   {bestAvailable}명 가능한 시간
                 </SecTitle>
               </>
@@ -588,6 +599,14 @@ export function SlotsScreen({
         meetingId={proposal.id ?? null}
         title={proposal.agenda || "정기 팀 회의록"}
         onClose={() => setViewingNote(false)}
+      />
+
+      <MeetingAttendanceSheet
+        open={viewingAttendance}
+        meetingId={proposal.id ?? null}
+        meetingTitle={`${whenText(proposal.date, proposed?.day ?? "", proposed?.time ?? "")} 회의 출석`}
+        onClose={() => setViewingAttendance(false)}
+        onSaved={() => router.refresh()}
       />
 
       <Toast msg={toast} />

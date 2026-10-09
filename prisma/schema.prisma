@@ -187,6 +187,8 @@ model Member {
   proposalsMade         MeetingProposal[]
   meetingResponses      MeetingResponse[]
   meetingNotes          MeetingNote[]
+  meetingAttendances    MeetingAttendance[]    @relation("AttendanceMember")
+  attendancesChecked    MeetingAttendance[]    @relation("AttendanceCheckedBy")
   reportShareTokens     ReportShareToken[]
   roleDraws             RoleDraw[]
   roleRejections        RoleRejection[]
@@ -462,10 +464,28 @@ model MeetingProposal {
   team       Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
   slot       MeetingSlot?      @relation(fields: [slotId], references: [id], onDelete: SetNull)
   proposedBy Member            @relation(fields: [proposedById], references: [id], onDelete: Cascade)
-  responses  MeetingResponse[]
-  note       MeetingNote?
+  responses   MeetingResponse[]
+  note        MeetingNote?
+  attendances MeetingAttendance[]
 
   @@index([teamId])
+}
+
+/// 확정된 회의의 실제 참석자 기록. 팀장이 출석을 확인한다.
+model MeetingAttendance {
+  id          String   @id @default(cuid())
+  meetingId   String
+  memberId    String
+  checkedById String
+  createdAt   DateTime @default(now())
+
+  meeting   MeetingProposal @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  member    Member          @relation("AttendanceMember", fields: [memberId], references: [id], onDelete: Cascade)
+  checkedBy Member          @relation("AttendanceCheckedBy", fields: [checkedById], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, memberId])
+  @@index([meetingId])
+  @@index([memberId])
 }
 
 /// 회의록 아카이브. AI 서기 결과 또는 작성된 회의록을 영구 보관한다.
