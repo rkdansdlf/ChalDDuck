@@ -61,8 +61,11 @@ export function Field({
 
 export type InputProps = {
   id?: string;
-  /** 기본은 글자. 마감처럼 날짜·시각을 받을 때만 `datetime-local` — 휴대폰에서 달력이 뜬다. 이메일은 `email`. */
-  type?: "text" | "datetime-local" | "email";
+  /**
+   * 기본은 글자. 마감처럼 날짜·시각을 받을 때만 `datetime-local` — 휴대폰에서 달력이 뜬다. 이메일은 `email`.
+   * 생일처럼 시각 없이 날짜만, 또는 날짜 없이 시각만 받을 때는 `date` · `time`.
+   */
+  type?: "text" | "datetime-local" | "email" | "date" | "time";
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;

@@ -2,6 +2,7 @@ import {
   getCurrentTeam,
   getJoinRequests,
   getMyDevices,
+  getMySaju,
   getRejoinRequests,
   getRoster,
 } from "@/data/api";
@@ -19,12 +20,13 @@ export const dynamic = "force-dynamic";
 export default async function AccessPage() {
   const me = await requireSessionMember();
   const team = await getCurrentTeam();
-  const [requests, joins, devices, roster, myEmail] = await Promise.all([
+  const [requests, joins, devices, roster, myEmail, mySaju] = await Promise.all([
     getRejoinRequests(team.id),
     getJoinRequests(team.id),
     getMyDevices(),
     getRoster(team.id),
     getMyEmail(),
+    getMySaju(),
   ]);
 
   return (
@@ -38,6 +40,7 @@ export default async function AccessPage() {
       others={roster.filter((m) => !m.isMe)}
       members={roster}
       myEmail={myEmail}
+      mySaju={mySaju}
     />
   );
 }

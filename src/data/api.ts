@@ -3,6 +3,8 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
+import { calculateSaju, type SajuChart } from "@/lib/saju/engine";
+import { birthInputFromStored } from "@/lib/saju/input";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
@@ -511,6 +513,30 @@ export async function getMyDevices(): Promise<MyDevice[]> {
     lastSeen: formatDeadline(s.lastSeenAt),
     isCurrent: s.token === current,
   }));
+}
+
+/**
+ * 내 사주 — 등록한 생년월일(시)과 거기서 계산한 결과.
+ *
+ * **본인만 읽는다.** 원본(`birthDate`·`birthTime`)은 이 함수로만 나가고, 팀원 목록(`toMember`)에는
+ * 실리지 않는다. 결과를 저장하지 않고 읽을 때 계산하므로 계산 규칙이 바뀌면 곧바로 반영된다.
+ * 등록하지 않았거나 저장값이 계산할 수 없는 모양이면 `null`.
+ */
+export type MySaju = { birthDate: string; birthTime: string | null; chart: SajuChart };
+
+export async function getMySaju(): Promise<MySaju | null> {
+  const session = await getSessionMember();
+  if (!session) return null;
+
+  const row = await db.member.findUnique({
+    where: { id: session.id },
+    select: { birthDate: true, birthTime: true },
+  });
+  if (!row?.birthDate) return null;
+
+  const input = birthInputFromStored(row.birthDate, row.birthTime);
+  const chart = input ? calculateSaju(input) : null;
+  return chart ? { birthDate: row.birthDate, birthTime: row.birthTime, chart } : null;
 }
 
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */
