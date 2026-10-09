@@ -740,6 +740,200 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       false,
     );
 
+    /* ── 알림·배지·고르기·리서치 저장 ──────────────────────── */
+    // 아래 네 액션은 감사기에서 **형식만** 이었다 — 소스는 읽지만 **한 번도 안 돌렸다.**
+    console.log("\n올린 것을 팀에 알린다 — 남의 것과 옛 것은 알리지 않는다");
+
+    const N = await makeTeam("알림");
+    const driveNotices = (t: { id: string }) =>
+      db.notification.count({ where: { kind: "drive", member: { teamId: t.id } } });
+
+    // 남의 팀 제출함이면 **조용히 돌아온다** — 던지지도, 알리지도 않는다.
+    const foreign = okFinish(await upload(A.asLeader, A.box.id, "남의팀파일.png"));
+    await as(N.asLeader, () => actions.announceUploads(A.box.id, [foreign.fileId]));
+    check("남의 팀 제출함은 조용히 넘어간다", await driveNotices(N), 0);
+
+    // 올린 사람이 **나여야** 한다 — 남이 올린 버전을 내가 대신 알릴 수 없다.
+    const mineForOther = okFinish(await upload(N.asMate, N.box.id, "남이올린.png"));
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [mineForOther.fileId]));
+    check("남이 올린 것은 알리지 않는다", await driveNotices(N), 0);
+
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, []));
+    check("빈 목록은 조용하다", await driveNotices(N), 0);
+
+    // **30분 창 밖** — 오래 전에 올린 것을 지금 알리면 "방금 올렸다" 는 말이 거짓이 된다.
+    const oldFile = await db.submittedFile.create({ data: { boxId: N.box.id, name: "옛날파일.png", kind: "image" } });
+    await db.fileVersion.create({
+      data: {
+        fileId: oldFile.id,
+        label: "v1",
+        authorId: N.leader.id,
+        note: "창 밖 검사",
+        size: "1 KB",
+        kind: "image",
+        storagePath: `${N.id}/${N.box.id}/${randomUUID()}`,
+        bytes: 100,
+        mimeType: PNG,
+        createdAt: new Date(Date.now() - 31 * 60 * 1000),
+      },
+    });
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [oldFile.id]));
+    check("30분 지난 것은 알리지 않는다", await driveNotices(N), 0);
+
+    // 정상 — 알림 하나.
+    const announced = okFinish(await upload(N.asLeader, N.box.id, "최종발표.png"));
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [announced.fileId]));
+    check("올리면 팀에 알린다", await driveNotices(N), 1);
+    const notice = await db.notification.findFirstOrThrow({
+      where: { kind: "drive", member: { teamId: N.id } },
+      select: { title: true, body: true, href: true, memberId: true },
+    });
+    check("누가 올렸는지 말한다", notice.title.includes(`김민준${suffix}`), true);
+    check("어느 제출함인지 말한다", notice.title.includes("최종본"), true);
+    check("무엇을 올렸는지 말한다", notice.body.includes("최종발표.png"), true);
+    check("버전 라벨도 말한다", notice.body.includes(announced.label), true);
+    check("한 파일이면 그 파일로 간다", notice.href, `/drive/${N.box.id}/${announced.fileId}`);
+    // **보낸 사람은 받지 않는다** — 자기 알림이 자기 배지에 뜨면 숫자가 거짓이다.
+    check("올린 사람에게는 안 간다", notice.memberId, N.mate.id);
+
+    // 여러 파일 — "첫 것 외 N개" 로 접고 **제출함으로** 보낸다(어느 파일로 갈지 모르니까).
+    const secondUp = okFinish(await upload(N.asLeader, N.box.id, "두번째.png"));
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [announced.fileId, secondUp.fileId]));
+    const many = await db.notification.findFirstOrThrow({
+      where: { kind: "drive", member: { teamId: N.id } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true, href: true },
+    });
+    check("여러 개면 외 N개로 접는다", many.body.includes("외 1개"), true);
+    check("여러 개면 제출함으로 간다", many.href, `/drive/${N.box.id}`);
+
+    // **같은 파일의 여러 버전은 하나로** — 두 번 올렸으면 최근 것 하나만 말한다.
+    const v2Up = okFinish(await upload(N.asLeader, N.box.id, "최종발표.png", { fileId: announced.fileId }));
+    const beforeDedupe = await driveNotices(N);
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [announced.fileId, announced.fileId, v2Up.fileId]));
+    const dedupe = await db.notification.findFirstOrThrow({
+      where: { kind: "drive", member: { teamId: N.id } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true },
+    });
+    check("같은 파일은 한 번만 알린다", await driveNotices(N), beforeDedupe + 1);
+    check("같은 파일은 접히지 않는다", dedupe.body.includes("외"), false);
+
+    // **마감 후 제출은 그렇게 말한다** — 아니면 늦게 낸 것이 정시처럼 보인다.
+    await db.submissionBox.update({ where: { id: N.box.id }, data: { dueAt: new Date(Date.now() - 60_000) } });
+    const late = okFinish(await upload(N.asLeader, N.box.id, "늦은것.png"));
+    await as(N.asLeader, () => actions.announceUploads(N.box.id, [late.fileId]));
+    const lateNotice = await db.notification.findFirstOrThrow({
+      where: { kind: "drive", member: { teamId: N.id } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true },
+    });
+    check("마감 후면 그렇게 말한다", lateNotice.body.includes("마감 후 제출"), true);
+
+    /* ── 드라이브 봤음 표시 ────────────────────────────────── */
+    console.log("\n드라이브를 열면 배지가 내려간다");
+
+    const M = await makeTeam("봤음");
+    // 낡은 읽음 표시를 **창 밖으로 옮겨** 새 버전이 배지에 잡히게 한다.
+    await db.readMark.create({
+      data: { memberId: M.mate.id, threadKey: "drive", readAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+    await upload(M.asLeader, M.box.id, "새자료.png");
+    const mateBadge = await as(M.asMate, () => actions.markDriveSeen());
+    // **순서를 뒤집으면 검사가 아니다**: 올리고 나서 "봤다" 를 찍어야 배지에서 빠진다.
+    check("봤으면 배지가 내려간다", mateBadge.drive, 0);
+    // ⚠️ **행이 있는지만 보면 검사가 아니다.** 내가 미리 심어 둔 행이 있으므로 `upsert` 를
+    // 없애도 통과한다(실제로 그렇게 통과했다). 봐야 할 것은 **시각이 방금으로 옮겨졌는가** 다.
+    const readMark = await db.readMark.findUnique({
+      where: { memberId_threadKey: { memberId: M.mate.id, threadKey: "drive" } },
+      select: { readAt: true },
+    });
+    check("읽음 시각이 방금으로 옮겨진다", (readMark?.readAt?.getTime() ?? 0) > Date.now() - 60_000, true);
+
+    // **내가 올린 것은 내 배지에 안 뜬다** — 자기 일을 자기가 알림받으면 숫자가 거짓이다.
+    await db.readMark.create({
+      data: { memberId: M.leader.id, threadKey: "drive", readAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+    const ownBadge = await as(M.asLeader, () => actions.markDriveSeen());
+    check("내가 올린 것은 내 배지에 안 뜬다", ownBadge.drive, 0);
+
+    const again = await as(M.asMate, () => actions.markDriveSeen());
+    check("두 번 봐도 안전하다", again.drive, 0);
+
+    /* ── 리서처가 고를 제출함 ──────────────────────────────── */
+    console.log("\n리서처가 고를 제출함은 우리 팀 것만");
+
+    const boxes = await as(M.asMate, () => actions.getMyTeamSubmissionBoxesForSelect());
+    check("제출함을 준다", boxes.map((b) => b.name), ["자료", "최종본"]);
+    check("역할도 준다", boxes.every((b) => typeof b.role === "string"), true);
+    const foreignBoxes = await as(A.asLeader, () => actions.getMyTeamSubmissionBoxesForSelect());
+    check("남의 팀 제출함은 안 준다", foreignBoxes.some((b) => b.id === M.box.id), false);
+
+    /* ── 리서치 결과를 드라이브로 ──────────────────────────── */
+    console.log("\n리서치 결과를 드라이브에 저장한다");
+
+    const otherBox = await as(A.asLeader, () =>
+      actions.saveResearchToDrive(M.box.id, { title: "남의 팀", source: "출처", snippet: "내용" }),
+    );
+    check("남의 팀 제출함에는 못 저장한다", otherBox, { ok: false, error: "제출함을 찾을 수 없습니다." });
+
+    const research = await as(M.asMate, () =>
+      actions.saveResearchToDrive(M.box.id, {
+        title: "탈락 원인 분석",
+        source: "한국연구재단",
+        snippet: "요약 내용",
+        url: "https://example.test/a",
+        year: "2024",
+      }),
+    );
+    check("저장된다", research.ok, true);
+    const savedResearch = research as { ok: true; fileName: string; boxId: string };
+    check("파일 이름이 [자료] 로 시작한다", savedResearch.fileName.startsWith("[자료] "), true);
+    check("PDF 로 저장된다", savedResearch.fileName.endsWith(".pdf"), true);
+
+    const researchFile = await db.submittedFile.findFirstOrThrow({
+      where: { boxId: M.box.id, name: savedResearch.fileName },
+      select: { id: true, kind: true },
+    });
+    check("종류는 pdf 다", researchFile.kind, "pdf");
+    const researchVersions = await versionsOf(researchFile.id);
+    check("버전이 하나 생겼다", researchVersions.length, 1);
+    check("바이트가 있다", (researchVersions[0]?.bytes ?? 0) > 0, true);
+    check("올린 사람이 나다", researchVersions[0]?.authorId, M.mate.id);
+    const researchPath = mustPath(researchVersions[0]!);
+    // **저장소에 진짜 PDF 가 올라갔는지** 본다 — DB 행만 있으면 "저장했다" 는 말이 거짓이 된다.
+    const { data: pdfData } = await storage().download(researchPath);
+    const pdfHead = pdfData ? Buffer.from(await pdfData.arrayBuffer()).subarray(0, 5).toString() : "";
+    check("저장소에 PDF 가 올라갔다", pdfHead, "%PDF-");
+
+    const researchNotice = await db.notification.findFirstOrThrow({
+      where: { kind: "drive", member: { teamId: M.id } },
+      orderBy: { createdAt: "desc" },
+      select: { title: true, body: true },
+    });
+    check("저장을 팀에 알린다", researchNotice.title.includes("참고자료"), true);
+    check("어느 제출함인지 말한다", researchNotice.body.includes("최종본"), true);
+
+    // **같은 제목이면 같은 파일의 다음 버전** — 파일이 두 개 생기면 드라이브가 지저분해진다.
+    const againResearch = await as(M.asMate, () =>
+      actions.saveResearchToDrive(M.box.id, { title: "탈락 원인 분석", source: "다른 출처", snippet: "고친 내용" }),
+    );
+    check("같은 제목이면 같은 파일이다", (againResearch as { fileName: string }).fileName, savedResearch.fileName);
+    const researchFiles = await db.submittedFile.count({ where: { boxId: M.box.id, name: savedResearch.fileName } });
+    check("파일은 하나뿐이다", researchFiles, 1);
+    const researchVersions2 = await versionsOf(researchFile.id);
+    check("버전이 늘었다", researchVersions2.length, 2);
+    check("버전 라벨이 올라간다", researchVersions2[1]?.label, "v2");
+
+    // 위험한 문자가 파일 이름에 남으면 안 된다 — `/` 는 경로를 가른다.
+    const dirty = await as(M.asMate, () =>
+      actions.saveResearchToDrive(M.box.id, { title: "a/b:c*d?e", source: "출처", snippet: "내용" }),
+    );
+    check("위험한 문자를 지운다", (dirty as { fileName: string }).fileName.includes("/"), false);
+    const long = await as(M.asMate, () =>
+      actions.saveResearchToDrive(M.box.id, { title: "가".repeat(100), source: "출처", snippet: "내용" }),
+    );
+    check("제목은 30자에서 잘린다", (long as { fileName: string }).fileName, `[자료] ${"가".repeat(30)}.pdf`);
   } finally {
     // 저장소 객체부터 지운다 — 안 지우면 개발 버킷에 쓰레기가 남는다.
     for (const teamId of teamIds) {
