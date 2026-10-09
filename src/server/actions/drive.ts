@@ -19,6 +19,7 @@ import { teamUsedBytes } from "@/server/drive/usage";
 import { DRIVE_READ_KEY, readNavBadges, type NavBadges } from "@/server/nav/badges";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { isStorageConfigured, explainStorageFailure, storage } from "@/server/storage/client";
+import { OfficeTextError, extractDocxText, extractPptxText } from "@/server/office-text";
 import { recordDriveVersionContrib } from "@/server/contrib/auto-record";
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
@@ -743,6 +744,161 @@ export async function getPreviewUrl(versionId: string, fileId?: string): Promise
     return null;
   }
   return data?.signedUrl ?? null;
+}
+
+/** 발표 화면이 "드라이브에서 가져오기" 목록에 쓰는 파일 한 줄. */
+export type DriveDocumentFile = {
+  fileId: string;
+  name: string;
+  kind: "pptx" | "docx";
+  latestVersionId: string;
+  size: string | null;
+};
+
+/**
+ * 팀 드라이브에서 **글자를 꺼낼 수 있는 파일**(PPTX·DOCX)만 골라 제출함별로 돌려준다.
+ *
+ * ⚠️ **저장소에 실제 내용이 있는 파일만 넣는다.** 시드 파일처럼 `storagePath` 가 없는 행을
+ * 목록에 넣으면, 사용자가 골랐을 때 "가져오지 못했습니다" 로 끝난다 — 목록이 거짓말을 한
+ * 셈이다. 꺼낼 수 없는 것은 **처음부터 보여 주지 않는다.**
+ *
+ * PDF·이미지는 목록에 없다. 그 종류에서 글자를 꺼내는 것은 이 도구가 하는 일이 아니다
+ * (`office-text.ts` 에 이유가 적혀 있다).
+ */
+export async function getMyTeamDriveDocuments(): Promise<
+  Array<{ boxId: string; boxName: string; files: DriveDocumentFile[] }>
+> {
+  const me = await requireSessionMember();
+  const boxes = await db.submissionBox.findMany({
+    where: { teamId: me.teamId },
+    select: {
+      id: true,
+      name: true,
+      files: {
+        where: { kind: { in: ["pptx", "docx"] } },
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          versions: {
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: 1,
+            select: { id: true, size: true, storagePath: true },
+          },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  return boxes
+    .map((box) => ({
+      boxId: box.id,
+      boxName: box.name,
+      files: box.files
+        .filter((file) => Boolean(file.versions[0]?.storagePath))
+        .map((file) => ({
+          fileId: file.id,
+          name: file.name,
+          kind: file.kind as "pptx" | "docx",
+          latestVersionId: file.versions[0].id,
+          size: file.versions[0].size,
+        })),
+    }))
+    .filter((box) => box.files.length > 0);
+}
+
+/**
+ * 드라이브 파일에서 **글자만** 꺼내 발표 대본 칸으로 돌려준다.
+ *
+ * `versionId` 를 주면 **그 파일의 그 버전**이어야 한다(`fileId` 로 묶는다). 예전 미리보기가
+ * 그랬듯, 팀 안의 아무 버전이나 받으면 **A 파일 이름 아래 B 파일의 글자**가 대본이 된다 —
+ * 화면에는 출처가 A 로 적히므로 아무도 그 어긋남을 눈으로 잡을 수 없다.
+ *
+ * 실패를 던지지 않고 돌려준다(`AiResult` 와 같은 이유 — 운영 빌드의 Next 는 던진 오류의
+ * 메시지를 사용자에게 그대로 보여 주지 않는다). 이유는 **사용자가 다음에 뭘 할지 알 수 있게**
+ * 적는다.
+ */
+export async function extractDriveDocument(
+  fileId: string,
+  versionId?: string,
+): Promise<
+  | {
+      ok: true;
+      fileName: string;
+      kind: "pptx" | "docx";
+      text: string;
+      slideCount?: number;
+      emptySlideCount?: number;
+      notesSlideCount?: number;
+    }
+  | { ok: false; error: string }
+> {
+  const me = await requireSessionMember();
+
+  const file = await db.submittedFile.findFirst({
+    where: { id: fileId, box: { teamId: me.teamId } },
+    select: {
+      name: true,
+      kind: true,
+      versions: {
+        ...(versionId ? { where: { id: versionId } } : {}),
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        select: { storagePath: true },
+      },
+    },
+  });
+  if (!file) return { ok: false, error: "파일을 찾을 수 없습니다." };
+
+  if (file.kind !== "pptx" && file.kind !== "docx") {
+    return { ok: false, error: "발표 자료(PPTX)와 문서(DOCX)에서만 글자를 가져올 수 있습니다." };
+  }
+
+  // **버전을 파일에 묶는다.** 버전 id 만 받고 파일 검사를 건너뛰면 팀 안의 아무 버전이나
+  // 끼워 넣을 수 있다 — "A 파일" 이라는 이름 아래 B 파일의 글자가 대본이 된다.
+  if (versionId && file.versions.length === 0) {
+    return { ok: false, error: "요청한 버전을 찾을 수 없습니다." };
+  }
+
+  const path = file.versions[0]?.storagePath;
+  if (!path || !isStorageConfigured()) {
+    return { ok: false, error: "이 파일에는 저장된 내용이 없습니다." };
+  }
+
+  const { data, error } = await storage().download(path);
+  if (error || !data) {
+    await explainStorageFailure(`발표 대본 추출 (${path})`, error);
+    return { ok: false, error: "파일을 내려받지 못했습니다. 잠시 뒤 다시 시도해 주세요." };
+  }
+
+  const bytes = Buffer.from(await data.arrayBuffer());
+  try {
+    // ⚠️ **PDF·이미지 경로는 여기 없다.** 종류 검사에서 이미 걸렀고, 여기서 또 나누면
+    // "지원한다고 적어 놓고 안 하는" 자리가 하나 더 생긴다.
+    const extracted = file.kind === "docx" ? extractDocxText(bytes) : extractPptxText(bytes);
+    if (extracted.text.trim() === "") {
+      // 빈 대본을 조용히 넘기면 AI 가 **없는 내용을 상상**한다. 그렇다고 실패로 끝내면
+      // 왜 비었는지(이미지 슬라이드)를 말할 수 없다 — 이유를 적어 돌려준다.
+      return {
+        ok: false,
+        error: `이 파일에서 글자를 찾지 못했습니다 — 이미지로만 만든 자료일 수 있습니다.`,
+      };
+    }
+    return {
+      ok: true,
+      fileName: file.name,
+      kind: extracted.kind,
+      text: extracted.text,
+      ...(extracted.slideCount !== undefined ? { slideCount: extracted.slideCount } : {}),
+      ...(extracted.emptySlideCount !== undefined ? { emptySlideCount: extracted.emptySlideCount } : {}),
+      ...(extracted.notesSlideCount !== undefined ? { notesSlideCount: extracted.notesSlideCount } : {}),
+    };
+  } catch (cause) {
+    if (cause instanceof OfficeTextError) return { ok: false, error: cause.message };
+    throw cause;
+  }
 }
 
 /**

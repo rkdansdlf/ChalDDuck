@@ -35,8 +35,11 @@ import { randomUUID } from "node:crypto";
 import { MAX_BYTES, TEAM_CAP_BYTES } from "../../src/features/drive/file-rules.js";
 import { teamUsedBytes } from "../../src/server/drive/usage.js";
 import { storage } from "../../src/server/storage/client.js";
+import { makeDocx, makePptx } from "../office-fixtures.mjs";
 
 const PNG = "image/png";
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 /** 진짜 PNG 바이트. 미리보기로 열어 실제로 이 크기가 오는지 본다. */
 const CONTENT = Buffer.from(
@@ -176,6 +179,21 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   /** 올리기 전체 — 사람이 하는 순서 그대로. */
   async function upload(token: string, boxId: string, name: string, opts: { fileId?: string } = {}) {
     return finishStaged(token, boxId, name, await stage(token, boxId, name), opts.fileId);
+  }
+
+  /**
+   * 임의 바이트를 올린다 — 오피스 문서 검사가 쓴다.
+   *
+   * `stage` 는 PNG 바이트를 전제하므로 여기서 형식과 내용을 받는 길을 따로 낸다.
+   * 문서 종류 판정(`resolveFileType`)은 **진짜 MIME** 을 보고, 추출기는 **진짜 바이트**를
+   * 푼다 — 둘 중 하나라도 흉내 내면 이 검사는 아무것도 지키지 않는다.
+   */
+  async function uploadBytes(token: string, boxId: string, name: string, bytes: Buffer, type: string) {
+    const prepared = await as(token, () =>
+      actions.prepareUpload(boxId, { name, size: bytes.byteLength, type }),
+    );
+    if (prepared.status === "ok") await putObject(prepared.signedUrl, bytes, prepared.contentType);
+    return finishStaged(token, boxId, name, prepared);
   }
 
   /**
@@ -622,6 +640,105 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       const still = await storage().info(fullAttach.path);
       check("거절해도 단톡방의 파일은 지워지지 않는다", still.error === null && Boolean(still.data), true);
     }
+
+    /* ⑰ 드라이브 문서 → 발표 대본 ─────────────────────────────── */
+
+    // **서버 액션 경계를 통과해서** 확인한다 — 저장소에서 진짜 바이트를 내려받아 ZIP 을 풀고,
+    // 팀 권한 검사도 그대로 돈다. 순수 추출 검사(smoke)와 이 검사가 합쳐져야 "화면에서 누른
+    // 것이 실제로 동작한다" 가 된다.
+    console.log("\n드라이브 문서에서 발표 대본을 꺼낸다");
+    const docs = await makeTeam("문서");
+    const scriptUp = okFinish(
+      await uploadBytes(
+        docs.asLeader,
+        docs.box.id,
+        "발표 대본.docx",
+        makeDocx(["여는 말", "본문입니다"]),
+        DOCX_MIME,
+      ),
+    );
+    const docxOut = await as(docs.asLeader, () => actions.extractDriveDocument(scriptUp.fileId));
+    check("DOCX 대본을 꺼낸다", docxOut.ok ? docxOut.text : docxOut, "여는 말\n본문입니다");
+    check("추출이 종류를 말한다", docxOut.ok ? docxOut.kind : null, "docx");
+
+    const deckUp = okFinish(
+      await uploadBytes(
+        docs.asLeader,
+        docs.box.id,
+        "발표 자료.pptx",
+        makePptx(
+          [{ text: ["슬라이드 하나"], notes: ["발표자 노트입니다"] }, { text: ["슬라이드 둘"] }],
+          { order: [2, 1] },
+        ),
+        PPTX_MIME,
+      ),
+    );
+    const pptxOut = await as(docs.asLeader, () => actions.extractDriveDocument(deckUp.fileId));
+    check(
+      "PPTX 는 발표 순서로 꺼내고 노트를 잇는다",
+      pptxOut.ok ? pptxOut.text : pptxOut,
+      "슬라이드 둘\n\n슬라이드 하나\n\n발표자 노트입니다",
+    );
+    check("슬라이드 장수를 돌려준다", pptxOut.ok ? pptxOut.slideCount : null, 2);
+    check("노트가 있는 슬라이드 수를 돌려준다", pptxOut.ok ? pptxOut.notesSlideCount : null, 1);
+
+    // **버전을 파일에 묶는다.** 다른 파일의 버전 id 를 끼워 넣으면 거절해야 한다 — 팀 안의
+    // 아무 버전이나 받으면 "A 파일" 이라는 이름 아래 B 파일의 글자가 대본이 된다.
+    const deckVersion = await db.fileVersion.findFirstOrThrow({
+      where: { fileId: deckUp.fileId },
+      select: { id: true },
+    });
+    const swapped = await as(docs.asLeader, () =>
+      actions.extractDriveDocument(scriptUp.fileId, deckVersion.id),
+    );
+    check("다른 파일의 버전을 끼워 넣으면 거절한다", swapped, {
+      ok: false,
+      error: "요청한 버전을 찾을 수 없습니다.",
+    });
+
+    // 종류로 거른다 — 이미지·PDF 는 추출 대상이 아니다.
+    const imageUp = okFinish(
+      await uploadBytes(docs.asLeader, docs.box.id, "그림.png", CONTENT, PNG),
+    );
+    const imageOut = await as(docs.asLeader, () => actions.extractDriveDocument(imageUp.fileId));
+    check("이미지에서는 꺼내지 않는다", imageOut, {
+      ok: false,
+      error: "발표 자료(PPTX)와 문서(DOCX)에서만 글자를 가져올 수 있습니다.",
+    });
+
+    // 남의 팀 파일은 존재 자체를 말하지 않는다.
+    const otherTeam = await as(A.asLeader, () => actions.extractDriveDocument(scriptUp.fileId));
+    check("남의 팀 파일은 꺼내지 않는다", otherTeam, {
+      ok: false,
+      error: "파일을 찾을 수 없습니다.",
+    });
+
+    // 목록은 **꺼낼 수 있는 것만** 준다 — 이미지도, 저장소에 내용이 없는 행도 없다.
+    // 경로 없는 행을 목록에 넣으면 고른 뒤 "가져오지 못했습니다" 로 끝난다.
+    const ghost = await db.submittedFile.create({
+      data: { boxId: docs.box.id, name: "경로 없는 대본.docx", kind: "docx" },
+    });
+    await db.fileVersion.create({
+      data: {
+        fileId: ghost.id,
+        label: "v1",
+        authorId: docs.leader.id,
+        note: "목록 제외 검사용",
+        size: "1 KB",
+        kind: "docx",
+      },
+    });
+    const listed = await as(docs.asLeader, () => actions.getMyTeamDriveDocuments());
+    check(
+      "목록은 꺼낼 수 있는 파일만 준다",
+      listed.map((b) => ({ box: b.boxName, files: b.files.map((f) => `${f.name}:${f.kind}`) })),
+      [{ box: "최종본", files: ["발표 대본.docx:docx", "발표 자료.pptx:pptx"] }],
+    );
+    check(
+      "가져올 파일이 없는 제출함은 목록에서 뺀다",
+      listed.some((b) => b.boxName === "자료"),
+      false,
+    );
 
   } finally {
     // 저장소 객체부터 지운다 — 안 지우면 개발 버킷에 쓰레기가 남는다.

@@ -119,6 +119,15 @@ import {
 import { aiCallStats, describeAiCalls, detectAiAnomalies, type AiCallStats } from "../src/server/ai/call-stats.js";
 import { pushDecision, pushPolicy, type NotifyKind } from "../src/server/notify/policy.js";
 import { confirmDueMeetings } from "../src/server/meetings/confirm-due.js";
+import {
+  OfficeTextError,
+  decodeXmlEntities,
+  extractDocxText,
+  extractOfficeText,
+  extractPptxText,
+  joinZipPath,
+} from "../src/server/office-text.js";
+import { makeDocx, makePptx, makeZip } from "./office-fixtures.mjs";
 import { CUSHION_CORPUS } from "./cushion-corpus.mjs";
 import {
   markAside,
@@ -5226,38 +5235,55 @@ console.log("\n할 일 수정 권한 (만든 사람 + 팀장 예외)");
   );
 }
 
-console.log("\n이름이 식별자로 남는 근거 (한 팀에 같은 이름은 한 명)");
+console.log("\n이름은 식별자가 아니다 (동명이인 준비)");
 {
   /**
-   * **DB 제약이 이름 조회의 안전을 지탱한다.** 이름으로 사람을 찾는 자리가 네 군데인데
-   * (`assigneeIdOf`·`invite/settle.ts`·`actions/rejoin.ts`·`actions/onboarding.ts`)
-   * `Member` 의 `@@unique([teamId, name])` 이 그 자리를 모호하지 않게 붙잡고 있다.
+   * **이름으로 사람을 집는 조회가 없어야 제약을 풀 수 있다.**
    *
-   * 제약만 풀면 **아무 예외도 나지 않는다** — 담당자가 두 명 중 아무에게나 붙고, 재입장이
-   * 남의 기록을 되살린다. 그래서 이 검사는 제약의 **존재**를 본다. 지울 때는 네 곳을 id
-   * 조회로 바꾼 뒤에 함께 지운다(`prisma/schema.prisma` 의 그 제약 옆 주석 참고).
+   * 예전에는 `Member` 의 `@@unique([teamId, name])` 이 이름 조회 자리들을 모호하지 않게
+   * 붙잡고 있었다. 제약만 먼저 풀면 **아무 예외도 나지 않는다** — 재입장이 남의 기록을
+   * 되살리고, 담당자가 두 명 중 아무에게나 붙는다.
+   *
+   * 그래서 순서가 있다: **① 이름을 키로 쓰는 조회를 없앤다 → ② 그 뒤에 제약을 푼다.**
+   * 이 검사는 ①이 끝났는지를 본다. 유니크 선택자(`teamId_name`)를 쓰는 소스가 하나도
+   * 없어야 ②가 안전한 한 줄이 된다.
    */
+  const root = new URL("../", import.meta.url);
+  const relying: string[] = [];
+  for (const file of productCopySources(new URL("src/", root))) {
+    if (/\bteamId_name\b/.test(stripComments(readFileSync(file, "utf8")))) {
+      relying.push(file.pathname.slice(root.pathname.length));
+    }
+  }
+  check("이름 유일 제약에 기대는 조회가 없다", relying, []);
+
+  // **재입장은 코드가 사람을 고른다.** 같은 이름이 둘이어도 코드는 사람마다 다르다 —
+  // 이름으로 한 명을 집으면 그 순간이 사칭이 되는 자리다.
+  const rejoin = readCode("../src/server/actions/rejoin.ts");
+  truthy("재입장은 후보를 이름으로 모은다", /findMany\(/.test(rejoin));
+  truthy(
+    "재입장은 그중에서 코드로 고른다",
+    /verifyRejoinCode\(\s*entered\s*,\s*m\.rejoinCodeHash/.test(rejoin),
+  );
+  // 모호한 승인 요청은 **거절 쪽으로 닫는다.** 아무나 골라 붙이면 팀장이 그 사람인 줄 알고
+  // 승인한다 — 잘못된 사람의 기기 목록에 남의 기기가 들어간다.
+  truthy("모호한 재입장 요청은 닫는다", /candidates\.length !== 1\) return "unknown"/.test(rejoin));
+
+  // 나머지 두 자리는 **존재만 묻는** 조회다(사람을 집지 않는다). 가입을 막는 게이트 자체는
+  // 제약이 풀릴 때 함께 바뀐다 — 지금은 이름이 유일하므로 그대로 맞다.
+  const settle = readCode("../src/server/invite/settle.ts");
+  truthy("초대 승인은 존재만 본다", /findFirst\(/.test(readCode("../src/server/invite/settle.ts")));
+  const onboarding = readCode("../src/server/actions/onboarding.ts");
+  check("이름이 겹치면 거절한다 (name-taken)", /"name-taken"/.test(onboarding), true);
+
+  // 제약은 아직 있다 — 지우는 것이 ②이고, 그때 스키마 주석과 이 블록을 함께 고친다.
   const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
-  // 다음 모델까지 자른다 — 길이를 정수로 두면 주석이 길어졌을 때 잘려서 조용히 실패한다.
   const memberStart = schema.indexOf("model Member {");
   const memberModel = schema.slice(memberStart, schema.indexOf("\nmodel ", memberStart + 1));
-  truthy("Member 에 팀 안 이름 유일 제약이 있다", /@@unique\(\[teamId, name\]\)/.test(memberModel));
-
-  // 이름으로 찾는 자리가 남아 있는데 제약만 없으면 조용히 틀린다 — 그래서 **양쪽** 본다.
-  const nameLookups = [
-    ["담당자 지정", "../src/server/actions/tasks.ts", /teamId,\s*name:\s*trimmed/],
-    ["초대 승인", "../src/server/invite/settle.ts", /teamId_name/],
-    ["재입장", "../src/server/actions/rejoin.ts", /teamId_name/],
-    ["이름 겹침 거절", "../src/server/actions/onboarding.ts", /teamId_name/],
-  ] as const;
-  for (const [what, file, re] of nameLookups) {
-    truthy(`${what} 은 이름을 키로 삼는다`, re.test(readCode(file)));
-  }
-
-  // 거절하는 길이 **화면 밖에서** 조용히 succeeds 하면 안 된다 — `name-taken` 을 돌려줘야
-  // 화면이 재입장으로 안내한다(던지면 배포본에서 문구가 가려진다).
-  const onboarding = readCode("../src/server/actions/onboarding.ts");
-  check("같은 이름은 거절한다 (name-taken)", /"name-taken"/.test(onboarding), true);
+  truthy(
+    "Member 에 팀 안 이름 유일 제약이 아직 있다 (2단계에서 푼다)",
+    /@@unique\(\[teamId, name\]\)/.test(memberModel),
+  );
 }
 
 console.log("\n사용자 노출 용어");
@@ -6800,6 +6826,126 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   // ⑧ 라이어 제시어 — **저장소가 정한 기본 팩**을 쓴다. 화면이 출처를 적어 둔다.
   const icebreakRaw = readRaw("../src/features/social/icebreak-screen.tsx");
   check("제시어 목록의 출처를 적는다", /data\/liar-prompts\.ts/.test(icebreakRaw), true);
+}
+
+/* ── 드라이브 문서에서 발표 대본 꺼내기 ───────────────────── */
+
+console.log("\n드라이브 문서에서 발표 대본을 꺼낸다");
+{
+  // 추출기는 **진짜 ZIP 컨테이너**를 푼다. 문자열을 흉내 내면 검사만 통과하고 실제 파일에서
+  // 죽는다 — 그래서 검사용 컨테이너를 직접 만들어 돌린다.
+
+  // ① DOCX — 문단·탭·줄바꿈, 그리고 XML 엔티티.
+  const docx = extractDocxText(makeDocx(["첫 문단", "", "둘째\t문단", "줄\n바꿈", "A & B < C"]));
+  check("문단을 줄로 잇는다", docx.text, "첫 문단\n둘째\t문단\n줄\n바꿈\nA & B < C");
+
+  // ② PPTX — 순서는 파일 이름이 아니라 `presentation.xml` 이 정한다. 이름순으로 읽으면
+  //    **발표 순서가 뒤집힌 대본**이 나오고, 다듬으면 PPT 와 순서가 다른 발표가 된다.
+  const ordered = extractPptxText(
+    makePptx([{ text: ["첫 슬라이드"] }, { text: ["둘째 슬라이드"] }, { text: ["셋째 슬라이드"] }], {
+      order: [2, 1, 3],
+    }),
+  );
+  check("파일 번호순이 아니라 발표 순서로 읽는다", ordered.text, "둘째 슬라이드\n\n첫 슬라이드\n\n셋째 슬라이드");
+  check("슬라이드 장수를 센다", ordered.slideCount, 3);
+
+  // ③ 발표자 노트 — 본문 뒤에 잇고, 노트에 늘 들어 있는 **슬라이드 번호 자동 필드**는 뺀다.
+  const noted = extractPptxText(
+    makePptx([
+      { text: ["본문"], notes: ["여러분 안녕하세요", "오늘은 발표입니다"] },
+      { text: ["두 번째"] },
+    ]),
+  );
+  check("노트를 본문 뒤에 잇는다", noted.text, "본문\n\n여러분 안녕하세요\n오늘은 발표입니다\n\n두 번째");
+  check("노트가 있는 슬라이드 수를 센다", noted.notesSlideCount, 1);
+
+  // ④ 글자가 하나도 없는 슬라이드 — 이미지로만 만든 슬라이드가 여기 들어간다. 빈 대본을
+  //    조용히 넘기면 AI 가 없는 내용을 상상하므로 **세어서 돌려준다.**
+  const empty = extractPptxText(makePptx([{ text: [] }, { text: ["글자"] }]));
+  check("본문이 빈 슬라이드를 센다", empty.emptySlideCount, 1);
+  check("빈 슬라이드도 장수에 센다", empty.slideCount, 2);
+
+  // ⑤ 압축하지 않은(저장) ZIP 도 읽는다 — 방식에 따라 못 읽으면 실제 파일에서 걸린다.
+  const stored = makeZip(
+    [
+      {
+        name: "word/document.xml",
+        data: `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>저장 방식</w:t></w:r></w:p></w:body></w:document>`,
+      },
+    ],
+    { method: "store" },
+  );
+  check("압축하지 않은 ZIP 도 읽는다", extractDocxText(stored).text, "저장 방식");
+
+  // ⑥ 모르는 압축·ZIP64·ZIP 이 아닌 것은 **이유를 말하고 멈춘다.** 조용히 엉뚱한 글자를
+  //    꺼내면 그게 더 나쁘다.
+  const reason = (fn: () => unknown): string => {
+    try {
+      fn();
+      return "실패하지 않았다";
+    } catch (error) {
+      return error instanceof OfficeTextError ? error.message : String(error);
+    }
+  };
+  const weird = makeZip([{ name: "word/document.xml", data: "<w:document/>" }], { method: "store" });
+  weird.writeUInt16LE(99, weird.readUInt32LE(weird.length - 22 + 16) + 10);
+  check("모르는 압축 방식은 이유를 말한다", reason(() => extractDocxText(weird)), "지원하지 않는 압축 방식입니다(99).");
+
+  const zip64 = makeZip([{ name: "word/document.xml", data: "<w:document/>" }]);
+  zip64.writeUInt32LE(0xffffffff, zip64.readUInt32LE(zip64.length - 22 + 16) + 20);
+  check("ZIP64 는 거절한다", reason(() => extractDocxText(zip64)), "ZIP64 형식은 아직 지원하지 않습니다.");
+
+  // 압축이 깨진 파일 — raw deflate 에는 체크섬이 없어서 **바이트를 하나만 뒤집어도 압축은
+  // "성공" 한다.** ZIP 헤더의 CRC 를 확인하지 않으면 깨진 글자가 그대로 대본이 된다.
+  // 여기서 바이트 하나를 뒤집어 그 자리를 고정한다.
+  const corrupt = makeZip([
+    {
+      name: "word/document.xml",
+      data: `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>깨질 글자</w:t></w:r></w:p></w:body></w:document>`,
+    },
+  ]);
+  corrupt[30 + "word/document.xml".length + 2] ^= 0xff;
+  check(
+    "바이트가 뒤집힌 파일은 체크섬으로 잡는다",
+    reason(() => extractDocxText(corrupt)),
+    "내용이 손상됐습니다(체크섬이 맞지 않습니다).",
+  );
+
+  check("ZIP 이 아니면 거절한다", reason(() => extractDocxText(Buffer.from("그냥 텍스트"))), "ZIP 파일이 아닙니다.");
+
+  const noBody = makeZip([{ name: "_rels/.rels", data: "<Relationships/>" }]);
+  check(
+    "본문이 없는 DOCX 는 이유를 말한다",
+    reason(() => extractDocxText(noBody)),
+    "DOCX 안에서 본문(document.xml)을 찾지 못했습니다.",
+  );
+
+  // ⑦ 부품들.
+  check("XML 엔티티를 편다", decodeXmlEntities("&#65;&#x42;&amp;&quot;&apos;"), "AB&\"'");
+  check(
+    "ZIP 상대 경로를 편다",
+    joinZipPath("ppt/slides", "../notesSlides/notesSlide1.xml"),
+    "ppt/notesSlides/notesSlide1.xml",
+  );
+  check("PDF 는 꺼내지 않는다", extractOfficeText(Buffer.from("x"), "pdf"), null);
+
+  // ⑧ 화면과 액션 — 꺼낸 글자가 **어디서 왔는지**를 보여 주는가. "출처 없는 결과는 보여 주지
+  //    않는다" 는 리서처만의 약속이 아니다. 그리고 버전을 파일에 묶는지도 코드로 고정한다 —
+  //    이 한 줄이 없으면 팀 안의 아무 버전이나 끼워 넣어 **다른 파일의 글자**가 대본이 된다.
+  const present = readCode("../src/features/tools/present-screen.tsx");
+  check("가져오기 버튼이 있다", present.includes("드라이브에서 가져오기"), true);
+  check("어느 파일에서 왔는지 보여 준다", present.includes("에서 가져왔어요"), true);
+  check("되돌리기가 있다", present.includes("되돌리기"), true);
+  check("8000자 초과를 화면에서 알린다", present.includes("aiInputOverrun"), true);
+  check("글자 없는 슬라이드를 요약에서 빼지 않는다", present.includes("글자 없는 슬라이드"), true);
+
+  const driveActions = readCode("../src/server/actions/drive.ts");
+  check("버전을 파일에 묶는다", /versionId \? \{ where: \{ id: versionId \} \}/.test(driveActions), true);
+  check(
+    "빈 대본을 조용히 넘기지 않는다",
+    driveActions.includes("이미지로만 만든 자료일 수 있습니다"),
+    true,
+  );
 }
 
 await finish();
