@@ -12,6 +12,8 @@
  * 6. **지우면 계산 결과도 함께 사라진다** — 저장된 파생값이 따로 없다.
  * 7. **팀 사주는 서로 보여 주는 만큼만** — 내가 등록하지 않으면 남의 값이 내려가지 않고, 응답에
  *    생년월일·시각이 없고, 떠난 사람·다른 팀은 빠진다.
+ * 9. **회의 케미는 참석 예정자(불참 응답 제외)만, 서로 보여 주는 만큼만** — 다른 팀 회의·없는 회의·
+ *    잘못된 번호는 null 이고 응답에 생년월일이 없다.
  * 8. **팀을 나가면 생년월일이 지워진다** — 행은 기록 근거라 남지만 이 값은 개인정보다(두 길 모두).
  *
  *   npm run test:saju
@@ -169,6 +171,61 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       await db.member.deleteMany({ where: { teamId: foreignTeam.id } });
       await db.team.delete({ where: { id: foreignTeam.id } }).catch(() => {});
     }
+
+    console.log("\n회의 케미 — 참석 예정자만, 서로 보여 주는 만큼만");
+    const chemBorn = [
+      [me.id, "2001-03-02", "14:30"],
+      [other.id, "1999-12-31", "03:07"],
+      [third.id, "2002-08-15", "07:20"],
+    ] as const;
+    for (const [id, d, t] of chemBorn) await db.member.update({ where: { id }, data: { birthDate: d, birthTime: t } });
+    const fourth = await db.member.create({ data: { teamId: team.id, name: `정하윤${suffix}` } });
+    memberIds.push(fourth.id);
+    const asFourth = await token(fourth.id);
+    const meeting = await db.meetingProposal.create({
+      data: { teamId: team.id, proposedById: me.id, stage: "confirmed", date: "2026-10-12", respondBy: new Date() },
+    });
+    await db.meetingResponse.createMany({
+      data: [
+        { proposalId: meeting.id, memberId: me.id, agree: true },
+        { proposalId: meeting.id, memberId: other.id, agree: false },
+      ],
+    });
+    const chem = (token_: string, id: string) => as(token_, () => saju.getMeetingChemistry(id));
+
+    const mine2 = await chem(asMe, meeting.id);
+    check("참석 어려움으로 응답한 사람은 센 수에서도 목록에서도 빠진다", mine2?.members.map((m) => m.name), [`김민준${suffix}`, `박지호${suffix}`]);
+    check("참석 예정 수는 응답하지 않은 사람까지 센다(반대만 뺀다)", [mine2?.activeCount, mine2?.registeredCount], [3, 2]);
+    check("내가 등록했으면 보인다", mine2?.meRegistered, true);
+
+    const against = await chem(asOther, meeting.id);
+    check("불참 응답을 했어도 내 사주 등록은 그대로라 남의 것이 보인다(나는 목록에 없다)", [against?.meRegistered, against?.members.map((m) => m.name)], [true, [`김민준${suffix}`, `박지호${suffix}`]]);
+
+    const unreg = await chem(asFourth, meeting.id);
+    check("내가 등록하지 않았으면 남의 값은 내려가지 않는다", unreg?.members, []);
+    check("그래도 사람 수는 안다", [unreg?.activeCount, unreg?.registeredCount, unreg?.meRegistered], [3, 2, false]);
+
+    const team3 = await db.team.create({
+      data: { name: `사주 검사 외부회의 ${suffix}`, course: "검증", code: `CD-${randomUUID().slice(0, 6).toUpperCase()}` },
+    });
+    try {
+      const m3 = await db.member.create({ data: { teamId: team3.id, name: `외부${suffix}b`, birthDate: "1995-07-07", birthTime: "09:09" } });
+      memberIds.push(m3.id);
+      const foreignMeeting = await db.meetingProposal.create({
+        data: { teamId: team3.id, proposedById: m3.id, stage: "confirmed", date: "2026-10-12", respondBy: new Date() },
+      });
+      check("다른 팀의 회의는 읽지 못한다", await chem(asMe, foreignMeeting.id), null);
+    } finally {
+      await db.member.deleteMany({ where: { teamId: team3.id } });
+      await db.team.delete({ where: { id: team3.id } }).catch(() => {});
+    }
+    check("없는 회의는 null", await chem(asMe, "없는회의"), null);
+    check("문자열이 아닌 회의 번호도 던지지 않고 null", await as(asMe, () => saju.getMeetingChemistry({ x: 1 } as unknown as string)), null);
+    check("로그인하지 않으면 null", await saju.getMeetingChemistry(meeting.id), null);
+    const chemWire = JSON.stringify([mine2, against, unreg]);
+    check("응답 어디에도 생년월일·출생 시각이 없다", ["2001-03-02", "1999-12-31", "2002-08-15", "14:30", "03:07", "07:20", "birth"].filter((x) => chemWire.includes(x)), []);
+    await db.meetingProposal.delete({ where: { id: meeting.id } });
+    for (const id of [me.id, other.id, third.id]) await db.member.update({ where: { id }, data: { birthDate: null, birthTime: null } });
 
     console.log("\n팀을 나가면 생년월일은 지워진다 (행과 기록은 남는다)");
     const team_ = await import("../../src/server/actions/team.js");

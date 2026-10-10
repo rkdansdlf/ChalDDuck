@@ -277,3 +277,23 @@ export const MISSION_MEETING_CLOSER = "회의 마지막에 “그래서 누가 �
 export const MISSION_DUE_SOON = "마감이 가까운 일이 있어요. 막힌 게 있는지 팀에 한 번 물어보세요.";
 
 export const TODAY_NEED_MINE = "내 사주를 등록하면 오늘의 팀플 흐름을 볼 수 있어요";
+
+/* ── 회의 케미 ────────────────────────────────────────────── */
+
+export const MEETING_CHEMISTRY_NOTICE =
+  "참석 예정인 팀원의 오행을 더해 본 재미 해석이에요. 누가 무엇을 해야 한다고 정하지 않고, 진행 방식만 제안해요.";
+
+/** 참석 예정 = 이 회의에 참석 어려움으로 응답하지 않은 팀원. 사람 수 안내에 같은 말을 쓴다. */
+export const MEETING_ATTENDEE_WORD = "참석 예정";
+
+export type MeetingFlowStep = { title: string; desc: string };
+
+/** 추천 진행 세 단계. 시간 배분은 `meeting-flow.ts` 가 회의 길이로 계산한다. */
+export const MEETING_FLOW_STEPS: readonly MeetingFlowStep[] = [
+  { title: "각자 아이디어 하나씩", desc: "한 사람씩 하나만 말하고, 이 단계에서는 평가하지 않아요." },
+  { title: "비슷한 의견 합치기", desc: "겹치는 것끼리 묶고, 남은 후보를 두세 개로 줄여요." },
+  { title: "마지막에 결정", desc: "결정한 것과 “누가 뭘 하지?” 를 확인하고 마쳐요." },
+];
+
+export const MEETING_FLOW_COPIED = "진행 방식을 복사했어요";
+export const MEETING_FLOW_COPY_FAILED = "복사하지 못했어요. 직접 선택해서 복사해 주세요";

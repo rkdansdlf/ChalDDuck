@@ -13,7 +13,8 @@ import { parseBirth } from "../src/lib/saju/input.js";
 import { chemistryOf, type Relation } from "../src/lib/saju/chemistry.js";
 import { summarizeTeam } from "../src/lib/saju/team.js";
 import { buildTodayFlow, dayStemOfDate } from "../src/lib/saju/today.js";
-import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY } from "../src/lib/saju/copy.js";
+import { MAX_MEETING_MINUTES, MIN_MEETING_MINUTES, meetingFlowText, planMeetingFlow } from "../src/lib/saju/meeting-flow.js";
+import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY, MEETING_FLOW_STEPS } from "../src/lib/saju/copy.js";
 
 /**
  * 사주 불변식.
@@ -264,6 +265,25 @@ async function main() {
   check("회의와 마감이 겹치면 둘 — 분포 제안을 뺀다", flowOf(0, "2026-10-12", { team: twoMembers, meetingToday: true, dueSoon: true })?.missions, [MISSION_MEETING_CLOSER, MISSION_DUE_SOON]);
   check("같은 입력은 같은 출력", JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })), JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })));
 
+  console.log("\n[회의 케미] 진행 방식의 시간 배분");
+  let badPlan = 0;
+  for (let d = 0; d <= 300; d += 1) {
+    const p = planMeetingFlow(d);
+    const sum = p.steps.reduce((a, x) => a + x.minutes, 0);
+    const clamped = Math.min(MAX_MEETING_MINUTES, Math.max(MIN_MEETING_MINUTES, Math.round(d / 5) * 5));
+    if (p.steps.length !== 3 || sum !== p.total || p.total !== clamped) badPlan += 1;
+    if (p.steps.some((x) => x.minutes < 5 || x.minutes % 5 !== 0)) badPlan += 1;
+  }
+  check("0–300분 모든 길이에서 세 단계가 5분 단위이고 합이 회의 길이와 같다", badPlan, 0);
+  check("60분 = 30 · 20 · 10", planMeetingFlow(60).steps.map((x) => x.minutes), [30, 20, 10]);
+  check("마지막 결정은 30분 이상이면 10분", [planMeetingFlow(30).steps[2]!.minutes, planMeetingFlow(90).steps[2]!.minutes], [10, 10]);
+  check("30분 미만이면 결정 5분", planMeetingFlow(20).steps.map((x) => x.minutes), [10, 5, 5]);
+  check("범위를 벗어난 길이는 15–240 으로 맞춘다", [planMeetingFlow(0).total, planMeetingFlow(9999).total, planMeetingFlow(Number.NaN).total], [15, 240, 60]);
+  const text = meetingFlowText(planMeetingFlow(60), ["earth", "water"]);
+  truthy("복사할 글에 세 단계와 시간이 모두 있다", MEETING_FLOW_STEPS.every((st, i) => text.includes(`${i + 1}) ${st.title} (${planMeetingFlow(60).steps[i]!.minutes}분)`)));
+  truthy("가장 적게 센 오행의 제안이 복사할 글에 들어간다", text.includes(MEETING_TIP.earth) && text.includes(MEETING_TIP.water));
+  check("두드러지는 오행이 없으면 챙겨 볼 것을 쓰지 않는다", meetingFlowText(planMeetingFlow(60), []).includes("챙겨 볼 것"), false);
+
   console.log("\n[약속] 사주는 역할 배정에 쓰지 않고, 생년월일 원본은 본인에게만 간다");
   const roles = readCode("../src/server/actions/roles.ts");
   truthy("역할 배정 액션이 생년월일·사주를 읽지 않는다", !/birth|saju/i.test(roles));
@@ -278,10 +298,16 @@ async function main() {
   const outside = api.slice(0, start) + api.slice(end);
   truthy("생년월일 열은 getMySaju 밖에서 읽지 않는다 (팀원 목록 등에 실리지 않는다)", !/birthDate|birthTime/.test(outside));
   const teamTypesStart = api.indexOf("export type TeamSajuMember =");
-  const teamFnStart = api.indexOf("export async function getTeamSaju");
+  const teamFnStart = api.indexOf("async function loadTeamSaju");
   truthy("팀 사주 타입이 있고 생년월일 필드가 없다", teamTypesStart >= 0 && teamFnStart > teamTypesStart && !/birth/i.test(api.slice(teamTypesStart, teamFnStart)));
-  truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*registered\s*:\s*\[\]/.test(api));
-  truthy("떠난 팀원은 팀 사주에서 뺀다", /getTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
+  truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*visible\s*:\s*\[\]/.test(api));
+  const loaderCalls = api.split("loadTeamSaju(").length - 1;
+  check("팀 사주와 회의 케미가 같은 읽기 함수(loadTeamSaju) 하나를 거친다(정의 1 + 호출 2)", loaderCalls, 3);
+  truthy("회의 케미는 다른 팀의 회의를 읽지 않는다(teamId 로 좁힌다)", /getMeetingSaju[\s\S]*?meetingProposal\.findFirst\(\{\s*where:\s*\{\s*id:\s*meetingId,\s*teamId:\s*session\.teamId/.test(api));
+  truthy("참석 예정 = 참석 어려움으로 응답하지 않은 사람(agree: false 만 뺀다)", /responses:\s*\{\s*where:\s*\{\s*agree:\s*false\s*\}/.test(api));
+  const sajuActions = readCode("../src/server/actions/saju.ts");
+  truthy("회의 케미 액션은 생년월일 열을 직접 읽지 않는다", !/birthDate|birthTime/.test(sajuActions.slice(sajuActions.indexOf("getMeetingChemistry"))));
+  truthy("떠난 팀원은 팀 사주에서 뺀다", /loadTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
   const teamActions = readCode("../src/server/actions/team.ts");
   check(
     "팀을 나가는 두 길(leaveTeam·handOverAndLeave)이 같은 값(clearBirthOnLeave)으로 생년월일을 지운다",
@@ -296,8 +322,8 @@ async function main() {
   const copy = readCode("../src/lib/saju/copy.ts");
   // 주석은 readCode 가 지운다. 남은 것은 사용자에게 보이는 문자열뿐이다.
   truthy("'진단'·'정확'·'운세'·'점수' 를 쓰지 않는다", !/진단|정확|운세|점수/.test(copy));
-  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
-  const logic = ["chemistry.ts", "team.ts", "today.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
+  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx", "meeting-chemistry-sheet.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const logic = ["chemistry.ts", "team.ts", "today.ts", "meeting-flow.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
   const everything = [copy, ...uiFiles, ...logic].join("\n");
   truthy("화면·계산 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(everything));
   truthy("역할을 정해 주는 말(담당·맡아)을 쓰지 않는다", !/담당|맡아|맡으/.test(everything));
@@ -309,6 +335,10 @@ async function main() {
   truthy("홈이 오늘의 흐름에 서버가 정한 today 와 브리핑의 회의·마감 결과를 넘긴다", /<TodayFlowCard[\s\S]*?today=\{today\}[\s\S]*?key === "meeting"[\s\S]*?key === "soon"/.test(homeScreen));
   const homePage = readCode("../src/app/(tabs)/home/page.tsx");
   truthy("홈은 팀 사주 조회가 실패해도 깨지지 않는다(catch 로 폴백)", /getTeamSaju\(\)\.catch\(\(\) => null\)/.test(homePage));
+  const chemSheet = readCode("../src/features/saju/meeting-chemistry-sheet.tsx");
+  truthy("회의 케미는 안건(agenda)을 바꾸지 않는다 — 안건은 회의록·기여 기록 제목이다", !/agenda/.test(chemSheet + readCode("../src/lib/saju/meeting-flow.ts")));
+  truthy("회의 케미는 AI 를 부르지 않는다", !/server\/ai|callModel|openai|streamText/i.test(chemSheet));
+  truthy("회의 케미는 시트가 사람을 다시 거르지 않는다(서버가 정한 members 를 그대로 쓴다)", /summarizeTeam\(data\.members\)/.test(chemSheet));
   truthy("팀 사주 화면이 역할 화면(07)의 데이터를 읽지 않는다", !/getRoster|getRoles|RoleNegotiation|wantRole|vetoRole/.test(uiFiles.join("\n")));
 
   await finish();

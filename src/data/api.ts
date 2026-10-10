@@ -569,10 +569,18 @@ export type TeamSaju = {
   members: TeamSajuMember[];
 };
 
-export async function getTeamSaju(): Promise<TeamSaju> {
-  const session = await getSessionMember();
-  if (!session) return { activeCount: 0, registeredCount: 0, meRegistered: false, members: [] };
-
+/**
+ * 팀 사주를 읽는 한 곳. **`excludeIds` 에 든 사람은 센 수에서도 목록에서도 뺀다.**
+ *
+ * 팀 전체(`getTeamSaju`)와 한 회의의 참석 예정자(`getMeetingSaju`)가 같은 규칙으로 읽도록 한 함수에
+ * 둔다 — 공개 범위(일간·오행 수만, 내가 등록해야 남의 것도 본다)가 두 곳에서 따로 어긋나지 않게.
+ * **`meRegistered` 는 제외와 무관하게 내 등록 여부다.** 회의에 불참 응답을 했다고 내 사주 등록이
+ * 사라지지는 않는다.
+ */
+async function loadTeamSaju(
+  session: { id: string; teamId: string },
+  excludeIds: ReadonlySet<string> = new Set(),
+): Promise<TeamSaju> {
   const rows = await db.member.findMany({
     where: { teamId: session.teamId, leftAt: null },
     select: { id: true, name: true, mbti: true, birthDate: true, birthTime: true },
@@ -597,12 +605,39 @@ export async function getTeamSaju(): Promise<TeamSaju> {
   }
 
   const meRegistered = registered.some((m) => m.isMe);
+  const visible = registered.filter((m) => !excludeIds.has(m.id));
   return {
-    activeCount: rows.length,
-    registeredCount: registered.length,
+    activeCount: rows.filter((r) => !excludeIds.has(r.id)).length,
+    registeredCount: visible.length,
     meRegistered,
-    members: meRegistered ? registered : [],
+    members: meRegistered ? visible : [],
   };
+}
+
+export async function getTeamSaju(): Promise<TeamSaju> {
+  const session = await getSessionMember();
+  if (!session) return { activeCount: 0, registeredCount: 0, meRegistered: false, members: [] };
+  return loadTeamSaju(session);
+}
+
+/**
+ * 한 회의의 **참석 예정자**만 본 팀 사주 — 회의 케미.
+ *
+ * 참석 예정 = 그 회의에 "참석 어려움"으로 응답하지 않은 팀원이다. 확정 규칙이 "반대가 없으면 동의로
+ * 확정"이라 응답하지 않은 사람도 참석 예정으로 본다(`meeting-model.ts`). 다른 팀의 회의 번호이거나
+ * 없는 회의면 `null` — 남의 팀 회의로 사람 수를 캐내지 못하게 한다.
+ */
+export async function getMeetingSaju(meetingId: string): Promise<TeamSaju | null> {
+  const session = await getSessionMember();
+  if (!session || typeof meetingId !== "string") return null;
+
+  const meeting = await db.meetingProposal.findFirst({
+    where: { id: meetingId, teamId: session.teamId },
+    select: { responses: { where: { agree: false }, select: { memberId: true } } },
+  });
+  if (!meeting) return null;
+
+  return loadTeamSaju(session, new Set(meeting.responses.map((r) => r.memberId)));
 }
 
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */

@@ -20,6 +20,7 @@ import { useAction } from "@/lib/use-action";
 import { whenText } from "./meeting-cell";
 import { downloadIcsFile, generateGoogleCalendarUrl, generateIcsContent } from "./calendar-export";
 import { MeetingNoteSheet } from "./meeting-note-sheet";
+import { MeetingChemistrySheet } from "@/features/saju/meeting-chemistry-sheet";
 import { MeetingAttendanceSheet } from "./meeting-attendance-sheet";
 import {
   carryOverMeeting,
@@ -62,6 +63,7 @@ export function SlotsScreen({
   const [agenda, setAgenda] = useState("");
   const [viewingNote, setViewingNote] = useState(false);
   const [viewingAttendance, setViewingAttendance] = useState(false);
+  const [viewingChemistry, setViewingChemistry] = useState(false);
   const { toast, busy, flash, run } = useAction();
   const requesting = busy.request === true;
 
@@ -252,6 +254,16 @@ export function SlotsScreen({
                 onClick={() => setViewingAttendance(true)}
               >
                 참석자 출석 체크
+              </Btn>
+
+              {/* 회의 케미 — 참석 예정자의 오행으로 본 진행 방식 제안. 역할을 정하지 않는다. */}
+              <Btn
+                v="outline"
+                icon="sparkles"
+                className="w-full"
+                onClick={() => setViewingChemistry(true)}
+              >
+                회의 케미 보기
               </Btn>
             </div>
           </div>
@@ -607,6 +619,13 @@ export function SlotsScreen({
         meetingTitle={`${whenText(proposal.date, proposed?.day ?? "", proposed?.time ?? "")} 회의 출석`}
         onClose={() => setViewingAttendance(false)}
         onSaved={() => router.refresh()}
+      />
+
+      <MeetingChemistrySheet
+        open={viewingChemistry}
+        meetingId={proposal.id ?? null}
+        durationMinutes={proposal.durationMinutes ?? DEFAULT_MINUTES}
+        onClose={() => setViewingChemistry(false)}
       />
 
       <Toast msg={toast} />
