@@ -251,7 +251,9 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     } = await import("../../src/server/actions/ai.js");
     const F = await makeTeam("액션");
 
-    const sample = await as(F.leaderToken, () => getSentenceSample("academic"));
+    // 문장 변환 예시의 키는 summary·email·peer_request·notice 다. `academic` 은 발표 모드 이름이라
+    // 여기서는 빈 문장이 돌아온다(처음 이 검사는 그 이름을 써서 main 에서도 실패하고 있었다).
+    const sample = await as(F.leaderToken, () => getSentenceSample("summary"));
     truthy("getSentenceSample이 문장을 반환한다", typeof sample === "string" && sample.length > 0);
 
     const todayUsage = await as(F.leaderToken, () => getAiUsageToday());
