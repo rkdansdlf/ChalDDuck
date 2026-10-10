@@ -104,6 +104,13 @@ export async function saveMeetingAttendance(
   const sanitizedAttendeeIds = attendeeMemberIds.filter((id) => validMemberIds.has(id));
 
   await db.$transaction(async (tx) => {
+    // **회의 행을 잠그고 한 명씩 지나가게 한다** — 드라이브(`withBoxLock`)와 같은 관용구다.
+    // 저장 버튼을 빠르게 두 번 누르면 두 요청이 모두 "아직 출석이 없다"를 읽고 둘 다 만들려 한다.
+    // 유일 제약이 중복은 막지만 그 순간 한쪽이 Prisma 의 원문 오류(`Unique constraint failed`)를
+    // 사용자에게 던진다. 잠그면 뒤의 요청이 앞 요청의 결과를 읽고 할 일이 없는 걸 안다.
+    // (이 하네스의 "던졌다면 DB 오류 원문이 아니다" 가 약 절반씩 실패해서 드러났다.)
+    await tx.$queryRaw`SELECT 1 FROM "MeetingProposal" WHERE "id" = ${meetingId} FOR UPDATE`;
+
     const existing = await tx.meetingAttendance.findMany({
       where: { meetingId },
       select: { id: true, memberId: true },
