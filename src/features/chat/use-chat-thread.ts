@@ -138,6 +138,14 @@ export function useChatThread(
    */
   const [drain, setDrain] = useState(0);
 
+  /**
+   * 이 대화방을 열었을 때 이미 있던 과거 메시지와 상단 스크롤로 불러온 과거 메시지의 ID 집합.
+   *
+   * 최초 렌더링 시점에 이미 존재하던 메시지는 애니메이션 없이 즉시 그려야 하며,
+   * 세션 도중에 실제로 새로 추가된 메시지만(내가 보낸 말, 폴링으로 도착한 말) 짧은 180ms 트랜지션을 준다.
+   */
+  const [historyIds, setHistoryIds] = useState<Set<string>>(() => new Set(fromServer.map((m) => m.id)));
+
   // 다른 방으로 옮기면 이전 방의 기록을 들고 있을 이유가 없다.
   // 렌더 중에 비교해 바로 반영한다 — effect 로 하면 옛 방의 내용이 한 프레임 비친다.
   const [threadForOlder, setThreadForOlder] = useState(threadId);
@@ -147,6 +155,7 @@ export function useChatThread(
     setCursor(initialCursor);
     setFresh([]);
     setPurifyNotice(null);
+    setHistoryIds(new Set(fromServer.map((m) => m.id)));
   }
 
   // 읽기 도움 상태는 방마다 다르다. 렌더 중 비교 — effect 로 하면 옛 방의 것이 한 프레임 남는다.
@@ -175,14 +184,17 @@ export function useChatThread(
    */
   const messages = useMemo(
     () =>
-      (older.length > 0 ? [...older, ...recent] : recent).map((message) =>
-        // 방금 서버에서 받은 읽기 도움 상태를 말에 붙인다. 저장된 값이 있으면 그걸 쓴다 —
-        // 화면이 가진 값을 우선하면 새로고침마다 다른 말이 순간적으로 원문으로 보인다.
-        message.purified !== null || !cushions[message.id]
-          ? message
-          : { ...message, purified: cushions[message.id] },
-      ),
-    [older, recent, cushions],
+      (older.length > 0 ? [...older, ...recent] : recent).map((message) => {
+        const enriched =
+          message.purified !== null || !cushions[message.id]
+            ? message
+            : { ...message, purified: cushions[message.id] };
+        return {
+          ...enriched,
+          isNew: !historyIds.has(message.id),
+        };
+      }),
+    [older, recent, cushions, historyIds],
   );
 
   /**
@@ -315,6 +327,11 @@ export function useChatThread(
     setIsLoadingMore(true);
     try {
       const page = await loadOlderMessages(threadId, cursor);
+      setHistoryIds((prev) => {
+        const next = new Set(prev);
+        for (const m of page.messages) next.add(m.id);
+        return next;
+      });
       setOlder((prev) => [...page.messages, ...prev]);
       setCursor(page.nextCursor);
     } finally {
@@ -337,6 +354,7 @@ export function useChatThread(
       try {
         const result = await sendChatMessage(threadId, text, { clientId });
         if (result.ok) {
+          setHistoryIds((prev) => new Set(prev).add(result.message.id));
           resolvePendingMessage(threadId, tempId, result.message);
         } else {
           markPendingFailed(threadId, tempId);
@@ -372,6 +390,7 @@ export function useChatThread(
       const result = await sendChatMessage(threadId, "", { attachment: { path: job.path, name: job.file.name } });
       if (result.ok) {
         forgetPendingFile(tempId);
+        setHistoryIds((prev) => new Set(prev).add(result.message.id));
         resolvePendingMessage(threadId, tempId, result.message);
         return null;
       }
@@ -442,6 +461,7 @@ export function useChatThread(
           clientId: clientIdOf(message.id),
         });
         if (result.ok) {
+          setHistoryIds((prev) => new Set(prev).add(result.message.id));
           resolvePendingMessage(threadId, message.id, result.message);
         }
         // 여전히 실패 — 말풍선은 그대로 두고 다시 누를 수 있게 한다

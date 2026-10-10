@@ -306,7 +306,12 @@ model JoinRequest {
   vetoRole     String?
   /// 승인되면 이 토큰으로 세션이 만들어진다. 요청한 브라우저만 갖고 있다.
   token        String    @unique
-  /// pending | approved | rejected
+  /// pending | approved | claimed | rejected
+  ///
+  /// `claimed` 는 **승인 뒤 팀원을 만드는 중**이라는 표시다. 동시 폴링이 같은 요청으로
+  /// 팀원을 둘 만들지 않도록, `checkJoinApproval` 이 `approved` 를 조건부로 이 값으로
+  /// 선점한다. **선점과 생성을 한 트랜잭션에 두었으므로 이 값이 남아 있는 채로 끝나지
+  /// 않는다** — 실패하면 함께 되돌아가고, 성공하면 요청 행 자체가 지워진다.
   status       String    @default("pending")
   label        String?
   createdAt    DateTime  @default(now())

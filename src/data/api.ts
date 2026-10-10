@@ -1596,7 +1596,7 @@ export async function getTeamCheck(teamId: string): Promise<TeamCheckRecord[]> {
   return teamCheckRecords(teamId, session?.id ?? null);
 }
 
-export { getContribReport, getPublicReport } from "@/server/contrib/report";
+export { getContribReport, getPublicReport, getReportTokenStatus } from "@/server/contrib/report";
 
 /* ── 21 할 일 ──────────────────────────────────────────────── */
 

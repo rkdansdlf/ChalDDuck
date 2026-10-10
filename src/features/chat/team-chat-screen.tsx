@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppBar, Body, Btn, Icon, Sheet, Toast } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ChatMessage, CushionLevel, CushionTone, Member, SubmissionBox, Team } from "@/lib/types";
@@ -9,8 +9,14 @@ import type { ReadCushionSetting } from "@/lib/read-cushion";
 import { useAction } from "@/lib/use-action";
 import { TEAM_THREAD_ID } from "@/lib/types";
 import { ACCEPT } from "@/features/drive/file-rules";
+import {
+  clearComposerDraft,
+  handOffToCushion,
+  noComposerDraft,
+  peekComposerDraft,
+  subscribeComposerDraft,
+} from "@/features/tools/cushion-handoff";
 import { useMe } from "@/features/onboarding/use-me";
-import { handOffToCushion } from "@/features/tools/cushion-handoff";
 import { setNavBadges } from "@/components/nav-badges-store";
 import { saveChatAttachmentToDrive } from "@/server/actions/drive";
 import { setReadCushion } from "@/server/actions/chat";
@@ -147,6 +153,30 @@ export function TeamChatScreen({
       picker.current?.click();
     };
   }, [discard, flash, fileLostText]);
+
+  const composerDraft = useSyncExternalStore(subscribeComposerDraft, peekComposerDraft, noComposerDraft);
+
+  // 쿠션 번역기에서 "단톡방 입력창에 담기"로 복귀했을 때 토스트 알림을 띄우고 스토어를 비운다.
+  useEffect(() => {
+    if (composerDraft) {
+      flash("쿠션어로 다듬은 말을 입력창에 담았습니다 ✨");
+      clearComposerDraft();
+    }
+  }, [composerDraft, flash]);
+
+  // 쿠션 번역기에서 "단톡방으로 바로 전송" 후 복귀했을 때 알림을 띄운다.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("from") === "cushion-sent") {
+        flash("쿠션어로 다듬은 메시지를 단톡방에 보냈습니다 ✨");
+        stick();
+        const url = new URL(window.location.href);
+        url.searchParams.delete("from");
+        window.history.replaceState({}, "", url.pathname + url.search);
+      }
+    }
+  }, [flash, stick]);
 
     /**
    * 읽기 도움 설정을 바꾼다 — 끄기·강도·말투.
@@ -287,6 +317,7 @@ export function TeamChatScreen({
 
       <Composer
         placeholder="메시지 입력"
+        initialText={composerDraft ?? ""}
         // 올려 보던 중에 보냈더라도 내가 방금 쓴 말은 보여야 한다.
         onSend={(text) => {
           stick();
@@ -294,9 +325,9 @@ export function TeamChatScreen({
         }}
         // 드라이브와 같은 형식·용량(문서·이미지·PPT·PDF, 50MB)만 받는다.
         onAttach={() => picker.current?.click()}
-        // 입력 중이던 글을 들고 넘어간다. 비어 있으면 쿠션 번역기는 예시 문장으로 열린다.
+        // 입력 중이던 글을 들고 넘어간다. 출처를 'chat'으로 넘겨 단톡방 복귀가 가능하게 한다.
         onCushion={(draft) => {
-          handOffToCushion(draft);
+          handOffToCushion(draft, { source: "chat", returnTo: "/chat/team" });
           router.push("/tools/cushion");
         }}
       />

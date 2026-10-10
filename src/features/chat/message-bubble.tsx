@@ -58,6 +58,8 @@ export const MessageBubble = memo(function MessageBubble({
   // 누르고 있으면 원문으로, 놓으면 읽기 도움문으로. 이 상태는 **말풍선마다** 따로다 —
   // 한 말만 대조해 보고 싶은데 방 전체가 원문으로 바뀌면 대조가 아니라 후퇴가 된다.
   const [showOriginal, setShowOriginal] = useState(false);
+  const [hasToggled, setHasToggled] = useState(false);
+  const [showCushionTip, setShowCushionTip] = useState(false);
   const { text: displayText, kind } = displayTextOf(message, showOriginal);
   /** 화면에 그리는 글과 **보관된 원문**이 다르다 — 표시가 남아야 할 때. */
   const changed = displayText !== message.text;
@@ -69,9 +71,16 @@ export const MessageBubble = memo(function MessageBubble({
    * "말투가 바뀐 것"으로 오해하고, 다음에는 그 라벨을 믿고 원문 보기를 누르지 않는다.
    */
   const label = kind === "FALLBACK" ? "공격적 표현 가림" : "다듬어 읽음";
+  const isNew = message.isNew ?? false;
 
   return (
-    <div className={cn("animate-slide-up flex items-start gap-[9px]", mine ? "flex-row-reverse" : "flex-row")}>
+    <div
+      className={cn(
+        "flex items-start gap-[9px]",
+        mine ? "flex-row-reverse" : "flex-row",
+        isNew && (mine ? "animate-message-in-mine" : "animate-message-in-other"),
+      )}
+    >
       <Avatar name={message.author} mbti={message.mbti} size={32} />
 
       <div className={cn("flex max-w-[72%] flex-col", mine ? "items-end" : "items-start")}>
@@ -96,30 +105,67 @@ export const MessageBubble = memo(function MessageBubble({
         {/* 파일만 보낸 말은 글이 비어 있다 — 빈 말풍선을 그리지 않는다. */}
         {displayText ? (
           <div
-            key={showOriginal ? "orig" : "purified"}
             className={cn(
-              "animate-fade-in text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong shadow-2xs transition-all duration-200",
+              "text-pretty-keep rounded-2xl px-[13px] py-2.5 text-[14.5px] leading-[1.55] text-txt-strong shadow-2xs transition-all duration-200",
               mine ? "bg-yellow-300" : "border border-line bg-card",
               (message.attachment || message.driveFile) && "mt-1",
+              message.viaCushion && "ring-1 ring-yellow-400/40",
               showOriginal && !mine && "border-yellow-400 bg-yellow-50/60",
             )}
           >
-            {displayText}
+            <span
+              key={showOriginal ? "orig" : "purified"}
+              className={cn("inline-block", hasToggled && "animate-cushion-swap")}
+            >
+              {displayText}
+            </span>
+          </div>
+        ) : null}
+
+        {/* 쿠션 번역 안내 팁 (뱃지 탭 시 토글) */}
+        {showCushionTip && message.viaCushion ? (
+          <div className={cn(
+            "mt-1 flex items-center gap-1.5 rounded-xl border border-yellow-300/80 bg-yellow-50 px-2.5 py-1.5 text-[11.5px] text-yellow-950 shadow-2xs animate-slide-up select-none",
+            mine ? "origin-top-right" : "origin-top-left"
+          )}>
+            <Icon name="wand-sparkles" size={13} className="text-yellow-700 flex-none animate-wiggle" />
+            <span className="leading-snug">
+              {mine
+                ? "쿠션 번역기로 부드럽게 다듬어 보낸 메시지입니다."
+                : `${message.author}님이 배려를 담아 쿠션 번역기로 다듬어 보낸 메시지입니다.`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowCushionTip(false)}
+              className="ml-1 text-yellow-700 hover:text-yellow-950 cursor-pointer"
+              aria-label="닫기"
+            >
+              <Icon name="x" size={11} />
+            </button>
           </div>
         ) : null}
 
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           {message.viaCushion ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-[11px] font-semibold text-yellow-800">
-              <Icon name="wand-sparkles" size={11} className="animate-wiggle" />
+            <button
+              type="button"
+              onClick={() => setShowCushionTip((prev) => !prev)}
+              title="쿠션 번역 안내 보기"
+              aria-expanded={showCushionTip}
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-yellow-300/70 bg-yellow-100/90 px-2 py-0.5 text-[11px] font-semibold text-yellow-800 transition-all hover:bg-yellow-200 active:scale-95 select-none"
+            >
+              <Icon name="wand-sparkles" size={11} className="animate-wiggle text-yellow-700" />
               <span>쿠션 번역</span>
-            </span>
+            </button>
           ) : null}
 
           {changed ? (
             <button
               type="button"
-              onClick={() => setShowOriginal((prev) => !prev)}
+              onClick={() => {
+                setHasToggled(true);
+                setShowOriginal((prev) => !prev);
+              }}
               aria-pressed={showOriginal}
               className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line bg-card/90 px-2 py-0.5 text-[11px] font-medium text-txt-muted shadow-2xs transition-all hover:bg-fill active:scale-90 select-none"
             >
