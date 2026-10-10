@@ -126,6 +126,10 @@ MBTI 와 같은 약속입니다. 사주(`src/lib/saju/`)는 **재미로 보는 �
 npm test && npm run build && npx tsc --noEmit && npm run lint
 ```
 
+서버 액션을 건드렸다면 **`npm run test:harness`** 도 돌립니다(액션 경계를 실제로 통과하는 하네스 전부, 1분 안팎).
+푸시 전 훅·`verify`·CI 가 같은 목록을 쓰고, 새 하네스는 `package.json` 에 `test:*` 스크립트를 달면 자동으로 들어갑니다.
+진짜 저장소 키가 필요한 `test:drive` 만 따로이며 키가 없는 환경에서는 "건너뜀"이라고 말하고 넘어갑니다.
+
 `npm test` 는 업무 규칙을 확인하는 불변식 모음입니다(`scripts/smoke.mts`,
 `scripts/smoke-join.mts` — 공통 기반은 `scripts/db-test-base.mts`). **타입 검사가
 잡아주지 못하는 종류의 버그**를 잡습니다 — Veto 를 후보에서 빼지 않는다, 확정된 회의를
