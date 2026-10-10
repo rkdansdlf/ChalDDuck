@@ -1,7 +1,7 @@
 import { getTeamByCode } from "@/data/api";
 import { getRemembered } from "@/server/session";
 import { JoinScreen } from "@/features/onboarding/join-screen";
-import { rememberInviteToken } from "@/server/invite/cookie";
+import { forgetInviteToken, rememberInviteToken } from "@/server/invite/cookie";
 import { resolveJoinTarget } from "@/server/invite/resolve-target";
 
 /**
@@ -26,33 +26,47 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   const { code, t } = await searchParams;
   // **서버는 저장소를 모른다** — `sessionStorage` 는 브라우저에만 있다. 그래서 기억한 팀은
   // 클라이언트 주소로 되돌린다(`JoinScreen` 의 effect).
-  const requested = typeof code === "string" ? code.trim() : "";
   const token = typeof t === "string" ? t.trim() : "";
+  // 링크 토큰이 있으면 그 길로만 판정하며, 코드 파라미터로 떨어지지 않는다.
+  // 되돌린 초대가 그 사실조차 숨기면 안 된다(resolve-target.ts 머리말).
+  const requested = token ? "" : typeof code === "string" ? code.trim() : "";
 
-  // 링크 토큰이 있으면 **그 길로만** 판정한다. 실패했을 때 코드 길로 조용히 넘어가지 않는다 —
-  // 되돌린 초대가 그 사실조차 숨기면 안 된다(`resolve-target.ts` 머리말).
-  const fromLink = token ? await resolveJoinTarget({ token }) : null;
-  if (fromLink) await rememberInviteToken(token);
-
-  const team = fromLink
-    ? {
-        id: fromLink.teamId,
-        name: fromLink.teamName,
-        course: fromLink.teamCourse,
-        code: fromLink.teamCode,
-        // 사람 수와 마감일을 **초대가 세어 온다.** 여기서 0 / null 로 박아 넣으면, 팀이
-        // 비어 있지 않아도 "0명" 으로 보인다 — 코드 길과 같은 정보를 두 길이 다르게 보여 주는
-        // 셈이라 화면이 스스로를 모순한다.
-        memberCount: fromLink.memberCount,
-        dday: fromLink.teamDday,
-      }
+  // 링크 토큰이 있으면 그 길로만, 없으면 입력된 코드로 팀/초대를 판정한다.
+  const fromTarget = token
+    ? await resolveJoinTarget({ token })
     : requested
-      ? await getTeamByCode(requested)
+      ? (await resolveJoinTarget({ code: requested })) ??
+        (!requested.toUpperCase().startsWith("CD-")
+          ? await resolveJoinTarget({ code: `CD-${requested}` })
+          : null)
       : null;
 
-  // 기억 쿠키: 어느 입장이든 없을 때만 — 초대 링크로 들어왔으면 그 팀을 보여 준다.
+  if (fromTarget?.invite && token) {
+    await rememberInviteToken(token);
+  } else if (!token) {
+    // 초대 토큰 링크 없이 직접 코드로 들어온 경우, 이전 팀의 초대 쿠키 잔류를 비운다.
+    await forgetInviteToken();
+  }
+
+  const invalidInvite = Boolean(token && !fromTarget);
+
+  const team = fromTarget
+    ? {
+        id: fromTarget.teamId,
+        name: fromTarget.teamName,
+        course: fromTarget.teamCourse,
+        code: fromTarget.teamCode,
+        // 사람 수와 마감일을 초대가 세어 온다. 여기서 0 / null 로 박아 넣으면, 팀이
+        // 비어 있지 않아도 "0명" 으로 보인다 — 코드 길과 같은 정보를 두 길이 다르게 보여 주는
+        // 셈이라 화면이 스스로를 모순한다.
+        memberCount: fromTarget.memberCount,
+        dday: fromTarget.teamDday,
+      }
+    : null;
+
+  // 기억 쿠키: 어느 입장이든 없을 때만 — 초대 링크나 코드로 들어왔으면 그 팀을 우선한다.
   let returning: { teamCode: string; name: string; teamName: string; course: string } | null = null;
-  if (!fromLink && !requested) {
+  if (!fromTarget && !requested) {
     const saved = await getRemembered();
     if (saved) {
       const savedTeam = await getTeamByCode(saved.teamCode);
@@ -67,5 +81,12 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
     }
   }
 
-  return <JoinScreen team={team} requestedCode={requested} returning={returning} />;
+  return (
+    <JoinScreen
+      team={team}
+      requestedCode={requested}
+      returning={returning}
+      invalidInvite={invalidInvite}
+    />
+  );
 }

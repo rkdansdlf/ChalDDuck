@@ -31,11 +31,20 @@ import { describeDevice, deviceIdOf, requireLeader, requireSessionMember, startS
 const CLAIM_COOKIE = "cd_claim";
 const CLAIM_MAX_AGE = 60 * 60 * 24; // 하루
 
-async function findMember(teamCode: string, name: string) {
+/**
+ * 그 이름을 가진 사람들 — **한 명이라고 가정하지 않는다.**
+ *
+ * 이름은 식별자가 아니다. 같은 팀에 같은 이름이 둘 있을 수 있으므로(2026-10-04 결정),
+ * 이름으로 한 명을 집는 조회는 **틀릴 수 있는 조회**다. 부르는 쪽이 후보 중에서 골라야 한다:
+ * 재입장은 **재입장 코드로**, 승인 요청은 모호하면 **거절 쪽으로** 닫는다(잘못된 사람에게
+ * 요청을 붙이는 것보다 낫다 — 붙으면 팀장이 그 사람인 줄 알고 승인한다).
+ */
+async function findMembers(teamCode: string, name: string) {
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
-  if (!team) return null;
-  return db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: normalizeName(name) } },
+  if (!team) return [];
+  return db.member.findMany({
+    where: { teamId: team.id, name: normalizeName(name) },
+    orderBy: { joinedAt: "asc" },
   });
 }
 
@@ -48,15 +57,21 @@ export async function rejoinWithCode(
   const key = attemptKey(teamCode, name);
   if (await isLocked(key)) return "locked";
 
-  const member = await findMember(teamCode, name);
+  const candidates = await findMembers(teamCode, name);
   // **그런 사람이 아니면 실패로 세지 않는다.** 맞힐 코드가 없으니 대충 아무 것이나 찍는 것과
   // 같다. 예전에도 세었더니, 팀 코드와 이름 아무 쌍이나 알고 있는
   // 사람이 그 쌍을 10분씩 잠글 수 있었다 — 심지어 자신이 속하지도 않은 팀의.
-  if (!member) return "unknown";
-  // 코드를 아직 받지 못한 옛 기록. 팀장 승인으로 보내야 한다.
-  if (!member.rejoinCodeHash) return "no-code";
+  if (candidates.length === 0) return "unknown";
 
-  if (!verifyRejoinCode(normalizeRejoinCode(code), member.rejoinCodeHash)) {
+  // 코드를 아직 받지 못한 옛 기록. 팀장 승인으로 보내야 한다.
+  const withCode = candidates.filter((m) => m.rejoinCodeHash);
+  if (withCode.length === 0) return "no-code";
+
+  // **코드가 사람을 고른다.** 같은 이름이 둘이어도 코드는 사람마다 다르므로, 이름이 아니라
+  // 코드가 어느 회원인지 정한다.
+  const entered = normalizeRejoinCode(code);
+  const member = withCode.find((m) => verifyRejoinCode(entered, m.rejoinCodeHash as string));
+  if (!member) {
     await countFailure(key);
     return "wrong";
   }
@@ -78,8 +93,12 @@ export async function requestRejoinApproval(
   teamCode: string,
   name: string,
 ): Promise<"requested" | "unknown"> {
-  const member = await findMember(teamCode, name);
-  if (!member) return "unknown";
+  // **모호하면 거절 쪽으로 닫는다.** 같은 이름이 둘인데 아무나 골라 붙이면, 팀장은 그 사람인
+  // 줄 알고 승인한다 — 잘못된 사람의 기기 목록에 남의 기기가 들어가는 것이 이 요청이 막으려던
+  // 바로 그 일이다. 누구인지 고르는 화면은 아직 없다(동명이인 작업 2단계).
+  const candidates = await findMembers(teamCode, name);
+  if (candidates.length !== 1) return "unknown";
+  const member = candidates[0];
 
   // **이 사람의 대기 요청을 지우지 않는다.**
   //
