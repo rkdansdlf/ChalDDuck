@@ -15,6 +15,7 @@
  * 9. **회의 케미는 참석 예정자(불참 응답 제외)만, 서로 보여 주는 만큼만** — 다른 팀 회의·없는 회의·
  *    잘못된 번호는 null 이고 응답에 생년월일이 없다.
  * 8. **팀을 나가면 생년월일이 지워진다** — 행은 기록 근거라 남지만 이 값은 개인정보다(두 길 모두).
+ * 10. **밸런스 게임은 한 사람 한 표이고 고른 뒤에만 결과가 내려오며, 나간 사람·다른 팀의 표는 세지 않는다.**
  *
  *   npm run test:saju
  */
@@ -229,6 +230,56 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("응답 어디에도 생년월일·출생 시각이 없다", ["2001-03-02", "1999-12-31", "2002-08-15", "14:30", "03:07", "07:20", "birth"].filter((x) => chemWire.includes(x)), []);
     await db.meetingProposal.delete({ where: { id: meeting.id } });
     for (const id of [me.id, other.id, third.id]) await db.member.update({ where: { id }, data: { birthDate: null, birthTime: null } });
+
+    console.log("\n밸런스 게임 — 한 사람 한 표, 고른 뒤에만 결과, 팀 안에서만");
+    const balanceAction = await import("../../src/server/actions/saju-balance.js");
+    const { BALANCE_QUESTIONS } = await import("../../src/lib/saju/balance.js");
+    const q1 = BALANCE_QUESTIONS[0]!.id;
+    const q2 = BALANCE_QUESTIONS[1]!.id;
+    const votesOf = (questionId: string) => db.sajuBalanceVote.findMany({ where: { teamId: team.id, questionId } });
+    const results = (token_: string) => as(token_, () => api.getBalanceResults());
+    const row = (r: Awaited<ReturnType<typeof api.getBalanceResults>>, id: string) => r.find((x) => x.questionId === id);
+
+    check("로그인하지 않으면 투표할 수 없다", await balanceAction.voteBalance(q1, "a"), "invalid");
+    check("로그인하지 않으면 결과가 비어 있다", await api.getBalanceResults(), []);
+    check("없는 질문은 invalid", await as(asMe, () => balanceAction.voteBalance("없는질문", "a")), "invalid");
+    check("선택이 a·b 가 아니면 invalid", await as(asMe, () => balanceAction.voteBalance(q1, "c")), "invalid");
+    check("문자열이 아닌 값도 던지지 않고 invalid", [
+      await as(asMe, () => balanceAction.voteBalance({ x: 1 } as unknown as string, "a")),
+      await as(asMe, () => balanceAction.voteBalance(q1, null as unknown as string)),
+    ], ["invalid", "invalid"]);
+    check("잘못된 요청은 아무 행도 만들지 않는다", await db.sajuBalanceVote.count({ where: { teamId: team.id } }), 0);
+
+    const before = row(await results(asMe), q1);
+    check("고르기 전에는 결과(counts)가 내려오지 않는다", [before?.mine, before?.counts], [null, null]);
+
+    check("투표한다", await as(asMe, () => balanceAction.voteBalance(q1, "a")), "ok");
+    check("행의 팀은 세션에서 정해진다", (await votesOf(q1)).map((v) => [v.teamId, v.memberId, v.choice]), [[team.id, me.id, "a"]]);
+    check("다시 누르면 바뀐다(한 사람 한 표)", [await as(asMe, () => balanceAction.voteBalance(q1, "b")), (await votesOf(q1)).map((v) => v.choice)], ["ok", ["b"]]);
+    check("고른 뒤에는 결과가 내려온다", row(await results(asMe), q1), { questionId: q1, mine: "b", counts: { a: 0, b: 1 } });
+    check("다른 질문은 여전히 가려져 있다", row(await results(asMe), q2)?.counts, null);
+
+    await as(asOther, () => balanceAction.voteBalance(q1, "a"));
+    await as(asThird, () => balanceAction.voteBalance(q1, "b"));
+    check("팀원들의 표가 사람 수로 집계된다", row(await results(asMe), q1)?.counts, { a: 1, b: 2 });
+    const wire2 = JSON.stringify(await results(asMe));
+    check("누가 골랐는지는 응답에 없다(사람 번호·이름이 없다)", ["memberId", me.id, other.id, third.id, `김민준${suffix}`, `이서연${suffix}`].filter((x) => wire2.includes(x)), []);
+
+    // 팀에서 나간 사람과 다른 팀의 표는 세지 않는다
+    await db.sajuBalanceVote.create({ data: { teamId: team.id, memberId: gone.id, questionId: q1, choice: "a" } });
+    const teamB = await db.team.create({ data: { name: `사주 검사 놀이 ${suffix}`, course: "검증", code: `CD-${randomUUID().slice(0, 6).toUpperCase()}` } });
+    try {
+      const mB = await db.member.create({ data: { teamId: teamB.id, name: `다른팀${suffix}` } });
+      memberIds.push(mB.id);
+      await db.sajuBalanceVote.create({ data: { teamId: teamB.id, memberId: mB.id, questionId: q1, choice: "a" } });
+      check("나간 사람과 다른 팀의 표는 세지 않는다", row(await results(asMe), q1)?.counts, { a: 1, b: 2 });
+      const asB = await token(mB.id);
+      check("다른 팀 사람이 보는 결과에 우리 팀 표가 섞이지 않는다", row(await results(asB), q1), { questionId: q1, mine: "a", counts: { a: 1, b: 0 } });
+    } finally {
+      await db.member.deleteMany({ where: { teamId: teamB.id } });
+      await db.team.delete({ where: { id: teamB.id } }).catch(() => {});
+    }
+    check("모든 질문이 결과에 한 줄씩 있다", (await results(asMe)).length, BALANCE_QUESTIONS.length);
 
     console.log("\n온보딩 사주 — 가입 길 세 갈래가 같은 값을 옮긴다");
     const onb = await import("../../src/server/actions/onboarding.js");

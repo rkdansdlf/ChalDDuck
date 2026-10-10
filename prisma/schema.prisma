@@ -52,6 +52,7 @@ model Team {
   createdAt      DateTime  @default(now())
 
   members         Member[]
+  sajuBalanceVotes SajuBalanceVote[]
   joinRequests    JoinRequest[]
   invites         TeamInvite[]
   submissionBoxes SubmissionBox[]
@@ -193,6 +194,7 @@ model Member {
   meetingResponses      MeetingResponse[]
   meetingNotes          MeetingNote[]
   meetingAttendances    MeetingAttendance[]    @relation("AttendanceMember")
+  sajuBalanceVotes      SajuBalanceVote[]
   attendancesChecked    MeetingAttendance[]    @relation("AttendanceCheckedBy")
   reportShareTokens     ReportShareToken[]
   roleDraws             RoleDraw[]
@@ -1374,4 +1376,24 @@ model IceBallot {
   @@id([roundId, seq, memberId])
   @@index([roundId, seq])
   @@index([roundId, memberId])
+}
+
+/// 사주 밸런스 게임의 한 표. 질문은 코드의 고정 목록(`lib/saju/balance.ts`)이고 DB 에는 답만 둔다.
+///
+/// 한 사람이 한 질문에 한 표다(`@@id`) — 다시 누르면 바뀐다. 결과는 **사람 수**로만 보여 주고 누가 무엇을
+/// 골랐는지는 내려가지 않는다. 팀에 남아 있는 사람의 표만 센다(나간 사람의 행은 남아도 집계에서 뺀다).
+model SajuBalanceVote {
+  teamId     String
+  memberId   String
+  questionId String
+  /// a | b
+  choice     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, questionId])
+  @@index([teamId, questionId])
 }

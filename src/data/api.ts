@@ -5,6 +5,7 @@ import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
 import { calculateSaju, elementCountsOf, type Element, type SajuChart } from "@/lib/saju/engine";
 import { birthInputFromStored } from "@/lib/saju/input";
+import { BALANCE_QUESTIONS, type BalanceChoice } from "@/lib/saju/balance";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
@@ -638,6 +639,42 @@ export async function getMeetingSaju(meetingId: string): Promise<TeamSaju | null
   if (!meeting) return null;
 
   return loadTeamSaju(session, new Set(meeting.responses.map((r) => r.memberId)));
+}
+
+/**
+ * 사주 밸런스 게임의 결과 — 질문마다 팀의 표 수와 내 선택.
+ *
+ * **내가 투표한 질문의 결과만 내려보낸다**(`counts` 가 `null` 이면 아직 못 본다). 남의 표를 먼저 보고 고르면
+ * 놀이가 아니라 눈치가 된다. 이 함수는 화면을 거치지 않고도 불리므로 가림은 여기서 한다.
+ * 사람 수만 내려가고 누가 무엇을 골랐는지는 내려가지 않는다. 팀에 남아 있는 사람의 표만 센다.
+ */
+export type BalanceResult = {
+  questionId: string;
+  mine: BalanceChoice | null;
+  counts: { a: number; b: number } | null;
+};
+
+export async function getBalanceResults(): Promise<BalanceResult[]> {
+  const session = await getSessionMember();
+  if (!session) return [];
+
+  const votes = await db.sajuBalanceVote.findMany({
+    where: { teamId: session.teamId, member: { leftAt: null } },
+    select: { memberId: true, questionId: true, choice: true },
+  });
+
+  return BALANCE_QUESTIONS.map((q) => {
+    const rows = votes.filter((v) => v.questionId === q.id);
+    const mine = rows.find((v) => v.memberId === session.id)?.choice;
+    const myChoice: BalanceChoice | null = mine === "a" || mine === "b" ? mine : null;
+    return {
+      questionId: q.id,
+      mine: myChoice,
+      counts: myChoice
+        ? { a: rows.filter((v) => v.choice === "a").length, b: rows.filter((v) => v.choice === "b").length }
+        : null,
+    };
+  });
 }
 
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */

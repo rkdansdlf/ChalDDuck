@@ -269,6 +269,18 @@ export const TODAY_COPY: Record<Relation, TodayCopy> = {
   },
 };
 
+/**
+ * 오늘의 흐름 제목 — **다른 사람에게 닿는 흐름**을 말할 때의 3인칭판. `TODAY_COPY` 의 제목은 "내가 …",
+ * "나와 …" 처럼 1인칭이라, 상대의 오늘을 그 제목으로 쓰면 "상대가 '내가 흐름을 잡는 날'" 이 된다.
+ */
+export const TODAY_TITLE_OTHER: Record<Relation, string> = {
+  same: "일간과 결이 같은 날",
+  generatesMe: "힘을 받는 날",
+  meGenerates: "힘을 내어 주는 날",
+  controlsMe: "빠듯하게 느껴질 수 있는 날",
+  meControls: "흐름을 잡는 날",
+};
+
 export const TODAY_NOTICE = "오늘 날짜와 내 일간의 오행 관계로 보는 재미 해석이에요. 하루를 정해 주는 것은 아니에요.";
 
 /** 오늘 회의가 있는 날의 고정 제안. 누가 무엇을 하라는 말이 아니라 회의 진행 방식이다. */
@@ -297,3 +309,38 @@ export const MEETING_FLOW_STEPS: readonly MeetingFlowStep[] = [
 
 export const MEETING_FLOW_COPIED = "진행 방식을 복사했어요";
 export const MEETING_FLOW_COPY_FAILED = "복사하지 못했어요. 직접 선택해서 복사해 주세요";
+
+/* ── 사주 놀이 ────────────────────────────────────────────── */
+
+export const PLAY_NOTICE =
+  "사주로 즐기는 가벼운 놀이예요. 결과는 재미일 뿐이고, 역할을 정하는 데는 쓰이지 않아요.";
+
+export type PairingCopy = { title: string; line: string; tip: string };
+
+/** 오늘의 궁합 — 두 사람에게 오늘의 흐름이 어떻게 닿는지로 고른 네 가지. 등급이 아니다. */
+export const PAIRING_COPY: Record<"start" | "care" | "easy" | "own", PairingCopy> = {
+  start: {
+    title: "함께 시작하는 날",
+    line: "오늘은 두 사람 모두 흐름을 받는 쪽이에요.",
+    tip: "미뤄 둔 일 중 하나를 같이 시작해 보세요.",
+  },
+  care: {
+    title: "서로 챙기는 날",
+    line: "한 사람은 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "오늘은 한쪽에 일이 몰리지 않게 나눠 보세요.",
+  },
+  easy: {
+    title: "가볍게 가는 날",
+    line: "두 사람 모두 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "큰 결정은 미루고, 확인할 것만 짧게 맞춰 보세요.",
+  },
+  own: {
+    title: "각자 속도로 가는 날",
+    line: "서로 영향을 크게 주고받는 흐름은 아니에요.",
+    tip: "각자 할 일을 하고, 끝나고 한 번 공유해 보세요.",
+  },
+};
+
+export const PAIRING_NEED_OTHERS = "나 말고도 사주를 등록한 팀원이 있어야 볼 수 있어요.";
+export const GUESS_NEED_MORE = "세 명 이상(나 포함)이 사주를 등록하면 할 수 있어요.";
+export const GUESS_INTRO = "연·월·일 여섯 글자의 오행 수만 보고, 누구의 사주인지 맞혀 보세요.";
