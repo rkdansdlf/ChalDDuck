@@ -33,6 +33,10 @@ export type OnboardingState = {
   picks: QuizPicks;
   want: RoleKey | null;
   veto: RoleKey | null;
+  /** 사주를 위한 생년월일(`YYYY-MM-DD`). **선택** — 비어 있으면 사주 없이 들어간다. */
+  birthDate: string;
+  /** 출생 시각(`HH:MM`). 모르면 비워 둔다. */
+  birthTime: string;
 };
 
 const EMPTY: OnboardingState = {
@@ -43,6 +47,8 @@ const EMPTY: OnboardingState = {
   picks: EMPTY_PICKS,
   want: null,
   veto: null,
+  birthDate: "",
+  birthTime: "",
 };
 
 let state: OnboardingState = EMPTY;
@@ -94,6 +100,8 @@ function loadStored(): OnboardingState | null {
     picks: sanitizePicks(saved.picks),
     want: (saved.want ?? null) as OnboardingState["want"],
     veto: (saved.veto ?? null) as OnboardingState["veto"],
+    birthDate: typeof saved.birthDate === "string" ? saved.birthDate : "",
+    birthTime: typeof saved.birthTime === "string" ? saved.birthTime : "",
   };
 }
 
@@ -158,6 +166,17 @@ export function setVeto(veto: RoleKey | null) {
   update({ veto });
 }
 
+/**
+ * 사주를 위한 생년월일(시). **둘 다 한 번에 바꾼다** — 날짜 없이 시각만 남는 상태를 만들지 않는다.
+ * 지우려면 `clearBirth()`.
+ */
+export function setBirth(birthDate: string, birthTime: string) {
+  update({ birthDate, birthTime });
+}
+export function clearBirth() {
+  update({ birthDate: "", birthTime: "" });
+}
+
 export function setPick(id: string, pick: Exclude<QuizPick, null>) {
   update({ picks: { ...state.picks, [id]: pick } });
 }
@@ -196,6 +215,9 @@ export function toDraft(): OnboardingDraft {
     mbtiFromQuiz: !state.mbti && picksToMbti(state.picks) !== null,
     want: state.want,
     veto: state.veto,
+    // 비어 있으면 보내지 않는다(`null`). 값이 있어도 서버가 `parseBirth` 로 다시 거른다.
+    birthDate: state.birthDate.trim() || null,
+    birthTime: state.birthDate.trim() ? state.birthTime.trim() || null : null,
   };
 }
 

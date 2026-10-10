@@ -9,8 +9,7 @@
  *
  * ## 지금 정한 규칙 (바꾸려면 여기만 본다)
  *
- * 만세력마다 갈리는 지점이다. 기획안에 정해진 값이 없어서 **가장 흔한 쪽**을 골랐고,
- * 화면은 `?review=1` 에서 이 사실을 `<Undecided>` 로 드러낸다.
+ * 만세력마다 갈리는 지점이다. **가장 흔한 쪽**으로 확정했다(정책 확정 — 화면에 `<Undecided>` 는 없다).
  *
  * - **시각은 한국 표준시(KST, UTC+9) 그대로** 쓴다. 출생지 경도 보정(서울 −30분 등)은 하지 않는다.
  * - **23:00 에 날이 바뀐다**(자시 시작). 23시대 출생은 다음 날의 일주·자시로 센다.
@@ -152,7 +151,7 @@ export function isRealDate(y: number, m: number, d: number): boolean {
 }
 
 /** 60갑자 번호(0 = 갑자)의 일주. JDN 2451545(2000-01-01)가 무오(54)인 데서 맞췄다. */
-function dayPillarOf(y: number, m: number, d: number): Pillar {
+export function dayPillarOf(y: number, m: number, d: number): Pillar {
   const idx = mod(julianDayNumber(y, m, d) + 49, 60);
   return { stem: idx % 10, branch: idx % 12 };
 }

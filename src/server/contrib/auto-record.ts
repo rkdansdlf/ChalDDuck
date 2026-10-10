@@ -132,11 +132,15 @@ export async function recordDriveVersionContrib(
 
 /**
  * 팀장이 회의 참석을 확인했을 때 기여 기록을 멱등하게 생성한다.
+ *
+ * **원천은 출석 행이 아니라 회의(`meetingId`)다.** 출석 행은 체크를 풀면 지워지고 다시 체크하면
+ * 새 아이디로 만들어진다. 기록이 출석 아이디에 묶여 있으면, 팀원 확인이나 이견이 붙어 회수되지
+ * 않고 남은 기록을 다시 체크할 때 알아보지 못해 **한 번의 참석이 두 건으로 세어졌다.**
+ * `(회의, 사람)` 은 출석 행의 유일 키와 같은 쌍이라 기록의 유일 키로도 맞다.
  */
 export async function recordMeetingAttendanceContrib(
   tx: Tx,
   input: {
-    attendanceId: string;
     meetingId: string;
     memberId: string;
     meetingTitle: string;
@@ -147,7 +151,7 @@ export async function recordMeetingAttendanceContrib(
     where: {
       originType_originId_memberId: {
         originType: "meeting_attendance",
-        originId: input.attendanceId,
+        originId: input.meetingId,
         memberId: input.memberId,
       },
     },
@@ -166,7 +170,7 @@ export async function recordMeetingAttendanceContrib(
       source: "auto",
       state: "pending",
       originType: "meeting_attendance",
-      originId: input.attendanceId,
+      originId: input.meetingId,
     },
   });
 }
@@ -178,10 +182,11 @@ export async function recordMeetingAttendanceContrib(
  */
 export async function unrecordMeetingAttendanceContrib(
   tx: Tx,
-  attendanceId: string,
+  meetingId: string,
+  memberId: string,
 ): Promise<void> {
   const records = await tx.contribRecord.findMany({
-    where: { originType: "meeting_attendance", originId: attendanceId },
+    where: { originType: "meeting_attendance", originId: meetingId, memberId },
     select: {
       id: true,
       state: true,

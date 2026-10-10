@@ -175,8 +175,17 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
     /* ── 5) 팀원 확인 (confirmContribRecord) ─────────────────── */
     console.log("\n팀원 확인 규칙");
-    const selfConfirm = await as(A.ownerToken, () => contrib.confirmContribRecord(recA.id));
+    // 의견이 붙은 기록(`recA`)은 소유자 검사보다 **먼저** 'disputed' 로 막힌다 — 의견이 떠 있는 동안은
+    // 아무도 확인하지 못한다. 처음 이 검사는 `recA` 로 'mine' 을 기대해 main 에서도 실패하고 있었다.
+    // 소유자 규칙은 의견이 없는 새 기록으로 보고, 순서는 따로 고정한다.
+    const recMine = await makeRecord(A.id, A.owner.id, `내 기록 ${suffix}`);
+    const selfConfirm = await as(A.ownerToken, () => contrib.confirmContribRecord(recMine.id));
     check("자기 기록 확인은 'mine' 이다", selfConfirm, "mine");
+    check(
+      "의견이 떠 있는 기록은 누구도 확인하지 못한다 — 소유자 검사보다 먼저 'disputed'",
+      await as(A.ownerToken, () => contrib.confirmContribRecord(recA.id)),
+      "disputed",
+    );
 
     const recC = await makeRecord(A.id, A.owner.id, `확인 테스트용 ${suffix}`);
     const mateConfirm = await as(A.otherToken, () => contrib.confirmContribRecord(recC.id));
@@ -202,7 +211,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       },
     });
     const evUrl = await as(A.otherToken, () => contrib.getEvidenceUrl(evRec.id));
-    check("증빙 파일이 있는 기록의 서명 URL 발급 성공", typeof evUrl, "string");
+    // 서명 주소는 저장소(Supabase)가 만든다 — 키가 없는 환경에서는 `null` 이 정직한 답이다. 그 경우
+    // 이 검사는 **건너뛰었다고 말한다**(조용히 통과시키면 안 본 것을 본 것처럼 보인다).
+    const { isStorageConfigured } = await import("../../src/server/storage/client.js");
+    if (isStorageConfigured()) {
+      check("증빙 파일이 있는 기록의 서명 URL 발급 성공", typeof evUrl, "string");
+    } else {
+      console.log("  - (저장소 키가 없어 건너뜀: 증빙 서명 URL 발급 — npm run test:drive 가 진짜 저장소로 본다)");
+      check("저장소 키가 없으면 서명 URL 은 null 이다", evUrl, null);
+    }
 
     /* ── 7) 확인 목록 폴링 ───────────────────────────────────── */
     console.log("\n확인 점검 목록 폴링");

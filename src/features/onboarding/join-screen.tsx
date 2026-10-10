@@ -74,7 +74,12 @@ export function JoinScreen({
   }
 
   const handleCodeChange = (raw: string) => {
-    const clean = raw
+    let text = raw.trim();
+    if (text.includes("code=")) {
+      const match = text.match(/code=([^&]+)/i);
+      if (match) text = match[1];
+    }
+    const clean = text
       .toUpperCase()
       .replace(/\s+/g, "")
       .replace(/^CD-?/i, "")
@@ -343,9 +348,23 @@ export function JoinScreen({
                     </span>
                   </div>
                   {errorText ? (
-                    <div className="animate-slide-down mt-2.5 flex items-start gap-1.5 text-err">
-                      <Icon name="circle-alert" size={15} className="mt-0.5 flex-none" />
-                      <span className="t-cap-strong keep-all">{errorText}</span>
+                    <div className="animate-slide-down mt-2.5 flex flex-col gap-2">
+                      <div className="flex items-start gap-1.5 text-err">
+                        <Icon name="circle-alert" size={15} className="mt-0.5 flex-none" />
+                        <span className="t-cap-strong keep-all">{errorText}</span>
+                      </div>
+                      {invalidInvite ? (
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => router.push("/join/new-team")}
+                            className="inline-flex items-center gap-1 rounded-lg bg-cr-100 px-2.5 py-1 text-[12px] font-bold text-txt-strong hover:bg-cr-200 transition-colors cursor-pointer border-none"
+                          >
+                            <Icon name="plus" size={13} />
+                            <span>새 팀 만들기</span>
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="mt-2 text-[12.5px] font-medium text-txt-muted">

@@ -232,3 +232,125 @@ export const TEAM_SAJU_NOTICE =
 
 export const TEAM_NEED_MINE =
   "내 사주를 등록하면 팀 사주를 볼 수 있어요. 서로 보여 주는 만큼만 볼 수 있게 했어요.";
+
+/* ── 오늘의 팀플 흐름 (홈) ─────────────────────────────────── */
+
+/**
+ * 오늘 날짜의 일간과 내 일간의 오행 관계(내가 기준)로 고르는 한 줄.
+ * 점수나 등급을 매기지 않는다 — 관계의 이름과 **오늘 해 볼 행동**만 말한다.
+ */
+export type TodayCopy = { title: string; line: string; tip: string };
+
+export const TODAY_COPY: Record<Relation, TodayCopy> = {
+  same: {
+    title: "나와 결이 같은 날",
+    line: "오늘의 기운이 내 일간과 같은 오행이에요.",
+    tip: "익숙한 방식이 잘 맞는 편이에요. 새 의견을 하나쯤 들어 보는 것도 좋아요.",
+  },
+  generatesMe: {
+    title: "힘을 받는 날",
+    line: "오늘의 기운이 나를 북돋는 흐름이에요.",
+    tip: "미뤄 둔 일 하나를 꺼내 시작해 보세요.",
+  },
+  meGenerates: {
+    title: "힘을 내어 주는 날",
+    line: "내가 오늘의 흐름에 힘을 보태는 쪽이에요.",
+    tip: "도와줄 일이 있는지 팀원에게 한 번 물어보세요.",
+  },
+  controlsMe: {
+    title: "빠듯하게 느껴질 수 있는 날",
+    line: "오늘의 기운이 나를 다잡는 흐름이에요. 일정이 촘촘하게 느껴질 수 있어요.",
+    tip: "오늘 할 일을 하나만 먼저 고르고, 나머지는 내일로 넘겨 보세요.",
+  },
+  meControls: {
+    title: "내가 흐름을 잡는 날",
+    line: "내가 오늘의 흐름을 이끄는 쪽이에요.",
+    tip: "회의에서 나온 이야기를 한 번 정리해서 말해 보세요.",
+  },
+};
+
+/**
+ * 오늘의 흐름 제목 — **다른 사람에게 닿는 흐름**을 말할 때의 3인칭판. `TODAY_COPY` 의 제목은 "내가 …",
+ * "나와 …" 처럼 1인칭이라, 상대의 오늘을 그 제목으로 쓰면 "상대가 '내가 흐름을 잡는 날'" 이 된다.
+ */
+export const TODAY_TITLE_OTHER: Record<Relation, string> = {
+  same: "일간과 결이 같은 날",
+  generatesMe: "힘을 받는 날",
+  meGenerates: "힘을 내어 주는 날",
+  controlsMe: "빠듯하게 느껴질 수 있는 날",
+  meControls: "흐름을 잡는 날",
+};
+
+export const TODAY_NOTICE = "오늘 날짜와 내 일간의 오행 관계로 보는 재미 해석이에요. 하루를 정해 주는 것은 아니에요.";
+
+/** 오늘 회의가 있는 날의 고정 제안. 누가 무엇을 하라는 말이 아니라 회의 진행 방식이다. */
+export const MISSION_MEETING_CLOSER = "회의 마지막에 “그래서 누가 뭘 하지?” 를 한 번 확인해 보세요.";
+/** 마감이 가까운 일이 있는 날의 고정 제안. */
+export const MISSION_DUE_SOON = "마감이 가까운 일이 있어요. 막힌 게 있는지 팀에 한 번 물어보세요.";
+
+export const TODAY_NEED_MINE = "내 사주를 등록하면 오늘의 팀플 흐름을 볼 수 있어요";
+
+/* ── 회의 케미 ────────────────────────────────────────────── */
+
+export const MEETING_CHEMISTRY_NOTICE =
+  "참석 예정인 팀원의 오행을 더해 본 재미 해석이에요. 누가 무엇을 해야 한다고 정하지 않고, 진행 방식만 제안해요.";
+
+/** 참석 예정 = 이 회의에 참석 어려움으로 응답하지 않은 팀원. 사람 수 안내에 같은 말을 쓴다. */
+export const MEETING_ATTENDEE_WORD = "참석 예정";
+
+export type MeetingFlowStep = { title: string; desc: string };
+
+/** 추천 진행 세 단계. 시간 배분은 `meeting-flow.ts` 가 회의 길이로 계산한다. */
+export const MEETING_FLOW_STEPS: readonly MeetingFlowStep[] = [
+  { title: "각자 아이디어 하나씩", desc: "한 사람씩 하나만 말하고, 이 단계에서는 평가하지 않아요." },
+  { title: "비슷한 의견 합치기", desc: "겹치는 것끼리 묶고, 남은 후보를 두세 개로 줄여요." },
+  { title: "마지막에 결정", desc: "결정한 것과 “누가 뭘 하지?” 를 확인하고 마쳐요." },
+];
+
+export const MEETING_FLOW_COPIED = "진행 방식을 복사했어요";
+export const MEETING_FLOW_COPY_FAILED = "복사하지 못했어요. 직접 선택해서 복사해 주세요";
+
+/* ── 사주 놀이 ────────────────────────────────────────────── */
+
+export const PLAY_NOTICE =
+  "사주로 즐기는 가벼운 놀이예요. 결과는 재미일 뿐이고, 역할을 정하는 데는 쓰이지 않아요.";
+
+export type PairingCopy = { title: string; line: string; tip: string };
+
+/** 오늘의 궁합 — 두 사람에게 오늘의 흐름이 어떻게 닿는지로 고른 네 가지. 등급이 아니다. */
+export const PAIRING_COPY: Record<"start" | "care" | "easy" | "own", PairingCopy> = {
+  start: {
+    title: "함께 시작하는 날",
+    line: "오늘은 두 사람 모두 흐름을 받는 쪽이에요.",
+    tip: "미뤄 둔 일 중 하나를 같이 시작해 보세요.",
+  },
+  care: {
+    title: "서로 챙기는 날",
+    line: "한 사람은 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "오늘은 한쪽에 일이 몰리지 않게 나눠 보세요.",
+  },
+  easy: {
+    title: "가볍게 가는 날",
+    line: "두 사람 모두 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "큰 결정은 미루고, 확인할 것만 짧게 맞춰 보세요.",
+  },
+  own: {
+    title: "각자 속도로 가는 날",
+    line: "서로 영향을 크게 주고받는 흐름은 아니에요.",
+    tip: "각자 할 일을 하고, 끝나고 한 번 공유해 보세요.",
+  },
+};
+
+export const PAIRING_NEED_OTHERS = "나 말고도 사주를 등록한 팀원이 있어야 볼 수 있어요.";
+export const GUESS_NEED_MORE = "세 명 이상(나 포함)이 사주를 등록하면 할 수 있어요.";
+export const GUESS_INTRO = "연·월·일 여섯 글자의 오행 수만 보고, 누구의 사주인지 맞혀 보세요.";
+
+/* ── 진행 방식 저장 ───────────────────────────────────────── */
+
+export const MEETING_FLOW_SAVE_CAPTION =
+  "저장하는 글에는 오행에서 고른 제안이 빠져요. 팀원 모두가 보는 칸이라서요.";
+export const MEETING_FLOW_SAVED_NOTE = "이 회의에 저장돼 있어요";
+export const MEETING_FLOW_SAVED = "회의에 저장했어요";
+export const MEETING_FLOW_CLEARED = "저장된 진행 방식을 지웠어요";
+export const MEETING_FLOW_NOT_CONFIRMED = "확정된 회의에만 저장할 수 있어요";
+export const MEETING_FLOW_SAVE_FAILED = "저장하지 못했어요. 잠시 뒤 다시 시도해 주세요";

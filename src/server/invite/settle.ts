@@ -119,6 +119,8 @@ export async function settleJoinRequest(
         status: input.approve ? "approved" : "rejected",
         resolvedAt: new Date(),
         approvedById: input.approverId,
+        // 거절된 요청 행은 감사 근거로 남지만, 생년월일은 기록이 아니라 개인정보다 — 거절과 함께 지운다.
+        ...(input.approve ? {} : { birthDate: null, birthTime: null }),
       },
     });
 

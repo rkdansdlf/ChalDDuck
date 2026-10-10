@@ -149,6 +149,22 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
                 인원수만 표기한다. */}
           </>
         )}
+
+        {/* 사주 놀이 — 등록하지 않아도 들어올 수 있다(밸런스 게임은 생년월일과 무관). 놀이 안에서 필요한 칸만 가린다. */}
+        <Rows className="mb-2">
+          <button
+            type="button"
+            onClick={() => router.push("/team/saju/play")}
+            className="flex min-h-12 w-full cursor-pointer items-center justify-between px-4 py-3 text-left hover:bg-fill"
+          >
+            <span className="flex items-center gap-2.5">
+              <Icon name="dices" size={17} className="text-txt-strong" />
+              <span className="text-[15px] font-semibold text-txt-strong">사주 놀이</span>
+              <span className="t-cap text-txt-muted">오늘의 궁합 · 맞히기 · 밸런스 게임</span>
+            </span>
+            <Icon name="chevron-right" size={16} className="text-txt-muted" />
+          </button>
+        </Rows>
       </Body>
 
       {pick && me ? <ChemistrySheet me={me} other={pick} onClose={() => setPick(null)} /> : null}

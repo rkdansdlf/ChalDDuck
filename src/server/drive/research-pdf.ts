@@ -22,7 +22,7 @@ import { PDFDocument, rgb, type PDFFont } from "pdf-lib";
  * ## 순수 함수로 둔 이유
  *
  * 저장소·DB·세션을 모른다. 하네스가 이 함수를 직접 불러 **파일 바이트를 읽어 보려고**다
- * (`scripts/harness/drive-save.mts`).
+ * (`scripts/harness/drive-save-pdf.mts`).
  */
 
 export type ResearchDocInput = {

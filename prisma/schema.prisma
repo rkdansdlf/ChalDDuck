@@ -52,6 +52,7 @@ model Team {
   createdAt      DateTime  @default(now())
 
   members         Member[]
+  sajuBalanceVotes SajuBalanceVote[]
   joinRequests    JoinRequest[]
   invites         TeamInvite[]
   submissionBoxes SubmissionBox[]
@@ -193,6 +194,10 @@ model Member {
   meetingResponses      MeetingResponse[]
   meetingNotes          MeetingNote[]
   meetingAttendances    MeetingAttendance[]    @relation("AttendanceMember")
+  sajuBalanceVotes      SajuBalanceVote[]
+  /// 시간표를 부탁한 기록(`ScheduleAsk`) — 보낸 쪽과 받은 쪽.
+  scheduleAsksSent      ScheduleAsk[]          @relation("ScheduleAskSender")
+  scheduleAsksReceived  ScheduleAsk[]          @relation("ScheduleAskTarget")
   attendancesChecked    MeetingAttendance[]    @relation("AttendanceCheckedBy")
   reportShareTokens     ReportShareToken[]
   roleDraws             RoleDraw[]
@@ -302,6 +307,11 @@ model JoinRequest {
   email        String?
   mbti         String?
   mbtiFromQuiz Boolean   @default(false)
+  /// 사주를 위해 온보딩에서 받은 생년월일(`YYYY-MM-DD`)·출생 시각(`HH:MM`). 선택이다.
+  /// 승인되면 `Member` 로 옮기고, **거절되면 지운다** — 요청 행은 감사 근거로 남지만 이 값은 기록이 아니라
+  /// 개인정보다. 서버가 `parseBirth` 로 걸러 낸 값만 들어온다.
+  birthDate    String?
+  birthTime    String?
   wantRole     String?
   vetoRole     String?
   /// 승인되면 이 토큰으로 세션이 만들어진다. 요청한 브라우저만 갖고 있다.
@@ -466,7 +476,14 @@ model MeetingProposal {
   /// 회의 장소 (오프라인 회의실 또는 온라인 URL).
   location        String?
   /// 회의 안건.
+  ///
+  /// **한 줄 자유 텍스트이고 회의록 제목·기여 기록 제목(`[회의 참석] …`)으로 그대로 쓰인다.** 여러 줄의
+  /// 진행 방식을 여기 넣으면 제목이 오염되므로, 진행 방식은 아래 `flow` 에 따로 둔다.
   agenda          String?
+  /// 이 회의에 저장해 둔 진행 방식(회의 케미). 여러 줄 글이고 **서버가 회의 길이로 만든다** — 클라이언트가
+  /// 보낸 글을 저장하지 않는다. 팀원 모두가 보므로 사주를 등록하지 않은 사람에게 팀 오행이 새지 않게,
+  /// 오행에서 고른 제안은 담지 않고 단계·시간만 담는다. 없으면 NULL.
+  flow            String?
   /// 회의 소요 시간(분). 기본 60분.
   durationMinutes Int      @default(60)
   createdAt    DateTime @default(now())
@@ -1369,4 +1386,44 @@ model IceBallot {
   @@id([roundId, seq, memberId])
   @@index([roundId, seq])
   @@index([roundId, memberId])
+}
+
+/// 사주 밸런스 게임의 한 표. 질문은 코드의 고정 목록(`lib/saju/balance.ts`)이고 DB 에는 답만 둔다.
+///
+/// 한 사람이 한 질문에 한 표다(`@@id`) — 다시 누르면 바뀐다. 결과는 **사람 수**로만 보여 주고 누가 무엇을
+/// 골랐는지는 내려가지 않는다. 팀에 남아 있는 사람의 표만 센다(나간 사람의 행은 남아도 집계에서 뺀다).
+model SajuBalanceVote {
+  teamId     String
+  memberId   String
+  questionId String
+  /// a | b
+  choice     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, questionId])
+  @@index([teamId, questionId])
+}
+
+/// 시간표 부탁 — 팀 겹쳐보기에서 아직 시간표를 안 낸 팀원에게 **받는 사람당 하루 한 번**.
+///
+/// 예전에는 이미 남긴 알림을 세어 하루 한 번을 막았다. 읽고 쓰는 사이가 벌어져 **동시에 두 번
+/// 누르면 둘 다 통과**했다(받는 사람이 같은 부탁을 두 번 받는다). 콕 찌르기(`Poke`)처럼 유일 키가
+/// 마지막 문을 지키고, 화면의 "오늘 보냄" 도 이 표를 읽는다 — 문과 표시가 같은 곳을 본다.
+model ScheduleAsk {
+  id        String   @id @default(cuid())
+  senderId  String
+  targetId  String
+  /// 한국 날짜("2026-10-10"). 서버가 어디서 돌든 같은 하루여야 한다.
+  sentOn    String
+  createdAt DateTime @default(now())
+
+  sender Member @relation("ScheduleAskSender", fields: [senderId], references: [id], onDelete: Cascade)
+  target Member @relation("ScheduleAskTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  /// 같은 사람이 같은 사람에게 같은 날 두 번 부탁할 수 없다.
+  @@unique([senderId, targetId, sentOn])
 }
