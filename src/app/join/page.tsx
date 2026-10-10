@@ -31,42 +31,60 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   // 되돌린 초대가 그 사실조차 숨기면 안 된다(resolve-target.ts 머리말).
   const requested = token ? "" : typeof code === "string" ? code.trim() : "";
 
-  // 링크 토큰이 있으면 그 길로만, 없으면 입력된 코드로 팀/초대를 판정한다.
-  const fromTarget = token
-    ? await resolveJoinTarget({ token })
-    : requested
-      ? (await resolveJoinTarget({ code: requested })) ??
-        (!requested.toUpperCase().startsWith("CD-")
-          ? await resolveJoinTarget({ code: `CD-${requested}` })
-          : null)
-      : null;
+  // 링크 토큰이 있으면 그 길로만 판정하며, 실패 시 코드 길로 떨어지지 않는다.
+  const fromLink = token ? await resolveJoinTarget({ token }) : null;
 
-  if (fromTarget?.invite && token) {
+  if (fromLink?.invite && token) {
     await rememberInviteToken(token);
   } else if (!token) {
     // 초대 토큰 링크 없이 직접 코드로 들어온 경우, 이전 팀의 초대 쿠키 잔류를 비운다.
     await forgetInviteToken();
   }
 
-  const invalidInvite = Boolean(token && !fromTarget);
+  const invalidInvite = Boolean(token && !fromLink);
 
-  const team = fromTarget
+  const team = fromLink
     ? {
-        id: fromTarget.teamId,
-        name: fromTarget.teamName,
-        course: fromTarget.teamCourse,
-        code: fromTarget.teamCode,
+        id: fromLink.teamId,
+        name: fromLink.teamName,
+        course: fromLink.teamCourse,
+        code: fromLink.teamCode,
         // 사람 수와 마감일을 초대가 세어 온다. 여기서 0 / null 로 박아 넣으면, 팀이
         // 비어 있지 않아도 "0명" 으로 보인다 — 코드 길과 같은 정보를 두 길이 다르게 보여 주는
         // 셈이라 화면이 스스로를 모순한다.
-        memberCount: fromTarget.memberCount,
-        dday: fromTarget.teamDday,
+        memberCount: fromLink.memberCount,
+        dday: fromLink.teamDday,
       }
-    : null;
+    : token
+      ? null
+      : requested
+        ? (await resolveJoinTarget({ code: requested })) ??
+          (!requested.toUpperCase().startsWith("CD-")
+            ? await resolveJoinTarget({ code: `CD-${requested}` })
+            : null)
+          ? await (async () => {
+              const res =
+                (await resolveJoinTarget({ code: requested })) ??
+                (!requested.toUpperCase().startsWith("CD-")
+                  ? await resolveJoinTarget({ code: `CD-${requested}` })
+                  : null);
+              return res
+                ? {
+                    id: res.teamId,
+                    name: res.teamName,
+                    course: res.teamCourse,
+                    code: res.teamCode,
+                    memberCount: res.memberCount,
+                    dday: res.teamDday,
+                  }
+                : null;
+            })()
+          : null
+        : null;
 
   // 기억 쿠키: 어느 입장이든 없을 때만 — 초대 링크나 코드로 들어왔으면 그 팀을 우선한다.
   let returning: { teamCode: string; name: string; teamName: string; course: string } | null = null;
-  if (!fromTarget && !requested) {
+  if (!fromLink && !token && !requested) {
     const saved = await getRemembered();
     if (saved) {
       const savedTeam = await getTeamByCode(saved.teamCode);
@@ -84,7 +102,7 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   return (
     <JoinScreen
       team={team}
-      requestedCode={requested}
+      requestedCode={token ? "" : requested}
       returning={returning}
       invalidInvite={invalidInvite}
     />

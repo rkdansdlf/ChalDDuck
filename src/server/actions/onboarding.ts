@@ -419,11 +419,12 @@ export async function joinTeam(
      * 정확하다(토큰은 사람마다 다르다). `token` 은 유일하므로 `findUnique` 가 그대로 된다.
      */
     const byToken = mine
-      ? await db.joinRequest.findFirst({
-          where: { token: mine, teamId: team.id },
-          select: { id: true, token: true, status: true },
+      ? await db.joinRequest.findUnique({
+          where: { token: mine },
+          select: { id: true, token: true, status: true, teamId: true },
         })
       : null;
+    const activeTokenRequest = byToken && byToken.teamId === team.id ? byToken : null;
     /**
      * 토큰이 없거나(첫 신청) 그 토큰의 행이 없으면, **이 이름으로 처리 중인 요청이 있는지**를
      * 본다. 있으면 남의 것이므로 건드리지 않고 `taken` 이다.
@@ -432,7 +433,7 @@ export async function joinTeam(
      * 것인지 내 것인지 이름만으로는 못 가른다. 지금은 이름이 유일해서 이 판정이 맞다.
      */
     const found =
-      byToken ??
+      activeTokenRequest ??
       (await db.joinRequest.findFirst({
         where: { teamId: team.id, name },
         select: { id: true, token: true, status: true },
