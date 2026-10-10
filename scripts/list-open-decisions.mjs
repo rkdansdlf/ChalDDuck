@@ -59,8 +59,17 @@
  *    | 드라이브 2GB 한도 | **제출함 버전만 합산, 근거 파일 무제한** | 닫음 (`server/drive/usage.ts`, `contrib-add-screen.tsx`) |
  *    | AI 발표 지원 예상 질문 | **대본 분석 기반 추출** | 닫음 (`server/ai/tools.ts`, `present-screen.tsx`) |
  *    | AI 리서처 결과 및 출처 | **출처 없는 결과 제외 + 메타데이터/공유/인용** | 닫음 (`tools/researcher-screen.tsx`, `smoke.mts`) |
+ *    | 성향 체크 정확도 문구 | **"진단"이라 부르지 않는다 — 검증 결과 없음** | 닫음 (`onboarding/quiz-screen.tsx`, `smoke.mts`) |
+ *    | AI 서기 입력 방식 | **텍스트 붙여넣기만 — 음성 녹음 인식 없음** | 닫음 (`tools/clerk-screen.tsx`, `smoke.mts`) |
+ *    | 라이어 제시어 목록 | **저장소가 정한 기본 팩 + 하네스 검증** | 닫음 (`data/liar-prompts.ts`, `smoke.mts`) |
+ *    | 동명이인 식별 표기 | **이름 유일 제약 유지 · 구분용 닉네임 권장** | 닫음 (`app/onboarding/name/page.tsx`, `smoke.mts`) |
+ *    | 사주 계산 기준시각(23시) | **KST · 23시 전환 · 경도 보정 없음** | 닫음 (`features/saju/my-saju.tsx`, `smoke.mts`) |
+ *    | 팀 사주 집계 비중 | **등록 팀원 6글자 균등 · 미등록 인원수만 노출** | 닫음 (`features/saju/team-saju-screen.tsx`, `smoke.mts`) |
+ *    | 직접 입력 시간 사유 | **본인만 상세 · 타인/회의 후보 완전 은닉** | 닫음 (`features/schedule/my-time-screen.tsx`, `smoke.mts`) |
+ *    | 쿠션어 말투 프리셋 | **3종 유지(soft 기본) · MBTI 비연동** | 닫음 (`features/tools/cushion-screen.tsx`, `smoke.mts`) |
  *
  *    남의 상태를 바꿀 수 있는 주요 권한과 기여도/생성자/DM/스토리지/AI 도구 규칙을 모두 정돈하고 하네스로 고정했다.
+ *    문구·입력 범위·게임 데이터·사주·일정·쿠션어에 남아 있던 미결 5건도 2026-10-10 에 모두 확정해 닫았다.
  * 3. **재입장 때 사람을 어떻게 구분하는가 — 여기는 설명이 사실과 달랐다**(2026-09-28 정정).
  *
  *    예전 이 목록은 "동명이인이면 **기록이 하나가 된다**" 고 적었다. **틀렸다.** 기록은
@@ -74,9 +83,8 @@
  *      지웠다**. 막는 자리를 승인으로 옮겼고(`invite/settle.ts` 의 `"name-taken"`), 신청인에게는
  *      "같은 이름이 이미 있습니다 — 다른 이름으로 신청해 주세요" 라고 말한다.
  *
- *    남은 질문은 이것이다 — **같은 이름의 두 사람을 서로 다른 사람으로 구분할 길을 열 것인가.**
- *    열면 유일 제약을 떼야 하고(`Member`·`JoinRequest`), 명단·DM·기여 리포트·알림 어디에나 같은
- *    이름이 두 줄 생긴다. 어느 화면에서 어떻게 구별할지가 정해지기 전엔 손대지 않는다.
+ *    남은 질문이었던 **동명이인 구분**은 이름 유일 제약을 유지하되, 학번 등 개인정보 대신
+ *    구분용 닉네임/이름(예: 홍길동2, 길동_디자인)을 사용하도록 화면 가이드로 확정해 닫았다 (2026-10-10).
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";

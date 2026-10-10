@@ -138,6 +138,11 @@ model Member {
   mbti            String?
   /// 30초 컷으로 얻은 값인지. 화면 문구가 달라진다.
   mbtiFromQuiz    Boolean   @default(false)
+  /// 사주 계산의 원본. `YYYY-MM-DD` 문자열 — 시간대가 낀 `Date` 로 넣으면 서버 시간대에 따라 하루가 밀린다.
+  /// **본인만 읽는다.** 팀 화면에는 여기서 계산한 일간·오행 분포만 나간다. 역할 배정에는 쓰지 않는다.
+  birthDate       String?
+  /// `HH:MM`. 모르면 NULL — 그러면 시주를 빼고 여섯 글자로 계산한다.
+  birthTime       String?
   /// 팀을 만든 사람. 새 기기 재입장 요청을 승인한다. 팀마다 한 명이다.
   isLeader        Boolean   @default(false)
   /// 재입장 코드의 해시. 첫 입장 때 한 번만 보여 주고 여기에는 해시만 남는다.
@@ -304,7 +309,12 @@ model JoinRequest {
   vetoRole     String?
   /// 승인되면 이 토큰으로 세션이 만들어진다. 요청한 브라우저만 갖고 있다.
   token        String    @unique
-  /// pending | approved | rejected
+  /// pending | approved | claimed | rejected
+  ///
+  /// `claimed` 는 **승인 뒤 팀원을 만드는 중**이라는 표시다. 동시 폴링이 같은 요청으로
+  /// 팀원을 둘 만들지 않도록, `checkJoinApproval` 이 `approved` 를 조건부로 이 값으로
+  /// 선점한다. **선점과 생성을 한 트랜잭션에 두었으므로 이 값이 남아 있는 채로 끝나지
+  /// 않는다** — 실패하면 함께 되돌아가고, 성공하면 요청 행 자체가 지워진다.
   status       String    @default("pending")
   label        String?
   createdAt    DateTime  @default(now())

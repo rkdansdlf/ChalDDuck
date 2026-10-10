@@ -131,6 +131,12 @@ export const session = {
   hasCreatorCookie() {
     return jar.has(CREATOR_COOKIE);
   },
+  setCookie(name, value) {
+    jar.set(name, String(value));
+  },
+  getCookie(name) {
+    return jar.get(name);
+  },
   revalidated,
 };
 

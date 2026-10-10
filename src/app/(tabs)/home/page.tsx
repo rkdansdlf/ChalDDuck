@@ -12,6 +12,7 @@ import {
   getRoleNegotiation,
   getRoster,
   getTasks,
+  getTeamSaju,
 } from "@/data/api";
 import { HomeScreen } from "@/features/home/home-screen";
 import { todayInSeoul } from "@/features/schedule/week";
@@ -28,7 +29,7 @@ export default async function HomePage() {
   // 마감 임박 추천용 — **역할과 마감 시각만** 읽는다(파일·버전 전체는 필요 없다).
   const boxDeadlines = getBoxDeadlines(team.id).catch(() => []);
 
-  const [roles, roster, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread] =
+  const [roles, roster, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread, saju] =
     await Promise.all([
       getRoles(),
       getRoster(team.id),
@@ -39,6 +40,8 @@ export default async function HomePage() {
       getJoinRequests(team.id),
       getTeamCheck(team.id),
       getUnreadNotificationCount(),
+      // 오늘의 팀플 흐름 — 쿼리 한 번. 실패해도 홈 전체가 깨지지 않게 `null` 로 폴백한다.
+      getTeamSaju().catch(() => null),
     ]);
 
   return (
@@ -65,6 +68,7 @@ export default async function HomePage() {
       today={todayInSeoul()}
       rejoinRequests={rejoinRequests.length + joinRequests.rows.length}
       unreadNotifications={unread}
+      saju={saju}
       awaitingMyConfirm={
         teamCheck.filter((r) => !r.isMine && r.state === "pending" && !r.iConfirmed).length
       }

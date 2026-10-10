@@ -42,3 +42,8 @@ export async function rememberInviteToken(rawToken: string): Promise<void> {
 export async function readInviteToken(): Promise<string | null> {
   return (await cookies()).get(INVITE_COOKIE)?.value ?? null;
 }
+
+/** 소비되었거나 불일치하는 초대 토큰 쿠키를 삭제한다. */
+export async function forgetInviteToken(): Promise<void> {
+  (await cookies()).delete(INVITE_COOKIE);
+}

@@ -596,6 +596,13 @@ export type ChatMessage = {
   attachment?: ChatAttachment;
   /** 드라이브에서 공유한 파일(단톡방만). **바이트를 복사하지 않고 그 버전만 가리킨다.** */
   driveFile?: SharedDriveFile;
+  /**
+   * 이 세션 중에 새로 추가된 말인지.
+   *
+   * 최초 렌더링 시점에 불러온 과거 메시지 및 상단 스크롤로 읽어온 과거 대화에는 붙지 않으며(false/undefined),
+   * 새로 전송하거나 실시간으로 도착한 메시지만 짧고 부드러운 트랜지션(180ms)을 적용한다.
+   */
+  isNew?: boolean;
 };
 
 export type ChatAttachment = {

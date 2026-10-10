@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppFrame, Body, Btn, Chip, Dock, Icon, Input, Note, Panel, TopInset } from "@/components/ui";
+import { AppFrame, Body, Btn, Chip, Dock, Icon, Input, Panel, TopInset } from "@/components/ui";
 import type { Team } from "@/lib/types";
 import { setTeamCode, useOnboarding } from "./onboarding-state";
 import { EmailLoginSheet } from "./email-login-sheet";
@@ -32,21 +32,63 @@ export function JoinScreen({
   team,
   requestedCode,
   returning,
+  invalidInvite = false,
 }: {
   team: Team | null;
   requestedCode: string;
   returning: ReturningInfo | null;
+  invalidInvite?: boolean;
 }) {
   const router = useRouter();
-  const [code, setCode] = useState(requestedCode);
+  const initialBody = requestedCode
+    ? requestedCode.toUpperCase().replace(/\s+/g, "").replace(/^CD-?/i, "").slice(0, 6)
+    : "";
+  const [codeBody, setCodeBody] = useState(initialBody);
+  const [isSearching, setIsSearching] = useState(false);
+  const [prevRequested, setPrevRequested] = useState(requestedCode);
+  const [errorText, setErrorText] = useState<string | null>(
+    invalidInvite
+      ? "유효하지 않거나 만료된 초대 링크입니다. 초대 코드를 직접 입력해 주세요."
+      : requestedCode && !team
+        ? `${requestedCode.toUpperCase().startsWith("CD-") ? requestedCode.toUpperCase() : `CD-${requestedCode.toUpperCase()}`} 코드의 팀을 찾을 수 없습니다. 코드를 다시 확인해 주세요.`
+        : null,
+  );
   /** 기억 쿠키 바로가기를 보여 줄지. 사용자가 "다른 팀 · 다른 사람으로 들어가기"를 누르면 false. */
   const [showReturning, setShowReturning] = useState(!!returning);
-  /** 복귀 모드에서 "다른 방법으로 시작하기" 아코디언 열림 여부 */
+  /** "다른 방법으로 시작하기" 아코디언 열림 여부 */
   const [showOtherMethods, setShowOtherMethods] = useState(false);
   /** 이메일 본인 확인 시트 열림 여부 */
   const [emailSheetOpen, setEmailSheetOpen] = useState(false);
 
   const isReturningMode = showReturning && Boolean(returning);
+
+  if (prevRequested !== requestedCode) {
+    setPrevRequested(requestedCode);
+    if (requestedCode && !team) {
+      const formatted = requestedCode.toUpperCase().startsWith("CD-")
+        ? requestedCode.toUpperCase()
+        : `CD-${requestedCode.toUpperCase()}`;
+      setErrorText(`${formatted} 코드의 팀을 찾을 수 없습니다. 코드를 다시 확인해 주세요.`);
+      setIsSearching(false);
+    }
+  }
+
+  const handleCodeChange = (raw: string) => {
+    const clean = raw
+      .toUpperCase()
+      .replace(/\s+/g, "")
+      .replace(/^CD-?/i, "")
+      .slice(0, 6);
+    setCodeBody(clean);
+    if (errorText) setErrorText(null);
+  };
+
+  const handleSearch = () => {
+    const clean = codeBody.trim().toUpperCase();
+    if (clean.length !== 6 || isSearching) return;
+    setIsSearching(true);
+    router.push(`/join?code=${encodeURIComponent(`CD-${clean}`)}`);
+  };
 
   // 어느 팀에 들어가는 중인지 기억해 둔다. 이후 화면들이 이 코드로 기록을 잇는다.
   useEffect(() => {
@@ -213,57 +255,105 @@ export function JoinScreen({
         ) : (
           <>
             {/* 일반 모드 (초대 링크 또는 코드 입력 화면) */}
-            <div className="flex flex-1 flex-col items-center justify-center gap-[18px] pt-5 pb-2 text-center">
-              <Image
-                src="/assets/logo-mochi.png"
-                alt=""
-                width={124}
-                height={124}
-                priority
-                className="block size-[124px] object-contain"
-              />
-              <div>
-                <h1 className="t-display m-0 text-ink-900">찰떡</h1>
-                <p className="text-pretty-keep mt-2 mb-0 font-medium text-[15px] leading-[1.6] text-ink-600">
-                  팀플을 시작하고, 함께 하고, 제출까지 준비하는 곳
-                </p>
-              </div>
-            </div>
-
             {team ? (
-              <Panel s="cream" pad={18}>
-                <div className="t-cap-strong mb-1 text-txt-muted">초대받은 팀</div>
-                <div className="t-h2 keep-all text-txt-strong">{team.name}</div>
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  <Chip icon="book-open">{team.course}</Chip>
-                  <Chip icon="users-round">{team.memberCount}명</Chip>
-                  {team.dday ? (
-                    <Chip tone="y" icon="calendar-clock">
-                      {team.dday}
-                    </Chip>
-                  ) : null}
+              <>
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 pt-3 pb-2 text-center">
+                  <Image
+                    src="/assets/logo-mochi.png"
+                    alt="찰떡 로고"
+                    width={64}
+                    height={64}
+                    priority
+                    className="block size-[64px] object-contain"
+                  />
+                  <div>
+                    <div className="t-cap-strong tracking-wide text-ink-500">찰떡 · 팀플을 더 쉽게</div>
+                    <h1 className="t-h1 m-0 mt-0.5 font-extrabold tracking-tight text-ink-900">
+                      초대받은 팀을 찾았어요
+                    </h1>
+                    <p className="text-pretty-keep mt-1 mb-0 text-[14px] text-ink-600">
+                      팀 정보를 확인하고 이름만 적어 참여해 주세요.
+                    </p>
+                  </div>
                 </div>
-              </Panel>
+
+                <Panel s="cream" pad={18}>
+                  <div className="t-cap-strong mb-1 text-txt-muted">초대받은 팀</div>
+                  <div className="t-h2 keep-all text-txt-strong">{team.name}</div>
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    <Chip icon="book-open">{team.course}</Chip>
+                    <Chip icon="users-round">{team.memberCount}명</Chip>
+                    {team.dday ? (
+                      <Chip tone="y" icon="calendar-clock">
+                        {team.dday}
+                      </Chip>
+                    ) : null}
+                  </div>
+                </Panel>
+              </>
             ) : (
-              <Panel s="cream" pad={18}>
-                <div className="t-label mb-2 text-txt-strong">초대 코드</div>
-                <Input
-                  value={code}
-                  onChange={setCode}
-                  placeholder="예: CD-7F2Q"
-                  mono
-                  aria-label="초대 코드"
-                />
-                {requestedCode ? (
-                  <Note tone="err" icon="circle-alert" className="mt-3">
-                    <b>{requestedCode}</b> 코드의 팀을 찾을 수 없습니다. 코드를 다시 확인해 주세요.
-                  </Note>
-                ) : (
-                  <Note tone="info" icon="info" className="mt-3">
-                    이미 팀에 들어가 있었다면, 같은 초대 코드와 이름으로 다시 입력하면 됩니다.
-                  </Note>
-                )}
-              </Panel>
+              <>
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 pt-3 pb-2 text-center">
+                  <Image
+                    src="/assets/logo-mochi.png"
+                    alt="찰떡 로고"
+                    width={64}
+                    height={64}
+                    priority
+                    className="block size-[64px] object-contain"
+                  />
+                  <div>
+                    <div className="t-cap-strong tracking-wide text-ink-500">찰떡 · 팀플을 더 쉽게</div>
+                    <h1 className="t-h1 m-0 mt-0.5 font-extrabold tracking-tight text-ink-900">
+                      초대 코드로 팀 찾기
+                    </h1>
+                    <p className="text-pretty-keep mt-1 mb-0 text-[14px] text-ink-600">
+                      팀장에게 받은 초대 코드를 입력해 주세요.
+                    </p>
+                  </div>
+                </div>
+
+                <Panel s="cream" pad={18}>
+                  <div className="t-label mb-2 text-txt-strong">초대 코드</div>
+                  <div className="relative flex items-center">
+                    <span className="pointer-events-none absolute left-3.5 z-10 select-none font-mono text-[16px] font-bold text-txt-muted">
+                      CD-
+                    </span>
+                    <Input
+                      value={codeBody}
+                      onChange={handleCodeChange}
+                      placeholder="AB7F2Q"
+                      mono
+                      maxLength={6}
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      error={Boolean(errorText)}
+                      disabled={isSearching}
+                      className="pl-[48px] pr-12 font-mono text-[16.5px] font-bold tracking-wider uppercase"
+                      aria-label="초대 코드 6자리"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && codeBody.length === 6 && !isSearching) {
+                          handleSearch();
+                        }
+                      }}
+                    />
+                    <span className="pointer-events-none absolute right-3.5 select-none font-mono text-[12px] font-medium text-txt-muted">
+                      {codeBody.length}/6
+                    </span>
+                  </div>
+                  {errorText ? (
+                    <div className="animate-slide-down mt-2.5 flex items-start gap-1.5 text-err">
+                      <Icon name="circle-alert" size={15} className="mt-0.5 flex-none" />
+                      <span className="t-cap-strong keep-all">{errorText}</span>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-[12.5px] font-medium text-txt-muted">
+                      영문·숫자 6자리 · 붙여넣기 가능
+                    </div>
+                  )}
+                </Panel>
+              </>
             )}
           </>
         )}
@@ -279,44 +369,99 @@ export function JoinScreen({
             <Btn
               full
               size="lg"
-              icon="arrow-right"
-              disabled={!code.trim()}
-              onClick={() => router.push(`/join?code=${encodeURIComponent(code.trim())}`)}
+              icon={isSearching ? undefined : "arrow-right"}
+              disabled={codeBody.length !== 6 || isSearching}
+              onClick={handleSearch}
             >
-              초대 코드로 팀 찾기
+              {isSearching ? "팀 찾는 중…" : "팀 찾기"}
             </Btn>
           )}
           <p className="t-cap keep-all m-0 text-center text-txt-muted">
-            가입이나 로그인 없이 바로 들어갑니다
+            로그인 없이 시작하고, 팀장 승인 후 참여해요
           </p>
 
-          <div className="flex flex-col items-center gap-1.5 pt-1">
-            {returning ? (
+          {team ? (
+            <div className="flex flex-col items-center gap-1.5 pt-1">
               <button
                 type="button"
-                onClick={() => setShowReturning(true)}
-                className="t-cap-strong cursor-pointer border-none bg-transparent text-center text-link"
+                onClick={() => router.push("/join")}
+                className="t-cap cursor-pointer border-none bg-transparent text-center text-txt-muted hover:text-txt"
               >
-                ↩ {returning.name}님({returning.teamName})으로 다시 돌아가기
+                다른 코드로 팀 찾기
               </button>
-            ) : null}
+            </div>
+          ) : (
+            <div className="mt-1 flex w-full flex-col items-center">
+              <button
+                type="button"
+                onClick={() => setShowOtherMethods((prev) => !prev)}
+                aria-expanded={showOtherMethods}
+                className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-txt-muted transition-colors hover:bg-cr-100 hover:text-txt cursor-pointer border-none bg-transparent font-medium text-[13px]"
+              >
+                <span>다른 방법으로 시작하기</span>
+                <Icon name={showOtherMethods ? "chevron-up" : "chevron-down"} size={15} />
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setEmailSheetOpen(true)}
-              className="t-cap-strong cursor-pointer border-none bg-transparent text-center text-link"
-            >
-              ✉️ 이메일로 본인 확인하기
-            </button>
+              {showOtherMethods && (
+                <div className="mt-2 w-full overflow-hidden rounded-2xl border border-line bg-card shadow-xs transition-all animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="divide-y divide-line/60">
+                    {returning ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowReturning(true)}
+                        className="group flex w-full items-start gap-3 p-3 text-left cursor-pointer border-none bg-transparent transition-colors hover:bg-cr-50 active:bg-cr-100"
+                      >
+                        <div className="mt-0.5 grid size-8 flex-none place-items-center rounded-lg bg-cr-100 text-txt-strong">
+                          <Icon name="arrow-left-right" size={16} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13.5px] font-bold text-txt-strong">
+                            {returning.name}님({returning.teamName})으로 돌아가기
+                          </div>
+                          <div className="text-[12px] text-txt-muted">이전에 접속했던 팀으로 계속해요</div>
+                        </div>
+                        <Icon name="chevron-right" size={15} className="mt-1 text-txt-light" />
+                      </button>
+                    ) : null}
 
-            <button
-              type="button"
-              onClick={() => router.push("/join/new-team")}
-              className="t-cap cursor-pointer border-none bg-transparent text-center text-txt-muted"
-            >
-              아직 팀이 없다면 — 새 팀 만들기
-            </button>
-          </div>
+                    <button
+                      type="button"
+                      onClick={() => setEmailSheetOpen(true)}
+                      className="group flex w-full items-start gap-3 p-3 text-left cursor-pointer border-none bg-transparent transition-colors hover:bg-cr-50 active:bg-cr-100"
+                    >
+                      <div className="mt-0.5 grid size-8 flex-none place-items-center rounded-lg bg-cr-100 text-txt-strong">
+                        <Icon name="mail" size={16} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13.5px] font-bold text-txt-strong">
+                          이메일로 본인 확인하기
+                        </div>
+                        <div className="text-[12px] text-txt-muted">이전에 등록한 이메일로 팀을 찾아요</div>
+                      </div>
+                      <Icon name="chevron-right" size={15} className="mt-1 text-txt-light" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => router.push("/join/new-team")}
+                      className="group flex w-full items-start gap-3 p-3 text-left cursor-pointer border-none bg-transparent transition-colors hover:bg-cr-50 active:bg-cr-100"
+                    >
+                      <div className="mt-0.5 grid size-8 flex-none place-items-center rounded-lg bg-cr-100 text-txt-strong">
+                        <Icon name="plus" size={16} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13.5px] font-bold text-txt-strong">
+                          새 팀 만들기
+                        </div>
+                        <div className="text-[12px] text-txt-muted">처음부터 새로운 팀을 시작해요</div>
+                      </div>
+                      <Icon name="chevron-right" size={15} className="mt-1 text-txt-light" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </Dock>
       )}
 

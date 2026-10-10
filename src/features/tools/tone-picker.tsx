@@ -42,7 +42,7 @@ export function TonePicker({
               "min-h-11 flex-none cursor-pointer whitespace-nowrap rounded-xl px-3.5 font-bold text-[13.5px] leading-none transition-all duration-150 select-none active:scale-95",
               on
                 ? "border border-transparent bg-action text-on-action shadow-2xs"
-                : "border border-line bg-card text-txt hover:bg-cr-50",
+                : "border border-line/60 bg-card/60 text-txt-muted hover:border-line hover:bg-card hover:text-txt",
             )}
           >
             {item.name}

@@ -190,7 +190,14 @@ export function PokeScreen({
             v="outline"
             icon="message-square-heart"
             onClick={() => {
-              handOffToCushion(polishable);
+              handOffToCushion(polishable, {
+                source: "poke",
+                returnTo: "/home/tasks",
+                context: {
+                  assignee: selectedTask?.assignee ?? undefined,
+                  taskTitle: selectedTask?.title,
+                },
+              });
               router.push("/tools/cushion");
             }}
           >

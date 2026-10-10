@@ -22,18 +22,28 @@ const MAX_MESSAGE = 2000;
  */
 export function Composer({
   placeholder,
+  initialText = "",
   onSend,
   onAttach,
   onCushion,
 }: {
   placeholder: string;
+  /** 쿠션 번역기 등에서 되가져온 텍스트가 있을 때 초기값으로 채운다. */
+  initialText?: string;
   onSend: (text: string) => void;
   /** 단톡방에만 있는 첨부·쿠션 번역기 버튼. 주지 않으면 그리지 않는다. */
   onAttach?: () => void;
   /** 입력 중이던 글을 넘긴다 — 쿠션 번역기가 그 글을 다듬는다. */
   onCushion?: (draft: string) => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
+  const [prevInitialText, setPrevInitialText] = useState(initialText);
+
+  // 외부에서 initialText 가 새로 들어오면 렌더링 중에 즉시 상태를 동기화한다.
+  if (initialText !== prevInitialText) {
+    setPrevInitialText(initialText);
+    setText(initialText);
+  }
 
   const submit = () => {
     const trimmed = text.trim();
@@ -42,13 +52,15 @@ export function Composer({
     setText("");
   };
 
+  const hasDraft = text.trim().length > 0;
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
-      className="flex flex-none items-center gap-2 border-t border-line px-3.5 py-2.5 backdrop-blur-md"
+      className="relative flex flex-none items-center gap-2 border-t border-line px-3.5 py-2.5 backdrop-blur-md"
       style={{
         background: "rgba(255,253,249,.96)",
         paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
@@ -87,15 +99,29 @@ export function Composer({
       />
 
       {onCushion ? (
-        <button
-          type="button"
-          onClick={() => onCushion(text)}
-          aria-label="쿠션 번역기로 다듬기"
-          title="쿠션 번역기로 다듬기"
-          className="grid size-11 flex-none cursor-pointer place-items-center rounded-full border-none bg-yellow-200 text-yellow-700 select-none transition-all duration-150 hover:bg-yellow-300 hover:rotate-12 active:scale-90"
-        >
-          <Icon name="wand-sparkles" size={18} />
-        </button>
+        <div className="relative flex-none">
+          {/* 글자가 입력되었을 때 쿠션어로 다듬기를 권유하는 넛지 툴팁 */}
+          {hasDraft && (
+            <span className="pointer-events-none absolute -top-7 right-0 flex items-center gap-1 rounded-full bg-yellow-400 px-2 py-0.5 text-[10.5px] font-bold text-yellow-950 shadow-xs animate-bounce select-none whitespace-nowrap">
+              <span>✨</span>
+              <span>말투 다듬기</span>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => onCushion(text)}
+            aria-label="쿠션 번역기로 다듬기"
+            title={hasDraft ? "작성 중인 말을 쿠션어로 다듬기" : "쿠션 번역기 열기"}
+            className={cn(
+              "grid size-11 cursor-pointer place-items-center rounded-full border-none select-none transition-all duration-200 active:scale-90",
+              hasDraft
+                ? "bg-yellow-300 text-yellow-950 shadow-xs ring-2 ring-yellow-400/50 hover:bg-yellow-400 hover:rotate-12"
+                : "bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
+            )}
+          >
+            <Icon name="wand-sparkles" size={18} className={hasDraft ? "animate-wiggle" : undefined} />
+          </button>
+        </div>
       ) : null}
 
       <button

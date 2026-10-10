@@ -338,11 +338,12 @@ export function RosterScreen({
 
         {/* 상단 히어로 액션 카드 (내 차례 / 협의 진행 배너) */}
         {heroRole ? (
-          <div className="mb-5 rounded-[20px] border border-yellow-200/90 bg-yellow-50/80 p-4 shadow-2xs">
+          <div className="heroCard mb-5 rounded-[20px] border border-yellow-200/90 bg-yellow-50/80 p-4 shadow-2xs">
             <div className="mb-1.5 flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 rounded-full bg-yellow-200/90 px-2 py-0.5 text-[11.5px] font-bold text-yellow-900">
-                <Icon name="clock" size={12} strokeWidth={2.5} />
-                내 차례
+              <span className="relative inline-flex items-center gap-1 rounded-full bg-yellow-200/90 px-2 py-0.5 text-[11.5px] font-bold text-yellow-900">
+                <span className="heroPulse absolute inset-0 rounded-full text-yellow-600 pointer-events-none" />
+                <Icon name="clock" size={12} strokeWidth={2.5} className="relative z-1" />
+                <span className="relative z-1">내 차례</span>
               </span>
             </div>
 
@@ -640,6 +641,19 @@ export function RosterScreen({
               ) : null}
               <Icon name="chevron-right" size={16} className="text-txt-muted" />
             </div>
+          </button>
+
+          {/* 우리 팀 사주 — 역할 배정과는 관계없다. 이 화면(07)에는 데이터를 올리지 않고 문만 둔다. */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/saju")}
+            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon name="sparkles" size={17} className="text-txt-strong" />
+              <span className="font-semibold text-[15px] text-txt-strong">우리 팀 사주</span>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted" />
           </button>
 
           {/* 아이스브레이킹 */}

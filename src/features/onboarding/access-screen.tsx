@@ -17,7 +17,7 @@ import {
   Sheet,
   Toast,
 } from "@/components/ui";
-import type { JoinRequestRow, MyDevice, RejoinRequest } from "@/data/api";
+import type { JoinRequestRow, MyDevice, MySaju, RejoinRequest } from "@/data/api";
 import type { Member } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
 import {
@@ -34,6 +34,7 @@ import {
   transferLeadership,
 } from "@/server/actions/team";
 import { updateMemberEmail } from "@/server/actions/email-auth";
+import { MySajuCard } from "@/features/saju/my-saju";
 import { TeamMbti } from "@/features/team/team-mbti";
 import { resetOnboarding } from "./onboarding-state";
 
@@ -55,6 +56,7 @@ export function AccessScreen({
   others,
   members,
   myEmail,
+  mySaju,
 }: {
   requests: RejoinRequest[];
   /** 팀에 처음 들어오려는 요청. 팀장이 아니면 빈 목록. */
@@ -81,6 +83,8 @@ export function AccessScreen({
    */
   members: Member[];
   myEmail?: string | null;
+  /** 내가 등록한 생년월일(시)과 계산 결과. 등록하지 않았으면 `null`. */
+  mySaju?: MySaju | null;
 }) {
   const router = useRouter();
   const [fresh, setFresh] = useState<string | null>(null);
@@ -358,6 +362,9 @@ export function AccessScreen({
             07 역할 조율에 두지 않는 이유는 그쪽 화면 주석에 적어 두었다. */}
         <TeamMbti members={members} />
 
+        {/* 사주도 MBTI 와 같다 — 내 계정의 값이고 역할 배정에는 쓰이지 않는다. */}
+        <MySajuCard saju={mySaju ?? null} />
+
         <SecTitle note="잃어버렸다면 새로 받으세요">재입장 코드</SecTitle>
         {fresh ? (
           <>
@@ -628,7 +635,10 @@ export function AccessScreen({
                 "act",
                 async () => {
                   const res = await updateMemberEmail(emailInput);
-                  if (!res.ok) throw new Error("올바른 이메일 주소를 입력해 주세요.");
+                  if (!res.ok) {
+                    if (res.reason === "email-in-use") throw new Error("팀 내 다른 팀원이 이미 등록한 이메일입니다.");
+                    throw new Error("올바른 이메일 주소를 입력해 주세요.");
+                  }
                   setEmailValue(emailInput.trim().toLowerCase());
                   setSheet(null);
                   router.refresh();

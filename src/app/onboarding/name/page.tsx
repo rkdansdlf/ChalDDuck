@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppBar, AppFrame, Body, Btn, Dock, Field, Icon, Input, Note, Progress, Undecided } from "@/components/ui";
+import { AppBar, AppFrame, Body, Btn, Dock, Field, Icon, Input, Note, Progress } from "@/components/ui";
 import { findMemberByName, getTeamTeammatePreview } from "@/server/actions/onboarding";
 import { setName, useOnboarding } from "@/features/onboarding/onboarding-state";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
@@ -101,8 +101,8 @@ export default function NamePage() {
 
         {existing ? (
           <Note tone="warn" icon="user-search" title="이미 쓰이고 있는 이름입니다" className="mt-3">
-            &ldquo;{existing.name}&rdquo;님 기록이 이미 있습니다. 본인이 맞으면 다음 화면에서{" "}
-            <b>재입장 코드</b>나 <b>팀장 승인</b>으로 들어오고, 아니면 다른 이름을 적어 주세요.
+            같은 이름을 사용하는 팀원이 있어요. 본인이라면 <b>재입장 코드</b>나 <b>팀장 승인</b>으로 들어오고,
+            다른 사람이라면 구분할 수 있는 이름을 사용해 주세요. (예: {existing.name}2, {existing.name}_디자인)
           </Note>
         ) : null}
 
@@ -136,11 +136,9 @@ export default function NamePage() {
           <p className="t-note mt-2.5 mb-0 text-txt-muted">실명이 아니어도 괜찮아요.</p>
         </div>
 
-        <Undecided>
-          동명이인이 있을 때 구분하는 더 나은 방법(예: 학번 뒷자리)이 있는지는 팀이 확인해야
-          합니다. **같은 이름의 두 사람이 팀에 함께 있을 수는 없다** — `Member` 의 이름 유일 제약이
-          두 번째를 막고, 막는 자리를 승인으로 옮겨 신청인에게 그대로 말해 준다.
-        </Undecided>
+        {/* 정책 확정: 같은 이름의 두 사람이 팀에 함께 있을 수는 없다 — Member 의 이름 유일 제약이
+            두 번째를 막고 재입장으로 안내한다. 학번 대신 닉네임이나 구분용 이름(예: 홍길동2, 길동_디자인)
+            사용을 안내하여 개인정보 노출 없이 식별을 돕는다. */}
       </Body>
 
       <Dock>

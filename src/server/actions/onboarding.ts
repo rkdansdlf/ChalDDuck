@@ -8,7 +8,7 @@ import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
 import { leaderIds, notify } from "@/server/notify/create";
-import { readInviteToken } from "@/server/invite/cookie";
+import { forgetInviteToken, readInviteToken } from "@/server/invite/cookie";
 import { createTeamInvite, findInviteByToken } from "@/server/invite/service";
 import { takeClientAttempt, takePushSlot, takeTeamCreation } from "@/server/rate-limit/join-throttle";
 import {
@@ -108,8 +108,11 @@ export async function findMemberByName(
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return null;
 
-  const member = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name: wanted } },
+  // 이름으로 **사람을 집는** 조회가 아니라 "이 이름이 이미 쓰이는가" 를 묻는 조회다.
+  // 같은 이름이 둘일 수 있게 되면 이 안내는 "한 명 이상 있다" 로 남고, 가입을 막는 자리는
+  // 아래 `joinTeam` 의 게이트다(동명이인 작업 2단계에서 연다).
+  const member = await db.member.findFirst({
+    where: { teamId: team.id, name: wanted },
     select: { name: true },
   });
   return member;
@@ -272,8 +275,11 @@ export async function joinTeam(
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
   if (!team) return { status: "invalid", reason: "no-code" };
 
-  const taken = await db.member.findUnique({
-    where: { teamId_name: { teamId: team.id, name } },
+  // **이 게이트가 동명이인 작업 2단계에서 열린다.** 지금은 같은 이름이 한 팀에 둘일 수
+  // 없으므로(스키마의 `@@unique([teamId, name])`) 존재만 확인해 재입장으로 안내한다 —
+  // 이름이 둘이 될 수 있게 되면 여기서 "새 사람으로 / 기존 사람으로" 를 고르게 해야 한다.
+  const taken = await db.member.findFirst({
+    where: { teamId: team.id, name },
     select: { id: true },
   });
   // 던지지 않고 돌려준다 — 이건 사고가 아니라 **예상되는 결말**이고, 화면은 여기서
@@ -377,7 +383,13 @@ export async function joinTeam(
     // 유효성은 **지금 다시 확인한다.** 링크를 열 때 유효했더라도 그 뒤에 폐기되었거나
     // 만료됐다면 여기서 빠진다 — 그 사이에 들어온 요청에 출처를 붙이면 안 된다.
     const invitedBy = await readInviteToken();
-    const invite = invitedBy ? await findInviteByToken(invitedBy) : null;
+    const rawInvite = invitedBy ? await findInviteByToken(invitedBy) : null;
+    // 불변식: 가입하려는 팀과 초대 토큰의 팀이 일치할 때만 출처로 인정한다.
+    // 이전 팀의 초대 쿠키가 남아 있는 상태에서 다른 팀으로 가입할 때 타 팀 초대로 오염되는 것을 막는다.
+    const invite = rawInvite && rawInvite.teamId === team.id ? rawInvite : null;
+    if (rawInvite && rawInvite.teamId !== team.id) {
+      await forgetInviteToken();
+    }
 
     // **2) 기존 요청이 있으면, 이 브라우저가 그 소유자인지가 전부다.**
     //
@@ -401,10 +413,31 @@ export async function joinTeam(
     // 않는다 — 토큰을 가진 쪽이 그 요청의 주인이고, 주인이면 `pending` 이든 `approved` 든
     // 자기 것이다.
     const mine = store.get(JOIN_COOKIE)?.value;
-    const found = await db.joinRequest.findUnique({
-      where: { teamId_name: { teamId: team.id, name } },
-      select: { id: true, token: true, status: true },
-    });
+    /**
+     * **내 토큰으로 먼저 찾는다.** 이름으로 찾으면 같은 이름이 둘일 때 남의 요청을 내 것으로
+     * 착각할 수 있다 — 소유자 판정이 "내 쿠키의 토큰과 같은 행" 이라는 불변식은 이쪽이 더
+     * 정확하다(토큰은 사람마다 다르다). `token` 은 유일하므로 `findUnique` 가 그대로 된다.
+     */
+    const byToken = mine
+      ? await db.joinRequest.findUnique({
+          where: { token: mine },
+          select: { id: true, token: true, status: true, teamId: true },
+        })
+      : null;
+    const activeTokenRequest = byToken && byToken.teamId === team.id ? byToken : null;
+    /**
+     * 토큰이 없거나(첫 신청) 그 토큰의 행이 없으면, **이 이름으로 처리 중인 요청이 있는지**를
+     * 본다. 있으면 남의 것이므로 건드리지 않고 `taken` 이다.
+     *
+     * ⚠️ **동명이인 작업 2단계에서 여기가 바뀐다.** 이름이 둘이면 "이 이름의 요청" 이 남의
+     * 것인지 내 것인지 이름만으로는 못 가른다. 지금은 이름이 유일해서 이 판정이 맞다.
+     */
+    const found =
+      activeTokenRequest ??
+      (await db.joinRequest.findFirst({
+        where: { teamId: team.id, name },
+        select: { id: true, token: true, status: true },
+      }));
 
     // 거절된 요청은 이미 끝난 것이다. **토큰이 죽었으니**(`checkJoinApproval` 이 거절을
     // 보고 쿠키를 지운다) 행만 치우고 새 요청을 받게 한다 — 안 치우면 거절을 받은 사람이
@@ -489,8 +522,9 @@ export async function checkJoinApproval(): Promise<
 
   const request = await db.joinRequest.findUnique({ where: { token } });
   if (!request) return { status: "none" };
-  if (request.status === "pending") return { status: "pending" };
-
+  // **`claimed` 도 기다리는 상태다.** 다른 폴링이 이미 가져가서 팀원을 만드는 중이라는
+  // 뜻이다. 여기서 "승인 아님"으로 읽으면 쿠키를 지워 **진행 중인 입장을 스스로 끊는다.**
+  if (request.status === "pending" || request.status === "claimed") return { status: "pending" };
   if (request.status !== "approved") {
     store.delete(JOIN_COOKIE);
     return { status: "rejected" };
@@ -501,7 +535,24 @@ export async function checkJoinApproval(): Promise<
   let memberId: string;
   let rejoinCode: string;
   try {
-    ({ member: { id: memberId }, rejoinCode } = await db.$transaction(async (tx) => {
+    const claimed = await db.$transaction(async (tx) => {
+      /**
+       * **이 요청을 내가 가져갔는지 먼저 본다.**
+       *
+       * 예전에는 `@@unique([teamId, name])` 이 이 자리를 대신 지켰다 — 겹친 폴링이 같은
+       * 이름으로 `member.create` 를 두 번 하면 P2002 가 났고, 아래 catch 가 그걸 읽었다.
+       * **동명이인을 허용하면 그 제약이 사라져** 같은 요청이 두 번 처리되고 팀원이 둘 생긴다.
+       *
+       * 조건부 갱신이라 겹친 트랜잭션 중 **하나만** 1행을 받는다(진 쪽은 행 잠금을 기다렸다가
+       * 조건이 더는 맞지 않아 0행). 선점과 생성을 한 트랜잭션에 두었으므로 도중에 실패하면
+       * 선점도 함께 되돌아간다 — "선점만 되고 팀원은 안 생긴" 상태가 남지 않는다.
+       */
+      const won = await tx.joinRequest.updateMany({
+        where: { id: request.id, status: "approved" },
+        data: { status: "claimed" },
+      });
+      if (won.count === 0) return null;
+
       const member = await tx.member.create({
         data: {
           teamId: request.teamId,
@@ -517,7 +568,15 @@ export async function checkJoinApproval(): Promise<
       });
       const code = await issueRejoinCode(member.id, tx);
       return { member, rejoinCode: code };
-    }));
+    });
+
+    if (!claimed) {
+      // 다른 폴링이 가져갔다. 그쪽이 팀원을 만들고 세션을 시작한다 — 나는 기다리거나,
+      // 이미 세션이 서 있으면 물러난다.
+      const mine = await db.session.findUnique({ where: { token }, select: { memberId: true } });
+      return mine ? { status: "none" } : { status: "pending" };
+    }
+    ({ member: { id: memberId }, rejoinCode } = claimed);
   } catch (error) {
     /**
      * P2002 는 **두 가지** 이유로 온다. 예전에는 "폴링이 겹쳤다" 고만 읽고 두 번째를
@@ -531,6 +590,10 @@ export async function checkJoinApproval(): Promise<
      *
      * 그래도 막는 곳을 앞세웠다면 이 도달하지 않는다 — 승인이 이름 충돌을 먼저 확인한다
      * (`server/invite/settle.ts` 의 `"name-taken"`). 여기는 안전망이다.
+     *
+     * ⚠️ **동명이인 작업 5단계에서 이 catch 가 하는 일이 줄어든다.** 위에서 `approved` 를
+     * 조건부로 선점하므로 겹친 폴링은 여기 오지 않고, 이름 유니크가 사라지면 P2002 자체가
+     * 나지 않는다 — 남는 것은 "다른 사람이 같은 이름을 쓰는 중" 뿐이다.
      */
     if ((error as { code?: string }).code === "P2002") {
       const alreadyOurs = await db.session.findUnique({ where: { token }, select: { memberId: true } });

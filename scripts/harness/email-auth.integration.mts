@@ -223,10 +223,23 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       (await db.member.findUnique({ where: { id: reader.leader.id }, select: { email: true } }))?.email,
       "me@example.test",
     );
+    // 팀 내 다른 팀원이 이미 사용하는 이메일 방어
+    await db.member.create({
+      data: { teamId: reader.id, name: `동료${suffix}`, email: "teammate@example.test" },
+    });
+    check("팀 내 다른 팀원이 쓰는 이메일은 거절된다", reasonOf(await auth.updateMemberEmail("teammate@example.test")), "email-in-use");
+
     check("바꾼다", (await auth.updateMemberEmail("new@example.test")).ok, true);
     check("바뀌었다", await auth.getMyEmail(), "new@example.test");
+    check(
+      "인증 절차 없는 변경은 verifiedAt 이 null 이다",
+      (await db.member.findUnique({ where: { id: reader.leader.id }, select: { emailVerifiedAt: true } }))?.emailVerifiedAt,
+      null,
+    );
+    check("상태 조회도 verified: false 이다", (await auth.getMyEmailStatus()).verified, false);
     check("지우면 비운다", (await auth.updateMemberEmail("")).ok, true);
     check("비었다", await auth.getMyEmail(), null);
+    check("비운 뒤 상태 조회도 verified: false 이다", (await auth.getMyEmailStatus()).verified, false);
     session.clearAll();
   } finally {
     for (const email of emails) {

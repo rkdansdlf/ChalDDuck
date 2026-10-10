@@ -79,8 +79,11 @@ export async function settleJoinRequest(
      * 다른 이유(동시 폴링)일 때 구분할 수 없다.
      */
     if (input.approve) {
-      const nameTaken = await tx.member.findUnique({
-        where: { teamId_name: { teamId: input.teamId, name: request.name } },
+      // ⚠️ **동명이인 작업 2단계에서 이 게이트가 바뀐다.** 같은 이름이 둘일 수 있게 되면
+      // "이미 있으면 승인하지 않는다" 는 규칙 자체가 사라진다 — 지금은 스키마의
+      // `@@unique([teamId, name])` 이 있어 그대로 둔다.
+      const nameTaken = await tx.member.findFirst({
+        where: { teamId: input.teamId, name: request.name },
         select: { id: true },
       });
       if (nameTaken) return "name-taken";

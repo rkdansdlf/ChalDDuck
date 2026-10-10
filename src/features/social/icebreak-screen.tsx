@@ -17,7 +17,6 @@ import {
   SecTitle,
   Sheet,
   Toast,
-  Undecided,
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -299,7 +298,9 @@ function Picker({
           </>
         ) : null}
 
-        <Undecided>라이어 제시어 목록은 기획안에 없어 임시로 정했습니다.</Undecided>
+        {/* 정책 확정:
+            제시어 목록은 기획안에 없어 이 저장소가 정한 기본 팩(`data/liar-prompts.ts`)을 쓴다 —
+            넣고 뺀 기준은 그 머리말에 있고, 데이터 불변식은 `smoke.mts` 가 지킨다. */}
       </Body>
 
       {game ? (

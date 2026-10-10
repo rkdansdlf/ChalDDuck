@@ -12,10 +12,13 @@ import {
   Note,
   Rows,
   SecTitle,
+  Sheet,
   Textarea,
 } from "@/components/ui";
 import { refineScript } from "@/server/actions/ai";
 import { shareQuestionsToChat } from "@/server/actions/chat";
+import { extractDriveDocument, getMyTeamDriveDocuments } from "@/server/actions/drive";
+import type { DriveDocumentFile } from "@/server/actions/drive";
 import { AiErrorNote, SampleNote } from "./ai-state-notes";
 import { readAi } from "./ai-result";
 import type {
@@ -25,7 +28,7 @@ import type {
   PresentQuestion,
   QuestionCategory,
 } from "@/lib/types";
-import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
+import { AI_INPUT_LIMIT, aiInputOverrun } from "@/lib/ai-limit";
 import { getSpeechPacingInfo } from "@/lib/present-pacing";
 import { cn } from "@/lib/cn";
 
@@ -72,6 +75,29 @@ const CATEGORY_MAP: Record<
 };
 
 /**
+ * 가져온 문서의 요약 — **세는 것만 말한다.**
+ *
+ * "발표 자료입니다" 같은 말은 화면이 이미 파일 이름으로 말한다. 여기서는 무엇이 들어왔는지를
+ * 센다. ⚠️ **빈 슬라이드를 빠뜨리지 않는다** — 이미지로만 만든 슬라이드는 글자가 안 꺼내지는데,
+ * 그 수를 안 말하면 사용자는 그 슬라이드가 대본에 들어온 줄 안다.
+ */
+function driveImportSummary(res: {
+  kind: "pptx" | "docx";
+  text: string;
+  slideCount?: number;
+  emptySlideCount?: number;
+  notesSlideCount?: number;
+}): string {
+  const chars = `${res.text.length.toLocaleString("ko-KR")}자`;
+  if (res.kind !== "pptx") return `문서 · ${chars}`;
+  const parts = [`슬라이드 ${res.slideCount ?? 0}장`];
+  if (res.notesSlideCount) parts.push(`발표자 노트 ${res.notesSlideCount}장`);
+  if (res.emptySlideCount) parts.push(`글자 없는 슬라이드 ${res.emptySlideCount}장`);
+  parts.push(chars);
+  return parts.join(" · ");
+}
+
+/**
  * 26 발표 지원.
  *
  * **내용을 새로 지어내지 않는다.** 말이 짧아지도록 표현만 다듬는다 —
@@ -99,6 +125,21 @@ export function PresentScreen({
   const [copiedQId, setCopiedQId] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+
+  /* 드라이브에서 가져오기 — 목록은 열 때 한 번 받고, 실패는 그 자리에 이유를 보여 준다. */
+  const [driveOpen, setDriveOpen] = useState(false);
+  const [driveBoxes, setDriveBoxes] = useState<
+    Array<{ boxId: string; boxName: string; files: DriveDocumentFile[] }>
+  >([]);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveBusy, setDriveBusy] = useState<string | null>(null);
+  const [driveError, setDriveError] = useState<string | null>(null);
+  const [broughtFrom, setBroughtFrom] = useState<{
+    fileName: string;
+    meta: string;
+    before: string;
+    imported: string;
+  } | null>(null);
 
   // 실시간 발화 소요 시간 계산
   const rawPacing = useMemo(() => getSpeechPacingInfo(raw), [raw]);
@@ -140,6 +181,59 @@ export function PresentScreen({
     } catch {
       // 클립보드 복사 실패 시 무시
     }
+  };
+
+  /**
+   * 드라이브 목록을 연다.
+   *
+   * 목록 조회 실패를 **조용히 넘기지 않는다** — 빈 목록과 "못 불러왔다" 는 다른 말이다.
+   * 전자는 "팀에 발표 자료가 없다" 로 읽히고, 후자는 사용자가 다시 시도할 수 있게 한다.
+   */
+  const openDriveSheet = async () => {
+    setDriveOpen(true);
+    setDriveError(null);
+    if (driveBoxes.length > 0) return;
+    setDriveLoading(true);
+    try {
+      setDriveBoxes(await getMyTeamDriveDocuments());
+    } catch {
+      setDriveError("드라이브 목록을 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.");
+    } finally {
+      setDriveLoading(false);
+    }
+  };
+
+  /**
+   * 파일 하나를 가져온다.
+   *
+   * **바꾸기 전의 글자를 기억한다** — 가져오기가 지금 칸을 덮어쓰므로, 되돌릴 수 없으면
+   * 붙여넣던 대본이 한 번의 클릭으로 사라진다. 되돌리기는 **그 뒤에 손대지 않았을 때만**
+   * 보여 준다(손댄 뒤 되돌리면 그 편집까지 사라져서다).
+   */
+  const bringFromDrive = async (file: DriveDocumentFile) => {
+    setDriveBusy(file.fileId);
+    setDriveError(null);
+    try {
+      const res = await extractDriveDocument(file.fileId, file.latestVersionId);
+      if (!res.ok) {
+        setDriveError(res.error);
+        return;
+      }
+      const before = raw;
+      setRaw(res.text);
+      setBroughtFrom({ fileName: res.fileName, meta: driveImportSummary(res), before, imported: res.text });
+      setDriveOpen(false);
+    } catch (cause: unknown) {
+      setDriveError(cause instanceof Error ? cause.message : "가져오지 못했습니다.");
+    } finally {
+      setDriveBusy(null);
+    }
+  };
+
+  const undoBring = () => {
+    if (!broughtFrom) return;
+    setRaw(broughtFrom.before);
+    setBroughtFrom(null);
   };
 
   const copySingleQuestion = async (text: string, id: string) => {
@@ -246,12 +340,47 @@ export function PresentScreen({
                 placeholder="발표할 대본을 붙여넣어 주세요"
                 aria-label="발표 대본"
               />
-              <div className="mt-1.5 flex items-center gap-1.5 px-1 text-[12px] text-txt-muted">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-[12px] text-txt-muted">
                 <Icon name="clock" size={13} />
                 <span>
                   예상 발표 시간: <strong className="font-semibold text-txt-sub">{rawPacing.formatted}</strong>
                 </span>
                 <span className="text-txt-faint">({rawPacing.syllables.toLocaleString()}음절)</span>
+                {/* 잘린다는 사실을 숨기지 않는다 — 문서에서 가져오면 8000자를 넘기 쉽고,
+                    넘긴 채로 다듬으면 **뒤쪽이 사라진 "다듬은 대본"** 이 나온다. */}
+                {aiInputOverrun(raw) > 0 ? (
+                  <b className="text-err">
+                    {aiInputOverrun(raw).toLocaleString("ko-KR")}자가 잘립니다 — AI 는 앞부분만 봅니다.
+                  </b>
+                ) : null}
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 px-1 text-[12px]">
+                <button
+                  type="button"
+                  onClick={openDriveSheet}
+                  className="inline-flex cursor-pointer items-center gap-1 font-semibold text-link transition-colors hover:underline"
+                >
+                  <Icon name="file-down" size={13} />
+                  드라이브에서 가져오기
+                </button>
+                {broughtFrom ? (
+                  <span className="flex min-w-0 items-center gap-1.5 text-txt-muted">
+                    <span className="truncate">
+                      {broughtFrom.fileName} 에서 가져왔어요 · {broughtFrom.meta}
+                    </span>
+                    {/* 손댄 뒤에는 되돌리기를 감춘다 — 그 편집까지 지우면 되돌리기가 더 크다. */}
+                    {raw === broughtFrom.imported ? (
+                      <button
+                        type="button"
+                        onClick={undoBring}
+                        className="inline-flex flex-none cursor-pointer items-center gap-1 font-semibold text-txt-sub transition-colors hover:text-txt-strong"
+                      >
+                        <Icon name="undo-2" size={12} />
+                        되돌리기
+                      </button>
+                    ) : null}
+                  </span>
+                ) : null}
               </div>
             </div>
           }
@@ -378,6 +507,81 @@ export function PresentScreen({
             {sharing ? "단톡방 공유 중…" : "팀과 Q&A 준비하기 (단톡방 공유)"}
           </Btn>
         </div>
+
+        {/* 5. 드라이브에서 가져오기 — 제출함별로 꺼낼 수 있는 파일만 보여 준다. */}
+        <Sheet
+          open={driveOpen}
+          title="드라이브에서 가져오기"
+          onClose={() => setDriveOpen(false)}
+          footer={
+            <Btn v="outline" className="flex-1" onClick={() => setDriveOpen(false)}>
+              닫기
+            </Btn>
+          }
+        >
+          <div className="space-y-3 py-1">
+            <div className="keep-all rounded-control bg-fill p-3 text-[13px] leading-[1.5] text-txt-muted">
+              발표 자료(PPTX)는 <b className="text-txt-strong">발표 순서대로 본문과 발표자 노트</b>를,
+              문서(DOCX)는 본문을 가져옵니다.{" "}
+              <b className="text-txt-strong">이미지로만 만든 슬라이드의 글자는 가져오지 못합니다.</b>{" "}
+              가져오면 지금 칸의 내용을 바꿉니다.
+            </div>
+
+            {driveLoading ? (
+              <div className="rounded-control border border-dashed border-line p-4 text-center text-[13px] text-txt-muted">
+                불러오는 중…
+              </div>
+            ) : driveBoxes.length === 0 ? (
+              <div className="rounded-control border border-dashed border-line p-4 text-center text-[13px] text-txt-muted">
+                팀 드라이브에 발표 자료(PPTX)나 문서(DOCX)가 없습니다.
+              </div>
+            ) : (
+              driveBoxes.map((box) => (
+                <div key={box.boxId}>
+                  <div className="mb-1.5 text-[13px] font-bold text-txt-strong">{box.boxName}</div>
+                  <div className="flex flex-col gap-2">
+                    {box.files.map((file) => (
+                      <button
+                        key={file.fileId}
+                        type="button"
+                        disabled={driveBusy !== null}
+                        onClick={() => bringFromDrive(file)}
+                        className="flex items-center justify-between rounded-control border border-line bg-card p-3 text-left text-txt transition-colors hover:bg-fill disabled:opacity-60"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-[14px] leading-[1.4]">
+                            {file.name}
+                          </div>
+                          <div className="text-[12px] text-txt-muted">
+                            {file.kind === "pptx" ? "발표 자료" : "문서"}
+                            {file.size ? ` · ${file.size}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex-none pl-2">
+                          <Icon
+                            name={driveBusy === file.fileId ? "loader-circle" : "file-down"}
+                            size={18}
+                            className={
+                              driveBusy === file.fileId
+                                ? "animate-spin text-txt-muted"
+                                : "text-txt-muted"
+                            }
+                          />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+
+            {driveError ? (
+              <div className="keep-all rounded-control border border-[rgba(235,94,85,0.35)] bg-[rgba(235,94,85,0.06)] p-3 text-[12.5px] leading-[1.5] text-err">
+                {driveError}
+              </div>
+            ) : null}
+          </div>
+        </Sheet>
 
         {/* 정책 확정:
             예상 질문은 자료에서 뽑는다 — 대본을 넣으면 표현을 다듬으면서 나올 만한 질문을 함께

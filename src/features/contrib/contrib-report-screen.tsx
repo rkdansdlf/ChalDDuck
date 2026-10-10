@@ -11,6 +11,7 @@ import {
   Icon,
   Note,
   Panel,
+  Sheet,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { ContribReportRow, Team } from "@/lib/types";
@@ -39,12 +40,21 @@ export function ContribReportScreen({
   const [sharing, setSharing] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pendingGuardOpen, setPendingGuardOpen] = useState(false);
 
   const totalConfirmed = rows.reduce((acc, r) => acc + r.confirmed, 0);
   const totalPending = rows.reduce((acc, r) => acc + r.pending, 0);
   const totalDisputed = rows.reduce((acc, r) => acc + r.disputed, 0);
   const totalAll = totalConfirmed + totalPending + totalDisputed;
   const consensusRate = totalAll > 0 ? Math.round((totalConfirmed / totalAll) * 100) : 100;
+
+  const handlePrint = () => {
+    if (totalPending > 0 || totalDisputed > 0) {
+      setPendingGuardOpen(true);
+      return;
+    }
+    printAs(`기여기록_리포트_${team.name}_${issuedOn}`);
+  };
 
   const handleShare = async () => {
     setSharing(true);
@@ -270,12 +280,53 @@ export function ContribReportScreen({
             v="primary"
             className="flex-1"
             icon="file-down"
-            onClick={() => printAs(`기여기록_리포트_${team.name}_${issuedOn}`)}
+            onClick={handlePrint}
           >
             PDF로 저장
           </Btn>
         </div>
       </Dock>
+
+      <Sheet
+        open={pendingGuardOpen}
+        title="미확인 기록이 남아 있습니다"
+        onClose={() => setPendingGuardOpen(false)}
+      >
+        <p className="text-pretty-keep m-0 mb-3 text-[14px] leading-relaxed text-txt">
+          현재 리포트에 <b>미확인 {totalPending}건</b>
+          {totalDisputed > 0 ? (
+            <>
+              , <b>의견 차이 {totalDisputed}건</b>
+            </>
+          ) : null}
+          이 포함되어 있습니다.
+        </p>
+        <Note tone="warn" icon="circle-alert" className="mb-4">
+          팀원 교차 확인이 완료되지 않은 기록은 공식 보고서에서 미확인 상태로 집계되며, 상호 확인율({consensusRate}%)이 낮아질 수 있습니다.
+        </Note>
+        <div className="flex flex-col gap-2">
+          <Btn
+            full
+            v="primary"
+            onClick={() => {
+              setPendingGuardOpen(false);
+              router.push("/team/contrib/members");
+            }}
+          >
+            팀원 확인하러 가기
+          </Btn>
+          <Btn
+            full
+            v="outline"
+            onClick={() => {
+              setPendingGuardOpen(false);
+              printAs(`기여기록_리포트_${team.name}_${issuedOn}`);
+            }}
+          >
+            현재 상태로 PDF 출력하기
+          </Btn>
+        </div>
+      </Sheet>
     </>
   );
 }
