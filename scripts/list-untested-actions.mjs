@@ -35,6 +35,7 @@ const TESTS = [
   "scripts/smoke-join.mts",
   "scripts/smoke-ai.mts",
   "scripts/harness/drive.integration.mts",
+  "scripts/harness/drive-save.integration.mts",
   "scripts/harness/ai.integration.mts",
   "scripts/harness/join.integration.mts",
   "scripts/harness/contrib.integration.mts",

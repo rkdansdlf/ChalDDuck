@@ -15,6 +15,7 @@ import {
   resolveFileType,
 } from "@/features/drive/file-rules";
 import { fromKstInputValue } from "@/lib/when";
+import { makeResearchPdf } from "@/server/drive/research-pdf";
 import { teamUsedBytes } from "@/server/drive/usage";
 import { DRIVE_READ_KEY, readNavBadges, type NavBadges } from "@/server/nav/badges";
 import { notify, teamMemberIds } from "@/server/notify/create";
@@ -947,9 +948,7 @@ export async function saveResearchToDrive(
     const mimeType = "application/pdf";
     const kind = "pdf";
 
-    const pdfBody = makeMinimalPdfText(
-      `${research.title}\n출처: ${research.source}${research.year ? ` (${research.year})` : ""}\n${research.snippet}\n${research.url ?? ""}`,
-    );
+    const pdfBody = await makeResearchPdf(research);
     const bytes = pdfBody.length;
 
     const result = await withTeamBoxLock(me.teamId, box.id, async (tx) => {
@@ -1017,32 +1016,4 @@ export async function saveResearchToDrive(
       error: error instanceof Error ? error.message : "드라이브 저장에 실패했습니다.",
     };
   }
-}
-
-function makeMinimalPdfText(text: string): Buffer {
-  const safeText = text.replace(/[()\\\r\n]/g, " ").slice(0, 200);
-  const stream = `BT /F1 12 Tf 50 700 Td (${safeText}) Tj ET`;
-  const pdf = `%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length ${stream.length} >>
-stream
-${stream}
-endstream
-endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000244 00000 n 
-0000000318 00000 n 
-trailer << /Size 6 /Root 1 0 R >>
-startxref
-${400 + stream.length}
-%%EOF`;
-  return Buffer.from(pdf, "utf-8");
 }

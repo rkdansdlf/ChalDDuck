@@ -641,6 +641,25 @@ npm run test:drive
 npm run test:drive:probe
 ```
 
+### 리서치 저장 검사 (PDF 를 실제로 열어 읽는다)
+
+```bash
+npm run test:drive-save
+```
+
+위 드라이브 검사의 "저장소에 진짜 `%PDF-` 가 올라갔다" 는 **머리 다섯 글자만** 본다. 그래서 한글이
+전부 깨진 PDF(`º·· Œ‚ ºfl‚„º`)도 초록불이었다. 이 검사는 만든 파일을 **poppler**
+(`pdftotext`·`pdfinfo`·`pdffonts`)로 열어 제목·출처·연도·주소·요약이 **그대로 읽히는지**, 한 줄이
+쪽 폭을 넘지 않는지, 글꼴이 파일 안에 들어 있는지를 본다. 본문 생성 함수
+(`server/drive/research-pdf.ts`)를 직접 부르는 겹과, 서버 액션을 통과해 저장소에 올라간 *바이트*를
+꺼내 읽는 겹이 있다.
+
+- **저장소는 이 프로세스 안의 가짜 서버**다(`drive-save.mts`). 앱의 저장소 어댑터는 그대로 돌고
+  `SUPABASE_URL` 만 로컬로 덮어쓰므로 개발 버킷이 없어도 돌고, 원격에는 닿지 않는다.
+- **로컬 DB 와 poppler 가 필요하다**(`brew install poppler`). poppler 가 없으면 건너뛰지 않고 실패한다.
+- 글꼴(`server/drive/fonts/`)은 Noto Sans KR(OFL)을 한글·한자·기호만 남겨 정적으로 만든 5.3MB 파일이다.
+  어떻게 만들었는지는 같은 폴더의 `README.md`.
+
 ### 저장소 자가진단
 
 ```bash
