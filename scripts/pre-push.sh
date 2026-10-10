@@ -13,19 +13,25 @@
 # 두 곳이 하는 일을 **같은 줄**로 적어 두면 어느 한쪽이 조용히 따로 놀게 된다. 그래서
 # 공유하는 것과 다른 것을 나눈다.
 #
-# | | 로컬 (이 훅 · `npm run verify`) | Vercel (`vercel.json`) |
+# | | 로컬 (이 훅 · `npm run verify`) | Vercel (`vercel.json` → `scripts/vercel-build.mjs`) |
 # |---|---|---|
-# | `prisma migrate deploy` | — | **한다.** 운영 DB 에 실제로 적용한다 |
-# | `db:check` · `storage:check:gate` · `build` | 한다 | 한다 |
+# | `prisma migrate deploy` | — | **운영 빌드만** 한다. 프리뷰(브랜치 푸시)는 하지 않는다 |
+# | `db:check` | 한다 | 운영 빌드만 한다 (마이그레이션 뒤에야 의미가 있다) |
+# | `storage:check:gate` · `build` | 한다 | 한다 |
 # | `db:migrations` | **한다** | — |
-# | `test` · `tsc` · `lint` | **한다** | — |
+# | `test` · 하네스 · `tsc` · `lint` | **한다** | — |
 #
-# 로컬에만 있는 세 개는 각자의 이유가 있다.
+# 로컬에만 있는 것은 각자의 이유가 있다.
 # - `db:migrations` — "마이그레이션 파일을 커밋했는가"다. Vercel clone 은 이미 커밋된 것만
 #   받아서 **항상 통과한다.** 넣어 봐야 아무 정보도 없다.
-# - `test` · `tsc` · `lint` — 시간을 산다. 배포를 막을 이유가 아니라면 CI 에서 돌린다.
+# - `test` · 하네스 · `tsc` · `lint` — 시간을 산다. 이 훅과 **CI(.github/workflows/ci.yml)가 같은 목록**
+#   (`scripts/ci-harness.mjs`)을 돌린다 — 훅을 건너뛴 푸시도 CI 에서 걸린다.
 #
-# 반대로 Vercel 만 하는 `prisma migrate deploy` 는 로컬에서 대신할 수 없다 — 그게 바로
+# `test:drive`(진짜 Supabase 저장소로 올리고 복원한다)는 **키가 있을 때만** 돈다 — 키가 없으면 "건너뜀"이라고
+# 말하고 통과한다(`--if-configured`). 예전에는 키가 없는 환경에서 이 검사가 항상 실패해서 모두가 `--no-verify` 를
+# 썼고, 그러면 이 훅 전체가 의미를 잃었다. 키가 *있는데* 운영 버킷을 가리키는 환경은 여전히 거절된다.
+#
+# 반대로 Vercel(운영 빌드)만 하는 `prisma migrate deploy` 는 로컬에서 대신할 수 없다 — 그게 바로
 # 2026-09-28 실패한 배포의 순서였다. **빌드는 죽었는데 마이그레이션은 이미 운영 DB 에
 # 적용된 상태**로 남는다. 그래서 배포는 빌드와 마이그레이션 사이에서 중간에 멈출 수 있고,
 # 그때를 대비해 **롤백이 아니라 코드를 굴리는 쪽**(롤 포워드)을 택했다.
