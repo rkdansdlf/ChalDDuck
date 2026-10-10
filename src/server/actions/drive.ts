@@ -382,8 +382,16 @@ export async function announceUploads(boxId: string, fileIds: string[]): Promise
     include: { file: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" },
   });
-  // 같은 파일을 여러 번 올렸으면 가장 최근 것 하나로.
-  const latestByFile = [...new Map(recent.map((v) => [v.fileId, v])).values()];
+  // 같은 파일을 여러 번 올렸으면 가장 최근 것 하나로. `recent` 는 최신순이므로 **먼저 나온 것**이
+  // 최근이다 — `new Map(entries)` 는 중복 키에서 마지막 값을 쓰므로 가장 오래된 버전이 남았다
+  // (알림에는 "v1" 이라고 쓰이고, 마감 후 제출 판정도 오래된 버전으로 갔다).
+  const latestByFile: typeof recent = [];
+  const seen = new Set<string>();
+  for (const v of recent) {
+    if (seen.has(v.fileId)) continue;
+    seen.add(v.fileId);
+    latestByFile.push(v);
+  }
   if (latestByFile.length === 0) return;
 
   const [first] = latestByFile;
@@ -797,6 +805,13 @@ export async function saveResearchToDrive(
     const bytes = pdfBody.length;
 
     const result = await withTeamBoxLock(me.teamId, box.id, async (tx) => {
+      // 올리기(`finishUpload`)와 같은 약속이다 — 팀 저장 용량(2GB)은 **팀 전체의 합**이고, 지키는 곳은
+      // 이 잠금 안이다. 작은 PDF 라도 가득 찬 팀에 계속 쌓이면 한도가 한도가 아니다. 저장소에 올리기
+      // **전에** 본다 — 거절하고 나서 객체만 남지 않게.
+      if ((await teamUsedBytes(me.teamId, tx)) + bytes > TEAM_CAP_BYTES) {
+        throw new Error("팀 저장 용량이 가득 차 저장할 수 없습니다.");
+      }
+
       const target = await tx.submittedFile.findFirst({ where: { boxId: box.id, name: fileName } });
       const file =
         target ?? (await tx.submittedFile.create({ data: { boxId: box.id, name: fileName, kind } }));
@@ -812,7 +827,11 @@ export async function saveResearchToDrive(
           upsert: true,
         });
         if (uploadError) {
+          // **기록을 남기지 않는다.** 예전에는 로그만 찍고 버전 행을 만들었다 — 객체가 없는 버전은
+          // 미리보기가 404 가 되고, 팀은 파일이 있다고 믿는다(올리기가 실패했을 때 객체를 지우는
+          // 것과 같은 이유다). 던지면 이 트랜잭션이 되돌려져 파일·버전·기여 기록이 모두 사라진다.
           console.error("[drive] 리서치 PDF 업로드 실패:", uploadError);
+          throw new Error("파일을 저장소에 올리지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
         }
       }
 
