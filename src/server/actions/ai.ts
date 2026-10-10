@@ -6,7 +6,7 @@ import { SENTENCE_SAMPLE_INPUT } from "@/data/catalog";
 // 매칭이 무의미해진다**(매칭할 명단이 없으므로 전부 `null` 이 된다).
 import { getCurrentTeam, getTeamToolContext } from "@/data/api";
 import type { AiResult, ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
-import { aiUsageCsv, aiUsageToday, type AiUsageToday } from "@/server/ai/limit";
+import { aiUsageCsv, aiUsageTeamSummaryCsv, aiUsageToday, type AiUsageToday } from "@/server/ai/limit";
 import { teamAiWeeklySummary, type TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { runTool } from "@/server/ai/run";
 import * as ai from "@/server/ai/tools";
@@ -78,15 +78,25 @@ export async function refineScript(
 }
 
 /**
- * 14 허브의 "AI 사용 내역 내려받기".
+ * 14 허브의 "내 AI 사용 내역 내려받기".
  *
- * 팀 전체의 내역이다 — 한도도 팀 단위로 세고, 수업에 낼 기록이라면 팀 것이어야 한다.
- * 한 사람 몫만 받을지는 기획안에 없다(허브의 `<Undecided>`).
+ * **내 기록만.** 예전에는 팀 전체 상세 로그를 그대로 내보냈다 — 한 사람의 이름·시각이 든
+ * 파일이 팀 전체에 돌도록 내려받기였다. 수업에 내는 기록이 필요하다면 개인 몫이 아니라
+ * 아래의 팀 집계를 쓴다.
  */
 export async function exportAiUsage(): Promise<{ filename: string; csv: string }> {
   const me = await requireSessionMember();
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
-  return { filename: `찰떡-AI-사용내역-${day}.csv`, csv: await aiUsageCsv(me.teamId) };
+  return { filename: `찰떡-내-AI-사용내역-${day}.csv`, csv: await aiUsageCsv(me.teamId, me.id) };
+}
+
+/**
+ * "팀 AI 사용 현황 내려받기" — 개인 이름·시각이 없는 **도구별 집계**만.
+ */
+export async function exportTeamAiUsage(): Promise<{ filename: string; csv: string }> {
+  const me = await requireSessionMember();
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  return { filename: `찰떡-팀-AI-사용현황-${day}.csv`, csv: await aiUsageTeamSummaryCsv(me.teamId) };
 }
 
 /**
