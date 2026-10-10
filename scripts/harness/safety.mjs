@@ -31,3 +31,26 @@ export function assertLocalOnly({ needsBucket = false } = {}) {
     );
   }
 }
+
+/**
+ * 이 하네스는 **저장소에 손대지 않는다** — 키가 있어도.
+ *
+ * ## 왜 필요한가 — 2026-10-10
+ *
+ * `contrib`·`chat` 하네스는 DB 에 증빙·첨부 **경로만** 만들고 저장소에 파일은 올리지 않는다. 그런데 서버(`signTeamFileUrl`)는
+ * 저장소 키가 있으면 **실제 저장소**에 서명 URL 을 요청하고, 저장소는 없는 객체를 `Object not found`(404) 로 거절한다.
+ * 그 결과 키가 있는 로컬 환경에서만 "서명 URL 발급 성공" 검사가 실패했다. 키가 없는 CI·다른 환경에서는 통과해서,
+ * **같은 코드가 환경에 따라 다른 검사를 했다.**
+ *
+ * 진입점의 주석은 처음부터 "저장소에 손대지 않는다" 고 했다. 말만이 아니라 **실제로 못 닿게** 한다 — 서버가 저장소를
+ * 쓰는지 판단하는 값(`SUPABASE_URL`·`SUPABASE_SECRET_KEY`·`SUPABASE_SERVICE_ROLE_KEY`)을 비운다. 진짜 저장소는
+ * `drive` 하네스가 개발 버킷(`needsBucket: true`)에서 본다.
+ *
+ * `load-env.mjs` 가 읽은 **뒤에** 부른다(dotenv 는 이미 있는 값을 덮어쓰지 않으므로 비운 값이 그대로 남는다).
+ * 서버의 `isStorageConfigured()` 는 부를 때마다 이 값을 읽는다.
+ */
+export function withoutStorage() {
+  for (const name of ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) {
+    process.env[name] = "";
+  }
+}

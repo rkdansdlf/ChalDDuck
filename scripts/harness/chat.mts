@@ -4,9 +4,11 @@
 import "../load-env.mjs";
 
 import { installRequestContext, session } from "./request-context.mjs";
-import { assertLocalOnly } from "./safety.mjs";
+import { assertLocalOnly, withoutStorage } from "./safety.mjs";
 
 assertLocalOnly();
+// 첨부는 경로만 만든다 — 저장소 키가 있어도 실제 저장소에 닿지 않게 한다(없는 객체의 서명 URL 은 404 다).
+withoutStorage();
 
 installRequestContext();
 
