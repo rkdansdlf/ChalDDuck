@@ -1,7 +1,8 @@
 import { getTeamByCode } from "@/data/api";
 import { getRemembered } from "@/server/session";
 import { JoinScreen } from "@/features/onboarding/join-screen";
-import { forgetInviteToken, rememberInviteToken } from "@/server/invite/cookie";
+import { InviteCookieSync } from "@/features/onboarding/invite-cookie-sync";
+import { readInviteToken } from "@/server/invite/cookie";
 import { resolveJoinTarget } from "@/server/invite/resolve-target";
 
 /**
@@ -34,12 +35,20 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   // 링크 토큰이 있으면 그 길로만 판정하며, 실패 시 코드 길로 떨어지지 않는다.
   const fromLink = token ? await resolveJoinTarget({ token }) : null;
 
-  if (fromLink?.invite && token) {
-    await rememberInviteToken(token);
-  } else if (!token) {
-    // 초대 토큰 링크 없이 직접 코드로 들어온 경우, 이전 팀의 초대 쿠키 잔류를 비운다.
-    await forgetInviteToken();
-  }
+  // 쿠키는 렌더 중에 쓸 수 없다(`actions/invite-cookie.ts`). 무엇을 할지만 정하고, 브라우저가
+  // `InviteCookieSync` 로 서버 액션을 부르게 한다. 이미 맞는 값이면 부르지 않는다.
+  //   - 유효한 링크 토큰 → 그 토큰을 심는다.
+  //   - 토큰 없이 코드로 들어옴 → 이전 팀의 초대 쿠키 잔류를 비운다.
+  // 비우지 못해도 안전하다 — `joinTeam` 이 다른 팀의 초대는 출처로 치지 않는다.
+  const stored = await readInviteToken();
+  const syncTo: string | null | undefined =
+    fromLink?.invite && token
+      ? stored === token
+        ? undefined
+        : token
+      : !token && stored
+        ? null
+        : undefined;
 
   const invalidInvite = Boolean(token && !fromLink);
 
@@ -100,11 +109,14 @@ export default async function JoinPage({ searchParams }: PageProps<"/join">) {
   }
 
   return (
-    <JoinScreen
-      team={team}
-      requestedCode={token ? "" : requested}
-      returning={returning}
-      invalidInvite={invalidInvite}
-    />
+    <>
+      {syncTo !== undefined && <InviteCookieSync token={syncTo} />}
+      <JoinScreen
+        team={team}
+        requestedCode={token ? "" : requested}
+        returning={returning}
+        invalidInvite={invalidInvite}
+      />
+    </>
   );
 }

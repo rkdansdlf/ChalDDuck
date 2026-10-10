@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, db, finish, makeIsolatedTeam, readCode, truthy } from "./db-test-base.mjs";
 import { clearWindow, hitWindow, readWindow } from "../src/server/rate-limit/window.js";
 import { EXPIRY_CHOICES, USE_CHOICES } from "../src/server/invite/choices.js";
@@ -271,6 +273,29 @@ console.log("\n입장 해석: 초대가 팀 정보를 지어내지 않는다");
   check("토큰 분기에 코드 길로 넘어가지 않는다", tokenBranch.includes("input.code"), false);
   // 초대를 세는 쿼리는 **관여자** 기준이다 — 나간 사람의 행은 기록을 위해 남는다.
   check("초대가 세는 것도 나간 사람을 뺀다", /members: \{ where: ACTIVE \}/.test(target), true);
+}
+
+console.log("\n초대 쿠키: 렌더 중에는 쓰지 않는다");
+{
+  // `cookies().set/delete` 는 서버 액션·라우트 핸들러에서만 된다. 서버 컴포넌트에서 부르면
+  // 개발 서버가 500("Cookies can only be modified…")으로 죽고, 운영은 오류 없이 `Set-Cookie`
+  // 를 내지 않아 "이전 팀 쿠키를 비운다"는 의도가 실제로는 일어나지 않았다. 타입은 둘 다 통과한다.
+  const page = readCode("../src/app/join/page.tsx");
+  check("/join 페이지가 쿠키를 쓰는 함수를 가져오지 않는다", /\b(rememberInviteToken|forgetInviteToken)\b/.test(page), false);
+  check("/join 페이지는 쿠키를 읽기만 한다", /readInviteToken\(\)/.test(page), true);
+  check("쿠키 쓰기는 클라이언트가 부르는 동기화 컴포넌트를 거친다", /<InviteCookieSync\b/.test(page), true);
+
+  const action = readCode("../src/server/actions/invite-cookie.ts");
+  const rawAction = readFileSync(new URL("../src/server/actions/invite-cookie.ts", import.meta.url), "utf8");
+  check("동기화 액션은 서버 액션이다", /^\s*"use server"/.test(rawAction), true);
+  check("심기 전에 서버가 토큰을 다시 찾아 본다", action.indexOf("findInviteByToken") < action.indexOf("rememberInviteToken(raw)"), true);
+
+  // 서버 컴포넌트(= "use client" 도 "use server" 도 아닌 page/layout)가 쓰기 함수를 부르지 않는다.
+  const offenders = readdirSync(new URL("../src/app", import.meta.url), { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && /^(page|layout)\.tsx$/.test(e.name))
+    .map((e) => join(e.parentPath, e.name))
+    .filter((f) => /\b(rememberInviteToken|forgetInviteToken)\b/.test(readFileSync(f, "utf8")));
+  check("page · layout 어디서도 초대 쿠키를 쓰지 않는다", offenders, []);
 }
 
 console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 남아 있다");
