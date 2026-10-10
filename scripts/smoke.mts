@@ -19,6 +19,7 @@ import {
   drawPoolOf,
   isRoleKey,
   isUnresolvedClash,
+  negotiatingRoles,
   normalizeName,
   rolesAwaitingMyConsent,
   roleViewOf,
@@ -873,6 +874,30 @@ console.log("\n추첨 동의 · 배지");
   const clashes = unresolvedClashes(roles, members, {}, { research: mine, deck: already }, NOW);
   // research 는 내 동의 대기 → 빠지고, deck 은 이미 동의했으니 팀 몫으로 남는다.
   check("내 동의 대기만 겹침 목록에서 빠진다", clashes.map((r) => r.key), ["deck"]);
+
+  // **히어로 카드(이야기해서 정하기)는 이야기할 역할이 있을 때만 뜬다.** 예전에는 겹친 역할이
+  // 없으면 첫 역할로 떨어뜨려 카드가 항상 떠 있었고, 역할을 다 정해도 사라지지 않았다.
+  // 확정·받기 대기·동의 대기·희망자 1명은 이야기 대상이 아니다.
+  const twoOnResearch = [
+    { id: "1", name: "김민준", want: "research", veto: null },
+    { id: "2", name: "최유나", want: "research", veto: null },
+  ] as unknown as Member[];
+  const oneOnDeck = [{ id: "3", name: "박지호", want: "deck", veto: null }] as unknown as Member[];
+  const negotiation = [{ key: "research" }, { key: "deck" }, { key: "present" }] as Role[];
+  const pick = (members: Member[], draws = {}, consents = {}) =>
+    negotiatingRoles(negotiation, members, draws, consents, NOW).map((r) => r.key);
+  check("겹친 역할만 이야기 대상이다", pick([...twoOnResearch, ...oneOnDeck]), ["research"]);
+  check("겹침이 없으면 카드가 없다", pick(oneOnDeck), []);
+  check(
+    "확정된 겹침은 이야기 대상이 아니다",
+    pick(twoOnResearch, { research: { tool: "룰렛", winner: "최유나", winnerId: "2", accepted: true, stale: false } }),
+    [],
+  );
+  check(
+    "추첨 결과를 받는 중인 겹침도 이야기 대상이 아니다",
+    pick(twoOnResearch, { research: { tool: "룰렛", winner: "최유나", winnerId: "2", accepted: false, stale: false } }),
+    [],
+  );
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
