@@ -5272,7 +5272,7 @@ console.log("\n이름은 식별자가 아니다 (동명이인 준비)");
   // 나머지 두 자리는 **존재만 묻는** 조회다(사람을 집지 않는다). 가입을 막는 게이트 자체는
   // 제약이 풀릴 때 함께 바뀐다 — 지금은 이름이 유일하므로 그대로 맞다.
   const settle = readCode("../src/server/invite/settle.ts");
-  truthy("초대 승인은 존재만 본다", /findFirst\(/.test(readCode("../src/server/invite/settle.ts")));
+  truthy("초대 승인은 존재만 본다", /findFirst\(/.test(settle));
   const onboarding = readCode("../src/server/actions/onboarding.ts");
   check("이름이 겹치면 거절한다 (name-taken)", /"name-taken"/.test(onboarding), true);
 
@@ -5382,10 +5382,8 @@ console.log("\n미결 목록 도구 (npm run decisions)");
     const source = stripComments(readFileSync(file, "utf8"));
     inCode += (source.match(/<Undecided/g) ?? []).length;
   }
-  // 도구가 실제로 세는 값(같은 규칙으로 직접 센 것) — 이 검사는 도구의 **출력**을 보지 않고
-  // 같은 계산을 두 번 해서 비교한다. 출력을 실행하는 것은 느리고(파일 훑는다) 실패 이유가
-  // "도구가 망가짐" 과 "화면에 항목이 줄었다" 로 갈리기 때문이다.
-  check("주석을 지우면 화면의 미결 표시가 하나도 줄지 않는다", inCode > 0, true);
+  // 도구가 실제로 세는 값(같은 규칙으로 직접 센 것) — 5건이 모두 확정되어 0건이어야 한다.
+  check("화면의 모든 미결이 확정되어 남아있지 않다", inCode, 0);
 
   // 주석 제거가 실제로 뭘 세는지 — 손으로 만든 두 경우로 확인한다.
   const sample = "/* <Undecided> 주석 안이니 세면 안 된다 */\nconst x = 1; // <Undecided> 이것도\n<Undecided>실제</Undecided>";
@@ -6772,20 +6770,19 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   //
   // 틀린 정본은 아무것도 고치지 않은 채 다음 사람을 그 방향으로 엉뚱하게wyn다. 특히 원문 링크
   // 항목은 **안전과 관련된 쪽**이 틀려 있었다 — "출처를 안 보여 준다" 고 읽으면 문제가 있다.
-  const decision = readCode("../src/app/onboarding/name/page.tsx");
+  const readRaw = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+  const decisionRaw = readRaw("../src/app/onboarding/name/page.tsx");
 
   // ① 동명이인 — **막는** 것이 맞다.
-  check("동명이인이 '구분'된다고 하지 않는다", decision.includes("이름만으로 구분합니다"), false);
-  check("같은 이름은 함께 있을 수 없다고 적는다", decision.includes("함께 있을 수는 없다"), true);
-  check("서버가 막는다고 적는다", /유일 제약/.test(decision), true);
+  check("동명이인이 '구분'된다고 하지 않는다", decisionRaw.includes("이름만으로 구분합니다"), false);
+  check("같은 이름은 함께 있을 수 없다고 적는다", decisionRaw.includes("함께 있을 수는 없다"), true);
+  check("서버가 막는다고 적는다", /유일 제약/.test(decisionRaw), true);
 
   // ② 예상 질문 — **뽑는다**고 적어야 한다.
   const present = readCode("../src/features/tools/present-screen.tsx");
   check("예상 질문을 '다루지 않았다' 고 하지 않는다", present.includes("다루지"), false);
   const tools = readCode("../src/server/ai/tools.ts");
   check("정말 자료에서 뽑는다", /질문을 뽑는다/.test(tools), true);
-
-  const readRaw = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
   // ③ 원문 링크 — **보여 준다**고 적어야 한다 (정책 주석 및 화면 노출).
   const research = readCode("../src/features/tools/researcher-screen.tsx");
@@ -6826,6 +6823,28 @@ console.log("\n미결 목록이 코드와 어긋나지 않는가");
   // ⑧ 라이어 제시어 — **저장소가 정한 기본 팩**을 쓴다. 화면이 출처를 적어 둔다.
   const icebreakRaw = readRaw("../src/features/social/icebreak-screen.tsx");
   check("제시어 목록의 출처를 적는다", /data\/liar-prompts\.ts/.test(icebreakRaw), true);
+
+  // ⑨ 동명이인 — 학번 대신 구분용 이름을 권장한다.
+  const namePageRaw = readRaw("../src/app/onboarding/name/page.tsx");
+  check("학번을 기본 가이드로 두지 않는다", /학번 뒷자리/.test(namePageRaw), false);
+  check("구분할 수 있는 이름을 권장한다", /구분할 수 있는 이름을 사용해 주세요/.test(namePageRaw), true);
+
+  // ⑩ 사주 — 00시대 출생자는 lateNight(다음 날 계산)에 걸리지 않는다 (23시대만).
+  const mySajuCode = readCode("../src/features/saju/my-saju.tsx");
+  check("00시대는 lateNight에 들어가지 않는다", /startsWith\("00"\)/.test(mySajuCode), false);
+  check("23시대만 lateNight로 센다", />= 23/.test(mySajuCode), true);
+
+  // ⑪ 팀 사주 — 6글자 균등 비중 계산을 안내한다.
+  const teamSajuCopy = readCode("../src/lib/saju/copy.ts");
+  check("팀 사주는 여섯 글자를 같은 비중으로 계산한다고 적는다", /여섯 글자를 같은 비중으로 계산해요/.test(teamSajuCopy), true);
+
+  // ⑫ 시간표 — 불참 사유는 공유되지 않고 개인 일정으로만 보인다.
+  const myTimeCode = readCode("../src/features/schedule/my-time-screen.tsx");
+  check("시간표 사유는 공유되지 않는다고 적는다", /사유는 공유되지 않습니다/.test(myTimeCode), true);
+
+  // ⑬ 쿠션어 — 3종 말투 프리셋을 쓰고 기본값은 soft이다.
+  const catalogCode = readCode("../src/data/catalog.ts");
+  check("쿠션어 말투는 3종이다", /CUSHION_TONES: CushionTone\[\] = \[\s*\{ key: "soft", name: "부드럽게" \},\s*\{ key: "plain", name: "담담하게" \},\s*\{ key: "firm", name: "분명하게" \}/.test(catalogCode), true);
 }
 
 /* ── 드라이브 문서에서 발표 대본 꺼내기 ───────────────────── */
