@@ -202,6 +202,12 @@ export type OnboardingDraft = {
   mbti: MbtiType | null;
   /** MBTI 를 직접 고르지 않고 04 성향 체크로 얻었는지. 결과 화면 문구가 달라진다. */
   mbtiFromQuiz: boolean;
+  /**
+   * 사주를 위한 생년월일(`YYYY-MM-DD`)과 출생 시각(`HH:MM`). **선택**이다 — 없으면 `null` 이거나 생략.
+   * 서버가 `parseBirth` 로 다시 걸러서, 형식·범위에 맞는 것만 저장한다.
+   */
+  birthDate?: string | null;
+  birthTime?: string | null;
   want: RoleKey | null;
   veto: RoleKey | null;
 };

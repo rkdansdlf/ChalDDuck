@@ -24,6 +24,7 @@ type Session = {
   as(token: string): void;
   nobody(): void;
   reset(): void;
+  clearAll(): void;
 };
 
 export async function run({ session }: { session: Session }): Promise<boolean> {
@@ -45,6 +46,8 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
 
   const suffix = randomUUID().slice(0, 6).toUpperCase();
   let teamId: string | null = null;
+  /** 가입 검사가 만든 팀 — 마지막에 지운다(멤버·요청·세션은 cascade). */
+  const joinTeamIds: string[] = [];
   const memberIds: string[] = [];
 
   /** 토큰이 문자열인지 먼저 본다 — 멤버 객체를 넘기면 Prisma 오류가 진짜 이유를 가린다. */
@@ -227,6 +230,93 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     await db.meetingProposal.delete({ where: { id: meeting.id } });
     for (const id of [me.id, other.id, third.id]) await db.member.update({ where: { id }, data: { birthDate: null, birthTime: null } });
 
+    console.log("\n온보딩 사주 — 가입 길 세 갈래가 같은 값을 옮긴다");
+    const onb = await import("../../src/server/actions/onboarding.js");
+    const rejoinActions = await import("../../src/server/actions/rejoin.js");
+    const draftOf = (name: string, extra: Record<string, unknown> = {}) => ({
+      name,
+      email: null,
+      mbti: null,
+      mbtiFromQuiz: false,
+      want: "research" as const,
+      veto: null,
+      ...extra,
+    });
+    const birthRow = (name: string, teamId_: string) =>
+      db.member.findFirst({ where: { teamId: teamId_, name }, select: { birthDate: true, birthTime: true } });
+    /** 새 팀을 만들고 그 첫 사람(팀장)으로 들어간다. 브라우저를 매번 새로 한다. */
+    const leaderJoin = async (label: string, extra: Record<string, unknown>) => {
+      session.clearAll();
+      const t = await onb.createTeam({ name: `사주 가입 ${label} ${suffix}`, course: "검증" });
+      joinTeamIds.push(t.id);
+      const name = `팀장${label}${suffix}`;
+      const r = await onb.joinTeam(t.code, draftOf(name, extra));
+      return { t, name, status: r.status };
+    };
+
+    // 1) 창작자가 곧바로 팀장이 되는 길
+    const direct = await leaderJoin("직접", { birthDate: "2001-03-02", birthTime: "14:30" });
+    check("직접 입장(첫 팀장)이 된다", direct.status, "joined");
+    check("직접 입장은 정규화된 생년월일·시각을 저장한다", await birthRow(direct.name, direct.t.id), { birthDate: "2001-03-02", birthTime: "14:30" });
+
+    const noTime = await leaderJoin("시각없음", { birthDate: "2001-03-02", birthTime: "" });
+    check("시각을 비우면 NULL 로 저장한다", await birthRow(noTime.name, noTime.t.id), { birthDate: "2001-03-02", birthTime: null });
+
+    // 2) 서버가 다시 거른다 — 맞지 않으면 가입을 막지 않고 비워 둔다
+    const badInputs: [string, Record<string, unknown>][] = [
+      ["없는날짜", { birthDate: "2001-02-30", birthTime: null }],
+      ["너무이른", { birthDate: "1980-01-01", birthTime: null }],
+      ["미래", { birthDate: "2999-01-01", birthTime: null }],
+      ["객체", { birthDate: { x: 1 }, birthTime: null }],
+      ["아주긴값", { birthDate: "2001-03-02" + "0".repeat(10_000), birthTime: null }],
+      ["잘못된시각", { birthDate: "2001-03-02", birthTime: "25:00" }],
+    ];
+    for (const [label, extra] of badInputs) {
+      const b = await leaderJoin(label, extra);
+      check(`${label}: 가입은 되고 생년월일은 저장하지 않는다`, [b.status, await birthRow(b.name, b.t.id)], ["joined", { birthDate: null, birthTime: null }]);
+    }
+
+    // 3) 승인 요청 길 — 요청 행이 들고 있다가 승인되면 Member 로 옮긴다
+    const leaderMember = await db.member.findFirstOrThrow({ where: { teamId: direct.t.id, isLeader: true } });
+    const asDirectLeader = await token(leaderMember.id);
+    const requestJoin = async (name: string, extra: Record<string, unknown>) => {
+      session.clearAll();
+      return onb.joinTeam(direct.t.code, draftOf(name, extra));
+    };
+
+    const approvedName = `승인자${suffix}`;
+    check("팀장이 있는 팀은 요청만 한다", (await requestJoin(approvedName, { birthDate: "1999-12-31", birthTime: "03:07" })).status, "requested");
+    const req = await db.joinRequest.findFirstOrThrow({ where: { teamId: direct.t.id, name: approvedName } });
+    check("요청 행이 생년월일을 들고 있다", [req.birthDate, req.birthTime], ["1999-12-31", "03:07"]);
+    session.as(asDirectLeader);
+    check("팀장이 승인한다", await rejoinActions.resolveJoinRequest(req.id, true), "ok");
+    session.reset();
+    check("승인만으로는 아직 Member 가 아니다", await birthRow(approvedName, direct.t.id), null);
+    await onb.checkJoinApproval();
+    check("신청인이 폴링하면 Member 로 옮겨진다", await birthRow(approvedName, direct.t.id), { birthDate: "1999-12-31", birthTime: "03:07" });
+    check("옮긴 뒤 요청 행은 지워진다", await db.joinRequest.count({ where: { id: req.id } }), 0);
+
+    // 4) 거절 — 요청 행은 감사 근거로 남지만 생년월일은 지운다
+    const rejectedName = `거절${suffix}`;
+    await requestJoin(rejectedName, { birthDate: "2000-05-05", birthTime: "09:09" });
+    const req2 = await db.joinRequest.findFirstOrThrow({ where: { teamId: direct.t.id, name: rejectedName } });
+    check("거절 전에는 요청 행에 들어 있다", req2.birthDate, "2000-05-05");
+    session.as(asDirectLeader);
+    check("팀장이 거절한다", await rejoinActions.resolveJoinRequest(req2.id, false), "ok");
+    session.reset();
+    const after2 = await db.joinRequest.findUnique({ where: { id: req2.id }, select: { status: true, birthDate: true, birthTime: true } });
+    check("요청 행은 남지만 생년월일·시각은 지워진다", after2, { status: "rejected", birthDate: null, birthTime: null });
+
+    // 5) 소유자가 값을 고쳐 다시 보내면 반영된다 — 사주를 빼면 지워진다
+    const editName = `수정${suffix}`;
+    await requestJoin(editName, { birthDate: "2002-08-15", birthTime: "07:20" });
+    const editReq = () => db.joinRequest.findFirstOrThrow({ where: { teamId: direct.t.id, name: editName }, select: { birthDate: true, birthTime: true } });
+    check("처음에는 들어 있다", await editReq(), { birthDate: "2002-08-15", birthTime: "07:20" });
+    // 같은 브라우저(쿠키 유지)가 사주 없이 다시 보낸다
+    check("소유자가 다시 보낸다", (await onb.joinTeam(direct.t.code, draftOf(editName))).status, "requested");
+    check("사주를 빼고 보내면 지워진다", await editReq(), { birthDate: null, birthTime: null });
+    session.reset();
+
     console.log("\n팀을 나가면 생년월일은 지워진다 (행과 기록은 남는다)");
     const team_ = await import("../../src/server/actions/team.js");
     const outcome = async (work: () => Promise<unknown>): Promise<string> => {
@@ -268,6 +358,9 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       await db.team.delete({ where: { id: team2.id } }).catch(() => {});
     }
   } finally {
+    for (const id of joinTeamIds) {
+      await db.team.delete({ where: { id } }).catch(() => {});
+    }
     if (teamId) {
       await db.member.deleteMany({ where: { teamId } });
       await db.team.delete({ where: { id: teamId } }).catch(() => {});

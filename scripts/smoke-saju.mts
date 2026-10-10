@@ -315,14 +315,32 @@ async function main() {
     2,
   );
   truthy("지우는 값이 두 열(birthDate·birthTime)을 모두 비운다", /clearBirthOnLeave\s*=\s*\{\s*birthDate:\s*null,\s*birthTime:\s*null\s*\}/.test(teamActions));
+  const onboardingActions = readCode("../src/server/actions/onboarding.ts");
+  truthy("온보딩 초안의 생년월일은 서버가 parseBirth 로 다시 거른다(cleanBirth)", /import \{ parseBirth \} from "@\/lib\/saju\/input"/.test(onboardingActions) && /parseBirth\(date,\s*t\)/.test(onboardingActions));
+  truthy("직접 입장·요청 생성·요청 갱신이 values 한 곳에서 생년월일을 받는다", /birthDate:\s*birth\.birthDate,\s*birthTime:\s*birth\.birthTime/.test(onboardingActions));
+  truthy("승인 뒤 클레임이 요청의 생년월일을 Member 로 옮긴다", /birthDate:\s*request\.birthDate,\s*birthTime:\s*request\.birthTime/.test(onboardingActions));
+  const settleSrc = readCode("../src/server/invite/settle.ts");
+  truthy("요청이 거절되면 생년월일·시각을 지운다", /input\.approve\s*\?\s*\{\}\s*:\s*\{\s*birthDate:\s*null,\s*birthTime:\s*null\s*\}/.test(settleSrc));
+  const onboardingState = readCode("../src/features/onboarding/onboarding-state.ts");
+  truthy("온보딩 초안이 생년월일을 들고 있고 비우면 보내지 않는다(toDraft)", /birthDate:\s*state\.birthDate\.trim\(\)\s*\|\|\s*null/.test(onboardingState));
+  truthy("서버에 등록되면 비우는 EMPTY 에 생년월일이 포함돼 있다(공용 PC 에 남지 않는다)", /birthDate:\s*"",\s*birthTime:\s*""/.test(onboardingState));
+  const onbSaju = readCode("../src/features/saju/onboarding-saju.tsx");
+  truthy("온보딩 사주 카드는 이 기기에서 계산하고 서버를 부르지 않는다", !/@\/server|"use server"/.test(onbSaju));
+  truthy("사주는 05 화면 안의 선택 칸이다 — 새 단계를 만들지 않는다(주 동작은 희망 역할 고르기)", /<OnboardingSaju/.test(readCode("../src/app/onboarding/character/page.tsx")) && /희망 역할 고르기/.test(readCode("../src/app/onboarding/character/page.tsx")));
   const types = readCode("../src/lib/types.ts");
-  truthy("공용 타입(Member 등)에 생년월일이 없다", !/birth/i.test(types));
+  // `OnboardingDraft` 는 사용자가 서버로 **보내는** 입력이라 생년월일을 가진다. 지키려는 것은 서버가 클라이언트로
+  // **내려주는** 읽기용 타입(Member·TeamSaju 등)에 생년월일이 없다는 것이다 — 그 정의만 빼고 본다.
+  const draftStart = types.indexOf("export type OnboardingDraft");
+  const draftEnd = types.indexOf("\n};", draftStart);
+  check("온보딩 초안 타입이 types.ts 에 있다", draftStart >= 0 && draftEnd > draftStart, true);
+  truthy("공용 타입(Member 등)에 생년월일이 없다 — 보내는 입력(OnboardingDraft)만 예외", !/birth/i.test(types.slice(0, draftStart) + types.slice(draftEnd)));
+  truthy("온보딩 초안의 생년월일은 선택(optional)이다", /birthDate\?:\s*string\s*\|\s*null/.test(types.slice(draftStart, draftEnd)));
 
   console.log("\n[문구] 단정하거나 점수·진단처럼 말하지 않는다");
   const copy = readCode("../src/lib/saju/copy.ts");
   // 주석은 readCode 가 지운다. 남은 것은 사용자에게 보이는 문자열뿐이다.
   truthy("'진단'·'정확'·'운세'·'점수' 를 쓰지 않는다", !/진단|정확|운세|점수/.test(copy));
-  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx", "meeting-chemistry-sheet.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx", "meeting-chemistry-sheet.tsx", "onboarding-saju.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
   const logic = ["chemistry.ts", "team.ts", "today.ts", "meeting-flow.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
   const everything = [copy, ...uiFiles, ...logic].join("\n");
   truthy("화면·계산 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(everything));

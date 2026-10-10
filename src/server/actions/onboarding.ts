@@ -18,6 +18,7 @@ import {
   type SessionMember,
 } from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
+import { parseBirth } from "@/lib/saju/input";
 import type { OnboardingDraft, Team } from "@/lib/types";
 
 /**
@@ -43,6 +44,22 @@ const MIN_NAME = 2;
  * 온 사람이 다른 사람"이 되어 재입장 문이 영영 풀리지 않는다.
  */
 const MAX_NAME = 20;
+
+/** 생년월일(시) 입력의 최대 길이 — 이보다 긴 값은 형식 검사에 닿기 전에 버린다. */
+const MAX_BIRTH_FIELD = 32;
+
+/**
+ * 온보딩 초안의 생년월일(시)을 **저장해도 되는 값**으로 걸러 낸다.
+ *
+ * 형식·범위는 `parseBirth` 한 곳이 정한다(화면·`saveMyBirth` 와 같다). 맞지 않으면 둘 다 `null` —
+ * 사주는 선택이라 가입을 막을 이유가 없고, 막으면 "사주 때문에 못 들어오는" 화면이 된다.
+ */
+function cleanBirth(date: unknown, time: unknown): { birthDate: string | null; birthTime: string | null } {
+  if (typeof date !== "string" || date.length > MAX_BIRTH_FIELD) return { birthDate: null, birthTime: null };
+  const t = typeof time === "string" && time.length <= MAX_BIRTH_FIELD ? time : null;
+  const parsed = parseBirth(date, t);
+  return parsed.ok ? { birthDate: parsed.date, birthTime: parsed.time } : { birthDate: null, birthTime: null };
+}
 
 /** `joinTeam` 이 거절한 이유. 화면이 무엇을 고쳐야 하는지 말해 준다. */
 export type JoinBlock = "no-code" | "short-name" | "long-name" | "no-want" | "in-other-team";
@@ -287,6 +304,11 @@ export async function joinTeam(
   // 숨긴다) 버튼을 눌러도 아무 일도 일어나지 않는 화면이 된다(실제로 그랬다).
   if (taken) return { status: "name-taken" };
 
+  // 사주를 위한 생년월일(시) — **선택**이고, 서버가 화면과 같은 규칙(`parseBirth`)으로 다시 거른다.
+  // 맞지 않으면 거절하지 않고 비워 둔다: 사주는 없어도 가입에는 아무 문제가 없다. 문자열이 아닌 값이나
+  // 터무니없이 긴 값이 와도 던지지 않는다.
+  const birth = cleanBirth(draft.birthDate, draft.birthTime);
+
   const values = {
     // **이메일을 요구하지 않는다** — 비어 있으면 그냥 없다. 강제하지 않는다: 강제하면
     // 팀 들어가기가 "양식을 채우는 일"이 되어 이 앱의 약속(초대 코드 + 이름)에 어긋난다.
@@ -294,6 +316,8 @@ export async function joinTeam(
     email: draft.email ? draft.email.trim().toLowerCase() : null,
     mbti: isMbtiType(draft.mbti) ? draft.mbti : null,
     mbtiFromQuiz: draft.mbtiFromQuiz,
+    birthDate: birth.birthDate,
+    birthTime: birth.birthTime,
     wantRole: isRoleKey(draft.want) ? draft.want : null,
     // 같은 역할을 희망하면서 동시에 피할 수는 없다 — 화면에서 잠근다. 그래도 서버도
     // 본다: 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수 있다.
@@ -562,6 +586,9 @@ export async function checkJoinApproval(): Promise<
           email: request.email || null,
           mbti: request.mbti,
           mbtiFromQuiz: request.mbtiFromQuiz,
+          // 승인되어 `Member` 가 되는 순간 옮긴다 — 요청 행은 곧 지워진다.
+          birthDate: request.birthDate,
+          birthTime: request.birthTime,
           wantRole: request.wantRole,
           vetoRole: request.vetoRole,
         },

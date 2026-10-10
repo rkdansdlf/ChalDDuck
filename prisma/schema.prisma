@@ -302,6 +302,11 @@ model JoinRequest {
   email        String?
   mbti         String?
   mbtiFromQuiz Boolean   @default(false)
+  /// 사주를 위해 온보딩에서 받은 생년월일(`YYYY-MM-DD`)·출생 시각(`HH:MM`). 선택이다.
+  /// 승인되면 `Member` 로 옮기고, **거절되면 지운다** — 요청 행은 감사 근거로 남지만 이 값은 기록이 아니라
+  /// 개인정보다. 서버가 `parseBirth` 로 걸러 낸 값만 들어온다.
+  birthDate    String?
+  birthTime    String?
   wantRole     String?
   vetoRole     String?
   /// 승인되면 이 토큰으로 세션이 만들어진다. 요청한 브라우저만 갖고 있다.
