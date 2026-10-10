@@ -7,14 +7,21 @@ import type { TeamSaju } from "@/data/api";
 import {
   MEETING_ATTENDEE_WORD,
   MEETING_CHEMISTRY_NOTICE,
+  MEETING_FLOW_CLEARED,
   MEETING_FLOW_COPIED,
   MEETING_FLOW_COPY_FAILED,
+  MEETING_FLOW_NOT_CONFIRMED,
+  MEETING_FLOW_SAVED,
+  MEETING_FLOW_SAVED_NOTE,
+  MEETING_FLOW_SAVE_CAPTION,
+  MEETING_FLOW_SAVE_FAILED,
   MEETING_TIP,
   TEAM_NEED_MINE,
 } from "@/lib/saju/copy";
 import { ELEMENTS, ELEMENT_KO } from "@/lib/saju/engine";
 import { meetingFlowText, planMeetingFlow } from "@/lib/saju/meeting-flow";
 import { summarizeTeam } from "@/lib/saju/team";
+import { clearMeetingFlow, saveMeetingFlow } from "@/server/actions/meeting-flow";
 import { getMeetingChemistry } from "@/server/actions/saju";
 import { ElementBar } from "./element-bar";
 
@@ -26,22 +33,31 @@ import { ElementBar } from "./element-bar";
  *
  * 누가 어느 단계를 하라는 말이 없다. 사주로 사람의 역할을 정하지 않는다.
  * 안건(`agenda`)에는 쓰지 않는다 — 안건은 회의록 제목과 기여 기록 제목으로 그대로 쓰여서, 여기에
- * 진행 방식을 넣으면 제목이 길어진다. 그래서 **복사**만 한다.
+ * 진행 방식을 넣으면 제목이 길어진다. 그래서 전용 칸(`MeetingProposal.flow`)에 **저장**하거나 **복사**한다.
+ *
+ * ## 저장하는 글과 복사하는 글은 다르다
+ *
+ * 복사하는 글에는 "가장 적게 센 오행" 제안이 들어가고, 저장하는 글에는 **들어가지 않는다.** 저장한 글은
+ * 사주를 등록하지 않은 팀원도 보기 때문이다. 저장하는 글은 서버가 회의 길이로 만든다(여기서 보내지 않는다).
  */
 export function MeetingChemistrySheet({
   open,
   meetingId,
   durationMinutes,
+  savedFlow,
   onClose,
 }: {
   open: boolean;
   meetingId: string | null;
   durationMinutes: number;
+  /** 이 회의에 이미 저장된 진행 방식. 없으면 `null`. */
+  savedFlow: string | null;
   onClose: () => void;
 }) {
   const router = useRouter();
   const [loaded, setLoaded] = useState<{ id: string | null; data: TeamSaju | null }>({ id: null, data: null });
   const [copyNote, setCopyNote] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const loading = Boolean(open && meetingId && loaded.id !== meetingId);
   const data = open && meetingId && loaded.id === meetingId ? loaded.data : null;
@@ -74,6 +90,25 @@ export function MeetingChemistrySheet({
     }
   };
 
+  /** 저장하거나 지운다. 결과는 말로 알리고, 회의 카드가 새 값을 그리도록 화면을 다시 읽는다. */
+  const toggleSaved = async () => {
+    if (!meetingId) return;
+    setSaving(true);
+    try {
+      const res = savedFlow ? await clearMeetingFlow(meetingId) : await saveMeetingFlow(meetingId);
+      if (res === "ok") {
+        setCopyNote(savedFlow ? MEETING_FLOW_CLEARED : MEETING_FLOW_SAVED);
+        router.refresh();
+      } else {
+        setCopyNote(res === "not-confirmed" ? MEETING_FLOW_NOT_CONFIRMED : MEETING_FLOW_SAVE_FAILED);
+      }
+    } catch {
+      setCopyNote(MEETING_FLOW_SAVE_FAILED);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Sheet
       open={open}
@@ -84,15 +119,28 @@ export function MeetingChemistrySheet({
       }}
       footer={
         ready ? (
-          <div>
-            <Btn full onClick={copy}>
+          <div className="flex flex-col gap-2">
+            {savedFlow ? <p className="t-cap-strong m-0 text-center text-txt-muted">{MEETING_FLOW_SAVED_NOTE}</p> : null}
+            {/* 채운 버튼은 하나 — 아직 저장하지 않았다면 저장이 주 동작이고, 저장한 뒤에는 지우기·복사가 둘 다 보조다. */}
+            {savedFlow ? (
+              <Btn full v="outline" disabled={saving} onClick={toggleSaved}>
+                저장된 진행 방식 지우기
+              </Btn>
+            ) : (
+              <Btn full disabled={saving} onClick={toggleSaved}>
+                {saving ? "저장 중…" : "회의에 저장하기"}
+              </Btn>
+            )}
+            <Btn full v="outline" onClick={copy}>
               진행 방식 복사하기
             </Btn>
             {copyNote ? (
-              <p role="status" className="t-cap mt-1.5 mb-0 text-center text-txt-muted">
+              <p role="status" className="t-cap m-0 text-center text-txt-muted">
                 {copyNote}
               </p>
-            ) : null}
+            ) : (
+              <p className="t-cap m-0 text-center text-txt-muted">{MEETING_FLOW_SAVE_CAPTION}</p>
+            )}
           </div>
         ) : undefined
       }

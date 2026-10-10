@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { check, finish, readCode, truthy } from "./db-test-base.mjs";
 import {
   calculateSaju,
@@ -343,6 +344,18 @@ async function main() {
   truthy("모든 질문과 선택지에 문구와 오행이 있다", BALANCE_QUESTIONS.every((q) => q.prompt && q.a.label && q.b.label && ELEMENTS.includes(q.a.element) && ELEMENTS.includes(q.b.element)));
   check("질문 번호·선택 확인 함수", [isBalanceQuestion(BALANCE_QUESTIONS[0]!.id), isBalanceQuestion("없는질문"), isBalanceQuestion({ x: 1 }), isBalanceChoice("a"), isBalanceChoice("b"), isBalanceChoice("c"), isBalanceChoice(null)], [true, false, false, true, true, false, false]);
 
+  console.log("\n[진행 방식 저장] 저장하는 글은 서버가 회의 길이로 만든다");
+  let badSaved = 0;
+  for (let d = 0; d <= 300; d += 1) {
+    const saved = meetingFlowText(planMeetingFlow(d), []);
+    const plan = planMeetingFlow(d);
+    if (saved !== meetingFlowText(planMeetingFlow(d), [])) badSaved += 1; // 결정적이다
+    if (saved.includes("챙겨 볼 것") || Object.values(MEETING_TIP).some((t) => saved.includes(t))) badSaved += 1; // 오행 제안이 없다
+    if (saved.split("\n").length !== 4 || !saved.startsWith(`[회의 진행 방식] ${plan.total}분`)) badSaved += 1; // 머리글 + 세 단계
+    if (saved.length > 600) badSaved += 1; // 칸이 커지지 않는다
+  }
+  check("0–300분 모든 길이에서 저장하는 글이 같은 형식이고 오행 제안이 없다", badSaved, 0);
+
   console.log("\n[약속] 사주는 역할 배정에 쓰지 않고, 생년월일 원본은 본인에게만 간다");
   const roles = readCode("../src/server/actions/roles.ts");
   truthy("역할 배정 액션이 생년월일·사주를 읽지 않는다", !/birth|saju/i.test(roles));
@@ -396,6 +409,17 @@ async function main() {
   truthy("투표의 팀은 세션에서 정한다(클라이언트가 팀 번호를 보내지 않는다)", /teamId:\s*session\.teamId/.test(balanceAction) && !/teamId\s*:\s*string|teamId\)/.test(balanceAction.split("export async function")[1]!.split("{")[0]!));
   truthy("결과는 내가 투표한 질문만 내려보낸다(counts 가 내 선택에 달려 있다)", /counts:\s*myChoice/.test(api));
   truthy("결과 집계는 팀에 남아 있는 사람의 표만 센다", /sajuBalanceVote\.findMany\([\s\S]*?member:\s*\{\s*leftAt:\s*null\s*\}/.test(api));
+  const flowAction = readCode("../src/server/actions/meeting-flow.ts");
+  truthy("저장 액션은 회의 번호만 받는다 — 클라이언트가 글을 보내지 않는다", /export async function saveMeetingFlow\(meetingId: string\)/.test(flowAction));
+  truthy("저장하는 글은 서버가 회의 길이로 만들고 오행 제안을 넣지 않는다", /meetingFlowText\(planMeetingFlow\(meeting\.durationMinutes\),\s*\[\]\)/.test(flowAction));
+  truthy("확정 여부는 화면과 같은 계산(effectiveStage)으로 본다", /effectiveStage\(\{/.test(flowAction) && /stage !== "confirmed"/.test(flowAction));
+  truthy("회의는 세션의 팀으로 좁힌다", /meetingProposal\.findFirst\(\{\s*where:\s*\{\s*id:\s*meetingId,\s*teamId\s*\}/.test(flowAction));
+  truthy("저장 액션은 안건(agenda)을 건드리지 않고 사주 데이터를 읽지 않는다", !/agenda|birth|getMeetingSaju|getTeamSaju/.test(flowAction.replace(/select:\s*\{[\s\S]*?\}\s*,?\s*\}\)/, "")));
+  const schemaSrc = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+  truthy("스키마에 MeetingProposal.flow 가 있고 안건과 따로 둔 이유가 적혀 있다", /model MeetingProposal[\s\S]*?\n\s+flow\s+String\?/.test(schemaSrc));
+  const sheetSrc = readCode("../src/features/saju/meeting-chemistry-sheet.tsx");
+  truthy("시트는 글을 보내지 않고 회의 번호로만 저장한다", /saveMeetingFlow\(meetingId\)/.test(sheetSrc) && !/saveMeetingFlow\(meetingId,/.test(sheetSrc));
+  truthy("저장된 진행 방식을 회의 카드가 보여 주고 지울 수 있다", /proposal\.flow/.test(readCode("../src/features/schedule/slots-screen.tsx")) && /clearMeetingFlow\(proposal\.id\)/.test(readCode("../src/features/schedule/slots-screen.tsx")));
   const types = readCode("../src/lib/types.ts");
   // `OnboardingDraft` 는 사용자가 서버로 **보내는** 입력이라 생년월일을 가진다. 지키려는 것은 서버가 클라이언트로
   // **내려주는** 읽기용 타입(Member·TeamSaju 등)에 생년월일이 없다는 것이다 — 그 정의만 빼고 본다.

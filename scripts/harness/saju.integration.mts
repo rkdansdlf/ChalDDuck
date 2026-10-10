@@ -15,6 +15,7 @@
  * 9. **회의 케미는 참석 예정자(불참 응답 제외)만, 서로 보여 주는 만큼만** — 다른 팀 회의·없는 회의·
  *    잘못된 번호는 null 이고 응답에 생년월일이 없다.
  * 8. **팀을 나가면 생년월일이 지워진다** — 행은 기록 근거라 남지만 이 값은 개인정보다(두 길 모두).
+ * 11. **진행 방식 저장은 서버가 만든 글만, 확정된 회의에만, 팀 안에서만 — 안건은 건드리지 않고 오행 제안은 담지 않는다.**
  * 10. **밸런스 게임은 한 사람 한 표이고 고른 뒤에만 결과가 내려오며, 나간 사람·다른 팀의 표는 세지 않는다.**
  *
  *   npm run test:saju
@@ -230,6 +231,80 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("응답 어디에도 생년월일·출생 시각이 없다", ["2001-03-02", "1999-12-31", "2002-08-15", "14:30", "03:07", "07:20", "birth"].filter((x) => chemWire.includes(x)), []);
     await db.meetingProposal.delete({ where: { id: meeting.id } });
     for (const id of [me.id, other.id, third.id]) await db.member.update({ where: { id }, data: { birthDate: null, birthTime: null } });
+
+    console.log("\n진행 방식 저장 — 서버가 만든 글만, 확정된 회의에만, 팀 안에서만");
+    const flowActions = await import("../../src/server/actions/meeting-flow.js");
+    const { meetingFlowText, planMeetingFlow } = await import("../../src/lib/saju/meeting-flow.js");
+    const { MEETING_TIP } = await import("../../src/lib/saju/copy.js");
+    const mkMeeting = (stage: string, respondBy: Date, extra: Record<string, unknown> = {}) =>
+      db.meetingProposal.create({
+        data: { teamId: team.id, proposedById: me.id, stage, date: "2026-10-12", respondBy, ...extra },
+      });
+    const flowOf = async (id: string) => (await db.meetingProposal.findUnique({ where: { id }, select: { flow: true, agenda: true } }))!;
+    const future = new Date(Date.now() + 86_400_000);
+    const past = new Date(Date.now() - 86_400_000);
+
+    const confirmed = await mkMeeting("confirmed", past, { agenda: "정기 회의 안건", durationMinutes: 60 });
+    const wantText = meetingFlowText(planMeetingFlow(60), []);
+
+    check("로그인하지 않으면 저장할 수 없다", await flowActions.saveMeetingFlow(confirmed.id), "invalid");
+    check("로그인하지 않으면 지울 수도 없다", await flowActions.clearMeetingFlow(confirmed.id), "invalid");
+    check("아무것도 바뀌지 않았다", (await flowOf(confirmed.id)).flow, null);
+    check("없는 회의·잘못된 번호는 gone", [
+      await as(asMe, () => flowActions.saveMeetingFlow("없는회의")),
+      await as(asMe, () => flowActions.saveMeetingFlow({ x: 1 } as unknown as string)),
+      await as(asMe, () => flowActions.saveMeetingFlow("")),
+      await as(asMe, () => flowActions.saveMeetingFlow("x".repeat(1000))),
+    ], ["gone", "gone", "gone", "gone"]);
+
+    check("확정된 회의에 저장한다", await as(asMe, () => flowActions.saveMeetingFlow(confirmed.id)), "ok");
+    const saved = await flowOf(confirmed.id);
+    check("저장된 글은 서버가 회의 길이로 만든 글과 같다", saved.flow, wantText);
+    check("글에 세 단계와 시간이 있다", /1\) .*\(30분\)/.test(saved.flow ?? "") && /2\) .*\(20분\)/.test(saved.flow ?? "") && /3\) .*\(10분\)/.test(saved.flow ?? ""), true);
+    check("오행에서 고른 제안은 담기지 않는다(팀원 모두가 보는 칸이다)", [
+      (saved.flow ?? "").includes("챙겨 볼 것"),
+      Object.values(MEETING_TIP).some((tip) => (saved.flow ?? "").includes(tip)),
+    ], [false, false]);
+    check("안건은 그대로다(안건은 회의록·기여 기록 제목이다)", saved.agenda, "정기 회의 안건");
+    check("다시 저장해도 같다", [await as(asMe, () => flowActions.saveMeetingFlow(confirmed.id)), (await flowOf(confirmed.id)).flow], ["ok", wantText]);
+
+    // 사주를 등록하지 않은 팀원도 저장·지울 수 있다 — 저장하는 글에 사주 데이터가 없으므로 열쇠가 필요 없다
+    check("사주를 등록하지 않은 팀원도 저장·지울 수 있다", [
+      await as(asFourth, () => flowActions.clearMeetingFlow(confirmed.id)),
+      (await flowOf(confirmed.id)).flow,
+      await as(asFourth, () => flowActions.saveMeetingFlow(confirmed.id)),
+    ], ["ok", null, "ok"]);
+
+    const api2 = await as(asMe, () => api.getMeetingProposal(team.id));
+    check("회의 조회가 저장된 진행 방식을 돌려준다", [api2.flow, api2.agenda], [wantText, "정기 회의 안건"]);
+    check("지운다", [await as(asMe, () => flowActions.clearMeetingFlow(confirmed.id)), (await flowOf(confirmed.id)).flow], ["ok", null]);
+    check("지운 뒤 회의 조회의 진행 방식은 null", (await as(asMe, () => api.getMeetingProposal(team.id))).flow, null);
+
+    // 확정 여부는 화면과 같은 계산(effectiveStage)이다
+    const waiting = await mkMeeting("proposed", future, { durationMinutes: 45 });
+    check("아직 응답을 기다리는 제안에는 저장하지 않는다", [await as(asMe, () => flowActions.saveMeetingFlow(waiting.id)), (await flowOf(waiting.id)).flow], ["not-confirmed", null]);
+    await db.meetingProposal.update({ where: { id: waiting.id }, data: { respondBy: past } });
+    check("마감이 지났고 반대가 없으면 확정으로 본다(예약 작업이 표를 고치기 전에도)", await as(asMe, () => flowActions.saveMeetingFlow(waiting.id)), "ok");
+    check("회의 길이에 맞춘 글이 저장된다(45분)", (await flowOf(waiting.id)).flow, meetingFlowText(planMeetingFlow(45), []));
+    await db.meetingResponse.create({ data: { proposalId: waiting.id, memberId: other.id, agree: false } });
+    await db.meetingProposal.update({ where: { id: waiting.id }, data: { flow: null } });
+    check("반대가 붙은 제안은 마감이 지나도 확정이 아니다", [await as(asMe, () => flowActions.saveMeetingFlow(waiting.id)), (await flowOf(waiting.id)).flow], ["not-confirmed", null]);
+
+    // 다른 팀의 회의는 저장도 지우기도 못 한다
+    const teamC = await db.team.create({ data: { name: `사주 검사 진행방식 ${suffix}`, course: "검증", code: `CD-${randomUUID().slice(0, 6).toUpperCase()}` } });
+    try {
+      const mC = await db.member.create({ data: { teamId: teamC.id, name: `진행방식외부${suffix}` } });
+      memberIds.push(mC.id);
+      const foreignMeeting = await db.meetingProposal.create({
+        data: { teamId: teamC.id, proposedById: mC.id, stage: "confirmed", date: "2026-10-12", respondBy: past, flow: "남의 팀 글" },
+      });
+      check("다른 팀의 회의는 저장할 수 없다", await as(asMe, () => flowActions.saveMeetingFlow(foreignMeeting.id)), "gone");
+      check("다른 팀의 회의는 지울 수 없다", [await as(asMe, () => flowActions.clearMeetingFlow(foreignMeeting.id)), (await flowOf(foreignMeeting.id)).flow], ["gone", "남의 팀 글"]);
+    } finally {
+      await db.member.deleteMany({ where: { teamId: teamC.id } });
+      await db.team.delete({ where: { id: teamC.id } }).catch(() => {});
+    }
+    await db.meetingProposal.deleteMany({ where: { id: { in: [confirmed.id, waiting.id] } } });
 
     console.log("\n밸런스 게임 — 한 사람 한 표, 고른 뒤에만 결과, 팀 안에서만");
     const balanceAction = await import("../../src/server/actions/saju-balance.js");

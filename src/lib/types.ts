@@ -162,6 +162,8 @@ export type MeetingProposal = {
   location?: string | null;
   /** 회의 안건. */
   agenda?: string | null;
+  /** 저장해 둔 진행 방식(여러 줄 글). 없으면 `null`. 안건과 별개다 — 안건은 제목으로 쓰인다. */
+  flow?: string | null;
   /** 회의 소요 시간(분). 기본 60분. */
   durationMinutes?: number;
   /** 회의록 작성 여부. */

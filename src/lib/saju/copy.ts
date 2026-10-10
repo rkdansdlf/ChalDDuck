@@ -344,3 +344,13 @@ export const PAIRING_COPY: Record<"start" | "care" | "easy" | "own", PairingCopy
 export const PAIRING_NEED_OTHERS = "나 말고도 사주를 등록한 팀원이 있어야 볼 수 있어요.";
 export const GUESS_NEED_MORE = "세 명 이상(나 포함)이 사주를 등록하면 할 수 있어요.";
 export const GUESS_INTRO = "연·월·일 여섯 글자의 오행 수만 보고, 누구의 사주인지 맞혀 보세요.";
+
+/* ── 진행 방식 저장 ───────────────────────────────────────── */
+
+export const MEETING_FLOW_SAVE_CAPTION =
+  "저장하는 글에는 오행에서 고른 제안이 빠져요. 팀원 모두가 보는 칸이라서요.";
+export const MEETING_FLOW_SAVED_NOTE = "이 회의에 저장돼 있어요";
+export const MEETING_FLOW_SAVED = "회의에 저장했어요";
+export const MEETING_FLOW_CLEARED = "저장된 진행 방식을 지웠어요";
+export const MEETING_FLOW_NOT_CONFIRMED = "확정된 회의에만 저장할 수 있어요";
+export const MEETING_FLOW_SAVE_FAILED = "저장하지 못했어요. 잠시 뒤 다시 시도해 주세요";

@@ -847,6 +847,7 @@ export async function getMeetingProposal(teamId: string): Promise<MeetingProposa
     myResponse: mine ? (mine.agree ? "agree" : "against") : null,
     location: proposal.location ?? null,
     agenda: proposal.agenda ?? null,
+    flow: proposal.flow ?? null,
     durationMinutes: proposal.durationMinutes ?? 60,
     hasNote: Boolean(proposal.note),
   };
