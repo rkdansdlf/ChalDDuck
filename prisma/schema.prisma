@@ -195,6 +195,9 @@ model Member {
   meetingNotes          MeetingNote[]
   meetingAttendances    MeetingAttendance[]    @relation("AttendanceMember")
   sajuBalanceVotes      SajuBalanceVote[]
+  /// 시간표를 부탁한 기록(`ScheduleAsk`) — 보낸 쪽과 받은 쪽.
+  scheduleAsksSent      ScheduleAsk[]          @relation("ScheduleAskSender")
+  scheduleAsksReceived  ScheduleAsk[]          @relation("ScheduleAskTarget")
   attendancesChecked    MeetingAttendance[]    @relation("AttendanceCheckedBy")
   reportShareTokens     ReportShareToken[]
   roleDraws             RoleDraw[]
@@ -1403,4 +1406,24 @@ model SajuBalanceVote {
 
   @@id([memberId, questionId])
   @@index([teamId, questionId])
+}
+
+/// 시간표 부탁 — 팀 겹쳐보기에서 아직 시간표를 안 낸 팀원에게 **받는 사람당 하루 한 번**.
+///
+/// 예전에는 이미 남긴 알림을 세어 하루 한 번을 막았다. 읽고 쓰는 사이가 벌어져 **동시에 두 번
+/// 누르면 둘 다 통과**했다(받는 사람이 같은 부탁을 두 번 받는다). 콕 찌르기(`Poke`)처럼 유일 키가
+/// 마지막 문을 지키고, 화면의 "오늘 보냄" 도 이 표를 읽는다 — 문과 표시가 같은 곳을 본다.
+model ScheduleAsk {
+  id        String   @id @default(cuid())
+  senderId  String
+  targetId  String
+  /// 한국 날짜("2026-10-10"). 서버가 어디서 돌든 같은 하루여야 한다.
+  sentOn    String
+  createdAt DateTime @default(now())
+
+  sender Member @relation("ScheduleAskSender", fields: [senderId], references: [id], onDelete: Cascade)
+  target Member @relation("ScheduleAskTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  /// 같은 사람이 같은 사람에게 같은 날 두 번 부탁할 수 없다.
+  @@unique([senderId, targetId, sentOn])
 }
