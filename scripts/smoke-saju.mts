@@ -12,7 +12,8 @@ import {
 import { parseBirth } from "../src/lib/saju/input.js";
 import { chemistryOf, type Relation } from "../src/lib/saju/chemistry.js";
 import { summarizeTeam } from "../src/lib/saju/team.js";
-import { PAIR_TITLE, RELATION_COPY, MEETING_TIP } from "../src/lib/saju/copy.js";
+import { buildTodayFlow, dayStemOfDate } from "../src/lib/saju/today.js";
+import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY } from "../src/lib/saju/copy.js";
 
 /**
  * 사주 불변식.
@@ -235,6 +236,34 @@ async function main() {
   const three = elementCountsOf([at(2001, 3, 2).year, at(2001, 3, 2).month, at(2001, 3, 2).day]);
   check("세 기둥은 여섯 글자", Object.values(three).reduce((a, b) => a + b, 0), 6);
 
+  console.log("\n[오늘의 팀플 흐름] 날짜와 팀 상태로만 정해진다");
+  check("2000-01-01 의 일진 천간은 戊(4)", dayStemOfDate("2000-01-01"), 4);
+  check("2024-01-01 의 일진 천간은 甲(0)", dayStemOfDate("2024-01-01"), 0);
+  check("달력에 없는 날은 null", [dayStemOfDate("2026-02-30"), dayStemOfDate("오늘"), dayStemOfDate("")], [null, null, null]);
+  const flowOf = (my: number, today: string, extra: Partial<Parameters<typeof buildTodayFlow>[0]> = {}) =>
+    buildTodayFlow({ today, myStem: my, team: [], meetingToday: false, dueSoon: false, ...extra });
+  check("甲 일간 × 甲 일진 = 같은 오행", flowOf(0, "2024-01-01")?.relation, "same");
+  check("丙 일간 × 甲 일진 = 오늘이 나를 북돋는다", flowOf(2, "2024-01-01")?.relation, "generatesMe");
+  check("甲 일간 × 丙 일진(2024-01-03) = 내가 힘을 내어 준다", flowOf(0, "2024-01-03")?.relation, "meGenerates");
+  check("일진 표기", [flowOf(0, "2000-01-01")?.pillarKo, flowOf(0, "2000-01-01")?.pillarHanja], ["무오", "戊午"]);
+  check("날짜가 아니면 카드를 만들지 않는다", flowOf(0, "내일"), null);
+  let badFlow = 0;
+  for (let my = 0; my < 10; my += 1) {
+    for (let d = 1; d <= 60; d += 1) {
+      const day = new Date(Date.UTC(2026, 0, d)).toISOString().slice(0, 10);
+      const f = flowOf(my, day);
+      if (!f || !f.title || !f.line || !f.tip || f.title !== TODAY_COPY[f.relation].title) badFlow += 1;
+    }
+  }
+  check("열 일간 × 60일 모두 문구가 있다", badFlow, 0);
+  const twoMembers = [member({ fire: 4, wood: 2 }), member({ fire: 2, metal: 4 })];
+  check("회의 없는 날은 미션이 없다", flowOf(0, "2026-10-12", { team: twoMembers })?.missions, []);
+  check("오늘 회의 + 둘 이상 등록 = 가장 적은 오행 제안 + 마무리 확인", flowOf(0, "2026-10-12", { team: twoMembers, meetingToday: true })?.missions, [MEETING_TIP.earth, MISSION_MEETING_CLOSER]);
+  check("한 명만 등록했으면 팀 분포 제안은 없다", flowOf(0, "2026-10-12", { team: [twoMembers[0]!], meetingToday: true })?.missions, [MISSION_MEETING_CLOSER]);
+  check("마감 임박만 = 마감 확인", flowOf(0, "2026-10-12", { dueSoon: true })?.missions, [MISSION_DUE_SOON]);
+  check("회의와 마감이 겹치면 둘 — 분포 제안을 뺀다", flowOf(0, "2026-10-12", { team: twoMembers, meetingToday: true, dueSoon: true })?.missions, [MISSION_MEETING_CLOSER, MISSION_DUE_SOON]);
+  check("같은 입력은 같은 출력", JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })), JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })));
+
   console.log("\n[약속] 사주는 역할 배정에 쓰지 않고, 생년월일 원본은 본인에게만 간다");
   const roles = readCode("../src/server/actions/roles.ts");
   truthy("역할 배정 액션이 생년월일·사주를 읽지 않는다", !/birth|saju/i.test(roles));
@@ -267,11 +296,19 @@ async function main() {
   const copy = readCode("../src/lib/saju/copy.ts");
   // 주석은 readCode 가 지운다. 남은 것은 사용자에게 보이는 문자열뿐이다.
   truthy("'진단'·'정확'·'운세'·'점수' 를 쓰지 않는다", !/진단|정확|운세|점수/.test(copy));
-  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
-  const logic = ["chemistry.ts", "team.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
+  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const logic = ["chemistry.ts", "team.ts", "today.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
   const everything = [copy, ...uiFiles, ...logic].join("\n");
   truthy("화면·계산 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(everything));
   truthy("역할을 정해 주는 말(담당·맡아)을 쓰지 않는다", !/담당|맡아|맡으/.test(everything));
+  const todayLogic = readCode("../src/lib/saju/today.ts");
+  const todayCard = readCode("../src/features/saju/today-flow-card.tsx");
+  truthy("오늘의 흐름은 시계를 읽지 않는다(오늘은 서버가 정해 넘긴다)", !/new Date\(|Date\.now|performance\.now/.test(todayLogic + todayCard));
+  truthy("오늘의 흐름은 AI 를 부르지 않는다", !/server\/ai|callModel|openai|streamText|generate/i.test(todayLogic + todayCard));
+  const homeScreen = readCode("../src/features/home/home-screen.tsx");
+  truthy("홈이 오늘의 흐름에 서버가 정한 today 와 브리핑의 회의·마감 결과를 넘긴다", /<TodayFlowCard[\s\S]*?today=\{today\}[\s\S]*?key === "meeting"[\s\S]*?key === "soon"/.test(homeScreen));
+  const homePage = readCode("../src/app/(tabs)/home/page.tsx");
+  truthy("홈은 팀 사주 조회가 실패해도 깨지지 않는다(catch 로 폴백)", /getTeamSaju\(\)\.catch\(\(\) => null\)/.test(homePage));
   truthy("팀 사주 화면이 역할 화면(07)의 데이터를 읽지 않는다", !/getRoster|getRoles|RoleNegotiation|wantRole|vetoRole/.test(uiFiles.join("\n")));
 
   await finish();

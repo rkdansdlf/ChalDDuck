@@ -232,3 +232,48 @@ export const TEAM_SAJU_NOTICE =
 
 export const TEAM_NEED_MINE =
   "내 사주를 등록하면 팀 사주를 볼 수 있어요. 서로 보여 주는 만큼만 볼 수 있게 했어요.";
+
+/* ── 오늘의 팀플 흐름 (홈) ─────────────────────────────────── */
+
+/**
+ * 오늘 날짜의 일간과 내 일간의 오행 관계(내가 기준)로 고르는 한 줄.
+ * 점수나 등급을 매기지 않는다 — 관계의 이름과 **오늘 해 볼 행동**만 말한다.
+ */
+export type TodayCopy = { title: string; line: string; tip: string };
+
+export const TODAY_COPY: Record<Relation, TodayCopy> = {
+  same: {
+    title: "나와 결이 같은 날",
+    line: "오늘의 기운이 내 일간과 같은 오행이에요.",
+    tip: "익숙한 방식이 잘 맞는 편이에요. 새 의견을 하나쯤 들어 보는 것도 좋아요.",
+  },
+  generatesMe: {
+    title: "힘을 받는 날",
+    line: "오늘의 기운이 나를 북돋는 흐름이에요.",
+    tip: "미뤄 둔 일 하나를 꺼내 시작해 보세요.",
+  },
+  meGenerates: {
+    title: "힘을 내어 주는 날",
+    line: "내가 오늘의 흐름에 힘을 보태는 쪽이에요.",
+    tip: "도와줄 일이 있는지 팀원에게 한 번 물어보세요.",
+  },
+  controlsMe: {
+    title: "빠듯하게 느껴질 수 있는 날",
+    line: "오늘의 기운이 나를 다잡는 흐름이에요. 일정이 촘촘하게 느껴질 수 있어요.",
+    tip: "오늘 할 일을 하나만 먼저 고르고, 나머지는 내일로 넘겨 보세요.",
+  },
+  meControls: {
+    title: "내가 흐름을 잡는 날",
+    line: "내가 오늘의 흐름을 이끄는 쪽이에요.",
+    tip: "회의에서 나온 이야기를 한 번 정리해서 말해 보세요.",
+  },
+};
+
+export const TODAY_NOTICE = "오늘 날짜와 내 일간의 오행 관계로 보는 재미 해석이에요. 하루를 정해 주는 것은 아니에요.";
+
+/** 오늘 회의가 있는 날의 고정 제안. 누가 무엇을 하라는 말이 아니라 회의 진행 방식이다. */
+export const MISSION_MEETING_CLOSER = "회의 마지막에 “그래서 누가 뭘 하지?” 를 한 번 확인해 보세요.";
+/** 마감이 가까운 일이 있는 날의 고정 제안. */
+export const MISSION_DUE_SOON = "마감이 가까운 일이 있어요. 막힌 게 있는지 팀에 한 번 물어보세요.";
+
+export const TODAY_NEED_MINE = "내 사주를 등록하면 오늘의 팀플 흐름을 볼 수 있어요";
