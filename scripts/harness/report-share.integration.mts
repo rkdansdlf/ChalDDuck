@@ -101,6 +101,13 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     await as(A.token, () => share.revokeReportShareToken(bToken.token));
     const bRevoked = await db.reportShareToken.findUnique({ where: { token: bToken.token } });
     check("남의 토큰은 지우지 않는다", bRevoked?.revokedAt, null);
+
+    // 토큰 상태 검증 (유효/폐기/만료/없음)
+    const { getReportTokenStatus } = await import("../../src/server/contrib/report.js");
+    check("유효한 토큰은 ok 상태", await getReportTokenStatus(bToken.token), "ok");
+    check("폐기된 토큰은 revoked 상태", await getReportTokenStatus(first.token), "revoked");
+    check("만료된 토큰은 expired 상태", await getReportTokenStatus(afterRevoke.token), "expired");
+    check("없는 토큰은 not_found 상태", await getReportTokenStatus("fake-token-xyz"), "not_found");
   } finally {
     for (const id of teamIds) {
       await db.member.deleteMany({ where: { teamId: id } });

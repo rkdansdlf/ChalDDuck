@@ -38,9 +38,10 @@ type Session = {
   reset(): void;
   clearAll(): void;
   asBrowser(anonId: string): void;
-  clearAll(): void;
   asCreator(teamId: string): void;
   hasCreatorCookie(): boolean;
+  setCookie(name: string, value: string): void;
+  getCookie(name: string): string | undefined;
 };
 
 const draft = (name: string) => ({
@@ -345,8 +346,104 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     });
     check("팀장이 정확히 한 명이다", afterTransfer.filter((m) => m.isLeader).length, 1);
     check("새 팀장이다", afterTransfer.find((m) => m.isLeader)?.name, `정다은${suffix}`);
+
+    /* ── 10) 팀원 이름 확인, 미리보기, MBTI 변경 ───────────── */
+    console.log("\n팀원 이름 확인, 미리보기, MBTI 변경");
+    const found = await actions.findMemberByName(made.code, `정다은${suffix}`);
+    check("이름으로 팀원 존재 확인", found?.name, `정다은${suffix}`);
+    const notFound = await actions.findMemberByName(made.code, "없는사람");
+    check("없는 이름은 null", notFound, null);
+
+    const preview = await actions.getTeamTeammatePreview(made.code);
+    check("팀원 미리보기 반환", typeof preview, "string");
+
+    session.as(await tokenOf(heir));
+    const mbtiRes = await actions.updateMyMbti("ENFP");
+    check("MBTI 수정 성공", mbtiRes, "ok");
+
+    /* ── 11) 초대 링크 생성 및 비활성화 ────────────────────── */
+    console.log("\n초대 링크 생성 및 비활성화");
+    const inviteActions = await import("../../src/server/actions/invite.js");
+    const inviteRes = await inviteActions.createInviteLink({ label: "신규팀원용", maxUses: 5, expiresInDays: 7 });
+    check("초대 링크 생성 성공", inviteRes.ok, true);
+    if (inviteRes.ok) {
+      const disableRes = await inviteActions.disableInviteLink(inviteRes.id);
+      check("초대 링크 비활성화 성공", disableRes, "ok");
+    }
+
+    /* ── 12) 초대 토큰과 팀 코드의 보안 경계 ────────────────────── */
+    console.log("\n초대 토큰과 팀 코드의 보안 경계");
+    const resolveTarget = await import("../../src/server/invite/resolve-target.js");
+
+    // ① 잘못된 토큰은 팀 코드가 함께 있더라도 팀을 반환하지 않는다
+    const badTarget = await resolveTarget.resolveJoinTarget({ token: "bad_token_xxx" });
+    check("잘못된 초대 토큰은 null", badTarget, null);
+
+    // ② 팀 A와 팀 B 생성
+    const teamA = await makeTeamWithLeader("보안팀A");
+    const teamB = await makeTeamWithLeader("보안팀B");
+
+    // 팀 A의 초대 링크 생성
+    const leaderA = await db.member.findFirstOrThrow({ where: { teamId: teamA.id, isLeader: true } });
+    session.as(await tokenOf(leaderA.id));
+    const inviteA = await inviteActions.createInviteLink({ label: "팀A초대", maxUses: 5, expiresInDays: 7 });
+    truthy("팀 A 초대 생성 성공", inviteA.ok);
+    if (!inviteA.ok) throw new Error("inviteA 생성 실패");
+
+    // 브라우저가 팀 A의 초대 쿠키를 보유한 상태에서, 팀 B에 가입 신청
+    session.clearAll();
+    session.asBrowser(`anon-b-${suffix}`);
+    session.setCookie("cd_invite", inviteA.token);
+
+    const joinBRes = await actions.joinTeam(teamB.code, draft(`신청인B${suffix}`));
+    check("팀 B 가입 신청 접수", joinBRes.status, "requested");
+
+    const reqB = await db.joinRequest.findFirst({
+      where: { teamId: teamB.id, name: `신청인B${suffix}` },
+    });
+    check("팀 A 초대 쿠키로 팀 B에 가입하면 inviteId는 null로 격리된다", reqB?.inviteId, null);
+
+    // ③ 올바른 팀 B의 초대 쿠키로 팀 B에 가입 신청하면 inviteId가 기록된다
+    const leaderB = await db.member.findFirstOrThrow({ where: { teamId: teamB.id, isLeader: true } });
+    session.as(await tokenOf(leaderB.id));
+    const inviteB = await inviteActions.createInviteLink({ label: "팀B초대", maxUses: 5, expiresInDays: 7 });
+    truthy("팀 B 초대 생성 성공", inviteB.ok);
+    if (!inviteB.ok) throw new Error("inviteB 생성 실패");
+
+    session.clearAll();
+    session.asBrowser(`anon-b2-${suffix}`);
+    session.setCookie("cd_invite", inviteB.token);
+
+    const joinB2Res = await actions.joinTeam(teamB.code, draft(`신청인B2${suffix}`));
+    check("팀 B 정당한 초대로 가입 신청 접수", joinB2Res.status, "requested");
+
+    const reqB2 = await db.joinRequest.findFirst({
+      where: { teamId: teamB.id, name: `신청인B2${suffix}` },
+    });
+    check("정당한 팀 B 초대 쿠키는 올바른 inviteId가 기록된다", reqB2?.inviteId, inviteB.id);
+
+    // ④ 비활성화된 초대는 inviteId에 연결되지 않는다
+    session.as(await tokenOf(leaderB.id));
+    await inviteActions.disableInviteLink(inviteB.id);
+
+    session.clearAll();
+    session.asBrowser(`anon-b3-${suffix}`);
+    session.setCookie("cd_invite", inviteB.token);
+
+    const joinB3Res = await actions.joinTeam(teamB.code, draft(`신청인B3${suffix}`));
+    check("비활성화된 초대로도 팀 코드 가입은 신청된다", joinB3Res.status, "requested");
+
+    const reqB3 = await db.joinRequest.findFirst({
+      where: { teamId: teamB.id, name: `신청인B3${suffix}` },
+    });
+    check("비활성화된 초대는 출처로 기록되지 않는다", reqB3?.inviteId, null);
+
+    session.nobody();
   } finally {
     for (const teamId of teamIds) {
+      await db.teamInvite.deleteMany({ where: { teamId } });
+      await db.joinRequest.deleteMany({ where: { teamId } });
+      await db.session.deleteMany({ where: { member: { teamId } } });
       await db.member.deleteMany({ where: { teamId } });
       await db.team.delete({ where: { id: teamId } });
     }

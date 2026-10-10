@@ -113,6 +113,10 @@
   --animate-check-bounce: check-bounce 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   --animate-poke: poke 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
   --animate-confetti: confetti-burst 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  --animate-message-in-mine: message-in-mine 180ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-message-in-other: message-in-other 180ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-cushion-swap: cushion-swap 160ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-hero-pulse: hero-pulse 2.4s ease-out infinite;
 
   @keyframes shimmer {
     0% { transform: translateX(-100%); }
@@ -209,6 +213,50 @@
       transform: translate(calc(var(--dx) * 1.25), calc(var(--dy) + 36px)) scale(0.5) rotate(calc(var(--rot) * 1.6));
     }
   }
+  @keyframes message-in-mine {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes message-in-other {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes cushion-swap {
+    0% {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    75% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes hero-pulse {
+    0% {
+      opacity: 0.12;
+      transform: scale(0.85);
+    }
+    65%,
+    100% {
+      opacity: 0;
+      transform: scale(1.45);
+    }
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -302,6 +350,64 @@
   text-wrap: pretty;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   모션 언어 — 채팅 말풍선 및 히어로 카드
+   ────────────────────────────────────────────────────────────── */
+@utility hero-card {
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@utility hero-pulse {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: inherit;
+    background: currentColor;
+    opacity: 0;
+    animation: hero-pulse 2.4s ease-out infinite;
+    pointer-events: none;
+  }
+}
+
+/* 클래스명 직접 지정 호환 (heroCard / heroPulse / messageBubble) */
+.heroCard,
+.hero-card {
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+.heroCard:hover,
+.hero-card:hover {
+  transform: translateY(-2px);
+}
+
+.heroPulse,
+.hero-pulse {
+  position: relative;
+}
+.heroPulse::after,
+.hero-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  animation: hero-pulse 2.4s ease-out infinite;
+  pointer-events: none;
+}
+
+.messageBubble {
+  animation: message-in-other 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 /* ────────────────────────────────────────────────────────────── */
 @layer base {
   html {
@@ -344,7 +450,9 @@
     -webkit-user-drag: none;
   }
   @media (prefers-reduced-motion: reduce) {
-    *, ::before, ::after {
+    *,
+    *::before,
+    *::after {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;

@@ -19,6 +19,8 @@ export function DraftActions({
   onRestore,
   used,
   className,
+  redoLabel = "마음에 안 들면 다시 만들기",
+  usageLabel,
 }: {
   canRedo: boolean;
   onRedo: () => void;
@@ -27,18 +29,23 @@ export function DraftActions({
   /** 오늘 내가 이 도구를 쓴 횟수. 한도가 없어도 **볼 수는 있어야** 하므로 개수는 그대로 준다. */
   used: number;
   className?: string;
+  redoLabel?: string;
+  usageLabel?: string | null;
 }) {
   if (!canRedo && history.length === 0) return null;
+
+  const displayUsage = usageLabel !== undefined ? usageLabel : `오늘 ${used}번 썼어요`;
 
   return (
     <div className={className}>
       {canRedo ? (
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Btn size="sm" v="outline" icon="rotate-ccw" onClick={onRedo}>
-            마음에 안 들면 다시 만들기
+            {redoLabel}
           </Btn>
-          {/* 한도가 없으므로 "몫" 을 말하지 않는다 — 오늘 쓴 횟수만 말한다. */}
-          <span className="t-cap text-txt-muted">오늘 {used}번 썼어요</span>
+          {displayUsage ? (
+            <span className="t-cap text-txt-muted">{displayUsage}</span>
+          ) : null}
         </div>
       ) : null}
 

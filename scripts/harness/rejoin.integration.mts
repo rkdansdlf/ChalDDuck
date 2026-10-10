@@ -225,10 +225,37 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("내 기기는 지워진다", await db.session.count({ where: { token: mineToken } }), 0);
     check("남의 기기는 여전히 남는다", await db.session.count({ where: { token: otherToken } }), 1);
 
+    /* ── 9) 팀장 승인 요청과 승인 처리 ───────────────────────── */
+    console.log("\n팀장 승인 요청과 승인 처리");
+    const F = await makeTeam("승인요청");
+    session.reset();
+    session.asBrowser(randomUUID());
+    const reqRes = await rejoin.requestRejoinApproval(F.code, `이서연${suffix}`);
+    check("재입장 승인 요청 성공", reqRes, "requested");
+
+    const checkPending = await rejoin.checkRejoinApproval();
+    check("승인 대기 상태는 pending", checkPending, "pending");
+
+    const claim = await db.memberClaim.findFirstOrThrow({
+      where: { memberId: F.mate.id, status: "pending" },
+    });
+    const leaderToken = randomUUID();
+    await db.session.create({
+      data: { token: leaderToken, memberId: F.leader.id, expiresAt: new Date(Date.now() + 3600_000) },
+    });
+    session.as(leaderToken);
+    const resolveRes = await rejoin.resolveRejoinClaim(claim.id, true);
+    check("팀장이 승인 완료", resolveRes, "ok");
+    session.nobody();
+
+    const checkApproved = await rejoin.checkRejoinApproval();
+    check("승인 확인 시 approved", checkApproved, "approved");
+
     void hashRejoinCode;
     void attemptKeys;
   } finally {
     for (const teamId of teamIds) {
+      await db.memberClaim.deleteMany({ where: { member: { teamId } } });
       await db.rejoinAttempt.deleteMany({ where: { key: { contains: teamId } } });
       await db.session.deleteMany({ where: { member: { teamId } } });
       await db.member.deleteMany({ where: { teamId } });

@@ -210,7 +210,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       data: { teamId: C.id, createdById: C.mate.id, title: "나가도 남을 회의록", rawText: "본문", summary: "요약" },
     });
     const boxesBefore = await db.submissionBox.count({ where: { teamId: C.id } });
-    const slotId = slot.id;
+    const _slotId = slot.id;
     const filesBefore = 1;
     const notesBefore = await db.meetingNote.count({ where: { teamId: C.id } });
     const othersSessionBefore = await sessionCount(C.third!.id);

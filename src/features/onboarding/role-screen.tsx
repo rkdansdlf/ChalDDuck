@@ -141,13 +141,18 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
                     aria-pressed={isWant}
                     onClick={() => handleToggleWant(role.key as RoleKey)}
                     className={cn(
-                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors cursor-pointer",
+                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-all duration-150 cursor-pointer active:scale-95",
                       isWant
-                        ? "border-want bg-ok-bg text-want font-bold"
+                        ? "border-want bg-ok-bg text-want font-bold shadow-sm"
                         : "border-line bg-card text-txt hover:bg-fill active:bg-fill",
                     )}
                   >
-                    <Icon name={isWant ? "check" : "thumbs-up"} size={13.5} strokeWidth={isWant ? 2.5 : 2} />
+                    <Icon
+                      name={isWant ? "check" : "thumbs-up"}
+                      size={13.5}
+                      strokeWidth={isWant ? 2.5 : 2}
+                      className={isWant ? "animate-check-bounce" : undefined}
+                    />
                     <span>맡을래요</span>
                   </button>
 
@@ -156,13 +161,18 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
                     aria-pressed={isVeto}
                     onClick={() => handleToggleVeto(role.key as RoleKey)}
                     className={cn(
-                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors cursor-pointer",
+                      "flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-all duration-150 cursor-pointer active:scale-95",
                       isVeto
-                        ? "border-veto bg-err-bg text-veto font-bold"
+                        ? "border-veto bg-err-bg text-veto font-bold shadow-sm"
                         : "border-line bg-card text-txt hover:bg-fill active:bg-fill",
                     )}
                   >
-                    <Icon name={isVeto ? "check" : "ban"} size={13.5} strokeWidth={isVeto ? 2.5 : 2} />
+                    <Icon
+                      name={isVeto ? "check" : "ban"}
+                      size={13.5}
+                      strokeWidth={isVeto ? 2.5 : 2}
+                      className={isVeto ? "animate-check-bounce" : undefined}
+                    />
                     <span>피할래요</span>
                   </button>
                 </div>

@@ -289,16 +289,76 @@ console.log("\n가입 요청: 막는 위치와 덮어쓰지 않음이 코드에 
   // 제한은 **행도 알림도 만들어지기 전에** —— 알림 폭탄의 비용이 이미 발생한 뒤에 막으면 늦다.
   check("이 브라우저 제한이 요청 생성보다 먼저 온다", fn.indexOf("takeClientAttempt") < fn.indexOf("joinRequest.create"), true);
   // 소유자만 자기 요청을 고친다. 남의 희망 역할을 덮어쓰면 역할 추첨의 입력이 바뀐다.
-  check("소유자 확인이 새 요청보다 먼저 온다", fn.indexOf("store.get(JOIN_COOKIE)?.value;\n    const found") >= 0, true);
+  //
+  // **토큰으로 먼저 찾는다.** 이름으로 찾으면 같은 이름이 둘일 때 남의 요청을 내 것으로
+  // 착각한다 — 이름은 식별자가 아니다(동명이인 작업 1단계).
+  truthy("내 요청을 토큰으로 찾는다", /findUnique\(\{\s*where: \{ token: mine \}/.test(fn));
+  check(
+    "소유자 확인이 새 요청보다 먼저 온다",
+    fn.indexOf("store.get(JOIN_COOKIE)") < fn.indexOf("joinRequest.create") &&
+      fn.indexOf("joinRequest.findUnique") < fn.indexOf("joinRequest.create"),
+    true,
+  );
   // **팀 예산은 새 행을 만들려는 시점에만 깎인다.** 위쪽에 두면 자기 요청을 다시 여는
   // 정상 사용자가 팀 예산을 먹고, 그 숫자를 공격자가 고쳐 팀 전체의 신규 가입을 막는다.
   // 팀 코드 하나만 알면 이 숫자를 조작할 수 있으므로 순서가 곧 방어다.
   check(
     "팀 예산은 소유자 확인 뒤에 온다",
-    fn.indexOf("takeTeamCreation") > fn.indexOf("const found = await db.joinRequest.findUnique"),
+    fn.indexOf("takeTeamCreation") > fn.indexOf("const found"),
     true,
   );
   check("팀 예산은 요청 생성보다 먼저 온다", fn.indexOf("takeTeamCreation") < fn.indexOf("joinRequest.create"), true);
+
+console.log("\n승인 처리: 요청 하나가 팀원 하나만 만든다");
+{
+  /**
+   * **이름 유니크가 지던 자리를 조건부 선점이 대신 진다.**
+   *
+   * 예전에는 겹친 폴링이 같은 이름으로 `member.create` 를 두 번 하면 P2002 가 났고,
+   * `checkJoinApproval` 의 catch 가 그걸 읽어 한 번만 만들게 했다. 동명이인을 허용하면
+   * 그 제약이 사라지므로, **같은 요청이 두 번 처리되면 팀원이 둘 생긴다.**
+   *
+   * 액션은 쿠키가 필요해 여기서 부를 수 없다(`db-test-base` 머리말). 그래서 둘로 나눠 본다:
+   * **① 액션이 그 자리를 실제로 쓰는지**(소스), **② 그 자리가 정말 한 번만 통과시키는지**(DB 경합).
+   */
+  const src = readCode("../src/server/actions/onboarding.ts");
+  const approval = src.slice(src.indexOf("export async function checkJoinApproval"));
+  truthy(
+    "승인 처리가 요청을 조건부로 선점한다",
+    /updateMany\(\{\s*where: \{ id: request\.id, status: "approved" \},\s*data: \{ status: "claimed" \}/.test(
+      approval,
+    ),
+  );
+  // **선점된 요청을 "승인 아님" 으로 읽으면 쿠키를 지워 진행 중인 입장을 스스로 끊는다.**
+  truthy(
+    "선점된 요청은 기다리는 상태로 읽는다",
+    /status === "pending" \|\| request\.status === "claimed"/.test(approval),
+  );
+  // **선점이 성공 경로에서 지워지는지** — 남으면 그 요청은 아무도 다시 못 꺼낸다.
+  truthy(
+    "요청은 팀원을 만든 뒤 지워진다",
+    approval.indexOf("joinRequest.delete") > approval.indexOf("joinRequest.updateMany"),
+  );
+
+  const { team } = await makeIsolatedTeam("승인 선점", { mates: 0 });
+  const made = await db.joinRequest.create({
+    data: { teamId: team.id, name: "김민준", token: `claim-${team.id}`, status: "approved" },
+  });
+  const claim = () =>
+    db.joinRequest.updateMany({
+      where: { id: made.id, status: "approved" },
+      data: { status: "claimed" },
+    });
+
+  // **두 폴링을 겹쳐 부른다.** 하나만 1행을 받아야 한다 — 둘 다 받으면 팀원이 둘 생긴다.
+  const raced = await Promise.all([claim(), claim()]);
+  check("겹쳐 불러도 한 쪽만 가져간다", raced.reduce((n, r) => n + r.count, 0), 1);
+  const after = await db.joinRequest.findUniqueOrThrow({
+    where: { id: made.id },
+    select: { status: true },
+  });
+  check("가져간 뒤에는 다시 가져갈 수 없다", after.status, "claimed");
+}
 
   // 푸시는 예산 안에서만, 앱 안 알림은 항상.
   const notifySrc = readCode("../src/server/notify/create.ts");

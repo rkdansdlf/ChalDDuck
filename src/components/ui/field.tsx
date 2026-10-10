@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "./icon";
 
@@ -74,8 +74,15 @@ export type InputProps = {
   mono?: boolean;
   autoFocus?: boolean;
   maxLength?: number;
+  disabled?: boolean;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoCorrect?: "on" | "off";
+  spellCheck?: boolean;
+  inputMode?: "none" | "text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url";
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
+  "aria-label"?: string;
 };
 
 export function Input({ value, onChange, error, mono, className, ...rest }: InputProps & { className?: string }) {
@@ -101,6 +108,8 @@ export type TextareaProps = {
   placeholder?: string;
   /** 보이는 최소 높이(px). 내용이 길어지면 스크롤된다. */
   minHeight?: number;
+  /** 내용에 맞춰 높이를 자동으로 늘릴지 여부. */
+  autoResize?: boolean;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
 };
@@ -116,21 +125,33 @@ export function Textarea({
   value,
   onChange,
   minHeight = 160,
+  autoResize = false,
   limit,
   className,
   ...rest
 }: TextareaProps & { className?: string; limit?: number }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const over = limit !== undefined && value.length > limit;
+
+  useEffect(() => {
+    if (autoResize && textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.max(minHeight, textareaRef.current.scrollHeight)}px`;
+    }
+  }, [value, autoResize, minHeight]);
+
   return (
     <div className="relative">
       <textarea
         {...rest}
+        ref={textareaRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-describedby={over && limit ? "textarea-count" : rest["aria-describedby"]}
         style={{ minHeight }}
         className={cn(
-          "text-pretty-keep box-border w-full resize-y rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
+          "text-pretty-keep box-border w-full rounded-control border-[1.5px] border-line-strong bg-card px-3.5 py-3",
+          autoResize ? "resize-none" : "resize-y",
           "text-[14.5px] leading-[1.6] text-txt-strong outline-none transition-all duration-150 ease-out focus:border-focus",
           over && "border-err",
           className,

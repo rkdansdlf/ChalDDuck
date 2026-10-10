@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Btn, Field, Input, Note, Panel, SecTitle, Sheet, Undecided } from "@/components/ui";
+import { Btn, Field, Input, Note, Panel, SecTitle, Sheet } from "@/components/ui";
 import type { MySaju } from "@/data/api";
 import { cn } from "@/lib/cn";
 import {
@@ -12,14 +12,12 @@ import {
   STEMS,
   pillarElements,
   pillarHanja,
-  type Element,
   type Pillar,
   type PillarTenGods,
 } from "@/lib/saju/engine";
 import {
   BOUNDARY_NOTICE,
   DAY_MASTER_COPY,
-  ELEMENT_WORD,
   LATE_NIGHT_NOTICE,
   NO_TIME_NOTICE,
   SAJU_NOTICE,
@@ -28,6 +26,7 @@ import {
 } from "@/lib/saju/copy";
 import { BIRTH_BLOCK_MESSAGE } from "@/lib/saju/input";
 import { clearMyBirth, saveMyBirth } from "@/server/actions/saju";
+import { ElementBar } from "./element-bar";
 
 /**
  * 내 사주 — 생년월일(시)을 등록하고, 거기서 계산한 사주를 본다.
@@ -171,7 +170,7 @@ function BirthSheet({ saju, onClose }: { saju: MySaju | null; onClose: () => voi
 function DetailSheet({ saju, onClose }: { saju: MySaju; onClose: () => void }) {
   const { chart } = saju;
   const master = DAY_MASTER_COPY[chart.dayMaster.stem];
-  const lateNight = saju.birthTime !== null && (Number(saju.birthTime.slice(0, 2)) >= 23 || saju.birthTime.startsWith("00"));
+  const lateNight = saju.birthTime !== null && Number(saju.birthTime.slice(0, 2)) >= 23;
 
   return (
     <Sheet open title="내 사주" onClose={onClose}>
@@ -223,11 +222,8 @@ function DetailSheet({ saju, onClose }: { saju: MySaju; onClose: () => void }) {
         </Note>
       ) : null}
 
-      <Undecided>
-        사주 계산의 갈림길 세 가지를 정하지 않았습니다 — ① 밤 11시에 날이 바뀌는지, 자정에 바뀌는지
-        ② 출생지 경도 보정(서울 −30분)을 하는지 ③ 팀 사주에서 시각을 모르는 사람을 어떻게 셀지. 지금은
-        ① 11시 ② 보정 없음으로 계산합니다.
-      </Undecided>
+      {/* 정책 확정: 한국 표준시(KST, UTC+9) 기준, 밤 11시(23:00) 기점 자시 시작으로 다음 날 일주로
+          전환 계산(야자시 미인정). 출생지 경도 보정(서울 -30분 등)은 미수행. */}
     </Sheet>
   );
 }
@@ -295,37 +291,5 @@ function PillarCell({ pillar, gods, master }: { pillar: Pillar | null; gods: Pil
         {gods?.branch ?? ""}
       </div>
     </td>
-  );
-}
-
-function ElementBar({
-  element,
-  count,
-  percent,
-  top,
-}: {
-  element: Element;
-  count: number;
-  percent: number;
-  top: boolean;
-}) {
-  const w = ELEMENT_WORD[element];
-  return (
-    <div>
-      <div className="mb-1 flex justify-between text-[12px] font-medium text-txt-muted">
-        <span className={cn(top && "font-bold text-txt-strong")}>
-          {ELEMENT_KO[element]} {w.hanja} · {w.keyword}
-        </span>
-        <span>
-          {count}글자 · {percent}%
-        </span>
-      </div>
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-line">
-        <div
-          className={cn("h-full transition-all duration-300", top ? "bg-yellow-500" : "bg-amber-200")}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-    </div>
   );
 }

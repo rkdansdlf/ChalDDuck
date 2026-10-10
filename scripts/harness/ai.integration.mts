@@ -236,6 +236,46 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       check(`${f.split("/").pop()} 에 '회 남음' 이 없다`, /회\s*남음/.test(code), false);
       check(`${f.split("/").pop()} 에 '몫을 다 썼' 이 없다`, /몫을\s*다\s*썼/.test(code), false);
     }
+
+    /* ── 9) AI 서버 액션 8종 검증 ────────────────────────────── */
+    console.log("\nAI 서버 액션 8종 경계 통과 검증");
+    const {
+      getSentenceSample,
+      getAiUsageToday,
+      getTeamAiSummary,
+      exportAiUsage,
+      exportTeamAiUsage,
+      summarizeMeeting,
+      searchResearch,
+      refineScript,
+    } = await import("../../src/server/actions/ai.js");
+    const F = await makeTeam("액션");
+
+    // 문장 변환 예시의 키는 summary·email·peer_request·notice 다. `academic` 은 발표 모드 이름이라
+    // 여기서는 빈 문장이 돌아온다(처음 이 검사는 그 이름을 써서 main 에서도 실패하고 있었다).
+    const sample = await as(F.leaderToken, () => getSentenceSample("summary"));
+    truthy("getSentenceSample이 문장을 반환한다", typeof sample === "string" && sample.length > 0);
+
+    const todayUsage = await as(F.leaderToken, () => getAiUsageToday());
+    check("getAiUsageToday가 내 사용량과 팀 사용량을 반환한다", [typeof todayUsage.mine, typeof todayUsage.team], ["number", "number"]);
+
+    const teamSummary = await as(F.leaderToken, () => getTeamAiSummary());
+    check("getTeamAiSummary가 주간 요약을 반환한다", typeof teamSummary.totalCalls, "number");
+
+    const myExport = await as(F.leaderToken, () => exportAiUsage());
+    truthy("exportAiUsage가 CSV 파일명과 내용을 생성한다", myExport.filename.endsWith(".csv") && typeof myExport.csv === "string");
+
+    const teamExport = await as(F.leaderToken, () => exportTeamAiUsage());
+    truthy("exportTeamAiUsage가 CSV 파일명과 내용을 생성한다", teamExport.filename.endsWith(".csv") && typeof teamExport.csv === "string");
+
+    const clerkResult = await as(F.leaderToken, () => summarizeMeeting("오늘 18시에 최종 발표 자료를 맞추기로 함."));
+    truthy("summarizeMeeting이 성공하거나 샘플을 반환한다", clerkResult.ok);
+
+    const researchResult = await as(F.leaderToken, () => searchResearch("협업 툴 시장 동향"));
+    truthy("searchResearch가 성공하거나 샘플을 반환한다", researchResult.ok);
+
+    const scriptResult = await as(F.leaderToken, () => refineScript("발표 대본 예시 문장입니다.", "academic"));
+    truthy("refineScript가 성공하거나 샘플을 반환한다", scriptResult.ok);
   } finally {
     for (const teamId of teamIds) {
       await db.member.deleteMany({ where: { teamId } });

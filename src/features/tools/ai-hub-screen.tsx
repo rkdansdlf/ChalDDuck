@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AppBar, Body, Btn, Chip, Icon, Note, Panel, Rows, Sheet, Toast, type IconName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { AiPolicy, AiTool } from "@/lib/types";
-import { exportAiUsage, getTeamAiSummary } from "@/server/actions/ai";
+import { exportAiUsage, exportTeamAiUsage, getTeamAiSummary } from "@/server/actions/ai";
 import type { TeamAiWeeklySummary } from "@/server/ai/call-stats";
 import { SampleNote } from "./ai-state-notes";
 
@@ -50,10 +50,10 @@ export function AiHubScreen({
       });
   }, [aiReady]);
 
-  const downloadUsage = async () => {
+  const downloadFile = async (get: () => Promise<{ filename: string; csv: string }>) => {
     setExporting(true);
     try {
-      const { filename, csv } = await exportAiUsage();
+      const { filename, csv } = await get();
       const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
       const link = document.createElement("a");
       link.href = url;
@@ -66,6 +66,8 @@ export function AiHubScreen({
       setExporting(false);
     }
   };
+  const downloadUsage = () => downloadFile(exportAiUsage);
+  const downloadTeamUsage = () => downloadFile(exportTeamAiUsage);
 
   return (
     <>
@@ -169,9 +171,15 @@ export function AiHubScreen({
           <div className="t-sec mb-2.5 text-txt-strong">내려받기</div>
           <div className="flex flex-col gap-2">
             <Btn v="outline" icon="download" full disabled={exporting} onClick={downloadUsage}>
-              {exporting ? "내역 만드는 중…" : "AI 사용 내역"}
+              {exporting ? "내역 만드는 중…" : "내 AI 내역"}
+            </Btn>
+            <Btn v="outline" icon="download" full disabled={exporting} onClick={downloadTeamUsage}>
+              {exporting ? "내역 만드는 중…" : "팀 현황"}
             </Btn>
           </div>
+          <p className="t-cap keep-all mt-2.5 text-txt-muted">
+            내 내역은 내 기록만, 팀 현황은 도구별 집계만 담깁니다. 다른 사람의 이름·시각은 없습니다.
+          </p>
         </div>
       </Sheet>
 

@@ -25,40 +25,58 @@ export function BriefingCard({ lines, onOpen }: { lines: BriefingLine[]; onOpen:
   const urgent = lines.filter((line) => line.tone === "warn").length;
 
   return (
-    <Panel s="cream" pad={14} r={18} className="mb-[18px]">
+    <Panel s="cream" pad={14} r={18} className="heroCard mb-[18px]">
       <div className="mb-2.5 flex items-baseline gap-2">
         <span className="t-cap-strong keep-all font-bold text-txt-strong">오늘의 브리핑</span>
         {/* "확인이 필요한 일이 N건" 을 다시 쓰지 않는다 — 카드가 이미 그걸 말하고 있다. */}
-        <span className="keep-all font-medium text-[12px] text-txt-muted">
-          {urgent > 0 ? `오늘 확인할 것 ${urgent}가지` : "오늘은 조용합니다"}
+        <span className="keep-all flex items-center gap-1.5 font-medium text-[12px] text-txt-muted">
+          {urgent > 0 ? (
+            <>
+              <span className="relative flex size-2 items-center justify-center">
+                <span className="size-1.5 rounded-full bg-amber-500" />
+                <span className="heroPulse absolute inset-0 rounded-full text-amber-500" />
+              </span>
+              <span>
+                오늘 확인할 것 <strong className="font-bold text-amber-700">{urgent}가지</strong>
+              </span>
+            </>
+          ) : (
+            "오늘은 조용합니다"
+          )}
         </span>
       </div>
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
-        {lines.map((line) => (
-          <li key={line.key}>
-            <button
-              type="button"
-              onClick={() => onOpen(line.href)}
-              className={cn(
-                "flex w-full cursor-pointer items-center gap-2.5 rounded-xl border-none bg-transparent px-1 py-1.5 text-left select-none",
-                "transition-colors duration-150 hover:bg-cr-50 active:scale-[0.99]",
-              )}
-            >
-              <span
+        {lines.map((line) => {
+          const isWarn = line.tone === "warn";
+          return (
+            <li key={line.key}>
+              <button
+                type="button"
+                onClick={() => onOpen(line.href)}
                 className={cn(
-                  "grid size-[26px] flex-none place-items-center rounded-lg",
-                  line.tone === "warn" ? "bg-yellow-200 text-yellow-700" : "bg-fill text-txt-muted",
+                  "flex w-full cursor-pointer items-center gap-2.5 rounded-xl border-none bg-transparent px-1 py-1.5 text-left select-none",
+                  "transition-colors duration-150 hover:bg-cr-50 active:scale-[0.99]",
                 )}
               >
-                <Icon name={line.icon} size={14} />
-              </span>
-              <span className="keep-all min-w-0 flex-1 font-medium text-[13.5px] leading-[1.45] text-txt-strong">
-                {line.text}
-              </span>
-              <Icon name="chevron-right" size={15} className="flex-none text-txt-muted" />
-            </button>
-          </li>
-        ))}
+                <span
+                  className={cn(
+                    "relative grid size-[26px] flex-none place-items-center rounded-lg",
+                    isWarn ? "bg-yellow-200 text-yellow-700" : "bg-fill text-txt-muted",
+                  )}
+                >
+                  {isWarn ? (
+                    <span className="heroPulse absolute inset-0 rounded-lg text-yellow-500 pointer-events-none" />
+                  ) : null}
+                  <Icon name={line.icon} size={14} className="relative z-1" />
+                </span>
+                <span className="keep-all min-w-0 flex-1 font-medium text-[13.5px] leading-[1.45] text-txt-strong">
+                  {line.text}
+                </span>
+                <Icon name="chevron-right" size={15} className="flex-none text-txt-muted" />
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </Panel>
   );

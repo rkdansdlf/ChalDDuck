@@ -203,8 +203,25 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     console.log("\n모르는 아이디는 조용히 무시된다");
     await as(C.asLeader, () => notifications.markNotificationsRead(["없는아이디"]));
     check("없어도 예외가 없다", true, true);
+
+    /* ── 6) 푸시 구독 관리 ──────────────────────────────────── */
+    console.log("\n푸시 구독 관리");
+    const push = await import("../../src/server/actions/push.js");
+    const subCount0 = await as(C.asLeader, () => push.countSubscriptions());
+    check("초기 푸시 구독 수는 0", subCount0, 0);
+
+    const fakeSub = {
+      endpoint: `https://fcm.googleapis.com/fcm/send/${randomUUID()}`,
+      keys: { p256dh: "key-p256dh", auth: "auth-secret" },
+    };
+    const saveRes = await as(C.asLeader, () => push.savePushSubscription(fakeSub));
+    check("푸시 구독 저장 시도", saveRes === "saved" || saveRes === "not-configured", true);
+
+    const clearRes = await as(C.asLeader, () => push.clearPushSubscription(fakeSub.endpoint));
+    check("푸시 구독 해제 반환", typeof clearRes.cleared, "number");
   } finally {
     for (const id of teamIds) {
+      await db.pushSubscription.deleteMany({ where: { member: { teamId: id } } });
       await db.notification.deleteMany({ where: { member: { teamId: id } } });
       await db.meetingNote.deleteMany({ where: { teamId: id } });
       await db.meetingProposal.deleteMany({ where: { teamId: id } });

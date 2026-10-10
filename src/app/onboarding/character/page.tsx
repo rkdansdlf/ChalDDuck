@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { AppFrame, Body, Btn, Dock, Icon, Note, Panel, TopInset } from "@/components/ui";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
+import { OnboardingSaju } from "@/features/saju/onboarding-saju";
 import { characterImage, getMbtiMeta } from "@/lib/mbti";
 import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
 
@@ -16,7 +17,7 @@ import { useOnboardingGate } from "@/features/onboarding/use-onboarding-gate";
  */
 export default function CharacterPage() {
   const router = useRouter();
-  const { effectiveMbti, fromQuiz } = useOnboarding();
+  const { effectiveMbti, fromQuiz, birthDate, birthTime } = useOnboarding();
   // 게이트는 초대 코드만 본다(`true`). **`effectiveMbti` 를 넘기면 아래 되돌리기가 죽는다.**
   // 게이트가 `ready = Boolean(effectiveMbti) && 코드있음` 을 돌려주므로 아래 이펙트의
   // `ready && !effectiveMbti` 는 언제나 거짓이었다 — 유형 없이 직접 들어온 사람은
@@ -101,6 +102,9 @@ export default function CharacterPage() {
             </div>
           </Panel>
         ) : null}
+
+        {/* 사주는 선택이다 — 단계를 늘리지 않고 이 화면 안에서 더한다. 아래 "희망 역할 고르기"가 그대로 주 동작. */}
+        <OnboardingSaju mbti={effectiveMbti} birthDate={birthDate} birthTime={birthTime} />
 
         <Panel s="cream" pad={14} r={16} className="mt-3">
           <p className="t-note text-pretty-keep m-0 text-txt-muted">

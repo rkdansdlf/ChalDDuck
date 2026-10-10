@@ -20,6 +20,8 @@ import { useAction } from "@/lib/use-action";
 import { whenText } from "./meeting-cell";
 import { downloadIcsFile, generateGoogleCalendarUrl, generateIcsContent } from "./calendar-export";
 import { MeetingNoteSheet } from "./meeting-note-sheet";
+import { MeetingChemistrySheet } from "@/features/saju/meeting-chemistry-sheet";
+import { clearMeetingFlow } from "@/server/actions/meeting-flow";
 import { MeetingAttendanceSheet } from "./meeting-attendance-sheet";
 import {
   carryOverMeeting,
@@ -62,6 +64,7 @@ export function SlotsScreen({
   const [agenda, setAgenda] = useState("");
   const [viewingNote, setViewingNote] = useState(false);
   const [viewingAttendance, setViewingAttendance] = useState(false);
+  const [viewingChemistry, setViewingChemistry] = useState(false);
   const { toast, busy, flash, run } = useAction();
   const requesting = busy.request === true;
 
@@ -181,6 +184,37 @@ export function SlotsScreen({
               </Panel>
             ) : null}
 
+            {/* 저장해 둔 진행 방식 — 회의 케미 시트에서 저장한다. 안건과 따로 둔다(안건은 회의록 제목으로 쓰인다). */}
+            {proposal.flow ? (
+              <Panel s="card" pad={14} r={16} className="mb-3">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-[13px] font-semibold text-txt-muted">
+                    <Icon name="list-ordered" size={15} />
+                    진행 방식
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!proposal.id) return;
+                      try {
+                        const res = await clearMeetingFlow(proposal.id);
+                        if (res === "ok") router.refresh();
+                        else flash("지우지 못했습니다");
+                      } catch {
+                        flash("지우지 못했습니다");
+                      }
+                    }}
+                    className="t-cap-strong cursor-pointer border-none bg-transparent p-0 text-txt-muted underline underline-offset-2"
+                  >
+                    지우기
+                  </button>
+                </div>
+                <p className="text-pretty-keep m-0 whitespace-pre-line text-[13.5px] leading-[1.6] text-txt">
+                  {proposal.flow}
+                </p>
+              </Panel>
+            ) : null}
+
             <div className="flex flex-col gap-2">
               <div className="flex gap-2">
                 <Btn
@@ -252,6 +286,16 @@ export function SlotsScreen({
                 onClick={() => setViewingAttendance(true)}
               >
                 참석자 출석 체크
+              </Btn>
+
+              {/* 회의 케미 — 참석 예정자의 오행으로 본 진행 방식 제안. 역할을 정하지 않는다. */}
+              <Btn
+                v="outline"
+                icon="sparkles"
+                className="w-full"
+                onClick={() => setViewingChemistry(true)}
+              >
+                회의 케미 보기
               </Btn>
             </div>
           </div>
@@ -607,6 +651,14 @@ export function SlotsScreen({
         meetingTitle={`${whenText(proposal.date, proposed?.day ?? "", proposed?.time ?? "")} 회의 출석`}
         onClose={() => setViewingAttendance(false)}
         onSaved={() => router.refresh()}
+      />
+
+      <MeetingChemistrySheet
+        open={viewingChemistry}
+        meetingId={proposal.id ?? null}
+        durationMinutes={proposal.durationMinutes ?? DEFAULT_MINUTES}
+        savedFlow={proposal.flow ?? null}
+        onClose={() => setViewingChemistry(false)}
       />
 
       <Toast msg={toast} />

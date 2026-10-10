@@ -276,6 +276,74 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const badHour = await blocked(() => as(F.asLeader, () => meetings.proposeMeetingAt(week, 1, 99)));
     check("시간 범위를 넘으면 거절한다", badHour.includes("시간표 밖"), true);
     check("시간표의 칸 수를 알고 있다", [SCHEDULE_DAYS.length > 0, SCHEDULE_HOURS.length > 0], [true, true]);
+
+    /* ── 9) 후보 제안·의견요청·시간표·출석 관리 검증 ─────────── */
+    console.log("\n후보 제안·의견요청·시간표·출석 액션 검증");
+    const { getMeetingAttendance, saveMeetingAttendance } = await import(
+      "../../src/server/actions/attendance.js"
+    );
+    const { saveMyBusyBlocks, askForTimetable } = await import(
+      "../../src/server/actions/schedule.js"
+    );
+
+    // 1. saveMyBusyBlocks
+    await as(F.asLeader, () =>
+      saveMyBusyBlocks([
+        { id: "b1", day: 0, startHour: 1, hours: 2, kind: "class", label: null, weekOf: null },
+      ]),
+    );
+    const savedBlocks = await db.busyBlock.count({ where: { memberId: F.leader.id } });
+    check("saveMyBusyBlocks로 바쁜 시간대가 저장된다", savedBlocks, 1);
+
+    // 2. askForTimetable
+    const askResult = await as(F.asLeader, () => askForTimetable(F.mate.id));
+    check("askForTimetable이 전송된다", askResult, "sent");
+    const askAgain = await as(F.asLeader, () => askForTimetable(F.mate.id));
+    check("같은 날 다시 요청하면 already를 반환한다", askAgain, "already");
+
+    // 3. requestRemoteInput & proposeMeeting
+    const slot = await db.meetingSlot.create({
+      data: {
+        teamId: F.id,
+        day: SCHEDULE_DAYS[day],
+        time: "20:00 – 21:00",
+        available: 2,
+        total: 3,
+        blockedBy: F.mate.name,
+        weekKey: "this",
+      },
+    });
+    const remoteCount = await as(F.asLeader, () => meetings.requestRemoteInput(slot.id));
+    check("requestRemoteInput이 요청 인원 수를 반환한다", typeof remoteCount, "number");
+
+    await as(F.asLeader, () => meetings.proposeMeeting(slot.id, { location: "스터디룸" }));
+    const proposedFromSlot = await db.meetingProposal.findFirst({
+      where: { teamId: F.id, slotId: slot.id },
+    });
+    check("proposeMeeting으로 후보 기반 제안이 생성된다", proposedFromSlot?.location, "스터디룸");
+
+    // 4. saveMeetingAttendance & getMeetingAttendance
+    const confMeeting = await db.meetingProposal.create({
+      data: {
+        teamId: F.id,
+        proposedById: F.leader.id,
+        stage: "confirmed",
+        respondBy: new Date(),
+        date: "2026-10-15",
+        agenda: "정기 회의",
+      },
+    });
+    const savedAttend = await as(F.asLeader, () =>
+      saveMeetingAttendance(confMeeting.id, [F.leader.id, F.mate.id]),
+    );
+    check("saveMeetingAttendance로 2명의 출석이 저장된다", savedAttend.count, 2);
+
+    const attendInfo = await as(F.asLeader, () => getMeetingAttendance(confMeeting.id));
+    check(
+      "getMeetingAttendance로 출석 명단을 조회한다",
+      attendInfo.attendees.filter((a) => a.attended).length,
+      2,
+    );
   } finally {
     for (const teamId of teamIds) {
       await db.member.deleteMany({ where: { teamId } });

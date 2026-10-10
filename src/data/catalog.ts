@@ -223,9 +223,9 @@ export const CUSHION_TONES: CushionTone[] = [
 export const CUSHION_SAMPLE_INPUT = "이거 왜 아직 안 올렸어요? 내일이 마감인데요";
 
 export const CUSHION_SAMPLE_OUTPUT: Record<string, string> = {
-  soft: "혹시 자료 올리는 데 어려운 점이 있을까요? 내일이 마감이라 지금 상황만 알려주시면 제가 맞춰서 준비해 볼게요.",
-  plain: "내일이 마감인데 자료가 아직 올라오지 않았습니다. 언제쯤 가능한지 알려주시면 일정을 맞추겠습니다.",
-  firm: "내일 마감이라 오늘 안에는 자료가 필요합니다. 어려우시면 지금 말씀해 주세요. 범위를 줄이거나 나눠서 진행하겠습니다.",
+  soft: "내일이 마감 일정인데 혹시 자료 등록에 어려운 점이 있으실까요? 현재 상황을 공유해 주시면 감사하겠습니다.",
+  plain: "내일이 마감인데 자료가 아직 등록되지 않았습니다. 현재 진행 상황을 확인해 주실 수 있을까요?",
+  firm: "내일 마감이라 자료 제출이 필요합니다. 오늘 안으로 현재 진행 상황 확인 부탁드립니다.",
 };
 
 export const CLERK_SAMPLE_INPUT =

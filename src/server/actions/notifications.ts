@@ -11,15 +11,20 @@ import { requireSessionMember } from "@/server/session";
  *
  * 읽음은 **내 알림에만** 찍을 수 있다 — 조건에 `memberId` 를 함께 넣는 이유다.
  * 알림 id 만 알면 남의 알림을 읽음으로 바꿀 수 있으면 안 된다.
+ *
+ * **"전부" 는 목록을 아예 주지 않는 것(`undefined`)뿐이다.** 빈 목록은 "읽을 것이 없다" 이다 —
+ * 예전에는 빈 목록도 전부로 읽어서, 화면이 거른 결과가 우연히 비었을 때 안 읽은 알림이
+ * 통째로 읽음이 됐다.
  */
 export async function markNotificationsRead(ids?: string[]): Promise<void> {
   const me = await requireSessionMember();
+  if (ids !== undefined && ids.length === 0) return;
 
   await db.notification.updateMany({
     where: {
       memberId: me.id,
       readAt: null,
-      ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
+      ...(ids !== undefined ? { id: { in: ids } } : {}),
     },
     data: { readAt: new Date() },
   });

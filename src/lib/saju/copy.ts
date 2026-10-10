@@ -1,4 +1,5 @@
 import type { Boundary, Element, TenGod } from "./engine";
+import type { Relation } from "./chemistry";
 
 /**
  * 사주 화면의 말 — **계산 결과를 읽어서만** 고른다.
@@ -10,7 +11,7 @@ import type { Boundary, Element, TenGod } from "./engine";
  * - **"~한 편이에요 / ~해 보세요"로 끝낸다.** 사람이나 팀이 실제로 그렇게 일한다고 서술하지
  *   않는다. (`team-mbti.tsx` 가 같은 이유로 `dominantSummary` 를 지웠다 — 근거 없는 단정은
  *   거짓이면 사실 주장으로 남는다.)
- * - **누가 무엇을 맡아야 한다고 말하지 않는다.** 역할은 희망·Veto·경험·가능한 시간으로만
+ * - **누가 무엇을 맡아야 한다고 말하지 않는다.** 역할은 지망·Veto·추첨 등 팀 합의로만
  *   조율한다. 일간 풀이의 팀플 한 줄은 *회의에서 해 볼 행동*이지 *맡을 역할*이 아니다.
  *
  * 고정 문구라서 같은 일간이면 언제나 같은 말이 나온다. AI 를 거치지 않는다.
@@ -34,7 +35,7 @@ export const BOUNDARY_NOTICE: Record<Boundary, string> = {
 export const NO_TIME_NOTICE = "출생 시각을 몰라도 볼 수 있어요. 시주는 빼고 여섯 글자로 계산했어요.";
 
 export const LATE_NIGHT_NOTICE =
-  "밤 11시 이후는 다음 날로 계산해요. 만세력마다 이 기준이 달라 결과가 다를 수 있어요.";
+  "밤 11시 이후는 찰떡 계산 기준에 따라 다음 날로 계산해요. 만세력마다 이 기준이 달라 결과가 다를 수 있어요.";
 
 export const ELEMENT_WORD: Record<Element, { hanja: string; keyword: string }> = {
   wood: { hanja: "木", keyword: "시작·성장" },
@@ -134,3 +135,222 @@ export const TEN_GOD_MEANING: Record<TenGod, string> = {
   편인: "일간을 낳는 오행, 음양이 같아요",
   정인: "일간을 낳는 오행, 음양이 달라요",
 };
+
+/* ── 1:1 케미 ─────────────────────────────────────────────── */
+
+/**
+ * 두 일간의 오행 조합 이름. 키는 `chemistryOf().pairKey`(작은 번호-큰 번호, 목0 화1 토2 금3 수4).
+ * 순서가 없다 — 나×상대와 상대×나는 같은 이름이다.
+ */
+export const PAIR_TITLE: Record<string, string> = {
+  "0-0": "같은 방향으로 자라는 조합",
+  "1-1": "열기가 두 배인 조합",
+  "2-2": "든든하게 버티는 조합",
+  "3-3": "기준이 또렷한 조합",
+  "4-4": "생각이 깊게 흐르는 조합",
+  "0-1": "불씨를 키우는 조합",
+  "1-2": "열기를 받아 주는 조합",
+  "2-3": "다져서 가다듬는 조합",
+  "3-4": "정리에서 흐름이 나오는 조합",
+  "0-4": "생각이 시작으로 이어지는 조합",
+  "0-2": "밀고 당기며 중심을 잡는 조합",
+  "2-4": "흐름에 둑을 쌓는 조합",
+  "1-4": "속도와 균형의 조합",
+  "1-3": "벼리고 다듬는 조합",
+  "0-3": "가지를 치며 키우는 조합",
+};
+
+export type RelationCopy = {
+  /** 관계 이름 — 방향이 있다(내가 기준). */
+  label: string;
+  line: string;
+  /** 같이 일할 때 해 볼 것. 누가 무엇을 맡으라는 말이 아니라 **진행 방식**이다. */
+  together: string;
+  /** 조심해 볼 순간. */
+  watch: string;
+  /** 서로에게 써 볼 말. */
+  say: string;
+};
+
+export const RELATION_COPY: Record<Relation, RelationCopy> = {
+  same: {
+    label: "오행이 같아요",
+    line: "일간의 오행이 같아서 일하는 박자가 닮은 편이에요.",
+    together: "말하지 않아도 통하는 대목이 많을 수 있어요. 막히는 곳도 같기 쉬우니, 막히면 다른 팀원 의견을 한 번 들어 보세요.",
+    watch: "둘 다 놓치는 부분이 같을 수 있어요.",
+    say: "“우리 둘 다 빼먹은 건 없을까요?”",
+  },
+  meGenerates: {
+    label: "내가 북돋는 사이",
+    line: "내 쪽이 상대에게 힘을 보태는 흐름이에요.",
+    together: "내가 재료나 아이디어를 건네고, 상대가 이어 가는 순서가 편할 수 있어요.",
+    watch: "계속 건네기만 하면 지칠 수 있어요. 필요한 건 말로 요청해 보세요.",
+    say: "“이 부분은 같이 해 줄 수 있어요?”",
+  },
+  generatesMe: {
+    label: "상대가 북돋아 주는 사이",
+    line: "상대가 내게 힘을 보태는 흐름이에요.",
+    together: "상대가 건네는 의견을 내가 받아서 키워 보세요.",
+    watch: "받기만 하는 느낌이 들지 않게, 고마운 건 말로 해 주세요.",
+    say: "“덕분에 정리됐어요. 이어서 제가 해볼게요.”",
+  },
+  meControls: {
+    label: "내가 다잡는 사이",
+    line: "내 쪽이 기준을 잡는 흐름이에요. 같은 말도 세게 들릴 수 있어요.",
+    together: "내가 기준을 먼저 말하고, 상대가 속도를 맞춰 보는 방식이 편할 수 있어요.",
+    watch: "내 의견이 지시처럼 들릴 수 있어요.",
+    say: "“일단 초안으로 해볼까요?”",
+  },
+  controlsMe: {
+    label: "상대가 다잡는 사이",
+    line: "상대가 기준을 잡는 흐름이에요. 재촉받는다고 느낄 수 있어요.",
+    together: "상대의 기준을 먼저 들어 보고, 내 속도를 설명해 보세요.",
+    watch: "결정이 빠르게 느껴질 때가 있을 수 있어요.",
+    say: "“이 부분은 이유부터 설명해도 될까요?”",
+  },
+};
+
+export const CHEMISTRY_NOTICE =
+  "두 사람의 일간 오행 관계로 풀어 본 재미 해석이에요. 숫자로 매기지 않고, 누가 무엇을 해야 한다고 정하지 않아요.";
+
+/* ── 팀 사주 ──────────────────────────────────────────────── */
+
+/**
+ * 가장 적게 센 오행의 키워드를 회의에서 챙겨 보는 제안. "팀에 이게 모자라다"는 말이 아니다 —
+ * 제안이 **어떻게 골라졌는지**(가장 적게 센 오행)를 화면이 같이 밝힌다.
+ */
+export const MEETING_TIP: Record<Element, string> = {
+  wood: "새 아이디어를 꺼낼 시간을 따로 잡아 보세요.",
+  fire: "각자 의견을 소리 내어 말하는 시간을 만들어 보세요.",
+  earth: "회의를 시작할 때 오늘의 목표를 한 줄로 맞춰 보세요.",
+  metal: "마지막 10분은 결론과 할 일 정리에 써 보세요.",
+  water: "결정하기 전에 각자 생각할 시간을 잠깐 가져 보세요.",
+};
+
+export const TEAM_SAJU_NOTICE =
+  "팀 오행 분석은 사주를 등록한 팀원들의 연·월·일 여섯 글자를 같은 비중으로 계산해요. 등록하지 않은 팀원은 집계에 포함되지 않아요.";
+
+export const TEAM_NEED_MINE =
+  "내 사주를 등록하면 팀 사주를 볼 수 있어요. 서로 보여 주는 만큼만 볼 수 있게 했어요.";
+
+/* ── 오늘의 팀플 흐름 (홈) ─────────────────────────────────── */
+
+/**
+ * 오늘 날짜의 일간과 내 일간의 오행 관계(내가 기준)로 고르는 한 줄.
+ * 점수나 등급을 매기지 않는다 — 관계의 이름과 **오늘 해 볼 행동**만 말한다.
+ */
+export type TodayCopy = { title: string; line: string; tip: string };
+
+export const TODAY_COPY: Record<Relation, TodayCopy> = {
+  same: {
+    title: "나와 결이 같은 날",
+    line: "오늘의 기운이 내 일간과 같은 오행이에요.",
+    tip: "익숙한 방식이 잘 맞는 편이에요. 새 의견을 하나쯤 들어 보는 것도 좋아요.",
+  },
+  generatesMe: {
+    title: "힘을 받는 날",
+    line: "오늘의 기운이 나를 북돋는 흐름이에요.",
+    tip: "미뤄 둔 일 하나를 꺼내 시작해 보세요.",
+  },
+  meGenerates: {
+    title: "힘을 내어 주는 날",
+    line: "내가 오늘의 흐름에 힘을 보태는 쪽이에요.",
+    tip: "도와줄 일이 있는지 팀원에게 한 번 물어보세요.",
+  },
+  controlsMe: {
+    title: "빠듯하게 느껴질 수 있는 날",
+    line: "오늘의 기운이 나를 다잡는 흐름이에요. 일정이 촘촘하게 느껴질 수 있어요.",
+    tip: "오늘 할 일을 하나만 먼저 고르고, 나머지는 내일로 넘겨 보세요.",
+  },
+  meControls: {
+    title: "내가 흐름을 잡는 날",
+    line: "내가 오늘의 흐름을 이끄는 쪽이에요.",
+    tip: "회의에서 나온 이야기를 한 번 정리해서 말해 보세요.",
+  },
+};
+
+/**
+ * 오늘의 흐름 제목 — **다른 사람에게 닿는 흐름**을 말할 때의 3인칭판. `TODAY_COPY` 의 제목은 "내가 …",
+ * "나와 …" 처럼 1인칭이라, 상대의 오늘을 그 제목으로 쓰면 "상대가 '내가 흐름을 잡는 날'" 이 된다.
+ */
+export const TODAY_TITLE_OTHER: Record<Relation, string> = {
+  same: "일간과 결이 같은 날",
+  generatesMe: "힘을 받는 날",
+  meGenerates: "힘을 내어 주는 날",
+  controlsMe: "빠듯하게 느껴질 수 있는 날",
+  meControls: "흐름을 잡는 날",
+};
+
+export const TODAY_NOTICE = "오늘 날짜와 내 일간의 오행 관계로 보는 재미 해석이에요. 하루를 정해 주는 것은 아니에요.";
+
+/** 오늘 회의가 있는 날의 고정 제안. 누가 무엇을 하라는 말이 아니라 회의 진행 방식이다. */
+export const MISSION_MEETING_CLOSER = "회의 마지막에 “그래서 누가 뭘 하지?” 를 한 번 확인해 보세요.";
+/** 마감이 가까운 일이 있는 날의 고정 제안. */
+export const MISSION_DUE_SOON = "마감이 가까운 일이 있어요. 막힌 게 있는지 팀에 한 번 물어보세요.";
+
+export const TODAY_NEED_MINE = "내 사주를 등록하면 오늘의 팀플 흐름을 볼 수 있어요";
+
+/* ── 회의 케미 ────────────────────────────────────────────── */
+
+export const MEETING_CHEMISTRY_NOTICE =
+  "참석 예정인 팀원의 오행을 더해 본 재미 해석이에요. 누가 무엇을 해야 한다고 정하지 않고, 진행 방식만 제안해요.";
+
+/** 참석 예정 = 이 회의에 참석 어려움으로 응답하지 않은 팀원. 사람 수 안내에 같은 말을 쓴다. */
+export const MEETING_ATTENDEE_WORD = "참석 예정";
+
+export type MeetingFlowStep = { title: string; desc: string };
+
+/** 추천 진행 세 단계. 시간 배분은 `meeting-flow.ts` 가 회의 길이로 계산한다. */
+export const MEETING_FLOW_STEPS: readonly MeetingFlowStep[] = [
+  { title: "각자 아이디어 하나씩", desc: "한 사람씩 하나만 말하고, 이 단계에서는 평가하지 않아요." },
+  { title: "비슷한 의견 합치기", desc: "겹치는 것끼리 묶고, 남은 후보를 두세 개로 줄여요." },
+  { title: "마지막에 결정", desc: "결정한 것과 “누가 뭘 하지?” 를 확인하고 마쳐요." },
+];
+
+export const MEETING_FLOW_COPIED = "진행 방식을 복사했어요";
+export const MEETING_FLOW_COPY_FAILED = "복사하지 못했어요. 직접 선택해서 복사해 주세요";
+
+/* ── 사주 놀이 ────────────────────────────────────────────── */
+
+export const PLAY_NOTICE =
+  "사주로 즐기는 가벼운 놀이예요. 결과는 재미일 뿐이고, 역할을 정하는 데는 쓰이지 않아요.";
+
+export type PairingCopy = { title: string; line: string; tip: string };
+
+/** 오늘의 궁합 — 두 사람에게 오늘의 흐름이 어떻게 닿는지로 고른 네 가지. 등급이 아니다. */
+export const PAIRING_COPY: Record<"start" | "care" | "easy" | "own", PairingCopy> = {
+  start: {
+    title: "함께 시작하는 날",
+    line: "오늘은 두 사람 모두 흐름을 받는 쪽이에요.",
+    tip: "미뤄 둔 일 중 하나를 같이 시작해 보세요.",
+  },
+  care: {
+    title: "서로 챙기는 날",
+    line: "한 사람은 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "오늘은 한쪽에 일이 몰리지 않게 나눠 보세요.",
+  },
+  easy: {
+    title: "가볍게 가는 날",
+    line: "두 사람 모두 빠듯하게 느껴질 수 있는 흐름이에요.",
+    tip: "큰 결정은 미루고, 확인할 것만 짧게 맞춰 보세요.",
+  },
+  own: {
+    title: "각자 속도로 가는 날",
+    line: "서로 영향을 크게 주고받는 흐름은 아니에요.",
+    tip: "각자 할 일을 하고, 끝나고 한 번 공유해 보세요.",
+  },
+};
+
+export const PAIRING_NEED_OTHERS = "나 말고도 사주를 등록한 팀원이 있어야 볼 수 있어요.";
+export const GUESS_NEED_MORE = "세 명 이상(나 포함)이 사주를 등록하면 할 수 있어요.";
+export const GUESS_INTRO = "연·월·일 여섯 글자의 오행 수만 보고, 누구의 사주인지 맞혀 보세요.";
+
+/* ── 진행 방식 저장 ───────────────────────────────────────── */
+
+export const MEETING_FLOW_SAVE_CAPTION =
+  "저장하는 글에는 오행에서 고른 제안이 빠져요. 팀원 모두가 보는 칸이라서요.";
+export const MEETING_FLOW_SAVED_NOTE = "이 회의에 저장돼 있어요";
+export const MEETING_FLOW_SAVED = "회의에 저장했어요";
+export const MEETING_FLOW_CLEARED = "저장된 진행 방식을 지웠어요";
+export const MEETING_FLOW_NOT_CONFIRMED = "확정된 회의에만 저장할 수 있어요";
+export const MEETING_FLOW_SAVE_FAILED = "저장하지 못했어요. 잠시 뒤 다시 시도해 주세요";

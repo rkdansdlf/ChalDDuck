@@ -11,6 +11,8 @@ import {
   unresolvedClashes,
   wantersOf,
 } from "@/features/roles/roster-model";
+import { TodayFlowCard } from "@/features/saju/today-flow-card";
+import type { TeamSaju } from "@/data/api";
 import { buildBriefing } from "./briefing";
 import { HomeRow } from "./home-row";
 import { HomeSide } from "./home-side";
@@ -67,6 +69,7 @@ export function HomeScreen({
   rejoinRequests,
   awaitingMyConfirm,
   unreadNotifications,
+  saju,
 }: {
   team: Team;
   roles: Role[];
@@ -98,6 +101,8 @@ export function HomeScreen({
   awaitingMyConfirm: number;
   /** 안 읽은 알림 수. 종에 붙는다. */
   unreadNotifications: number;
+  /** 팀 사주 — 오늘의 팀플 흐름에 쓴다. 조회에 실패하면 `null`(카드를 그리지 않는다). */
+  saju: TeamSaju | null;
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
@@ -280,6 +285,14 @@ export function HomeScreen({
             아래 목록은 **내가** 해야 하는 것이고, 이 카드는 **우리 팀 전체**가 지금 어디인지다.
             내 것만 보면 팀이 어딘가에서 밀리고 있다는 사실을 모른다. */}
         <BriefingCard lines={briefing} onOpen={(href) => router.push(href)} />
+        {/* 오늘 회의·마감 임박은 위 브리핑이 센 결과를 그대로 쓴다 — 한 화면이 두 말을 하지 않게. */}
+        <TodayFlowCard
+          saju={saju}
+          today={today}
+          meetingToday={briefing.some((l) => l.key === "meeting")}
+          dueSoon={briefing.some((l) => l.key === "soon")}
+          onOpen={(href) => router.push(href)}
+        />
         <SecTitle
           note={
             todos.length > 0

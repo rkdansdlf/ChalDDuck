@@ -52,6 +52,15 @@ export async function transferLeadership(toMemberId: string): Promise<void> {
 }
 
 /**
+ * 나갈 때 함께 지우는 값.
+ *
+ * 나간 사람의 `Member` 행은 기여 기록·메시지·파일 이력의 근거라 지우지 않는다. 하지만 사주를 위해
+ * 받은 생년월일·출생 시각은 **기록이 아니라 개인정보**다 — 행이 남는다고 같이 남으면, 팀을 떠난 사람의
+ * 생일이 DB 에 계속 있게 된다. 나가는 모든 길이 이 한 값을 쓴다(두 곳이 따로 비우면 한 곳이 빠진다).
+ */
+const clearBirthOnLeave = { birthDate: null, birthTime: null } as const;
+
+/**
  * 팀에서 나간다.
  *
  * 팀장은 이 길로 나갈 수 없다 — 먼저 넘기거나(`transferLeadership`) 폭파해야 한다.
@@ -64,7 +73,9 @@ export async function leaveTeam(): Promise<void> {
   }
 
   await db.$transaction([
-    db.member.update({ where: { id: me.id }, data: { leftAt: new Date() } }),
+    // 나간 사람의 생년월일(시)은 **지운다.** 행은 기록 근거라 남기지만, 이 값은 기록이 아니라
+    // 개인정보이고 이 사람이 팀에 없으면 쓸 곳도 없다(`clearBirthOnLeave`).
+    db.member.update({ where: { id: me.id }, data: { leftAt: new Date(), ...clearBirthOnLeave } }),
     // 열려 있던 기기를 전부 끊는다. 나갔는데 다른 기기로 계속 보이면 안 된다.
     db.session.deleteMany({ where: { memberId: me.id } }),
   ]);
@@ -97,7 +108,10 @@ export async function handOverAndLeave(toMemberId: string): Promise<void> {
 
   await db.$transaction([
     // 넘기는 것과 나가는 것을 한 행에서 함께 처리한다.
-    db.member.update({ where: { id: leader.id }, data: { isLeader: false, leftAt: new Date() } }),
+    db.member.update({
+      where: { id: leader.id },
+      data: { isLeader: false, leftAt: new Date(), ...clearBirthOnLeave },
+    }),
     db.member.update({ where: { id: next.id }, data: { isLeader: true } }),
     // 열려 있던 기기를 전부 끊는다. 나갔는데 다른 기기로 계속 보이면 안 된다.
     db.session.deleteMany({ where: { memberId: leader.id } }),

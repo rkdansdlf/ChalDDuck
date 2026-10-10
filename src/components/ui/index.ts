@@ -25,3 +25,4 @@ export { SURFACE, type SurfaceVariant } from "./surface";
 export { Switch } from "./switch";
 export { TABS, TabBar, type TabKey, type TabPending } from "./tab-bar";
 export { Toast } from "./toast";
+export { OfflineBanner } from "./offline-banner";

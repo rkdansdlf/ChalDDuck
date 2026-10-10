@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
-import { askedTodayBy, SCHEDULE_ASK_KIND } from "@/server/meetings/schedule-ask";
+import { SCHEDULE_ASK_KIND } from "@/server/meetings/schedule-ask";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 import { BUSY_KINDS, SCHEDULE_DAYS, SCHEDULE_HOURS } from "@/data/catalog";
 import { normalizeBusyLabel } from "@/features/schedule/busy-blocks";
-import { isWeekKey, scheduleWeeks } from "@/features/schedule/week";
+import { isWeekKey, scheduleWeeks, todayInSeoul } from "@/features/schedule/week";
 import type { BusyBlock } from "@/lib/types";
 
 const PRESET_KINDS = new Set<string>(BUSY_KINDS.map((k) => k.key));
@@ -55,6 +55,11 @@ function toRow(b: BusyBlock, weeks: string[]) {
 export async function saveMyBusyBlocks(blocks: BusyBlock[]): Promise<void> {
   const me = await requireSessionMember();
   const weeks = scheduleWeeks();
+  // 화면은 같은 요일·같은 범위(매주 · 볼 수 있는 각 주) 안에서 블록이 겹치지 않게 막으므로(`placeBlock`)
+  // 정상적인 시간표는 칸 수 × 범위 수를 넘을 수 없다. 서버는 겹침을 거절하지 않으니, 상한이 없으면
+  // 한 번의 저장이 몇만 줄을 쓴다.
+  const MAX_BLOCKS = SCHEDULE_DAYS.length * SCHEDULE_HOURS.length * (weeks.length + 1);
+  if (blocks.length > MAX_BLOCKS) throw new Error("시간 블록이 너무 많습니다.");
   const rows = blocks
     // 화면을 연 사이에 주가 넘어가(일요일 밤 → 월요일) 지나간 주가 된 것은 조용히 버린다 —
     // 이미 끝난 주라 적을 이유가 없고, 거절하면 저장 자체가 실패한다.
@@ -90,16 +95,34 @@ export async function askForTimetable(memberId: string): Promise<"sent" | "alrea
   });
   if (!target) throw new Error("팀원을 찾을 수 없습니다.");
 
-  if ((await askedTodayBy(me.id, target.id)).size > 0) return "already";
+  // 읽어 보고 쓰는 두 걸음이 아니라 **쓰는 한 걸음**이 문이다 — 동시에 두 번 눌러도 유일 키가
+  // 두 번째를 막는다(`ScheduleAsk`). 먼저 읽어 보는 길은 둘 다 통과했다.
+  const sentOn = todayInSeoul();
+  let ask: { id: string };
+  try {
+    ask = await db.scheduleAsk.create({
+      data: { senderId: me.id, targetId: target.id, sentOn },
+      select: { id: true },
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2002") return "already";
+    throw error;
+  }
 
-  await notify({
-    to: [target.id],
-    kind: SCHEDULE_ASK_KIND,
-    title: `${me.name}님이 시간표를 부탁했습니다`,
-    body: "안 되는 시간을 표시해 두면 회의 시간을 함께 고를 수 있습니다",
-    href: "/schedule",
-    actorId: me.id,
-  });
+  try {
+    await notify({
+      to: [target.id],
+      kind: SCHEDULE_ASK_KIND,
+      title: `${me.name}님이 시간표를 부탁했습니다`,
+      body: "안 되는 시간을 표시해 두면 회의 시간을 함께 고를 수 있습니다",
+      href: "/schedule",
+      actorId: me.id,
+    });
+  } catch (error) {
+    // 알림이 가지 못했는데 "오늘은 이미 보냄" 이 남으면 하루 한 번을 태우고 아무도 모른다.
+    await db.scheduleAsk.delete({ where: { id: ask.id } }).catch(() => {});
+    throw error;
+  }
 
   revalidatePath("/schedule/team");
   return "sent";
