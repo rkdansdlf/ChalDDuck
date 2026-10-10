@@ -162,6 +162,8 @@ export type MeetingProposal = {
   location?: string | null;
   /** 회의 안건. */
   agenda?: string | null;
+  /** 저장해 둔 진행 방식(여러 줄 글). 없으면 `null`. 안건과 별개다 — 안건은 제목으로 쓰인다. */
+  flow?: string | null;
   /** 회의 소요 시간(분). 기본 60분. */
   durationMinutes?: number;
   /** 회의록 작성 여부. */
@@ -202,6 +204,12 @@ export type OnboardingDraft = {
   mbti: MbtiType | null;
   /** MBTI 를 직접 고르지 않고 04 성향 체크로 얻었는지. 결과 화면 문구가 달라진다. */
   mbtiFromQuiz: boolean;
+  /**
+   * 사주를 위한 생년월일(`YYYY-MM-DD`)과 출생 시각(`HH:MM`). **선택**이다 — 없으면 `null` 이거나 생략.
+   * 서버가 `parseBirth` 로 다시 걸러서, 형식·범위에 맞는 것만 저장한다.
+   */
+  birthDate?: string | null;
+  birthTime?: string | null;
   want: RoleKey | null;
   veto: RoleKey | null;
 };

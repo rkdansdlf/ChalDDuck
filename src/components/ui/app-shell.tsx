@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { OfflineBanner } from "./offline-banner";
 
 /**
  * 탭 화면의 셸.
@@ -51,6 +52,7 @@ export function AppShell({
             wide ? "max-w-[1400px]" : "max-w-[860px]",
           )}
         >
+          <OfflineBanner />
           {children}
           {/* 입력창에 포커스가 있거나 대화방 내부일 때는 탭바를 숨겨 대화 공간을 극대화한다. */}
           {!isChatRoom ? (

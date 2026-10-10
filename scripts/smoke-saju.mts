@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { check, finish, readCode, truthy } from "./db-test-base.mjs";
 import {
   calculateSaju,
@@ -13,7 +14,10 @@ import { parseBirth } from "../src/lib/saju/input.js";
 import { chemistryOf, type Relation } from "../src/lib/saju/chemistry.js";
 import { summarizeTeam } from "../src/lib/saju/team.js";
 import { buildTodayFlow, dayStemOfDate } from "../src/lib/saju/today.js";
-import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY } from "../src/lib/saju/copy.js";
+import { MAX_GUESS_ROUNDS, buildGuessRounds, dailyPartner, hashString, pairingKindOf, seededOrder, todayPairing } from "../src/lib/saju/play.js";
+import { BALANCE_QUESTIONS, isBalanceChoice, isBalanceQuestion } from "../src/lib/saju/balance.js";
+import { MAX_MEETING_MINUTES, MIN_MEETING_MINUTES, meetingFlowText, planMeetingFlow } from "../src/lib/saju/meeting-flow.js";
+import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY, TODAY_TITLE_OTHER, MEETING_FLOW_STEPS } from "../src/lib/saju/copy.js";
 
 /**
  * 사주 불변식.
@@ -264,6 +268,94 @@ async function main() {
   check("회의와 마감이 겹치면 둘 — 분포 제안을 뺀다", flowOf(0, "2026-10-12", { team: twoMembers, meetingToday: true, dueSoon: true })?.missions, [MISSION_MEETING_CLOSER, MISSION_DUE_SOON]);
   check("같은 입력은 같은 출력", JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })), JSON.stringify(flowOf(3, "2026-10-12", { team: twoMembers, meetingToday: true })));
 
+  console.log("\n[회의 케미] 진행 방식의 시간 배분");
+  let badPlan = 0;
+  for (let d = 0; d <= 300; d += 1) {
+    const p = planMeetingFlow(d);
+    const sum = p.steps.reduce((a, x) => a + x.minutes, 0);
+    const clamped = Math.min(MAX_MEETING_MINUTES, Math.max(MIN_MEETING_MINUTES, Math.round(d / 5) * 5));
+    if (p.steps.length !== 3 || sum !== p.total || p.total !== clamped) badPlan += 1;
+    if (p.steps.some((x) => x.minutes < 5 || x.minutes % 5 !== 0)) badPlan += 1;
+  }
+  check("0–300분 모든 길이에서 세 단계가 5분 단위이고 합이 회의 길이와 같다", badPlan, 0);
+  check("60분 = 30 · 20 · 10", planMeetingFlow(60).steps.map((x) => x.minutes), [30, 20, 10]);
+  check("마지막 결정은 30분 이상이면 10분", [planMeetingFlow(30).steps[2]!.minutes, planMeetingFlow(90).steps[2]!.minutes], [10, 10]);
+  check("30분 미만이면 결정 5분", planMeetingFlow(20).steps.map((x) => x.minutes), [10, 5, 5]);
+  check("범위를 벗어난 길이는 15–240 으로 맞춘다", [planMeetingFlow(0).total, planMeetingFlow(9999).total, planMeetingFlow(Number.NaN).total], [15, 240, 60]);
+  const text = meetingFlowText(planMeetingFlow(60), ["earth", "water"]);
+  truthy("복사할 글에 세 단계와 시간이 모두 있다", MEETING_FLOW_STEPS.every((st, i) => text.includes(`${i + 1}) ${st.title} (${planMeetingFlow(60).steps[i]!.minutes}분)`)));
+  truthy("가장 적게 센 오행의 제안이 복사할 글에 들어간다", text.includes(MEETING_TIP.earth) && text.includes(MEETING_TIP.water));
+  check("두드러지는 오행이 없으면 챙겨 볼 것을 쓰지 않는다", meetingFlowText(planMeetingFlow(60), []).includes("챙겨 볼 것"), false);
+
+  console.log("\n[사주 놀이] 오늘의 궁합 · 사주 맞히기는 날짜로 정해진다");
+  check("같은 문자열은 같은 해시", hashString("2026-10-10:abc"), hashString("2026-10-10:abc"));
+  truthy("해시는 0 이상의 정수", [ "", "a", "한글", "x".repeat(1000) ].every((x) => Number.isInteger(hashString(x)) && hashString(x) >= 0));
+  const items = ["가", "나", "다", "라", "마", "바"].map((id) => ({ id }));
+  const ord = (arr: typeof items, seed: string) => seededOrder(arr, seed, (x) => x.id).map((x) => x.id).join("");
+  check("씨앗이 같으면 입력 순서와 상관없이 같은 순서", ord(items, "s1"), ord([...items].reverse(), "s1"));
+  truthy("씨앗이 다르면 순서가 달라진다(여러 씨앗 중 하나는 다르다)", ["s2", "s3", "s4", "s5"].some((sd) => ord(items, sd) !== ord(items, "s1")));
+  const cuidLike = Array.from({ length: 6 }, (_, i) => ({ id: `cm1x9k2a30000${String(i).padStart(4, "0")}abcdefgh` }));
+  const distinctOrders = new Set(Array.from({ length: 30 }, (_, d) => seededOrder(cuidLike, `2026-10-${String(d + 1).padStart(2, "0")}:me`, (x) => x.id).map((x) => x.id).join(",")));
+  truthy(`길이가 같은 식별자도 날짜마다 순서가 다양하다(30일 중 ${distinctOrders.size}가지 — 돌려 놓기만 하면 최대 6가지)`, distinctOrders.size > 12);
+  check("순서를 섞어도 원소는 그대로", ord(items, "s9").split("").sort().join(""), "가나다라마바".split("").sort().join(""));
+
+  let badKind = 0;
+  const kinds = new Set<string>();
+  for (let a = 0; a < 10; a += 1) {
+    for (let b = 0; b < 10; b += 1) {
+      for (let d = 1; d <= 60; d += 1) {
+        const day = new Date(Date.UTC(2026, 0, d)).toISOString().slice(0, 10);
+        const ab = todayPairing({ today: day, myStem: a, otherStem: b });
+        const ba = todayPairing({ today: day, myStem: b, otherStem: a });
+        if (!ab || !ba || ab.kind !== ba.kind || ab.pairKey !== ba.pairKey || !ab.copy.title || !ab.copy.line || !ab.copy.tip) badKind += 1;
+        else kinds.add(ab.kind);
+      }
+    }
+  }
+  check("오늘의 궁합은 순서를 바꿔도 같은 갈래이고 문구가 있다(10×10×60)", badKind, 0);
+  check("네 갈래가 모두 나온다", [...kinds].sort(), ["care", "easy", "own", "start"]);
+  check("상대에게 닿는 흐름의 제목은 3인칭이다(내가·나와 가 없다)", Object.values(TODAY_TITLE_OTHER).filter((t) => /내가|나와|제가/.test(t)), []);
+  check("오늘의 궁합의 상대 쪽 제목은 3인칭판을 쓴다", todayPairing({ today: "2024-01-01", myStem: 4, otherStem: 2 })?.theirs, TODAY_TITLE_OTHER.generatesMe);
+  check("날짜가 아니면 null", todayPairing({ today: "내일", myStem: 0, otherStem: 1 }), null);
+  check("갈래 규칙: 둘 다 가벼움=start · 둘 다 빠듯=easy · 한쪽 빠듯=care · 그 밖=own", [pairingKindOf("light", "light"), pairingKindOf("heavy", "heavy"), pairingKindOf("heavy", "light"), pairingKindOf("neutral", "heavy"), pairingKindOf("neutral", "light"), pairingKindOf("neutral", "neutral")], ["start", "easy", "care", "care", "own", "own"]);
+  // 2024-01-01 의 일진은 갑목이다: 무토·기토(토)는 다잡히고, 병화·정화(화)는 북돋움을 받고, 경금·신금(금)은 갑목을 다잡는 쪽이라 중간이다.
+  check("甲일: 戊(빠듯) × 丙(가벼움) = 서로 챙기는 날", todayPairing({ today: "2024-01-01", myStem: 4, otherStem: 2 })?.kind, "care");
+  check("甲일: 戊 × 己 = 둘 다 빠듯", todayPairing({ today: "2024-01-01", myStem: 4, otherStem: 5 })?.kind, "easy");
+  check("甲일: 丙 × 丁 = 둘 다 가벼움", todayPairing({ today: "2024-01-01", myStem: 2, otherStem: 3 })?.kind, "start");
+  check("甲일: 壬(수) × 庚(금) = 둘 다 중간", todayPairing({ today: "2024-01-01", myStem: 8, otherStem: 6 })?.kind, "own");
+
+  const people = ["m1", "m2", "m3", "m4", "m5"].map((id) => ({ id }));
+  check("오늘의 짝은 후보가 없으면 null", dailyPartner([], "m1", "2026-10-10"), null);
+  check("오늘의 짝은 같은 날이면 몇 번을 불러도·순서를 바꿔도 같다", dailyPartner(people, "m1", "2026-10-10")?.id, dailyPartner([...people].reverse(), "m1", "2026-10-10")?.id);
+  truthy("오늘의 짝은 후보 안에서 나온다", people.some((p) => p.id === dailyPartner(people, "m1", "2026-10-10")?.id));
+  truthy("날짜가 바뀌면 짝이 바뀐다(30일 중 둘 이상)", new Set(Array.from({ length: 30 }, (_, i) => dailyPartner(people, "m1", `2026-10-${String(i + 1).padStart(2, "0")}`)?.id)).size > 1);
+
+  const mem = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `u${i + 1}` }));
+  check("세 명 미만이면 맞히기 문제가 없다(보기가 하나뿐인 문제를 만들지 않는다)", [buildGuessRounds(mem(1), "u1", "2026-10-10").length, buildGuessRounds(mem(2), "u1", "2026-10-10").length], [0, 0]);
+  const gr = buildGuessRounds(mem(4), "u1", "2026-10-10");
+  check("네 명이면 나를 뺀 셋이 모두 문제로 나온다", gr.map((r) => r.targetId).sort(), ["u2", "u3", "u4"]);
+  truthy("보기는 나를 뺀 모두이고 정답이 들어 있다", gr.every((r) => r.optionIds.length === 3 && !r.optionIds.includes("u1") && r.optionIds.includes(r.targetId)));
+  check("같은 날·같은 사람이면 같은 문제", JSON.stringify(gr), JSON.stringify(buildGuessRounds([...mem(4)].reverse(), "u1", "2026-10-10")));
+  check("문제는 최대 상한까지", buildGuessRounds(mem(12), "u1", "2026-10-10").length, MAX_GUESS_ROUNDS);
+  truthy("정답이 한 사람에게 중복되지 않는다", new Set(buildGuessRounds(mem(12), "u1", "2026-10-10").map((r) => r.targetId)).size === MAX_GUESS_ROUNDS);
+
+  console.log("\n[밸런스 게임] 질문 목록");
+  check("질문 id 는 겹치지 않는다(DB 에 저장되는 값)", new Set(BALANCE_QUESTIONS.map((q) => q.id)).size, BALANCE_QUESTIONS.length);
+  truthy("모든 질문과 선택지에 문구와 오행이 있다", BALANCE_QUESTIONS.every((q) => q.prompt && q.a.label && q.b.label && ELEMENTS.includes(q.a.element) && ELEMENTS.includes(q.b.element)));
+  check("질문 번호·선택 확인 함수", [isBalanceQuestion(BALANCE_QUESTIONS[0]!.id), isBalanceQuestion("없는질문"), isBalanceQuestion({ x: 1 }), isBalanceChoice("a"), isBalanceChoice("b"), isBalanceChoice("c"), isBalanceChoice(null)], [true, false, false, true, true, false, false]);
+
+  console.log("\n[진행 방식 저장] 저장하는 글은 서버가 회의 길이로 만든다");
+  let badSaved = 0;
+  for (let d = 0; d <= 300; d += 1) {
+    const saved = meetingFlowText(planMeetingFlow(d), []);
+    const plan = planMeetingFlow(d);
+    if (saved !== meetingFlowText(planMeetingFlow(d), [])) badSaved += 1; // 결정적이다
+    if (saved.includes("챙겨 볼 것") || Object.values(MEETING_TIP).some((t) => saved.includes(t))) badSaved += 1; // 오행 제안이 없다
+    if (saved.split("\n").length !== 4 || !saved.startsWith(`[회의 진행 방식] ${plan.total}분`)) badSaved += 1; // 머리글 + 세 단계
+    if (saved.length > 600) badSaved += 1; // 칸이 커지지 않는다
+  }
+  check("0–300분 모든 길이에서 저장하는 글이 같은 형식이고 오행 제안이 없다", badSaved, 0);
+
   console.log("\n[약속] 사주는 역할 배정에 쓰지 않고, 생년월일 원본은 본인에게만 간다");
   const roles = readCode("../src/server/actions/roles.ts");
   truthy("역할 배정 액션이 생년월일·사주를 읽지 않는다", !/birth|saju/i.test(roles));
@@ -278,10 +370,16 @@ async function main() {
   const outside = api.slice(0, start) + api.slice(end);
   truthy("생년월일 열은 getMySaju 밖에서 읽지 않는다 (팀원 목록 등에 실리지 않는다)", !/birthDate|birthTime/.test(outside));
   const teamTypesStart = api.indexOf("export type TeamSajuMember =");
-  const teamFnStart = api.indexOf("export async function getTeamSaju");
+  const teamFnStart = api.indexOf("async function loadTeamSaju");
   truthy("팀 사주 타입이 있고 생년월일 필드가 없다", teamTypesStart >= 0 && teamFnStart > teamTypesStart && !/birth/i.test(api.slice(teamTypesStart, teamFnStart)));
-  truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*registered\s*:\s*\[\]/.test(api));
-  truthy("떠난 팀원은 팀 사주에서 뺀다", /getTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
+  truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*visible\s*:\s*\[\]/.test(api));
+  const loaderCalls = api.split("loadTeamSaju(").length - 1;
+  check("팀 사주와 회의 케미가 같은 읽기 함수(loadTeamSaju) 하나를 거친다(정의 1 + 호출 2)", loaderCalls, 3);
+  truthy("회의 케미는 다른 팀의 회의를 읽지 않는다(teamId 로 좁힌다)", /getMeetingSaju[\s\S]*?meetingProposal\.findFirst\(\{\s*where:\s*\{\s*id:\s*meetingId,\s*teamId:\s*session\.teamId/.test(api));
+  truthy("참석 예정 = 참석 어려움으로 응답하지 않은 사람(agree: false 만 뺀다)", /responses:\s*\{\s*where:\s*\{\s*agree:\s*false\s*\}/.test(api));
+  const sajuActions = readCode("../src/server/actions/saju.ts");
+  truthy("회의 케미 액션은 생년월일 열을 직접 읽지 않는다", !/birthDate|birthTime/.test(sajuActions.slice(sajuActions.indexOf("getMeetingChemistry"))));
+  truthy("떠난 팀원은 팀 사주에서 뺀다", /loadTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
   const teamActions = readCode("../src/server/actions/team.ts");
   check(
     "팀을 나가는 두 길(leaveTeam·handOverAndLeave)이 같은 값(clearBirthOnLeave)으로 생년월일을 지운다",
@@ -289,15 +387,54 @@ async function main() {
     2,
   );
   truthy("지우는 값이 두 열(birthDate·birthTime)을 모두 비운다", /clearBirthOnLeave\s*=\s*\{\s*birthDate:\s*null,\s*birthTime:\s*null\s*\}/.test(teamActions));
+  const onboardingActions = readCode("../src/server/actions/onboarding.ts");
+  truthy("온보딩 초안의 생년월일은 서버가 parseBirth 로 다시 거른다(cleanBirth)", /import \{ parseBirth \} from "@\/lib\/saju\/input"/.test(onboardingActions) && /parseBirth\(date,\s*t\)/.test(onboardingActions));
+  truthy("직접 입장·요청 생성·요청 갱신이 values 한 곳에서 생년월일을 받는다", /birthDate:\s*birth\.birthDate,\s*birthTime:\s*birth\.birthTime/.test(onboardingActions));
+  truthy("승인 뒤 클레임이 요청의 생년월일을 Member 로 옮긴다", /birthDate:\s*request\.birthDate,\s*birthTime:\s*request\.birthTime/.test(onboardingActions));
+  const settleSrc = readCode("../src/server/invite/settle.ts");
+  truthy("요청이 거절되면 생년월일·시각을 지운다", /input\.approve\s*\?\s*\{\}\s*:\s*\{\s*birthDate:\s*null,\s*birthTime:\s*null\s*\}/.test(settleSrc));
+  const onboardingState = readCode("../src/features/onboarding/onboarding-state.ts");
+  truthy("온보딩 초안이 생년월일을 들고 있고 비우면 보내지 않는다(toDraft)", /birthDate:\s*state\.birthDate\.trim\(\)\s*\|\|\s*null/.test(onboardingState));
+  truthy("서버에 등록되면 비우는 EMPTY 에 생년월일이 포함돼 있다(공용 PC 에 남지 않는다)", /birthDate:\s*"",\s*birthTime:\s*""/.test(onboardingState));
+  const onbSaju = readCode("../src/features/saju/onboarding-saju.tsx");
+  truthy("온보딩 사주 카드는 이 기기에서 계산하고 서버를 부르지 않는다", !/@\/server|"use server"/.test(onbSaju));
+  truthy("사주는 05 화면 안의 선택 칸이다 — 새 단계를 만들지 않는다(주 동작은 희망 역할 고르기)", /<OnboardingSaju/.test(readCode("../src/app/onboarding/character/page.tsx")) && /희망 역할 고르기/.test(readCode("../src/app/onboarding/character/page.tsx")));
+  const playFiles = ["play-screen.tsx", "pairing-panel.tsx", "guess-panel.tsx", "balance-panel.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const playLogic = ["play.ts", "balance.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
+  truthy("놀이 계산은 무작위·시계를 읽지 않는다(문제 순서는 날짜로 정한다)", !/Math\.random|new Date\(|Date\.now/.test(playLogic[0]!));
+  truthy("오늘의 궁합·맞히기 패널은 서버를 부르지 않는다(밸런스 게임만 투표를 보낸다)", ![playFiles[1]!, playFiles[2]!].some((c) => /@\/server|"use server"/.test(c)) && /voteBalance/.test(playFiles[3]!));
+  truthy("놀이 화면이 역할 화면(07)의 데이터를 읽지 않는다", !/getRoster|getRoles|RoleNegotiation|wantRole|vetoRole/.test(playFiles.join("\n")));
+  const balanceAction = readCode("../src/server/actions/saju-balance.ts");
+  truthy("투표 액션이 질문 번호와 선택을 서버에서 다시 본다", /isBalanceQuestion\(questionId\)/.test(balanceAction) && /isBalanceChoice\(choice\)/.test(balanceAction));
+  truthy("투표의 팀은 세션에서 정한다(클라이언트가 팀 번호를 보내지 않는다)", /teamId:\s*session\.teamId/.test(balanceAction) && !/teamId\s*:\s*string|teamId\)/.test(balanceAction.split("export async function")[1]!.split("{")[0]!));
+  truthy("결과는 내가 투표한 질문만 내려보낸다(counts 가 내 선택에 달려 있다)", /counts:\s*myChoice/.test(api));
+  truthy("결과 집계는 팀에 남아 있는 사람의 표만 센다", /sajuBalanceVote\.findMany\([\s\S]*?member:\s*\{\s*leftAt:\s*null\s*\}/.test(api));
+  const flowAction = readCode("../src/server/actions/meeting-flow.ts");
+  truthy("저장 액션은 회의 번호만 받는다 — 클라이언트가 글을 보내지 않는다", /export async function saveMeetingFlow\(meetingId: string\)/.test(flowAction));
+  truthy("저장하는 글은 서버가 회의 길이로 만들고 오행 제안을 넣지 않는다", /meetingFlowText\(planMeetingFlow\(meeting\.durationMinutes\),\s*\[\]\)/.test(flowAction));
+  truthy("확정 여부는 화면과 같은 계산(effectiveStage)으로 본다", /effectiveStage\(\{/.test(flowAction) && /stage !== "confirmed"/.test(flowAction));
+  truthy("회의는 세션의 팀으로 좁힌다", /meetingProposal\.findFirst\(\{\s*where:\s*\{\s*id:\s*meetingId,\s*teamId\s*\}/.test(flowAction));
+  truthy("저장 액션은 안건(agenda)을 건드리지 않고 사주 데이터를 읽지 않는다", !/agenda|birth|getMeetingSaju|getTeamSaju/.test(flowAction.replace(/select:\s*\{[\s\S]*?\}\s*,?\s*\}\)/, "")));
+  const schemaSrc = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
+  truthy("스키마에 MeetingProposal.flow 가 있고 안건과 따로 둔 이유가 적혀 있다", /model MeetingProposal[\s\S]*?\n\s+flow\s+String\?/.test(schemaSrc));
+  const sheetSrc = readCode("../src/features/saju/meeting-chemistry-sheet.tsx");
+  truthy("시트는 글을 보내지 않고 회의 번호로만 저장한다", /saveMeetingFlow\(meetingId\)/.test(sheetSrc) && !/saveMeetingFlow\(meetingId,/.test(sheetSrc));
+  truthy("저장된 진행 방식을 회의 카드가 보여 주고 지울 수 있다", /proposal\.flow/.test(readCode("../src/features/schedule/slots-screen.tsx")) && /clearMeetingFlow\(proposal\.id\)/.test(readCode("../src/features/schedule/slots-screen.tsx")));
   const types = readCode("../src/lib/types.ts");
-  truthy("공용 타입(Member 등)에 생년월일이 없다", !/birth/i.test(types));
+  // `OnboardingDraft` 는 사용자가 서버로 **보내는** 입력이라 생년월일을 가진다. 지키려는 것은 서버가 클라이언트로
+  // **내려주는** 읽기용 타입(Member·TeamSaju 등)에 생년월일이 없다는 것이다 — 그 정의만 빼고 본다.
+  const draftStart = types.indexOf("export type OnboardingDraft");
+  const draftEnd = types.indexOf("\n};", draftStart);
+  check("온보딩 초안 타입이 types.ts 에 있다", draftStart >= 0 && draftEnd > draftStart, true);
+  truthy("공용 타입(Member 등)에 생년월일이 없다 — 보내는 입력(OnboardingDraft)만 예외", !/birth/i.test(types.slice(0, draftStart) + types.slice(draftEnd)));
+  truthy("온보딩 초안의 생년월일은 선택(optional)이다", /birthDate\?:\s*string\s*\|\s*null/.test(types.slice(draftStart, draftEnd)));
 
   console.log("\n[문구] 단정하거나 점수·진단처럼 말하지 않는다");
   const copy = readCode("../src/lib/saju/copy.ts");
   // 주석은 readCode 가 지운다. 남은 것은 사용자에게 보이는 문자열뿐이다.
   truthy("'진단'·'정확'·'운세'·'점수' 를 쓰지 않는다", !/진단|정확|운세|점수/.test(copy));
-  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
-  const logic = ["chemistry.ts", "team.ts", "today.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
+  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx", "today-flow-card.tsx", "meeting-chemistry-sheet.tsx", "onboarding-saju.tsx", "play-screen.tsx", "pairing-panel.tsx", "guess-panel.tsx", "balance-panel.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const logic = ["chemistry.ts", "team.ts", "today.ts", "meeting-flow.ts", "play.ts", "balance.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
   const everything = [copy, ...uiFiles, ...logic].join("\n");
   truthy("화면·계산 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(everything));
   truthy("역할을 정해 주는 말(담당·맡아)을 쓰지 않는다", !/담당|맡아|맡으/.test(everything));
@@ -309,6 +446,10 @@ async function main() {
   truthy("홈이 오늘의 흐름에 서버가 정한 today 와 브리핑의 회의·마감 결과를 넘긴다", /<TodayFlowCard[\s\S]*?today=\{today\}[\s\S]*?key === "meeting"[\s\S]*?key === "soon"/.test(homeScreen));
   const homePage = readCode("../src/app/(tabs)/home/page.tsx");
   truthy("홈은 팀 사주 조회가 실패해도 깨지지 않는다(catch 로 폴백)", /getTeamSaju\(\)\.catch\(\(\) => null\)/.test(homePage));
+  const chemSheet = readCode("../src/features/saju/meeting-chemistry-sheet.tsx");
+  truthy("회의 케미는 안건(agenda)을 바꾸지 않는다 — 안건은 회의록·기여 기록 제목이다", !/agenda/.test(chemSheet + readCode("../src/lib/saju/meeting-flow.ts")));
+  truthy("회의 케미는 AI 를 부르지 않는다", !/server\/ai|callModel|openai|streamText/i.test(chemSheet));
+  truthy("회의 케미는 시트가 사람을 다시 거르지 않는다(서버가 정한 members 를 그대로 쓴다)", /summarizeTeam\(data\.members\)/.test(chemSheet));
   truthy("팀 사주 화면이 역할 화면(07)의 데이터를 읽지 않는다", !/getRoster|getRoles|RoleNegotiation|wantRole|vetoRole/.test(uiFiles.join("\n")));
 
   await finish();

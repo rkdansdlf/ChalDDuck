@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getMeetingSaju, type TeamSaju } from "@/data/api";
 import { parseBirth, type BirthBlock } from "@/lib/saju/input";
 import { db } from "@/server/db";
 import { getSessionMember } from "@/server/session";
@@ -54,4 +55,14 @@ export async function clearMyBirth(): Promise<"ok" | "invalid"> {
   revalidatePath("/team/access");
   revalidatePath("/team/saju");
   return "ok";
+}
+
+/**
+ * 한 회의의 참석 예정자 사주(회의 케미) — 시트가 열릴 때 부른다.
+ *
+ * 읽기 규칙은 `getMeetingSaju` 한 곳에 있다(일간·오행 수만, 내가 등록해야 남의 것도 본다).
+ * 여기서는 그 결과를 그대로 돌려줄 뿐 생년월일을 직접 읽지 않는다.
+ */
+export async function getMeetingChemistry(meetingId: string): Promise<TeamSaju | null> {
+  return getMeetingSaju(meetingId);
 }
