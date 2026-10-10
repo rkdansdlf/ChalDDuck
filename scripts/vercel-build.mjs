@@ -39,6 +39,10 @@ if (plan.migrate) {
     throw new Error("`node_modules/prisma` 가 없습니다. 의존성을 먼저 설치해 주세요.");
   }
   step("prisma migrate deploy", process.execPath, [prismaEntry, "migrate", "deploy"]);
+}
+
+// 읽기 전용 확인 — 마이그레이션을 적용한 뒤(운영)이거나, 어느 환경인지 모를 때(안전망). 프리뷰는 건너뛴다.
+if (plan.check) {
   step("db:check", "npm", ["run", "db:check"]);
 }
 

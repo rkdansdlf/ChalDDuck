@@ -848,12 +848,23 @@ npm run deploy:why -- <배포 아이디>   # 그 배포
 브랜치의 마이그레이션이 머지 전에 운영에 적용됐다**(2026-10-10, PR #2 의 마이그레이션 두 개가 같은 시각에
 `_prisma_migrations` 에 남았다). Prisma CLI 는 `DATABASE_URL` 이 아니라 **`DIRECT_URL`** 을 읽는다는 점이 함정이었다.
 
-- **막는 방향.** `VERCEL_ENV` 가 `preview`·`development` 로 **확실할 때만** 건너뛴다. `production` 이거나 비어
-  있거나 모르는 값이면 예전처럼 한다 — 반대로 "`production` 일 때만 한다" 로 쓰면 변수가 비었을 때 운영 배포가
-  마이그레이션 없이 조용히 성공한다(앞의 `P2022` 사고와 같은 모양). 결정은 `scripts/deploy-plan.mjs` 한 곳에
-  있고 `scripts/smoke-deploy.mts` 가 결정표와 `vercel.json` 이 맨 `migrate deploy` 로 되돌아가지 못한다는 것을
-  고정한다.
-- **`db:check` 도 같이 건너뛰는 이유.** 마이그레이션 뒤에야 의미가 있다. 건너뛴 채 돌리면 새 마이그레이션이 든
+- **막는 방향 — 쓰기는 `production` 일 때만, 모르면 읽어서 확인한다.** `VERCEL_ENV` 가 정확히 `production` 일 때만
+  `prisma migrate deploy` 를 한다. 비어 있거나 모르는 값이거나 대소문자가 다르면(`Production`) **적용하지 않는다** —
+  "프리뷰가 아니면 운영" 으로 쓰면 환경 이름이 어긋난 빌드가 조용히 운영 DB 를 바꾼다. 다만 그렇게만 쓰면 변수가
+  **운영 배포에서** 비었을 때 마이그레이션 없이 조용히 성공한다(앞의 `P2022` 사고와 같은 모양). 그래서 **모르는
+  환경에서는 읽기 전용인 `db:check` 는 돌린다** — 운영이었는데 마이그레이션이 필요했다면 빌드가 로그에 ⚠️ 를 남기며
+  눈에 보이게 실패하고, 필요 없었다면 그대로 통과한다.
+
+  | `VERCEL_ENV` | 마이그레이션(쓰기) | `db:check`(읽기) |
+  |---|---|---|
+  | `production` | 한다 | 한다 |
+  | `preview` · `development` | 안 한다 | 안 한다 |
+  | 없음 · 모르는 값 | **안 한다** | **한다** |
+
+  결정은 `scripts/deploy-plan.mjs` 한 곳에 있고 `scripts/smoke-deploy.mts` 가 결정표(어떤 값이 와도 쓰기는
+  `production`·프리뷰 옵트인뿐이고, 쓰면 반드시 읽어서 확인한다)와 `vercel.json` 이 맨 `migrate deploy` 로 되돌아가지
+  못한다는 것을 고정한다.
+- **프리뷰에서 `db:check` 도 건너뛰는 이유.** 마이그레이션 뒤에야 의미가 있다. 건너뛴 채 돌리면 새 마이그레이션이 든
   PR 의 프리뷰가 "차이" 로 막힌다. 같은 검사는 CI 가 한다(빈 DB 에 전부 적용한 뒤 동기화 확인).
 - **프리뷰가 분리된 DB 를 쓰게 되면** Preview 환경에 `MIGRATE_ON_PREVIEW=1` 을 넣으면 프리뷰도 마이그레이션한다.
   운영 DB 를 가리킨 채 이 값을 넣으면 위 사고가 그대로 난다.
