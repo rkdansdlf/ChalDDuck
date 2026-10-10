@@ -6,9 +6,13 @@ import {
   tenGodOf,
   ELEMENTS,
   STEM_HANJA,
+  elementCountsOf,
   type Pillar,
 } from "../src/lib/saju/engine.js";
 import { parseBirth } from "../src/lib/saju/input.js";
+import { chemistryOf, type Relation } from "../src/lib/saju/chemistry.js";
+import { summarizeTeam } from "../src/lib/saju/team.js";
+import { PAIR_TITLE, RELATION_COPY, MEETING_TIP } from "../src/lib/saju/copy.js";
 
 /**
  * 사주 불변식.
@@ -180,6 +184,57 @@ async function main() {
   const stored = parseBirth("2001-03-02", "07:05", TODAY);
   check("저장 문자열은 정규화된 그대로", stored.ok ? [stored.date, stored.time] : null, ["2001-03-02", "07:05"]);
 
+  console.log("\n[1:1 케미] 두 일간의 오행 관계");
+  const MIRROR: Record<Relation, Relation> = {
+    same: "same",
+    meGenerates: "generatesMe",
+    generatesMe: "meGenerates",
+    meControls: "controlsMe",
+    controlsMe: "meControls",
+  };
+  let badMirror = 0;
+  let badPair = 0;
+  let badCopy = 0;
+  for (let a = 0; a < 10; a += 1) {
+    const perRelation: Record<string, number> = {};
+    for (let b = 0; b < 10; b += 1) {
+      const ab = chemistryOf(a, b);
+      const ba = chemistryOf(b, a);
+      if (MIRROR[ab.relation] !== ba.relation) badMirror += 1;
+      if (ab.pairKey !== ba.pairKey || ab.samePolarity !== ba.samePolarity) badPair += 1;
+      const rc = RELATION_COPY[ab.relation];
+      if (!PAIR_TITLE[ab.pairKey] || !rc.label || !rc.line || !rc.together || !rc.watch || !rc.say) badCopy += 1;
+      perRelation[ab.relation] = (perRelation[ab.relation] ?? 0) + 1;
+    }
+    // 한 일간이 열 천간을 만나면 다섯 관계가 두 번씩 나온다(오행마다 천간이 둘이므로).
+    check(`일간 ${STEM_HANJA[a]} 이 만나는 관계는 다섯 가지가 두 번씩`, Object.values(perRelation).sort(), [2, 2, 2, 2, 2]);
+  }
+  check("나×상대 와 상대×나 는 서로 거울이다", badMirror, 0);
+  check("조합 이름·음양 비교는 순서와 무관", badPair, 0);
+  check("모든 조합에 이름과 문구가 있다", badCopy, 0);
+  check("조합 이름이 열다섯 개 모두 있다", Object.keys(PAIR_TITLE).length, 15);
+  check("丙火 × 壬水 = 상대가 다잡는 사이, 속도와 균형의 조합", [chemistryOf(2, 8).relation, PAIR_TITLE[chemistryOf(2, 8).pairKey]], ["controlsMe", "속도와 균형의 조합"]);
+  check("甲木 × 丙火 = 내가 북돋는 사이", chemistryOf(0, 2).relation, "meGenerates");
+  check("甲木 × 乙木 = 같은 오행, 음양은 다르다", [chemistryOf(0, 1).relation, chemistryOf(0, 1).samePolarity], ["same", false]);
+
+  console.log("\n[팀 집계] 더하기만 한다");
+  const member = (counts: Partial<Record<(typeof ELEMENTS)[number], number>>) => ({
+    elements: { wood: 0, fire: 0, earth: 0, metal: 0, water: 0, ...counts },
+  });
+  const empty = summarizeTeam([]);
+  check("사람이 없으면 모두 0, 두드러지는 것 없음", [empty.characters, empty.dominant, empty.lowest, Object.values(empty.percent)], [0, [], [], [0, 0, 0, 0, 0]]);
+  const t2 = summarizeTeam([member({ fire: 4, wood: 2 }), member({ fire: 2, metal: 4 })]);
+  check("두 사람 합산", t2.counts, { wood: 2, fire: 6, earth: 0, metal: 4, water: 0 });
+  check("글자 수 = 사람 수 × 6", [t2.members, t2.characters], [2, 12]);
+  check("가장 많은 오행", t2.dominant, ["fire"]);
+  check("가장 적은 오행은 동률이면 모두", t2.lowest, ["earth", "water"]);
+  check("비율 합 100", Object.values(t2.percent).reduce((a, b) => a + b, 0), 100);
+  const flat = summarizeTeam([member({ wood: 1, fire: 1, earth: 1, metal: 1, water: 2 }), member({ wood: 1, fire: 1, earth: 1, metal: 1, water: 0 })]);
+  check("다섯이 모두 같으면 적은 것을 고르지 않는다", flat.lowest, []);
+  truthy("가장 적은 오행마다 회의 제안이 있다", ELEMENTS.every((e) => MEETING_TIP[e].length > 0));
+  const three = elementCountsOf([at(2001, 3, 2).year, at(2001, 3, 2).month, at(2001, 3, 2).day]);
+  check("세 기둥은 여섯 글자", Object.values(three).reduce((a, b) => a + b, 0), 6);
+
   console.log("\n[약속] 사주는 역할 배정에 쓰지 않고, 생년월일 원본은 본인에게만 간다");
   const roles = readCode("../src/server/actions/roles.ts");
   truthy("역할 배정 액션이 생년월일·사주를 읽지 않는다", !/birth|saju/i.test(roles));
@@ -193,6 +248,11 @@ async function main() {
   const end = api.indexOf("/* ── ", start);
   const outside = api.slice(0, start) + api.slice(end);
   truthy("생년월일 열은 getMySaju 밖에서 읽지 않는다 (팀원 목록 등에 실리지 않는다)", !/birthDate|birthTime/.test(outside));
+  const teamTypesStart = api.indexOf("export type TeamSajuMember =");
+  const teamFnStart = api.indexOf("export async function getTeamSaju");
+  truthy("팀 사주 타입이 있고 생년월일 필드가 없다", teamTypesStart >= 0 && teamFnStart > teamTypesStart && !/birth/i.test(api.slice(teamTypesStart, teamFnStart)));
+  truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*registered\s*:\s*\[\]/.test(api));
+  truthy("떠난 팀원은 팀 사주에서 뺀다", /getTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
   const types = readCode("../src/lib/types.ts");
   truthy("공용 타입(Member 등)에 생년월일이 없다", !/birth/i.test(types));
 
@@ -200,9 +260,12 @@ async function main() {
   const copy = readCode("../src/lib/saju/copy.ts");
   // 주석은 readCode 가 지운다. 남은 것은 사용자에게 보이는 문자열뿐이다.
   truthy("'진단'·'정확'·'운세'·'점수' 를 쓰지 않는다", !/진단|정확|운세|점수/.test(copy));
-  const ui = readCode("../src/features/saju/my-saju.tsx");
-  truthy("화면 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(ui));
-  truthy("역할을 정해 주는 말(담당·맡아)을 쓰지 않는다", !/담당|맡아|맡으/.test(copy + ui));
+  const uiFiles = ["my-saju.tsx", "team-saju-screen.tsx", "element-bar.tsx"].map((f) => readCode(`../src/features/saju/${f}`));
+  const logic = ["chemistry.ts", "team.ts"].map((f) => readCode(`../src/lib/saju/${f}`));
+  const everything = [copy, ...uiFiles, ...logic].join("\n");
+  truthy("화면·계산 문구에도 '진단'·'정확'·'운세'·'점수' 가 없다", !/진단|정확|운세|점수/.test(everything));
+  truthy("역할을 정해 주는 말(담당·맡아)을 쓰지 않는다", !/담당|맡아|맡으/.test(everything));
+  truthy("팀 사주 화면이 역할 화면(07)의 데이터를 읽지 않는다", !/getRoster|getRoles|RoleNegotiation|wantRole|vetoRole/.test(uiFiles.join("\n")));
 
   await finish();
 }

@@ -362,3 +362,22 @@ export function pillarElements(p: Pillar): { stem: Element; branch: Element } {
     branch: elementOf(stemElement(BRANCH_MAIN_STEM[p.branch])),
   };
 }
+
+/**
+ * 기둥 몇 개를 오행별로 센다 — 지지는 본기 천간의 오행으로.
+ *
+ * 팀 집계는 **연·월·일 세 기둥(여섯 글자)** 만 센다. 출생 시각을 아는 사람과 모르는 사람이
+ * 같은 글자 수로 세어져야 비교가 공평하고, 시각은 팀에 보이지 않아야 하기 때문이다.
+ */
+export function elementCountsOf(pillars: Pillar[]): Record<Element, number> {
+  const counts = { wood: 0, fire: 0, earth: 0, metal: 0, water: 0 } as Record<Element, number>;
+  for (const p of pillars) {
+    const e = pillarElements(p);
+    counts[e.stem] += 1;
+    counts[e.branch] += 1;
+  }
+  return counts;
+}
+
+/** 천간 번호 → 그 천간의 오행. */
+export const elementOfStem = (stem: number): Element => elementOf(stemElement(stem));

@@ -37,6 +37,7 @@ export async function saveMyBirth(
   });
 
   revalidatePath("/team/access");
+  revalidatePath("/team/saju");
   return "ok";
 }
 
@@ -51,5 +52,6 @@ export async function clearMyBirth(): Promise<"ok" | "invalid"> {
   });
 
   revalidatePath("/team/access");
+  revalidatePath("/team/saju");
   return "ok";
 }
