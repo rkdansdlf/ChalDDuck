@@ -4989,9 +4989,18 @@ console.log("\n문서가 숫자를 담지 않는다");
   check("README 의 빌드 명령이 vercel.json 과 같다", readmeText.includes(vercel.buildCommand), true);
   // 빌드 단계는 반드시 `npm run build` 를 지나야 한다 — `next build` 를 직접 부르면
   // `package.json` 의 `build` 스크립트(플래그 포함)가 통째로 건너뛰어진다.
+  //
+  // 빌드 명령이 스크립트(`node scripts/vercel-build.mjs`)를 거치면 약속은 **그 스크립트의 마지막 단계**에
+  // 있다 — 문자열 끝만 보면 간접이 된 순간 이 검사가 의미를 잃는다. 스크립트를 따라가서 같은 것을 본다.
+  const buildScriptPath = /^node (scripts\/[\w.-]+\.mjs)$/.exec(vercel.buildCommand.trim())?.[1];
+  const lastBuildStep = buildScriptPath
+    ? readFileSync(new URL(`../${buildScriptPath}`, import.meta.url), "utf8").trim()
+    : vercel.buildCommand.trim();
   check(
     "배포 빌드는 package.json 의 build 를 지난다",
-    /npm run build\s*$/.test(vercel.buildCommand.trim()),
+    buildScriptPath
+      ? /step\("build",\s*"npm",\s*\["run",\s*"build"\]\);?$/.test(lastBuildStep)
+      : /npm run build\s*$/.test(lastBuildStep),
     true,
   );
 

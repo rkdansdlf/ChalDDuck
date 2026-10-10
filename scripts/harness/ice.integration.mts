@@ -113,6 +113,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("동점 시 재투표 안내", tieRes.message?.includes("동점이거나"), true);
 
     // 라이어 찾아서 라이어에게 몰표
+    //
+    // ⚠️ **앞 단계의 표를 비우고 시작한다.** 라이어는 무작위로 정해지는데, 같은 사람을 다시 누르면 표가
+    // **취소**된다(위의 "동일인 재투표 시 표 취소"). 앞에서 t1→p2, t2→p1 로 던져 둔 채 몰표를 던지면
+    // 라이어가 p1 이나 p2 일 때 그 표가 취소되어 표가 모자라고, 이 검사는 약 절반만 통과했다.
+    await db.iceBallot.deleteMany({ where: { roundId: round!.id } });
     const liarSeat = round!.seats.find((s) => s.role === "liar")!;
     const innocentSeats = round!.seats.filter((s) => s.role !== "liar");
     const innocentToken1 = T.tokens[T.members.findIndex((m) => m.id === innocentSeats[0].memberId)];

@@ -53,6 +53,11 @@ const TESTS = [
   "scripts/harness/saju.integration.mts",
   "scripts/harness/chat.integration.mts",
   "scripts/harness/ice.integration.mts",
+  "scripts/harness/attendance.integration.mts",
+  "scripts/harness/schedule.integration.mts",
+  "scripts/harness/badges.integration.mts",
+  "scripts/harness/drive-save.integration.mts",
+  "scripts/harness/ai-actions.integration.mts",
 ];
 
 /** 검사 파일들을 한 덩어리로 읽는다 — 호출 여부는 '어딘가에 그 이름이 있나' 다. */

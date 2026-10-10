@@ -134,7 +134,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       },
     });
     const attachUrl = await as(T.asMate, () => chat.getChatAttachmentUrl(attachMsg.id));
-    check("첨부 메시지의 서명 URL 발급 성공", typeof attachUrl, "string");
+    // 서명 주소는 저장소(Supabase)가 만든다 — 키가 없는 환경에서는 `null` 이 정직한 답이다. 그 경우
+    // 이 검사는 **건너뛰었다고 말한다**(조용히 통과시키면 안 본 것을 본 것처럼 보인다).
+    const { isStorageConfigured } = await import("../../src/server/storage/client.js");
+    if (isStorageConfigured()) {
+      check("첨부 메시지의 서명 URL 발급 성공", typeof attachUrl, "string");
+    } else {
+      console.log("  - (저장소 키가 없어 건너뜀: 첨부 서명 URL 발급 — npm run test:drive 가 진짜 저장소로 본다)");
+      check("저장소 키가 없으면 서명 URL 은 null 이다", attachUrl, null);
+    }
 
     /* ── 3) 단톡방 드라이브 / 리서치 / 발표 질문 공유 ─────── */
     console.log("\n3) 드라이브 버전 및 리서치/질문 공유");
@@ -228,13 +236,20 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     /* ── 5) 읽기 순화 쿠션 설정 및 조회 ──────────────────── */
     console.log("\n5) 읽기 쿠션 설정 및 메시지 순화 조회");
     const cushionRes = await as(T.asMate, () =>
-      chat.setReadCushion("team", { enabled: true, mode: "STRONG", tone: "careful" }),
+      chat.setReadCushion("team", { enabled: true, mode: "STRONG", tone: "firm" }),
     );
     check("쿠션 설정 저장 성공", cushionRes.ok, true);
     if (cushionRes.ok) {
       check("설정된 모드가 STRONG 이다", cushionRes.setting.mode, "STRONG");
-      check("설정된 말투가 careful 이다", cushionRes.setting.tone, "careful");
+      // 말투의 키는 soft·plain·firm 이다(`CUSHION_TONES`). 처음 이 검사는 없는 이름("careful")을 써서
+      // 어느 트리에서도 통과할 수 없었다.
+      check("설정된 말투가 firm 이다", cushionRes.setting.tone, "firm");
     }
+    // 모르는 말투는 그대로 넣지 않고 **지금 쓰던 말투를 유지한다** — 프롬프트가 못 찾는 말투가 저장되지 않게.
+    const unknownTone = await as(T.asMate, () =>
+      chat.setReadCushion("team", { enabled: true, mode: "STRONG", tone: "careful" }),
+    );
+    check("모르는 말투는 이전 말투를 유지한다", unknownTone.ok && unknownTone.setting.tone, "firm");
 
     // 모르는 모드는 기본값으로 대체
     const defaultModeRes = await as(T.asMate, () =>
