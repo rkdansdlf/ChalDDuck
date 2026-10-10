@@ -28,6 +28,9 @@ jobs:
 
     env:
       DATABASE_URL: "postgresql://postgres:password@localhost:5432/chaldduck_test?schema=public"
+      # prisma.config.ts 가 마이그레이션·`prisma generate` 에 DIRECT_URL 을 읽는다. 없으면 `npm ci`
+      # 의 postinstall(prisma generate)에서 죽는다. 이 CI 는 풀러가 없어 같은 주소를 쓴다.
+      DIRECT_URL: "postgresql://postgres:password@localhost:5432/chaldduck_test?schema=public"
       NEXT_PUBLIC_APP_URL: "http://localhost:3000"
 
     steps:
