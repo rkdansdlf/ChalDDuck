@@ -10,9 +10,9 @@
  * 4. **문자열이 아닌 값·터무니없이 긴 값도 던지지 않고 돌려준다**(`.trim()` 에서 죽지 않는다).
  * 5. **남의 행은 건드리지 않고, 읽기도 본인 것만 읽는다.**
  * 6. **지우면 계산 결과도 함께 사라진다** — 저장된 파생값이 따로 없다.
- * 8. **팀을 나가면 생년월일이 지워진다** — 행은 기록 근거라 남지만 이 값은 개인정보다(두 길 모두).
  * 7. **팀 사주는 서로 보여 주는 만큼만** — 내가 등록하지 않으면 남의 값이 내려가지 않고, 응답에
  *    생년월일·시각이 없고, 떠난 사람·다른 팀은 빠진다.
+ * 8. **팀을 나가면 생년월일이 지워진다** — 행은 기록 근거라 남지만 이 값은 개인정보다(두 길 모두).
  *
  *   npm run test:saju
  */
@@ -184,8 +184,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const born = { birthDate: "2001-03-02", birthTime: "14:30" };
     const leaver = await db.member.create({ data: { teamId: team.id, name: `나감${suffix}`, ...born } });
     const successor = await db.member.create({ data: { teamId: team.id, name: `이어받음${suffix}`, ...born } });
-    const oldLeader = await db.member.create({ data: { teamId: team.id, name: `전팀장${suffix}`, isLeader: false, ...born } });
-    memberIds.push(leaver.id, successor.id, oldLeader.id);
+    memberIds.push(leaver.id, successor.id);
     const asLeaver = await token(leaver.id);
     check("팀원이 나간다", await outcome(() => as(asLeaver, () => team_.leaveTeam())), "redirect");
     const left = await db.member.findUnique({ where: { id: leaver.id }, select: { leftAt: true, birthDate: true, birthTime: true } });
@@ -211,7 +210,6 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       await db.member.deleteMany({ where: { teamId: team2.id } });
       await db.team.delete({ where: { id: team2.id } }).catch(() => {});
     }
-    void oldLeader;
   } finally {
     if (teamId) {
       await db.member.deleteMany({ where: { teamId } });

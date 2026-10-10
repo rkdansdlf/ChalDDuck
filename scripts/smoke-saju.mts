@@ -253,6 +253,13 @@ async function main() {
   truthy("팀 사주 타입이 있고 생년월일 필드가 없다", teamTypesStart >= 0 && teamFnStart > teamTypesStart && !/birth/i.test(api.slice(teamTypesStart, teamFnStart)));
   truthy("내가 등록하지 않았으면 남의 값을 내려보내지 않는다", /members:\s*meRegistered\s*\?\s*registered\s*:\s*\[\]/.test(api));
   truthy("떠난 팀원은 팀 사주에서 뺀다", /getTeamSaju[\s\S]*?leftAt:\s*null/.test(api));
+  const teamActions = readCode("../src/server/actions/team.ts");
+  check(
+    "팀을 나가는 두 길(leaveTeam·handOverAndLeave)이 같은 값(clearBirthOnLeave)으로 생년월일을 지운다",
+    teamActions.split("...clearBirthOnLeave").length - 1,
+    2,
+  );
+  truthy("지우는 값이 두 열(birthDate·birthTime)을 모두 비운다", /clearBirthOnLeave\s*=\s*\{\s*birthDate:\s*null,\s*birthTime:\s*null\s*\}/.test(teamActions));
   const types = readCode("../src/lib/types.ts");
   truthy("공용 타입(Member 등)에 생년월일이 없다", !/birth/i.test(types));
 

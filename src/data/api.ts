@@ -3,7 +3,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
-import { calculateSaju, type SajuChart } from "@/lib/saju/engine";
+import { calculateSaju, elementCountsOf, type Element, type SajuChart } from "@/lib/saju/engine";
 import { birthInputFromStored } from "@/lib/saju/input";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
@@ -539,11 +539,77 @@ export async function getMySaju(): Promise<MySaju | null> {
   return chart ? { birthDate: row.birthDate, birthTime: row.birthTime, chart } : null;
 }
 
+/**
+ * 팀 사주 — 등록한 팀원들의 **일간과 연·월·일 오행 글자 수**.
+ *
+ * 생년월일·출생 시각은 내려가지 않는다. 일간 번호와 오행별 글자 수만 나가고, 그 값에서 날짜를
+ * 되짚을 수 없다(시주를 뺀 것도 이 때문이다 — 시각은 팀에 보이지 않는다).
+ *
+ * **내가 등록하지 않았으면 남의 것도 내려보내지 않는다.** 화면이 가리는 것으로는 부족하다 —
+ * 이 함수는 화면을 거치지 않고도 불린다. 서로 보여 주는 만큼만 볼 수 있다.
+ */
+export type TeamSajuMember = {
+  id: string;
+  name: string;
+  isMe: boolean;
+  mbti: MbtiType | null;
+  /** 일간 천간 번호(0 = 갑 … 9 = 계). */
+  stem: number;
+  /** 연·월·일 세 기둥 여섯 글자를 오행별로 센 값. */
+  elements: Record<Element, number>;
+};
+
+export type TeamSaju = {
+  /** 팀에 남아 있는 사람 수 — 등록하지 않은 사람까지. 이름은 내려가지 않는다. */
+  activeCount: number;
+  /** 등록한 사람 수. 내가 등록하지 않았어도 센 수는 알려 준다(등록을 권하는 문구에 쓴다). */
+  registeredCount: number;
+  meRegistered: boolean;
+  /** 내가 등록했을 때만 채워진다. */
+  members: TeamSajuMember[];
+};
+
+export async function getTeamSaju(): Promise<TeamSaju> {
+  const session = await getSessionMember();
+  if (!session) return { activeCount: 0, registeredCount: 0, meRegistered: false, members: [] };
+
+  const rows = await db.member.findMany({
+    where: { teamId: session.teamId, leftAt: null },
+    select: { id: true, name: true, mbti: true, birthDate: true, birthTime: true },
+    orderBy: { name: "asc" },
+  });
+
+  const registered: TeamSajuMember[] = [];
+  for (const row of rows) {
+    if (!row.birthDate) continue;
+    const input = birthInputFromStored(row.birthDate, row.birthTime);
+    // 시각이 있어야 절입일의 월주가 맞게 나오므로 시각까지 넣어 계산하고, 집계는 세 기둥만 쓴다.
+    const chart = input ? calculateSaju(input) : null;
+    if (!chart) continue;
+    registered.push({
+      id: row.id,
+      name: row.name,
+      isMe: row.id === session.id,
+      mbti: toMbti(row.mbti),
+      stem: chart.dayMaster.stem,
+      elements: elementCountsOf([chart.year, chart.month, chart.day]),
+    });
+  }
+
+  const meRegistered = registered.some((m) => m.isMe);
+  return {
+    activeCount: rows.length,
+    registeredCount: registered.length,
+    meRegistered,
+    members: meRegistered ? registered : [],
+  };
+}
+
 /* ── 08 내 가능한 시간 ─────────────────────────────────────── */
 
-export async function getMyBusyBlocks(_teamId: string): Promise<BusyBlock[]> {
+export async function getMyBusyBlocks(teamId: string): Promise<BusyBlock[]> {
   const session = await getSessionMember();
-  if (!session) return [];
+  if (!session || session.teamId !== teamId) return [];
 
   const blocks = await db.busyBlock.findMany({
     where: { memberId: session.id, ...notExpired() },
@@ -575,10 +641,11 @@ function notExpired() {
  * 팀 겹쳐보기 — 팀원마다 안 되는 시간.
  *
  * 사유는 **여기서 뺀다.** 화면에서 가리면 네트워크 응답에는 남아 개발자 도구로 보인다.
+ * 세션의 소속 팀이 일치할 때만 조회할 수 있다.
  */
 export async function getTeamTimetables(teamId: string): Promise<TeamTimetable[]> {
   const session = await getSessionMember();
-  if (!session) return [];
+  if (!session || session.teamId !== teamId) return [];
 
   const [members, asked] = await Promise.all([
     db.member.findMany({
