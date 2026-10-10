@@ -286,6 +286,20 @@ export async function getMyEmail(): Promise<string | null> {
   return record?.email ?? null;
 }
 
+/** 현재 사용자의 등록된 이메일 및 인증 여부 조회 */
+export async function getMyEmailStatus(): Promise<{ email: string | null; verified: boolean }> {
+  const { requireSessionMember } = await import("@/server/session");
+  const me = await requireSessionMember();
+  const record = await db.member.findUnique({
+    where: { id: me.id },
+    select: { email: true, emailVerifiedAt: true },
+  });
+  return {
+    email: record?.email ?? null,
+    verified: Boolean(record?.email && record?.emailVerifiedAt),
+  };
+}
+
 /** 현재 사용자의 이메일 등록 및 변경 */
 export async function updateMemberEmail(newEmail: string): Promise<{ ok: boolean; reason?: string }> {
   const { requireSessionMember } = await import("@/server/session");
@@ -296,11 +310,51 @@ export async function updateMemberEmail(newEmail: string): Promise<{ ok: boolean
     return { ok: false, reason: "invalid-email" };
   }
 
+  // 이메일 비우기
+  if (!norm) {
+    await db.member.update({
+      where: { id: me.id },
+      data: {
+        email: null,
+        emailVerifiedAt: null,
+      },
+    });
+    return { ok: true };
+  }
+
+  // 같은 팀 내 다른 활성 팀원이 이미 사용 중인 이메일인지 검사 (팀 내 중복/오인 방지)
+  const conflict = await db.member.findFirst({
+    where: {
+      teamId: me.teamId,
+      email: norm,
+      id: { not: me.id },
+      leftAt: null,
+    },
+    select: { id: true },
+  });
+  if (conflict) {
+    return { ok: false, reason: "email-in-use" };
+  }
+
+  const current = await db.member.findUnique({
+    where: { id: me.id },
+    select: { email: true, emailVerifiedAt: true },
+  });
+
+  // 이 브라우저에서 방금 OTP/매직링크 인증을 통과한 이메일인지 증명 쿠키 확인
+  const store = await cookies();
+  const provenEmail = store.get(EMAIL_COOKIE)?.value;
+  const isProven = Boolean(provenEmail && normalizeEmail(provenEmail) === norm);
+  const alreadyVerified = current?.email === norm && current?.emailVerifiedAt !== null;
+
+  // 인증 과정을 거치지 않은 단순 변경은 emailVerifiedAt 을 null 로 유지 (자기 주장만으로 통과 방지)
+  const emailVerifiedAt = isProven || alreadyVerified ? (current?.emailVerifiedAt ?? new Date()) : null;
+
   await db.member.update({
     where: { id: me.id },
     data: {
-      email: norm || null,
-      emailVerifiedAt: norm ? new Date() : null,
+      email: norm,
+      emailVerifiedAt,
     },
   });
 

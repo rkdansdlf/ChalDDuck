@@ -635,7 +635,10 @@ export function AccessScreen({
                 "act",
                 async () => {
                   const res = await updateMemberEmail(emailInput);
-                  if (!res.ok) throw new Error("올바른 이메일 주소를 입력해 주세요.");
+                  if (!res.ok) {
+                    if (res.reason === "email-in-use") throw new Error("팀 내 다른 팀원이 이미 등록한 이메일입니다.");
+                    throw new Error("올바른 이메일 주소를 입력해 주세요.");
+                  }
                   setEmailValue(emailInput.trim().toLowerCase());
                   setSheet(null);
                   router.refresh();
