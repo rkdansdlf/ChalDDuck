@@ -155,8 +155,79 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     }
     check("남의 팀 기록은 막힌다", thrown.includes("기록을 찾을 수 없습니다"), true);
     check("남의 기록에 의견이 붙지 않는다", await disputeCount(recB.id), 0);
+
+    /* ── 4) 증빙 업로드 및 기록 추가 ─────────────────────────── */
+    console.log("\n증빙 업로드 및 기록 직접 추가");
+    const prep = await as(A.ownerToken, () =>
+      contrib.prepareEvidenceUpload({ name: "보고서_증빙.pdf", size: 1024, type: "application/pdf" }),
+    );
+    if (prep.status === "ok") {
+      check("증빙 업로드 준비 URL 생성", typeof prep.signedUrl, "string");
+      check("경로가 evidence/ 로 시작한다", prep.path.startsWith(`${A.id}/evidence/`), true);
+    } else {
+      check("스토리지 상태 확인", typeof prep.status, "string");
+    }
+
+    const added = await as(A.ownerToken, () =>
+      contrib.addContribRecord({ kind: "task", title: "최종 발표자료 제작" }),
+    );
+    check("기여 기록 직접 추가 성공", added.status, "ok");
+
+    /* ── 5) 팀원 확인 (confirmContribRecord) ─────────────────── */
+    console.log("\n팀원 확인 규칙");
+    const selfConfirm = await as(A.ownerToken, () => contrib.confirmContribRecord(recA.id));
+    check("자기 기록 확인은 'mine' 이다", selfConfirm, "mine");
+
+    const recC = await makeRecord(A.id, A.owner.id, `확인 테스트용 ${suffix}`);
+    const mateConfirm = await as(A.otherToken, () => contrib.confirmContribRecord(recC.id));
+    check("팀원이 확인하면 'ok'", mateConfirm, "ok");
+    const dupConfirm = await as(A.otherToken, () => contrib.confirmContribRecord(recC.id));
+    check("이미 확인한 경우 'already'", dupConfirm, "already");
+
+    /* ── 6) 증빙 URL 발급 ─────────────────────────────────────── */
+    console.log("\n증빙 파일 URL 발급");
+    const noEvUrl = await as(A.ownerToken, () => contrib.getEvidenceUrl(recA.id));
+    check("증빙 없는 기록의 URL 은 null", noEvUrl, null);
+
+    const evRec = await db.contribRecord.create({
+      data: {
+        memberId: A.owner.id,
+        kind: "task",
+        title: "증빙 첨부 기록",
+        detail: "내용",
+        source: "self",
+        evidencePath: `${A.id}/evidence/proof.pdf`,
+        evidenceName: "proof.pdf",
+        evidenceMime: "application/pdf",
+      },
+    });
+    const evUrl = await as(A.otherToken, () => contrib.getEvidenceUrl(evRec.id));
+    check("증빙 파일이 있는 기록의 서명 URL 발급 성공", typeof evUrl, "string");
+
+    /* ── 7) 확인 목록 폴링 ───────────────────────────────────── */
+    console.log("\n확인 점검 목록 폴링");
+    const pollList = await as(A.otherToken, () => contrib.pollContribCheck());
+    check("팀 점검 목록 배열 반환", Array.isArray(pollList), true);
+
+    /* ── 8) 팀장 확인 기준 변경 ─────────────────────────────── */
+    console.log("\n팀장의 확인 기준 인원 설정");
+    const previewNeeded = await as(A.ownerToken, () => contrib.setConfirmsNeeded(2, false));
+    check("기준 변경 프리뷰는 ok: false", previewNeeded.ok, false);
+    const applyNeeded = await as(A.ownerToken, () => contrib.setConfirmsNeeded(2, true));
+    check("기준 변경 확인 적용 성공", applyNeeded.ok, true);
+
+    /* ── 9) 회의 참여 표시 ───────────────────────────────────── */
+    console.log("\n회의 참여 표시 토글");
+    const markPart = await as(A.ownerToken, () => contrib.setParticipation(recC.id, true));
+    check("참여 표시 찍기", markPart, "marked");
+    const clearPart = await as(A.ownerToken, () => contrib.setParticipation(recC.id, false));
+    check("참여 표시 지우기", clearPart, "cleared");
   } finally {
     for (const teamId of teamIds) {
+      await db.contribParticipation.deleteMany({ where: { record: { member: { teamId } } } });
+      await db.contribConfirm.deleteMany({ where: { record: { member: { teamId } } } });
+      await db.contribDispute.deleteMany({ where: { record: { member: { teamId } } } });
+      await db.contribRecord.deleteMany({ where: { member: { teamId } } });
       await db.member.deleteMany({ where: { teamId } });
       await db.team.delete({ where: { id: teamId } });
     }

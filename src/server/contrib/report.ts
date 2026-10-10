@@ -120,3 +120,21 @@ export async function getPublicReport(token: string): Promise<PublicReportData |
     rows,
   };
 }
+
+/**
+ * 리포트 토큰의 상태를 확인한다.
+ * 유효하지 않은 링크 접근 시 구체적인 사유(만료/폐기)를 안내하기 위함.
+ */
+export async function getReportTokenStatus(
+  token: string,
+): Promise<"ok" | "expired" | "revoked" | "not_found"> {
+  const record = await db.reportShareToken.findFirst({
+    where: { token },
+    select: { revokedAt: true, expiresAt: true },
+  });
+
+  if (!record) return "not_found";
+  if (record.revokedAt !== null) return "revoked";
+  if (record.expiresAt <= new Date()) return "expired";
+  return "ok";
+}

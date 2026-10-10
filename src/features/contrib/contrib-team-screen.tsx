@@ -27,6 +27,7 @@ import {
 import { isMarked, participationText } from "./participation";
 import { usePoll } from "@/lib/use-poll";
 import { EvidenceLink } from "./evidence-link";
+import { ContribResolveSheet } from "./contrib-resolve-sheet";
 
 /**
  * 17 기여 기록 · 팀원 확인.
@@ -63,6 +64,7 @@ export function ContribTeamScreen({
   const [policySheetOpen, setPolicySheetOpen] = useState(false);
   const [disputing, setDisputing] = useState<TeamCheckRecord | null>(null);
   const [reason, setReason] = useState("");
+  const [resolvingRecord, setResolvingRecord] = useState<TeamCheckRecord | null>(null);
   /** 기준을 바꾸기 전에 "이렇게 바뀌는데 괜찮나"를 한 번 더 묻는다. */
   const [changing, setChanging] = useState<{ needed: number; affected: number } | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -446,14 +448,14 @@ export function ContribTeamScreen({
                   {/* 하단 요약 및 자세히 토글 */}
                   <div className="mt-2.5 flex items-center justify-between border-t border-line/60 pt-2 text-[12.5px]">
                     <div className="flex items-center gap-1.5 text-txt-muted">
-                      <span className="flex items-center gap-0.5">
+                      <span className="flex items-center gap-1">
                         {dots.map((_, i) => (
                           <span
                             key={i}
                             className={cn(
-                              "size-1.5 rounded-full inline-block",
+                              "size-1.5 rounded-full inline-block transition-all duration-200",
                               i < record.confirms
-                                ? "bg-txt-strong"
+                                ? "scale-110 bg-ok shadow-[0_0_0_2px_var(--ok-bg)]"
                                 : "border border-line-strong/60 bg-transparent",
                             )}
                           />
@@ -526,8 +528,8 @@ export function ContribTeamScreen({
                           <div className="text-[13.5px] leading-[1.5] text-[#8A3B31]">
                             {record.dispute}
                           </div>
-                          {record.dmWith ? (
-                            <div className="mt-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {record.dmWith ? (
                               <Btn
                                 size="sm"
                                 v="outline"
@@ -536,8 +538,18 @@ export function ContribTeamScreen({
                               >
                                 1:1 DM
                               </Btn>
-                            </div>
-                          ) : null}
+                            ) : null}
+                            {record.iCanResolve ? (
+                              <Btn
+                                size="sm"
+                                v="yellow"
+                                icon="check"
+                                onClick={() => setResolvingRecord(record)}
+                              >
+                                정정 응답하기
+                              </Btn>
+                            ) : null}
+                          </div>
                           {/* 철회 — **내가 남긴 반대만** 보인다.
                               `iFiledDispute` 가 판정 결과라 화면이 규칙을 다시 짜지 않는다.
                               주인이 보이는 버튼은 주인이 남의 반대를 대신 거두는 버튼이 되고,
@@ -672,6 +684,13 @@ export function ContribTeamScreen({
           </Btn>
         </div>
       </Sheet>
+
+      <ContribResolveSheet
+        open={resolvingRecord !== null}
+        record={resolvingRecord}
+        onClose={() => setResolvingRecord(null)}
+        onResolved={() => router.refresh()}
+      />
 
       <Toast msg={toast} />
     </>

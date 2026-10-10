@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Chip, Icon, type IconName } from "@/components/ui";
 import type { ContribKind, ContribRecord } from "@/lib/types";
 import { EvidenceLink } from "./evidence-link";
@@ -52,8 +53,14 @@ export function ContribRow({ record, kinds }: { record: ContribRecord; kinds: Co
         </div>
 
         {record.state === "disputed" ? (
-          <div className="keep-all mt-1.5 text-[13px] leading-[1.5] text-err">
-            팀원 확인에서 의견이 달리었습니다. 팀 탭의 기여 기록 확인에서 그 내용을 볼 수 있습니다.
+          <div className="keep-all mt-2 flex flex-col gap-1 rounded-control bg-err/10 p-2.5 text-[13px] leading-[1.5] text-err">
+            <span>팀원 확인에서 사실과 다르다는 의견이 남겨졌습니다.</span>
+            <Link
+              href={`/team/contrib/resolve/${record.id}`}
+              className="inline-flex items-center gap-1 font-semibold text-err underline underline-offset-2 hover:opacity-85"
+            >
+              내용 확인 및 정정 협의하기 →
+            </Link>
           </div>
         ) : null}
 
