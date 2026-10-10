@@ -24,8 +24,13 @@
  *
  * - 모델이 실제로 무엇을 말하는가 — 모델 호출 주소가 코드에 고정돼 있어 가짜 서버를 둘 수 없고, 외부로
  *   요청을 보내지 않는다. 키가 있는 경로는 `runTool` 에 호출 함수를 직접 넘겨 본다.
- * - `exportAiUsage` 가 **누구의 내역까지 담는가** — 팀 전체인지 내 것인지는 정해지지 않은 정책이고(AI 허브의
- *   `<Undecided>`), 다른 작업에서 바뀌고 있다. 여기서는 팀 경계와 형식만 고정한다.
+ *
+ * ## 내려받기 정책 (확정)
+ *
+ * `exportAiUsage` 는 **내 기록만**, `exportTeamAiUsage` 는 **개인 이름·시각 없는 도구별 집계**다. 한 사람의
+ * 이름·시각이 든 팀 전체 로그가 파일로 돌지 않게 하려는 결정이라, 내려받는 파일에 다른 사람이 새는 것은
+ * 형식 문제가 아니라 규칙 위반이다 — 그래서 여기서 고정한다. (처음 이 하네스를 쓸 때는 정책이 미정이라 팀 경계와
+ * 형식만 고정했고, 정책이 확정되며 이 구간을 다시 썼다.)
  *
  *   npm run test:ai-actions
  */
@@ -33,6 +38,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   AI_POLICY,
+  AI_TOOL_NAMES,
   CLERK_SAMPLE_DRAFT,
   MENU_OPTIONS,
   RANDOM_TOOLS,
@@ -221,29 +227,55 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     }
 
     /* ── 4) 내역 내려받기 ──────────────────────────────────── */
-    console.log("\n내역 CSV 는 내 팀 것만, 엑셀에서 깨지지 않게");
-    // 이름에 쉼표와 따옴표가 든 팀원 — 칸이 밀리지 않아야 한다.
+    console.log("\n내 내역은 내 기록만, 팀 현황은 집계만 — 둘 다 내 팀 안에서, 엑셀에서 깨지지 않게");
+    // 이름에 쉼표와 따옴표가 든 팀장 — 칸이 밀리지 않아야 한다.
     const E = await makeTeam("내역", `김,민준"${suffix}`);
     const F = await makeTeam("이웃내역", `남의팀${suffix}`);
     await fill(E.id, E.leader.id, 2, "clerk");
     await fill(E.id, E.mate.id, 1, "read-cushion");
+    await fill(E.id, E.mate.id, 1, "research");
     await fill(F.id, F.leader.id, 3, "research");
-    // 보관 기간이 지난 기록 — 내려받는 파일에 들어가지 않는다.
+    // 보관 기간이 지난 기록 — 어느 파일에도 들어가지 않는다.
     await fill(E.id, E.leader.id, 1, "present", seoulDay(Date.now() - (AI_POLICY.retentionDays + 5) * 86_400_000));
 
-    check("세션이 없으면 내려받을 수 없다", await blocked(() => aiActions.exportAiUsage()), "로그인이 필요합니다.");
-    const exported = await as(E.asLeader, () => aiActions.exportAiUsage());
-    check("파일 이름에 오늘 날짜가 있다", exported.filename, `찰떡-AI-사용내역-${today}.csv`);
-    check("엑셀이 한글을 깨뜨리지 않도록 BOM 이 붙는다", exported.csv.charCodeAt(0), 0xfeff);
-    const lines = exported.csv.trim().split("\r\n");
-    check("머리글이 있다", lines[0]?.replace("﻿", ""), "날짜,시각(한국),팀원,도구");
-    check("우리 팀의 기록만 들어 있다 (보관 기간이 지난 것 제외)", lines.length - 1, 3);
-    check("남의 팀 사람의 이름은 없다", exported.csv.includes(`남의팀${suffix}`), false);
-    check("도구는 사람이 읽는 이름이다", exported.csv.includes("읽기 도움"), true);
-    check("쉼표·따옴표가 든 이름은 따옴표로 감싸 한 칸이 된다", exported.csv.includes(`"김,민준""${suffix}"`), true);
-    check("그래서 모든 줄의 칸 수가 같다", lines.slice(1).every((l) => l.length > 0), true);
-    const otherExport = await as(F.asLeader, () => aiActions.exportAiUsage());
-    check("다른 팀은 자기 것만 받는다", [otherExport.csv.trim().split("\r\n").length - 1, otherExport.csv.includes(`김,민준`)], [3, false]);
+    check("세션이 없으면 내 내역을 내려받을 수 없다", await blocked(() => aiActions.exportAiUsage()), "로그인이 필요합니다.");
+    check("세션이 없으면 팀 현황을 내려받을 수 없다", await blocked(() => aiActions.exportTeamAiUsage()), "로그인이 필요합니다.");
+
+    const mineCsv = await as(E.asLeader, () => aiActions.exportAiUsage());
+    check("내 내역 파일 이름에 '내' 와 오늘 날짜가 있다", mineCsv.filename, `찰떡-내-AI-사용내역-${today}.csv`);
+    check("엑셀이 한글을 깨뜨리지 않도록 BOM 이 붙는다", mineCsv.csv.charCodeAt(0), 0xfeff);
+    const mineLines = mineCsv.csv.trim().split("\r\n");
+    check("머리글이 있다", mineLines[0]?.replace("\ufeff", ""), "날짜,시각(한국),팀원,도구");
+    // **내 기록만.** 팀원이 쓴 읽기 도움·리서치는 내 파일에 없고, 보관 기간이 지난 것도 없다.
+    check("내가 쓴 두 건만 들어 있다", mineLines.length - 1, 2);
+    check("팀원의 도구 기록은 내 파일에 없다", [mineCsv.csv.includes("읽기 도움"), mineCsv.csv.includes(AI_TOOL_NAMES.research!)], [false, false]);
+    check("쉼표·따옴표가 든 내 이름은 따옴표로 감싸 한 칸이 된다", mineCsv.csv.includes(`"김,민준""${suffix}"`), true);
+    const mateCsv = await as(E.asMate, () => aiActions.exportAiUsage());
+    check("팀원은 자기 두 건만 받는다", mateCsv.csv.trim().split("\r\n").length - 1, 2);
+    check("팀원의 파일에 다른 사람의 이름이 없다", mateCsv.csv.includes(`김,민준`), false);
+    const otherCsv = await as(F.asLeader, () => aiActions.exportAiUsage());
+    check("다른 팀은 자기 것만 받는다", [otherCsv.csv.trim().split("\r\n").length - 1, otherCsv.csv.includes(`김,민준`)], [3, false]);
+
+    const teamCsv = await as(E.asLeader, () => aiActions.exportTeamAiUsage());
+    check("팀 현황 파일 이름에 '팀' 과 오늘 날짜가 있다", teamCsv.filename, `찰떡-팀-AI-사용현황-${today}.csv`);
+    check("팀 현황에도 BOM 이 붙는다", teamCsv.csv.charCodeAt(0), 0xfeff);
+    const teamLines = teamCsv.csv.trim().split("\r\n").map((l) => l.replace("\ufeff", ""));
+    check("머리글은 도구와 횟수뿐이다 — 이름·시각 칸이 없다", teamLines[0], "도구,사용 횟수");
+    check(
+      "도구별 집계다 (서기 2 · 읽기 도움 1 · 리서처 1, 보관 기간이 지난 것 제외)",
+      [...teamLines.slice(1)].sort(),
+      [`${AI_TOOL_NAMES.clerk},2`, `${AI_TOOL_NAMES.research},1`, `읽기 도움,1`].sort(),
+    );
+    check(
+      "개인의 이름은 어디에도 없다",
+      [teamCsv.csv.includes(`김,민준`), teamCsv.csv.includes(`이서연${suffix}`)],
+      [false, false],
+    );
+    check(
+      "다른 팀의 집계는 섞이지 않는다",
+      (await as(F.asLeader, () => aiActions.exportTeamAiUsage())).csv.trim().split("\r\n").slice(1).map((l) => l.replace("\ufeff", "")),
+      [`${AI_TOOL_NAMES.research},3`],
+    );
 
     /* ── 5) 팀 요약 ────────────────────────────────────────── */
     console.log("\n팀 요약은 집계뿐이고 내 팀 것만이다");
