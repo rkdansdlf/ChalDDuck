@@ -835,9 +835,27 @@ npm run deploy:why -- <배포 아이디>   # 그 배포
 `npx vercel --prod` 로 직접 올릴 수도 있지만 그러면 **푸시하지 않은 커밋까지 배포**됩니다.
 배포본이 `main` 보다 앞서고, 다음 푸시가 또 다른 배포를 만들어 배포 이력이 두 갈래로벌어집니다. 되도록 푸시로만 올리세요.
 
-`vercel.json` 의 `buildCommand` 가 빌드 순서를 정합니다 —
-`prisma migrate deploy && npm run db:check && npm run storage:check:gate && npm run build`.
+`vercel.json` 의 `buildCommand` 는 `node scripts/vercel-build.mjs` 이고, 그 스크립트가 빌드 순서를 정합니다.
+**운영** 은 예전과 같습니다 — `prisma migrate deploy` → `db:check` → `storage:check:gate` → `npm run build`.
 **푸시 = 마이그레이션 적용 + 가드 + 빌드** 이므로 `db:check` 를 빠뜨릴 길이 없습니다.
+
+⚠️ **프리뷰(브랜치 푸시)는 마이그레이션도 `db:check` 도 하지 않고 빌드만 합니다.** 예전에는 프리뷰 빌드도
+`migrate deploy` 를 돌렸고, Preview 의 `DIRECT_URL` 이 운영 DB 를 가리켜서 **PR 브랜치를 푸시하는 순간 그
+브랜치의 마이그레이션이 머지 전에 운영에 적용됐다**(2026-10-10, PR #2 의 마이그레이션 두 개가 같은 시각에
+`_prisma_migrations` 에 남았다). Prisma CLI 는 `DATABASE_URL` 이 아니라 **`DIRECT_URL`** 을 읽는다는 점이 함정이었다.
+
+- **막는 방향.** `VERCEL_ENV` 가 `preview`·`development` 로 **확실할 때만** 건너뛴다. `production` 이거나 비어
+  있거나 모르는 값이면 예전처럼 한다 — 반대로 "`production` 일 때만 한다" 로 쓰면 변수가 비었을 때 운영 배포가
+  마이그레이션 없이 조용히 성공한다(앞의 `P2022` 사고와 같은 모양). 결정은 `scripts/deploy-plan.mjs` 한 곳에
+  있고 `scripts/smoke-deploy.mts` 가 결정표와 `vercel.json` 이 맨 `migrate deploy` 로 되돌아가지 못한다는 것을
+  고정한다.
+- **`db:check` 도 같이 건너뛰는 이유.** 마이그레이션 뒤에야 의미가 있다. 건너뛴 채 돌리면 새 마이그레이션이 든
+  PR 의 프리뷰가 "차이" 로 막힌다. 같은 검사는 CI 가 한다(빈 DB 에 전부 적용한 뒤 동기화 확인).
+- **프리뷰가 분리된 DB 를 쓰게 되면** Preview 환경에 `MIGRATE_ON_PREVIEW=1` 을 넣으면 프리뷰도 마이그레이션한다.
+  운영 DB 를 가리킨 채 이 값을 넣으면 위 사고가 그대로 난다.
+- **Preview 의 `DIRECT_URL` 은 비우지 말고 자리표시 값으로 바꾸는 편이 좋다.** `npm ci` 의 postinstall
+  (`prisma generate`)이 이 변수가 *있기만* 하면 되고 연결하지는 않는다. 없으면 설치에서 죽고, 운영 DB 를 가리키고
+  있으면 이 보호가 한 겹뿐이다.
 
 ⚠️ **마지막은 `next build` 가 아니라 `npm run build` 여야 합니다.** `next build` 를 직접 부르면
 `package.json` 의 `build` 스크립트를 **통째로 건너뛰고**, 그 안에 있는 플래그가 배포에 닿지

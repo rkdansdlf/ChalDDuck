@@ -15,7 +15,7 @@
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
-    "test": "tsx --conditions=react-server scripts/smoke.mts && tsx --conditions=react-server scripts/smoke-join.mts && tsx --conditions=react-server scripts/smoke-ai.mts && tsx --conditions=react-server scripts/smoke-saju.mts",
+    "test": "tsx --conditions=react-server scripts/smoke.mts && tsx --conditions=react-server scripts/smoke-join.mts && tsx --conditions=react-server scripts/smoke-ai.mts && tsx --conditions=react-server scripts/smoke-saju.mts && tsx --conditions=react-server scripts/smoke-deploy.mts",
     "test:drive:probe": "tsx --conditions=react-server scripts/harness/probe.mts",
     "test:drive": "tsx --conditions=react-server scripts/harness/drive.mts",
     "test:ai": "tsx --conditions=react-server scripts/harness/ai.mts",
