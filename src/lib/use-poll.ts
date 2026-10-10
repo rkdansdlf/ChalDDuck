@@ -50,14 +50,16 @@ export function usePoll(tick: () => void | Promise<void>, intervalMs: number, en
     };
 
     const timer = window.setInterval(run, intervalMs);
-    const onVisible = () => {
+    const onWake = () => {
       if (document.visibilityState === "visible") void run();
     };
-    document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("online", onWake);
 
     return () => {
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("online", onWake);
     };
   }, [intervalMs, enabled]);
 }
