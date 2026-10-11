@@ -35,6 +35,7 @@ import {
   canProposeIn,
   consentViewOf,
   drawPoolOf,
+  negotiatingRoles,
   roleViewOf,
   wantersOf,
   type ConsentView,
@@ -291,13 +292,11 @@ export function RosterScreen({
     (role) => roleViewOf(wantersOf(members, role.key).length, draws[role.key] ?? null).kind === "confirmed",
   ).length;
 
-  // 내게 걸려 있는 겹침 역할 또는 팀의 협의 대상 역할 찾기
-  const myOverlappingRole = roles.find((r) => {
-    const w = wantersOf(members, r.key);
-    return w.length > 1 && w.some((m) => m.isMe);
-  });
-  const anyOverlappingRole = roles.find((r) => wantersOf(members, r.key).length > 1);
-  const heroRole = myOverlappingRole ?? anyOverlappingRole ?? roles[0];
+  // 히어로 카드는 **이야기로 정해야 하는 역할**이 있을 때만 뜬다. 없으면 카드를 아예 두지 않는다
+  // (`heroRole` 이 null). 내가 걸린 역할을 우선한다.
+  const clashRoles = negotiatingRoles(roles, members, draws, consents, now);
+  const heroRole =
+    clashRoles.find((r) => wantersOf(members, r.key).some((m) => m.isMe)) ?? clashRoles[0] ?? null;
   const heroWanters = heroRole ? wantersOf(members, heroRole.key) : [];
   const otherHeroMember = heroWanters.find((m) => !m.isMe);
 
