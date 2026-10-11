@@ -11,6 +11,8 @@ import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
+import { isRoleKey, roleKeySet } from "@/features/roles/roster-model";
+import { rolesOf } from "./team-roles";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -98,7 +100,6 @@ import {
   RANDOM_TOOLS,
   RESEARCH_SAMPLE_QUERY,
   RESEARCH_SAMPLE_RESULTS,
-  ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
   SENTENCE_MODES,
@@ -183,6 +184,7 @@ export async function getRoster(teamId: string): Promise<Member[]> {
     isMe: m.id === session?.id,
     mbti: toMbti(m.mbti),
     want: toRole(m.wantRole),
+    want2: toRole(m.wantRole2),
     veto: toRole(m.vetoRole),
   }));
 }
@@ -190,8 +192,13 @@ export async function getRoster(teamId: string): Promise<Member[]> {
 
 /* ── 제품 설정 (팀마다 달라지지 않는 값) ───────────────────── */
 
-export async function getRoles(): Promise<Role[]> {
-  return ROLES;
+/**
+ * **그 팀의** 역할 목록 — 팀이 고치지 않았다면 기본 다섯 개(`rolesOf`).
+ *
+ * 예전에는 팀과 상관없는 고정 목록이었다. 팀마다 달라지므로 팀을 받는다.
+ */
+export async function getRoles(teamId: string): Promise<Role[]> {
+  return rolesOf(db, teamId);
 }
 export async function getQuiz(): Promise<QuizQuestion[]> {
   return QUIZ_QUESTIONS;
@@ -329,12 +336,13 @@ export async function getScheduleOptions(): Promise<{
 export async function getAcceptedRoleAssignments(
   teamId: string,
 ): Promise<Map<string, RoleKey[]>> {
-  return acceptedRoleAssignments(db, teamId, ROLES.map((r) => r.key as string));
+  const roles = await rolesOf(db, teamId);
+  return acceptedRoleAssignments(db, teamId, roles.map((r) => r.key));
 }
 
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
-  const [draws, rejections, consents, members, session] = await Promise.all([
+  const [draws, rejections, consents, members, session, estimateRows, teamRoleList] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
       include: { winner: { select: { id: true, name: true, leftAt: true } } },
@@ -356,9 +364,12 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
     db.member.findMany({ where: { teamId, leftAt: null }, select: { id: true } }),
     // **내가 동의했는지** — 화면이 자기 응답 버튼을 숨기려면 판정자가 있어야 한다.
     getSessionMember(),
+    db.roleEstimate.findMany({ where: { teamId }, select: { role: true, hours: true } }),
+    rolesOf(db, teamId),
   ]);
+  const knownRoles = roleKeySet(teamRoleList);
 
-  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {} };
+  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {}, estimates: {} };
 
   for (const d of draws) {
     result.draws[d.role as RoleKey] = {
@@ -391,6 +402,11 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
       respondBy: formatDeadline(c.respondBy),
       iAgreed: session ? c.responses.some((r) => r.memberId === session.id && r.agree) : false,
     };
+  }
+
+  // 모르는 역할 값이 들어 있으면 조용히 뺀다 — 없는 이름을 지어내지 않는다.
+  for (const e of estimateRows) {
+    if (isRoleKey(e.role, knownRoles)) result.estimates[e.role] = e.hours;
   }
 
   return result;
@@ -460,17 +476,20 @@ export async function getJoinRequests(
   const session = await getSessionMember();
   if (!session || !session.isLeader) return { rows: [], capped: false };
 
-  const rows = await db.joinRequest.findMany({
-    where: { teamId, status: "pending" },
-    orderBy: { createdAt: "desc" },
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.joinRequest.findMany({
+      where: { teamId, status: "pending" },
+      orderBy: { createdAt: "desc" },
+    }),
+    rolesOf(db, teamId),
+  ]);
 
   return {
     capped: isJoinCapped(await countUnresolved(teamId)),
     rows: rows.map((r) => ({
       id: r.id,
       name: r.name,
-      want: ROLES.find((role) => role.key === r.wantRole)?.name ?? "미정",
+      want: teamRoleList.find((role) => role.key === r.wantRole)?.name ?? "미정",
       device: r.label ?? "알 수 없는 기기",
       when: formatDeadline(r.createdAt),
     })),
@@ -1114,7 +1133,7 @@ export async function getTeamToolContext(teamId: string): Promise<TeamToolContex
     team: { name: team.name, dday: team.dday },
     currentMember: { id: session.id, name: session.name },
     members: roster,
-    roles: ROLES.map((r) => ({ key: r.key, name: r.name })),
+    roles: (await rolesOf(db, teamId)).map((r) => ({ key: r.key, name: r.name })),
     tasks: openTasks.map((t) => ({
       id: t.id,
       title: t.title,

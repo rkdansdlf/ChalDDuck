@@ -25,7 +25,7 @@ export default async function HomePage() {
 
   const [roles, roster, tasks, negotiation, meeting, rejoinRequests, joinRequests, teamCheck, unread, saju] =
     await Promise.all([
-      getRoles(),
+      getRoles(team.id),
       getRoster(team.id),
       getTasks(team.id),
       getRoleNegotiation(team.id),

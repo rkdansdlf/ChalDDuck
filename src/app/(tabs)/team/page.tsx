@@ -24,7 +24,7 @@ export default async function TeamPage() {
   const inviteOrigin = process.env.APP_URL?.replace(/\/$/, "") || undefined;
   const [roles, roster, tools, negotiation, rejoinRequests, joinRequests, invites] =
     await Promise.all([
-      getRoles(),
+      getRoles(team.id),
       getRoster(team.id),
       getRandomTools(),
       getRoleNegotiation(team.id),

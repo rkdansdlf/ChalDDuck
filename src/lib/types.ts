@@ -9,13 +9,30 @@ import type { MbtiType } from "./mbti";
  * 계약(contract)이 되고, `src/data/` 의 목 구현만 교체하면 된다.
  */
 
-/** 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다. */
-export type RoleKey = "research" | "deck" | "script" | "present" | "manage";
+/**
+ * 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다.
+ *
+ * **팀마다 역할이 다르므로 닫힌 목록이 아니다.** 기본 역할은 예전 키(`research` …)를 그대로 쓰고, 팀이
+ * 더한 역할은 `r-` 로 시작하는 임의의 키를 받는다(`TeamRole`). 그래서 타입이 모르는 값을 막아 주지
+ * 않는다 — **서버 액션은 받은 값을 그 팀의 역할 목록으로 검사**한다(`rolesOf`).
+ */
+export type RoleKey = string;
+
+/**
+ * 역할의 **무게.** 핵심 = 결과물을 직접 만드는 일, 운영 = 팀이 굴러가게 하는 일,
+ * 보조 = 남이 만든 것을 다듬는 일. 보조가 핵심을 대신하지 않는다 — 그래서 "핵심 업무를
+ * 맡았는가" 는 `core` 만 센다.
+ *
+ * 이 분류는 **기본값**이다. 긴 프로젝트에서는 운영이 핵심만큼 무거울 수 있어 팀이 고칠 수
+ * 있어야 하지만, 고치는 길(프로젝트별 역할 편집)은 아직 없다 — 역할이 코드의 닫힌 목록이라서다.
+ */
+export type RoleKind = "core" | "ops" | "support";
 
 export type Role = {
   key: RoleKey;
   name: string;
   note: string;
+  kind: RoleKind;
 };
 
 export type Team = {
@@ -45,6 +62,8 @@ export type Member = {
   mbti: MbtiType | null;
   /** 1순위 희망 역할. */
   want: RoleKey | null;
+  /** 두 번째 희망 역할 — 선택. 균형 추천에서만 쓰이고 추첨 후보에는 들어가지 않는다. */
+  want2: RoleKey | null;
   /** 이번엔 피하고 싶은 역할. */
   veto: RoleKey | null;
 };
@@ -231,7 +250,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "drive";
+  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "role-edit" | "drive";
   title: string;
   body: string;
   href: string | null;
@@ -1137,6 +1156,11 @@ export type RoleNegotiation = {
    * `consentViewOf`(roster-model)가 `respondBy` 와 **now** 를 보고 정한다.
    */
   consents: Partial<Record<RoleKey, RoleDrawConsentView>>;
+  /**
+   * 역할별 예상 작업 시간(시간). **없으면 팀이 아직 안 적은 것**이다 — 0 이나 평균으로 메우지 않는다.
+   * 부담 비교(`workloadOf`)는 이 값이 있는 역할만 합친다.
+   */
+  estimates: Partial<Record<RoleKey, number>>;
 };
 
 /** 07 추첨 동의 제안 — 팀 화면이 읽는 모양. */

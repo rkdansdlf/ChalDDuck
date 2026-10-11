@@ -42,7 +42,7 @@ type Session = {
 export async function run({ session }: { session: Session }): Promise<boolean> {
   const { db } = await import("../../src/server/db.js");
   const roles = await import("../../src/server/actions/roles.js");
-  const { ROLES, RANDOM_TOOLS } = await import("../../src/data/catalog.js");
+  const { DEFAULT_ROLES: ROLES, RANDOM_TOOLS } = await import("../../src/data/catalog.js");
   // 액션이 쓰는 두 집합을 **같은 곳에서** 가져온다 — 순서를 바꿔 쓰면 검사가 제품을 안 따라간다.
   const TOOL_NAMES = new Set<string>(RANDOM_TOOLS.map((t) => t.name));
   // 타입을 좁힌다 — 실제 키 집합에서 고르는데도 타입은 `string` 이라서다.
@@ -152,6 +152,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     (await db.roleRejection.findUnique({
       where: { teamId_role_memberId: { teamId, role: role as Parameters<typeof roles.claimSoleRole>[0], memberId } },
     })) !== null;
+
+  const rolesAt = async (teamId: string) => {
+    const { rolesOf } = await import("../../src/data/team-roles.js");
+    return rolesOf(db, teamId);
+  };
+  const errOf2 = async (token: string, input: Parameters<typeof roles.addTeamRole>[0]) => {
+    const r = await as(token, () => roles.addTeamRole(input));
+    return r.status === "invalid" ? r.error : r.status;
+  };
 
   const drawOf = (teamId: string) =>
     db.roleDraw.findFirst({
@@ -346,6 +355,241 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("모르는 역할은 거절한다", badRole.includes("알 수 없는 역할"), true);
     const badTool = await blocked(() => as(A.asLeader, () => roles.proposeRoleDraw(role, "없는도구")));
     check("모르는 도구는 거절한다", badTool.includes("알 수 없는 추첨 도구"), true);
+
+    /* ── 15) 예상 시간 ─────────────────────────────────────── */
+    console.log("\n예상 시간은 범위 안의 정수만 저장하고, 지우면 미정으로 돌아간다");
+    const K = await makeTeam("예상시간");
+    const other = await makeTeam("예상시간-다른팀");
+    check("적으면 저장된다", await as(K.asLeader, () => roles.setRoleEstimate(role, 8)), "ok");
+    const stored = await db.roleEstimate.findMany({ where: { teamId: K.id } });
+    check("행이 하나 생긴다", stored.map((e) => [e.role, e.hours]), [[role, 8]]);
+    check("다시 적으면 같은 행을 고친다", await as(K.asLeader, () => roles.setRoleEstimate(role, 5)), "ok");
+    check(
+      "행이 늘지 않고 값만 바뀐다",
+      (await db.roleEstimate.findMany({ where: { teamId: K.id } })).map((e) => e.hours),
+      [5],
+    );
+    for (const bad of [0, -1, 100, 2.5, Number.NaN]) {
+      check(`범위 밖(${bad})은 거절한다`, await as(K.asLeader, () => roles.setRoleEstimate(role, bad)), "invalid");
+    }
+    check(
+      "모르는 역할은 거절한다",
+      await as(K.asLeader, () => roles.setRoleEstimate("없는역할" as typeof role, 3)),
+      "invalid",
+    );
+    check("거절된 값은 저장되지 않는다", (await db.roleEstimate.findMany({ where: { teamId: K.id } })).map((e) => e.hours), [5]);
+    check(
+      "다른 팀 행은 건드리지 않는다",
+      await db.roleEstimate.count({ where: { teamId: other.id } }),
+      0,
+    );
+    check("null 로 지운다", await as(K.asLeader, () => roles.setRoleEstimate(role, null)), "ok");
+    check("지우면 행이 없다(0 이 아니라 미정)", await db.roleEstimate.count({ where: { teamId: K.id } }), 0);
+
+    /* ── 16) 균형 추천 ─────────────────────────────────────── */
+    type RK = Parameters<typeof roles.claimSoleRole>[0];
+    const allKeys = ROLES.map((r) => r.key as RK);
+    const coreKeys = ROLES.filter((r) => r.kind === "core").map((r) => r.key as string);
+    const draws = (teamId: string) =>
+      db.roleDraw.findMany({
+        where: { teamId },
+        select: { id: true, role: true, tool: true, winnerId: true, accepted: true },
+        orderBy: { role: "asc" },
+      });
+
+    console.log("\n균형 추천은 받기 대기로 올라가고, 확정되지 않는다");
+    const M = await makeTeam("균형");
+    const first = await as(M.asLeader, () => roles.proposeBalancedRoles());
+    check("역할 전부에 올라간다", first.status === "ok" ? first.proposed.map((p) => p.role).sort() : first.status, [...allKeys].sort());
+    const rows = await draws(M.id);
+    check("도구 이름은 균형 추천이다", [...new Set(rows.map((r) => r.tool))], ["균형 추천"]);
+    check("아무도 받기 전에는 확정되지 않는다", rows.every((r) => r.accepted === false), true);
+    const coreWinners = rows.filter((r) => coreKeys.includes(r.role)).map((r) => r.winnerId);
+    check("세 사람 모두 핵심 업무를 하나는 받는다", new Set(coreWinners).size, 3);
+    check("받는 사람에게 알림이 간다", (await db.notification.count({ where: { memberId: M.mate.id, kind: "task-assigned" } })) > 0, true);
+    check("올린 사람 자신에게는 알림이 가지 않는다", await db.notification.count({ where: { memberId: M.leader.id, kind: "task-assigned" } }), 0);
+
+    console.log("\n다시 올려도 이미 걸린 역할은 건드리지 않는다");
+    check("새로 채울 역할이 없으면 none", (await as(M.asLeader, () => roles.proposeBalancedRoles())).status, "none");
+    check("행이 늘지 않는다", (await draws(M.id)).length, 5);
+
+    console.log("\n안 받으면 그 사람은 그 역할의 다음 추천에서 빠진다");
+    const mine = rows.find((r) => r.winnerId === M.mate.id)!;
+    const tokenOf = (id: string) => (id === M.leader.id ? M.asLeader : id === M.mate.id ? M.asMate : M.asThird);
+    check("당사자가 안 받기를 누른다", await as(tokenOf(mine.winnerId), () => roles.rejectRoleDraw(mine.role as RK)), "ok");
+    check("그 자리가 비었다", (await draws(M.id)).length, 4);
+    const again = await as(M.asLeader, () => roles.proposeBalancedRoles());
+    check("다시 올리면 그 역할 하나만 올라간다", again.status === "ok" ? again.proposed.map((p) => p.role) : again.status, [mine.role]);
+    const redo = (await draws(M.id)).find((r) => r.role === mine.role)!;
+    check("안 받은 사람이 아닌 다른 사람에게 간다", redo.winnerId !== mine.winnerId, true);
+
+    console.log("\n피할 역할과 확정된 것, 동의 중인 것은 건드리지 않는다");
+    const V = await makeTeam("제외");
+    await db.member.update({ where: { id: V.mate.id }, data: { vetoRole: "deck" } });
+    await db.member.update({ where: { id: V.third.id }, data: { vetoRole: "deck" } });
+    // 확정된 추첨 하나, 동의를 받는 중인 역할 하나.
+    await db.roleDraw.create({ data: { teamId: V.id, role: "research", tool: "담당", winnerId: V.mate.id, accepted: true } });
+    await as(V.asLeader, () => roles.proposeRoleDraw("present" as RK, tool));
+    await as(V.asLeader, () => roles.proposeBalancedRoles());
+    const vrows = await draws(V.id);
+    check("피할 역할로 고른 사람은 그 역할을 받지 않는다", vrows.find((r) => r.role === "deck")?.winnerId, V.leader.id);
+    const research = vrows.find((r) => r.role === "research")!;
+    check("확정된 역할은 그대로다", [research.winnerId, research.accepted, research.tool], [V.mate.id, true, "담당"]);
+    check("동의를 받는 중인 역할은 비어 있다", vrows.some((r) => r.role === "present"), false);
+
+    console.log("\n두 사람이 동시에 올려도 역할마다 하나뿐이다");
+    const Conc = await makeTeam("동시");
+    await Promise.all([
+      as(Conc.asLeader, () => roles.proposeBalancedRoles()),
+      as(Conc.asMate, () => roles.proposeBalancedRoles()),
+    ]);
+    check("행이 다섯을 넘지 않는다", (await draws(Conc.id)).length, 5);
+
+    console.log("\n내 희망 역할 — 첫 희망 · 두 번째 희망 · 피할 역할");
+    const W = await makeTeam("희망");
+    const choice = (who: string, c: { want: string; want2: string | null; veto: string | null }) =>
+      as(who, () => roles.setMyRoleChoices(c as Parameters<typeof roles.setMyRoleChoices>[0]));
+    check("세 칸이 저장된다", await choice(W.asMate, { want: "research", want2: "deck", veto: "present" }), "ok");
+    const saved = await db.member.findUnique({ where: { id: W.mate.id } });
+    check("DB 에 그대로 들어간다", [saved?.wantRole, saved?.wantRole2, saved?.vetoRole], ["research", "deck", "present"]);
+    check("두 번째·피할 역할은 비울 수 있다", await choice(W.asMate, { want: "script", want2: null, veto: null }), "ok");
+    const cleared = await db.member.findUnique({ where: { id: W.mate.id } });
+    check("비우면 null 이다", [cleared?.wantRole, cleared?.wantRole2, cleared?.vetoRole], ["script", null, null]);
+    check("첫 희망을 피할 수는 없다", await choice(W.asMate, { want: "deck", want2: null, veto: "deck" }), "invalid");
+    check("첫 희망을 두 번째로 또 고를 수 없다", await choice(W.asMate, { want: "deck", want2: "deck", veto: null }), "invalid");
+    check("두 번째 희망을 피할 수는 없다", await choice(W.asMate, { want: "deck", want2: "manage", veto: "manage" }), "invalid");
+    check("모르는 역할은 거절한다", await choice(W.asMate, { want: "없는역할", want2: null, veto: null }), "invalid");
+    check("첫 희망이 없으면 거절한다", await choice(W.asMate, { want: null as unknown as string, want2: null, veto: null }), "invalid");
+    check("거절된 값은 저장되지 않는다", (await db.member.findUnique({ where: { id: W.mate.id } }))?.wantRole, "script");
+    check("남의 희망은 건드리지 않는다", (await db.member.findUnique({ where: { id: W.third.id } }))?.wantRole, role);
+
+    /* ── 17) 팀 역할 편집 ──────────────────────────────────── */
+    type In = Parameters<typeof roles.addTeamRole>[0];
+    const spec = (name: string, kind = "core", note = ""): In => ({ name, note, kind });
+    const keysOf = async (teamId: string) =>
+      (await db.teamRole.findMany({ where: { teamId }, orderBy: { position: "asc" }, select: { key: true } })).map((r) => r.key);
+
+    console.log("\n역할 편집은 팀장만 하고, 처음 고칠 때 기본 다섯 개가 팀의 것이 된다");
+    const R = await makeTeam("역할편집");
+    check("고치기 전에는 행이 없다(기본 다섯 개를 쓴다)", await db.teamRole.count({ where: { teamId: R.id } }), 0);
+    check("팀원은 더할 수 없다", (await as(R.asMate, () => roles.addTeamRole(spec("설문 설계")))).status, "forbidden");
+    check("거절된 편집은 아무것도 만들지 않는다", await db.teamRole.count({ where: { teamId: R.id } }), 0);
+    const added = await as(R.asLeader, () => roles.addTeamRole(spec("설문 설계", "core", "문항 작성")));
+    check("팀장은 더할 수 있다", added.status, "ok");
+    const addedKey = added.status === "ok" ? added.key : "";
+    check("새 키는 r- 로 시작한다", addedKey.startsWith("r-"), true);
+    check("기본 다섯 개가 옮겨지고 맨 끝에 붙는다", await keysOf(R.id), [...ROLES.map((r) => r.key), addedKey]);
+    check("기본 역할의 키는 그대로다", (await keysOf(R.id)).slice(0, 5), ROLES.map((r) => r.key));
+
+    console.log("\n입력 검사");
+    const errOf = async (input: In) => {
+      const r = await as(R.asLeader, () => roles.addTeamRole(input));
+      return r.status === "invalid" ? r.error : r.status;
+    };
+    check("빈 이름은 거절한다", await errOf(spec("   ")), "empty-name");
+    check("같은 이름은 거절한다", await errOf(spec("설문 설계")), "name-taken");
+    check("공백이 달라도 같은 이름이다", await errOf(spec("설문   설계")), "name-taken");
+    check("기본 역할과 같은 이름도 거절한다", await errOf(spec("발표")), "name-taken");
+    check("너무 긴 이름은 거절한다", await errOf(spec("가".repeat(21))), "long-name");
+    check("너무 긴 설명은 거절한다", await errOf(spec("새 역할", "core", "가".repeat(61))), "long-note");
+    check("모르는 유형은 거절한다", await errOf(spec("새 역할", "boss")), "bad-kind");
+    check("거절된 입력은 저장되지 않는다", (await keysOf(R.id)).length, 6);
+
+    console.log("\n고치기 — 키는 그대로라 기존 배정이 이어진다");
+    const researchBefore = await db.roleDraw.create({ data: { teamId: R.id, role: "research", tool: "담당", winnerId: R.mate.id, accepted: true } });
+    check("이름과 유형을 고친다", (await as(R.asLeader, () => roles.updateTeamRole("research", spec("자료 조사와 정리", "support")))).status, "ok");
+    const renamed = await rolesAt(R.id);
+    check("바뀐 값이 읽힌다", renamed.find((r) => r.key === "research"), { key: "research", name: "자료 조사와 정리", note: "", kind: "support" });
+    check("확정된 배정은 그대로 이어진다", (await db.roleDraw.findUnique({ where: { id: researchBefore.id } }))?.winnerId, R.mate.id);
+    check("팀원은 고칠 수 없다", (await as(R.asMate, () => roles.updateTeamRole("deck", spec("다른 이름")))).status, "forbidden");
+    check("다른 역할의 이름으로는 못 바꾼다", (await as(R.asLeader, () => roles.updateTeamRole("deck", spec("발표")))).status, "invalid");
+    check("자기 이름 그대로 저장은 된다", (await as(R.asLeader, () => roles.updateTeamRole("deck", spec("PPT 제작", "core")))).status, "ok");
+    check("없는 역할은 gone", (await as(R.asLeader, () => roles.updateTeamRole("r-nothing", spec("아무거나")))).status, "gone");
+
+    console.log("\n지우기 — 기록의 근거는 지우지 않고, 나머지는 함께 치운다");
+    check("확정된 담당이 있는 역할은 지울 수 없다", await as(R.asLeader, () => roles.removeTeamRole("research")), { status: "blocked", reason: "confirmed" });
+    const box = await db.submissionBox.create({ data: { teamId: R.id, role: "script", name: "대본", due: "10/1" } });
+    check("제출함이 묶인 역할은 지울 수 없다", await as(R.asLeader, () => roles.removeTeamRole("script")), { status: "blocked", reason: "box" });
+    check("팀원은 지울 수 없다", (await as(R.asMate, () => roles.removeTeamRole(addedKey))).status, "forbidden");
+
+    // 지우는 역할에 걸린 것들 — 받기 대기 추첨, 안 받은 기록, 예상 시간, 희망·피할 역할.
+    await db.roleDraw.create({ data: { teamId: R.id, role: addedKey, tool: "룰렛", winnerId: R.third.id } });
+    await db.roleRejection.create({ data: { teamId: R.id, role: addedKey, memberId: R.leader.id } });
+    await db.roleEstimate.create({ data: { teamId: R.id, role: addedKey, hours: 4 } });
+    await db.member.update({ where: { id: R.third.id }, data: { wantRole: addedKey, wantRole2: addedKey } });
+    await db.member.update({ where: { id: R.leader.id }, data: { vetoRole: addedKey } });
+    const editNoticesBefore = await db.notification.count({ where: { memberId: R.mate.id, kind: "role-edit" } });
+    check("걸린 것이 없으면 지울 수 있다", (await as(R.asLeader, () => roles.removeTeamRole(addedKey))).status, "ok");
+    check("역할 행이 없어진다", (await keysOf(R.id)).includes(addedKey), false);
+    check("받기 대기 추첨도 사라진다", await db.roleDraw.count({ where: { teamId: R.id, role: addedKey } }), 0);
+    check("안 받은 기록도 사라진다", await db.roleRejection.count({ where: { teamId: R.id, role: addedKey } }), 0);
+    check("예상 시간도 사라진다", await db.roleEstimate.count({ where: { teamId: R.id, role: addedKey } }), 0);
+    const afterThird = await db.member.findUnique({ where: { id: R.third.id } });
+    check("그 역할을 희망하던 사람의 희망이 비워진다", [afterThird?.wantRole, afterThird?.wantRole2], [null, null]);
+    check("피하던 사람의 값도 비워진다", (await db.member.findUnique({ where: { id: R.leader.id } }))?.vetoRole, null);
+    check("팀원에게 알림이 간다", (await db.notification.count({ where: { memberId: R.mate.id, kind: "role-edit" } })) > editNoticesBefore, true);
+    check("다시 지우면 gone", (await as(R.asLeader, () => roles.removeTeamRole(addedKey))).status, "gone");
+    await db.submissionBox.delete({ where: { id: box.id } });
+
+    console.log("\n지워진 역할은 그 팀에서 더는 통하지 않는다");
+    check("지워진 역할로는 제안할 수 없다", (await blocked(() => as(R.asLeader, () => roles.proposeRoleDraw(addedKey as typeof role, tool)))).includes("알 수 없는 역할"), true);
+    check("지워진 역할로는 예상 시간을 못 적는다", await as(R.asLeader, () => roles.setRoleEstimate(addedKey as typeof role, 3)), "invalid");
+    check("지워진 역할은 희망으로 못 고른다", await choice(R.asMate, { want: addedKey, want2: null, veto: null }), "invalid");
+    check("다른 팀의 역할 키는 이 팀에서 통하지 않는다", await choice(W.asMate, { want: addedKey, want2: null, veto: null }), "invalid");
+
+    console.log("\n새 역할은 추첨·추천에서 기본 역할과 똑같이 쓰인다");
+    const N = await makeTeam("새역할");
+    const nAdded = await as(N.asLeader, () => roles.addTeamRole(spec("설문 설계", "core")));
+    const nKey = nAdded.status === "ok" ? nAdded.key : "";
+    check("새 역할을 첫 희망으로 고를 수 있다", await choice(N.asMate, { want: nKey, want2: null, veto: null }), "ok");
+    check("그 역할은 희망자만 후보다", await as(N.asLeader, () => roles.proposeRoleDraw(nKey as typeof role, tool)), "ok");
+    const nBalance = await as(N.asLeader, () => roles.proposeBalancedRoles());
+    check(
+      "균형 추천은 새 역할까지 여섯 개를 본다(동의 중인 하나는 뺀다)",
+      nBalance.status === "ok" ? nBalance.proposed.length : nBalance.status,
+      5,
+    );
+    check("추천된 역할 중에 새 역할이 없다(동의를 받는 중이므로)", nBalance.status === "ok" && nBalance.proposed.some((p) => p.role === nKey), false);
+
+    console.log("\n가입 화면은 들어가려는 팀의 역할을 초대 코드로 읽는다");
+    const onboarding = await import("../../src/server/actions/onboarding.js");
+    const codeOf = async (teamId: string) => (await db.team.findUnique({ where: { id: teamId } }))!.code;
+    const Jn = await makeTeam("가입역할");
+    const joinAdded = await as(Jn.asLeader, () => roles.addTeamRole(spec("설문 설계", "core")));
+    const joinKey = joinAdded.status === "ok" ? joinAdded.key : "";
+    const seen = await onboarding.getJoinRoles(await codeOf(Jn.id));
+    check("팀이 더한 역할이 보인다", seen.map((r) => r.key).includes(joinKey), true);
+    check("소문자 코드도 읽는다", (await onboarding.getJoinRoles((await codeOf(Jn.id)).toLowerCase())).length, 6);
+    check("고치지 않은 팀은 기본 다섯 개다", (await onboarding.getJoinRoles(await codeOf(W.id))).map((r) => r.key), ROLES.map((r) => r.key));
+    check("모르는 코드는 기본 다섯 개다(코드가 맞는지 알려 주지 않는다)", (await onboarding.getJoinRoles("NOPE-000")).length, 5);
+
+    const draftFor = (want: string, veto: string | null = null) => ({
+      name: `가입자${suffix}${Math.floor(Math.random() * 1e6)}`,
+      email: "",
+      mbti: null,
+      mbtiFromQuiz: false,
+      want,
+      veto,
+      birthDate: "",
+      birthTime: "",
+    }) as unknown as Parameters<typeof onboarding.joinTeam>[1];
+    session.nobody();
+    const code = await codeOf(Jn.id);
+    const outsider = await onboarding.joinTeam(code, draftFor("research", "없는역할"));
+    check("팀에 있는 역할로는 가입 요청이 선다(없는 피할 역할은 비워진다)", ["joined", "requested"].includes(outsider.status), true);
+    const unknown = await onboarding.joinTeam(code, draftFor("없는역할"));
+    check("팀에 없는 역할로는 가입할 수 없다", unknown, { status: "invalid", reason: "no-want" });
+
+    console.log("\n마지막 하나는 지울 수 없다");
+    const L = await makeTeam("마지막");
+    for (const r of ROLES.slice(1)) await as(L.asLeader, () => roles.removeTeamRole(r.key));
+    check("하나 남으면 지울 수 없다", await as(L.asLeader, () => roles.removeTeamRole(ROLES[0]!.key)), { status: "blocked", reason: "last" });
+    check("그 하나만 남는다", await keysOf(L.id), [ROLES[0]!.key]);
+
+    console.log("\n역할 수 상한");
+    const X = await makeTeam("상한");
+    for (let i = 0; i < 7; i++) check(`#${i + 1} 더한다`, (await as(X.asLeader, () => roles.addTeamRole(spec(`역할${i}`)))).status, "ok");
+    check("열두 개가 넘으면 거절한다", await errOf2(X.asLeader, spec("하나 더")), "too-many");
   } finally {
     for (const teamId of teamIds) {
       await db.member.deleteMany({ where: { teamId } });

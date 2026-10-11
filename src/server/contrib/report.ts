@@ -2,13 +2,14 @@ import "server-only";
 
 import { db } from "@/server/db";
 import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
-import { ROLES } from "@/data/catalog";
+import { rolesOf } from "@/data/team-roles";
 import { contribTotals } from "@/data/contrib-report-totals";
 import { acceptedRoleAssignments } from "@/data/accepted-roles";
 import type { ContribReportRow, PublicReportData } from "@/lib/types";
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 같은 표에서 센다. */
 export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
+  const teamRoleList = await rolesOf(db, teamId);
   const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
     db.member.findMany({
       where: { teamId },
@@ -32,7 +33,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       where: { member: { teamId }, dispute: { not: null }, resolution: RESOLUTION_WAYS.noAgreement },
       _count: { _all: true },
     }),
-    acceptedRoleAssignments(db, teamId, ROLES.map((r) => r.key as string)),
+    acceptedRoleAssignments(db, teamId, teamRoleList.map((r) => r.key)),
     db.contribRecord.findMany({
       where: { member: { teamId }, state: "ok" },
       select: { memberId: true, title: true },
@@ -62,7 +63,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       memberId: m.id,
       who: m.name,
       left: m.leftAt !== null,
-      role: roles.length > 0 ? roles.map((r) => ROLES.find((x) => x.key === r)?.name).join(" · ") : "미정",
+      role: roles.length > 0 ? roles.map((r) => teamRoleList.find((x) => x.key === r)?.name).join(" · ") : "미정",
       confirmed: bucket?.confirmed ?? 0,
       pending: bucket?.pending ?? 0,
       disputed: bucket?.disputed ?? 0,

@@ -35,6 +35,8 @@ const LOOK: Record<AppNotification["kind"], { icon: string; surface: string; lab
   "who-does-it": { icon: "disc-3", surface: "bg-yellow-200 text-yellow-700", label: "누가 하지" },
   /** 추첨 동의는 **응답해야** 다음이 열린다 — 회의 제안과 같은 자리다. */
   "role-consent": { icon: "users-round", surface: "bg-yellow-200 text-yellow-700", label: "추첨 동의" },
+  /** 팀장이 역할 목록을 바꿨다 — 이미 끝난 일이라 앱 안에만 남는다. */
+  "role-edit": { icon: "list-checks", surface: "bg-fill text-txt-muted", label: "역할 변경" },
   drive: { icon: "folder-open", surface: "bg-yellow-200 text-yellow-700", label: "드라이브" },
 };
 
