@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
-import { AppBar, Body, Panel, Rows, SecTitle, type IconName } from "@/components/ui";
+import { useMemo, useState } from "react";
+import { AppBar, Body, Btn, Panel, Rows, SecTitle, type IconName } from "@/components/ui";
 import { useNavBadges } from "@/components/nav-badges-store";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import {
@@ -11,6 +11,7 @@ import {
   unresolvedClashes,
   wantersOf,
 } from "@/features/roles/roster-model";
+import { BirthSheet } from "@/features/saju/birth-sheet";
 import { TodayFlowCard } from "@/features/saju/today-flow-card";
 import type { TeamSaju } from "@/data/api";
 import { buildBriefing } from "./briefing";
@@ -18,17 +19,17 @@ import { HomeRow } from "./home-row";
 import { HomeSide } from "./home-side";
 import {
   BriefingCard,
+  HomeShortcuts,
   UpcomingMeeting,
   homeFingerprint,
   useRefreshWhenStale,
+  type HomeShortcut,
 } from "./home-parts";
 import type {
-  AiTool,
   MeetingProposal,
   Member,
   RecentItem,
   Role,
-  RoleKey,
   RoleNegotiation,
   Task,
   Team,
@@ -48,8 +49,9 @@ type Todo = {
 /**
  * 11 홈.
  *
- * 순서가 곧 설계다: **내 확인이 필요한 일 → 가까운 일정 → 최근 자료·업무 → AI 도구**.
- * 팀플에서 가장 자주 놓치는 것이 "나를 기다리는 일"이라 맨 위에 둔다.
+ * 순서가 곧 설계다(v3 핸드오프): **지금 할 일 → 다음 일정 → 바로가기 → 최근 자료·업무**.
+ * 팀플에서 가장 자주 놓치는 것이 "나를 기다리는 일"이라 맨 위에 둔다. 오늘의 브리핑과
+ * 오늘의 팀플 흐름은 맨 아래에 둔다 — 빼지 않고, 위의 할 일을 가리지 않게 하려는 자리다.
  *
  * 맨 위 두 구역은 데모 값이 아니라 07·09 화면의 **실제 상태에서 계산한다** —
  * 홈에 2건이라고 적혀 있는데 팀 탭에 가면 다른 수가 보이면 안 된다.
@@ -59,12 +61,10 @@ export function HomeScreen({
   roles,
   roster,
   recent,
-  aiTools,
   tasks,
   negotiation,
   now: nowIso,
   meeting,
-  boxDeadlines,
   today,
   rejoinRequests,
   awaitingMyConfirm,
@@ -74,9 +74,8 @@ export function HomeScreen({
   team: Team;
   roles: Role[];
   roster: Member[];
-  /** 오른쪽 기둥 데이터는 Promise 로 받는다 — `HomeSide` 가 Suspense 안에서 읽는다. */
+  /** 최근 목록은 Promise 로 받는다 — `HomeSide` 가 Suspense 안에서 읽는다. */
   recent: Promise<RecentItem[]>;
-  aiTools: Promise<AiTool[]>;
   tasks: Task[];
   negotiation: RoleNegotiation;
   /**
@@ -87,12 +86,6 @@ export function HomeScreen({
    */
   now: string;
   meeting: MeetingProposal;
-  /**
-   * 제출함의 역할과 마감 시각만(파일·버전 없음). **마감 임박 추천에 쓴다.**
-   * 홈이 12번째 조회를 얻는 값인데, 이게 없으면 "발표 임박 → 발표 지원" 추천이 영영
-   * 나오지 않습니다 — 팀 발표일 필드가 없어서(스키마에 없다) 제출함 마감을 쓴 것입니다.
-   */
-  boxDeadlines: Promise<Array<{ role: RoleKey; name: string; dueAt: string | null }>>;
   /** 한국 날짜(`YYYY-MM-DD`). **서버가 정한다** — 화면이 자기 시계로 맞추면 사람마다 다르다. */
   today: string;
   /** 팀장이 승인해 줘야 하는 요청 수(가입 + 재입장). 팀장이 아니면 0. */
@@ -106,6 +99,7 @@ export function HomeScreen({
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
+  const [showBirthSheet, setShowBirthSheet] = useState(false);
   const { stage, slot } = meeting;
 
   // 종은 내비게이션 배지와 **같은 값**을 본다 — 탭바에 "새 알림"이 떠 있는데 종은
@@ -263,6 +257,27 @@ export function HomeScreen({
     () => buildBriefing({ today, awaitingMe: 0, meeting, tasks }),
     [today, meeting, tasks],
   );
+  // 브리핑은 두 줄만 — 나머지는 아래 목록과 일정이 이미 보여 준다.
+  const briefingLines = briefing.slice(0, 2);
+
+  // 지금 할 일의 맨 위 한 건은 크게 보여 주고, 나머지는 아래 줄로 둔다.
+  const [hero, ...restTodos] = todos;
+
+  // 바로가기의 "할 일" 배지 — 최근 목록과 같은 기준(완료가 아닌 것)으로 센다.
+  const remainingTasks = tasks.filter((t) => t.status !== "done").length;
+  const shortcuts: HomeShortcut[] = [
+    { key: "drive", icon: "folder-open", label: "제출함", href: "/drive", surface: "bg-yellow-200 text-yellow-700" },
+    {
+      key: "tasks",
+      icon: "list-checks",
+      label: "할 일",
+      href: "/home/tasks",
+      surface: "bg-coral-100 text-coral-700",
+      badge: remainingTasks,
+    },
+    { key: "chat", icon: "messages-square", label: "단톡방", href: "/chat", surface: "bg-fill text-txt-muted" },
+    { key: "ai", icon: "sparkles", label: "AI 도구", href: "/tools", surface: "bg-fill text-txt-muted" },
+  ];
 
   return (
     <>
@@ -279,76 +294,86 @@ export function HomeScreen({
       <Body dense>
         {/* 넓은 화면에서는 두 기둥으로 나눈다 — 한 기둥이면 오른쪽이 통째로 빈다.
             왼쪽은 "지금 나를 기다리는 것", 오른쪽은 "필요할 때 꺼내 쓰는 것". */}
+        {/* 넓은 화면은 두 기둥 — 왼쪽은 "지금 나를 기다리는 것", 오른쪽은 "꺼내 쓰는 것". */}
         <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
-        <div>
-        {/* 오늘의 브리핑이 맨 위다 — "내 확인이 필요한 일" 보다 먼저.
-            아래 목록은 **내가** 해야 하는 것이고, 이 카드는 **우리 팀 전체**가 지금 어디인지다.
-            내 것만 보면 팀이 어딘가에서 밀리고 있다는 사실을 모른다. */}
-        <BriefingCard lines={briefing} onOpen={(href) => router.push(href)} />
-        {/* 오늘 회의·마감 임박은 위 브리핑이 센 결과를 그대로 쓴다 — 한 화면이 두 말을 하지 않게. */}
-        <TodayFlowCard
-          saju={saju}
-          today={today}
-          meetingToday={briefing.some((l) => l.key === "meeting")}
-          dueSoon={briefing.some((l) => l.key === "soon")}
-          onOpen={(href) => router.push(href)}
-        />
-        <SecTitle
-          note={
-            todos.length > 0
-              ? `${todos.length}건이 처리를 기다리고 있습니다`
-              : "지금 확인할 일이 없습니다"
-          }
-        >
-          내 확인이 필요한 일
-        </SecTitle>
+          <div>
+            <SecTitle>내 확인이 필요한 일</SecTitle>
 
-        {todos.length > 0 ? (
-          <Rows className="mb-[18px]">
-            {todos.map((todo) => (
-              <HomeRow
-                key={todo.key}
-                size="lg"
-                icon={todo.icon}
-                surface={todo.surface}
-                title={todo.title}
-                note={todo.note}
-                onOpen={() => router.push(todo.href)}
-              />
-            ))}
-          </Rows>
-        ) : (
-          <Panel s="fill" pad={16} className="mb-[18px]">
-            <p className="t-note keep-all m-0 text-center text-txt-muted">
-              모두 확인했습니다. 새로 생기면 여기에 표시됩니다.
-            </p>
-          </Panel>
-        )}
+            <div className="mb-[18px]">
+              {hero ? (
+                <div className="rounded-[22px] bg-action p-[18px]">
+                  <div className="keep-all font-bold text-[20px] leading-[1.4] tracking-[-0.02em] text-on-action">
+                    {hero.title}
+                  </div>
+                  <div className="keep-all mt-0.5 font-medium text-[14px] leading-[1.5] text-cr-200">
+                    {hero.note}
+                  </div>
+                  <div className="mt-3.5">
+                    <Btn v="yellow" full iconRight="arrow-right" onClick={() => router.push(hero.href)}>
+                      확인하기
+                    </Btn>
+                  </div>
+                </div>
+              ) : (
+                <Panel s="fill" pad={16}>
+                  <p className="t-note keep-all m-0 text-center text-txt-muted">
+                    모두 확인했습니다. 새로 생기면 여기에 표시됩니다.
+                  </p>
+                </Panel>
+              )}
 
-        <SecTitle note="응답이 확정되면 여기 표시가 바뀝니다">가까운 일정</SecTitle>
-        <UpcomingMeeting
-          stage={stage}
-          day={slot?.day ?? null}
-          time={slot?.time ?? null}
-          agreed={meeting.agreed}
-          pending={meeting.pending}
-          onOpen={() => router.push("/schedule/slots")}
-        />
+              {restTodos.length > 0 ? (
+                <Rows className="mt-2.5">
+                  {restTodos.map((todo) => (
+                    <HomeRow
+                      key={todo.key}
+                      size="lg"
+                      icon={todo.icon}
+                      surface={todo.surface}
+                      title={todo.title}
+                      note={todo.note}
+                      onOpen={() => router.push(todo.href)}
+                    />
+                  ))}
+                </Rows>
+              ) : null}
+            </div>
 
+            <SecTitle action="캘린더" onAction={() => router.push("/schedule/calendar")}>
+              다음 일정
+            </SecTitle>
+            <UpcomingMeeting
+              stage={stage}
+              day={slot?.day ?? null}
+              time={slot?.time ?? null}
+              agreed={meeting.agreed}
+              pending={meeting.pending}
+              onOpen={() => router.push("/schedule/slots")}
+            />
+          </div>
+
+          <div>
+            <SecTitle>바로가기</SecTitle>
+            <HomeShortcuts items={shortcuts} onOpen={(href) => router.push(href)} />
+            <HomeSide recent={recent} tasks={tasks} />
+          </div>
         </div>
 
-        <div>
-          <HomeSide
-            recent={recent}
-            aiTools={aiTools}
-            boxDeadlines={boxDeadlines}
-            tasks={tasks}
+        {/* 브리핑과 팀플 흐름은 맨 아래 — 위의 할 일과 일정을 가리지 않게. */}
+        <div className="mt-2">
+          <BriefingCard lines={briefingLines} onOpen={(href) => router.push(href)} />
+          <TodayFlowCard
+            saju={saju}
             today={today}
+            meetingToday={briefing.some((l) => l.key === "meeting")}
+            dueSoon={briefing.some((l) => l.key === "soon")}
+            onOpen={(href) => router.push(href)}
+            onRegisterSaju={() => setShowBirthSheet(true)}
           />
-        </div>
         </div>
       </Body>
 
+      {showBirthSheet ? <BirthSheet onClose={() => setShowBirthSheet(false)} /> : null}
     </>
   );
 }
