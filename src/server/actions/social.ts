@@ -160,6 +160,9 @@ export async function spinMenu(toolName: string, labels?: string[]): Promise<str
  *
  * 동점이면 동점자끼리 다시 굴린다. 마지막까지 동점이면(사실상 없음, `DICE_MAX_ROUNDS` 가
  * 묶는다) 그중 한 명을 뽑는다 — 판을 끝내지 않는 것보다 정직하다.
+ *
+ * 혼자 굴리면 혼자가 이긴다. 게임으로는 의미가 없지만, 막으면 1인 팀의 주사위 버튼이
+ * 영영 잠긴다 — "고장"으로 보인다. 결과는 정직하게 그대로 둔다.
  */
 export async function rollDiceClash(): Promise<{ winner: string; rounds: DiceClashRound[] }> {
   const me = await requireSessionMember();
@@ -171,7 +174,8 @@ export async function rollDiceClash(): Promise<{ winner: string; rounds: DiceCla
     select: { name: true },
     orderBy: { name: "asc" },
   });
-  if (members.length < 2) throw new Error("주사위 게임은 두 명부터 할 수 있습니다.");
+  // 부르는 사람이 팀원이므로 비는 일은 없다 — 빈 채로 굴리면 승자가 `undefined` 가 된다.
+  if (members.length === 0) throw new Error("팀원이 없습니다.");
 
   const rounds: DiceClashRound[] = [];
   let contenders = members.map((m) => m.name);
