@@ -72,7 +72,9 @@ jobs:
       - name: Check Open Decisions (0 Undecided)
         run: npm run decisions
 
-      - name: Audit Server Actions (100% Tested)
+      # 액션 이름이 어느 하네스에서든 **호출되는지**만 본다(`audit:actions`). 호출한 하네스가 통과하는지는
+      # 아래 `Tests` 잡의 하네스 실행이 보고, 여기서 그 통과를 대신 말하지 않는다.
+      - name: Audit Server Action Coverage (names called by a harness)
         run: npm run audit:actions
 
       # 만들어 놓고 `package.json` 에 안 단 하네스가 없는지 — 있으면 그 하네스는 조용히 안 돈다.
