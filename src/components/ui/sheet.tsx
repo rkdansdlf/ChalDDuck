@@ -3,6 +3,10 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
+/** Tab 순환의 대상. 비활성·숨김 입력은 포커스를 받을 수 없어서 뺀다. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
  * 하단에서 올라오는 모달.
  *
@@ -30,6 +34,8 @@ export function Sheet({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  /** 시트를 연 순간의 포커스. 닫을 때 그 자리로 돌려보낸다 — 아니면 포커스가 `body` 로 사라진다. */
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [rendered, setRendered] = useState(open);
   const [prevOpen, setPrevOpen] = useState(open);
 
@@ -49,12 +55,43 @@ export function Sheet({
 
   useEffect(() => {
     if (!open) return;
+    const panel = panelRef.current;
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeOnEscape();
+      if (e.key === "Escape") {
+        closeOnEscape();
+        return;
+      }
+      // 배경은 시트에 가려져 있어도 Tab 으로는 닿는다. 시트 가장자리에서 안쪽으로 되돌린다.
+      if (e.key !== "Tab" || !panel) return;
+      const items = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      const inside = active instanceof Node && panel.contains(active);
+      if (e.shiftKey) {
+        if (!inside || active === first || active === panel) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!inside || active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener("keydown", onKey);
-    panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    panel?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      returnFocusRef.current?.focus();
+    };
   }, [open]);
 
   if (!rendered) return null;

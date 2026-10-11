@@ -41,6 +41,16 @@ export function AppShell({
   const isChatRoom =
     pathname === "/chat/team" || (pathname.startsWith("/chat/dm/") && pathname !== "/chat/dm");
 
+  /**
+   * 하단 바가 실제로 있는 곳에서만 `--cd-tabbar` 를 채운다(토스트가 그 위로 뜬다).
+   * - 채팅방: 탭바 대신 입력줄이 하단을 차지하므로 같은 높이로 맞춘다, 모든 폭에서.
+   * - 탭 화면: 탭바는 좁은 폭(1024 미만)에서만 있다. 넓은 화면은 세로 내비게이션이다.
+   * 바가 없는 곳은 기본값(`env(safe-area-inset-bottom)`)을 그대로 쓴다.
+   */
+  const bottomBar = isChatRoom
+    ? "[--cd-tabbar:calc(var(--cd-bar-h)_+_env(safe-area-inset-bottom))]"
+    : "max-lg:[--cd-tabbar:calc(var(--cd-bar-h)_+_env(safe-area-inset-bottom))]";
+
   return (
     <div className="flex h-dvh bg-cr-100">
       {sideNav}
@@ -49,6 +59,7 @@ export function AppShell({
         <div
           className={cn(
             "group relative flex h-dvh w-full flex-col overflow-hidden bg-page lg:border-x lg:border-line",
+            bottomBar,
             wide ? "max-w-[1400px]" : "max-w-[860px]",
           )}
         >

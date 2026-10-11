@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon, type IconName } from "./icon";
 
@@ -216,11 +216,30 @@ export const Body = forwardRef<HTMLDivElement, BodyProps>(function Body(
  */
 export function Dock({ children, above }: { children: ReactNode; above?: number }) {
   const floating = above !== undefined;
+  const ref = useRef<HTMLDivElement>(null);
+
+  // 흐름 안의 Dock 은 탭바 바로 위에 쌓인다. 높이를 `--cd-dock-h` 로 알려 두면 `Toast` 가 그 위로 뜬다.
+  // Dock 마다 버튼 수가 달라 높이가 제각각이라 화면마다 숫자를 적을 수 없다.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || floating) return;
+    const root = document.documentElement;
+    const sync = () => root.style.setProperty("--cd-dock-h", `${el.offsetHeight}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--cd-dock-h");
+    };
+  }, [floating]);
+
   return (
     <div
+      ref={ref}
       className={cn(
         "flex flex-col gap-2 border-t border-line px-4 pt-3 backdrop-blur-md",
-        floating ? "absolute inset-x-0" : "flex-none",
+        floating ? "absolute inset-x-0" : "relative flex-none",
       )}
       style={{
         bottom: above,
