@@ -904,7 +904,8 @@ npm run deploy:why -- <배포 아이디>   # 그 배포
 - **프리뷰에서 `db:check` 도 건너뛰는 이유.** 마이그레이션 뒤에야 의미가 있다. 건너뛴 채 돌리면 새 마이그레이션이 든
   PR 의 프리뷰가 "차이" 로 막힌다. 같은 검사는 CI 가 한다(빈 DB 에 전부 적용한 뒤 동기화 확인).
 - **프리뷰가 분리된 DB 를 쓰게 되면** Preview 환경에 `MIGRATE_ON_PREVIEW=1` 을 넣으면 프리뷰도 마이그레이션한다.
-  운영 DB 를 가리킨 채 이 값을 넣으면 위 사고가 그대로 난다.
+  운영 DB 를 가리킨 채 이 값을 넣으면 위 사고가 그대로 난다. 분리하는 법은
+  [프리뷰 전용 Supabase](#프리뷰-전용-supabase--프리뷰가-운영-데이터를-건드리지-않게).
 - **Preview 의 `DIRECT_URL` 은 비우지 말고 자리표시 값으로 바꾸는 편이 좋다.** `npm ci` 의 postinstall
   (`prisma generate`)이 이 변수가 *있기만* 하면 되고 연결하지는 않는다. 없으면 설치에서 죽고, 운영 DB 를 가리키고
   있으면 이 보호가 한 겹뿐이다.
@@ -975,6 +976,55 @@ Vercel 이 소유한 공유 도메인이라 DNS 를 건드릴 수 없어 인증 
 빌드 명령은 `vercel.json` 에 있습니다 —
 `prisma migrate deploy && npm run db:check && npm run storage:check:gate && npm run build`.
 **배포할 때마다 마이그레이션이 먼저 돕고, 그다음 DB 가 스키마와 같은지 확인합니다.**
+
+#### 프리뷰 전용 Supabase — 프리뷰가 운영 데이터를 건드리지 않게
+
+Preview 환경의 `DATABASE_URL`·`DIRECT_URL`·`SUPABASE_URL`·`SUPABASE_SECRET_KEY` 가 운영 프로젝트와
+같은 값이면 — 2026-10-10 에 실제로 그랬습니다 — 프리뷰 주소에서 누른 가입·채팅·기록이 **실제 팀의 데이터**가 되고,
+프리뷰에서 올린 파일이 **운영 버킷**에 쌓입니다. 빌드가 마이그레이션을 건너뛰게 한 것(`deploy-plan`)은 그중 한 겹일
+뿐이라, 프리뷰가 도는 동안의 읽기·쓰기는 막지 못합니다. Vercel 의 `Hidden` 타입 변수는 만든 뒤에 값을 볼 수 없어서,
+지금 어느 쪽을 가리키는지는 대시보드로도 확인되지 않습니다 — **분리한 값으로 새로 넣는 것이 확인하는 것보다 빠릅니다.**
+
+**Supabase 프로젝트를 하나 더 만들어** 아래 네 값만 Preview 환경에서 바꿉니다. Production·Development 는 건드리지 않습니다.
+
+| 변수 | Supabase 에서 가져오는 곳 |
+|---|---|
+| `DATABASE_URL` | Connect > Transaction pooler (6543) |
+| `DIRECT_URL` | Connect > Session pooler (5432) |
+| `SUPABASE_URL` | Settings > API > Project URL |
+| `SUPABASE_SECRET_KEY` | Settings > API Keys > Secret key (`sb_secret_...`) |
+
+나머지는 그대로 둬도 됩니다. 다만 두 가지는 알아 두세요.
+
+- `GMAIL_*` 는 프리뷰에서도 **실제로 메일을 보냅니다.**
+- 코드는 `APP_URL` 이 없으면 `NEXT_PUBLIC_APP_URL` 을 먼저 봅니다(`appBaseUrl()`). Preview 에 이 값이 운영 주소로 들어
+  있으면 프리뷰에서 받은 매직 링크가 운영으로 갑니다.
+
+**순서가 중요합니다.** 변수부터 바꾸면 빈 DB 를 보고 프리뷰가 깨집니다. `.env` 는 운영을 가리키므로 새 프로젝트의 주소를
+환경에 직접 넣어 실행하세요.
+
+```bash
+# 1. 새 프로젝트에 마이그레이션 (DIRECT_URL 을 쓴다)
+DIRECT_URL="<새 Session pooler 주소>" npx prisma migrate deploy
+
+# 2. 파일 버킷 — 로컬이 아닌 DB 라 ALLOW_REMOTE_SEED=1 이 있어야 돈다
+DIRECT_URL="<새 Session pooler 주소>" ALLOW_REMOTE_SEED=1 npm run db:storage
+
+# 3. Vercel Preview 변수 교체 (변수마다 rm → add, 값은 sensitive 로)
+npx vercel env rm DIRECT_URL preview
+npx vercel env add DIRECT_URL preview
+```
+
+3 은 위 표의 네 변수에 모두 하고, **마지막에** Preview 에 `MIGRATE_ON_PREVIEW=1` 을 넣습니다. 그 뒤 아무 PR 의 프리뷰를
+다시 배포해 빌드 로그에서 `migrate` 가 새 DB 에 적용되는지와 `storage:check:gate` 가 통과하는지 봅니다.
+
+⚠️ **분리한 뒤에도 `MIGRATE_ON_PREVIEW=1` 은 새 프로젝트를 가리킬 때만 넣습니다.** 운영 주소가 한 변수라도 남아 있으면
+(특히 `DIRECT_URL`) 이 값이 위 사고를 그대로 되살립니다.
+
+⚠️ **변수를 빼서 분리하지 마세요.** 특히 `DIRECT_URL` 은 `npm ci` 의 postinstall(`prisma generate`)이 *있기만* 하면
+되고 연결하지는 않아서, 없으면 설치에서 죽습니다. 빼는 것이 아니라 **다른 프로젝트의 값으로 바꾸는 것**이 분리입니다.
+
+프리뷰 DB 는 비어서 시작합니다. 화면을 채우려면 새 DB 에만 `ALLOW_REMOTE_SEED=1 npm run db:seed` 를 돌립니다.
 
 #### `db:check` — 왜 있는가
 
