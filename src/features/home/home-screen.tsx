@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { AppBar, Body, Btn, Panel, Rows, SecTitle, type IconName } from "@/components/ui";
+import { AppBar, Avatar, Body, Btn, Panel, Rows, SecTitle, type IconName } from "@/components/ui";
 import { useNavBadges } from "@/components/nav-badges-store";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
+import { useMe } from "@/features/onboarding/use-me";
 import {
   applyMyChoices,
   rolesAwaitingMyConsent,
@@ -99,6 +100,8 @@ export function HomeScreen({
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
+  // 앱바 왼쪽의 내 캐릭터 — 방금 고른 값이 서버 명단보다 앞선다(`useMe` 와 같은 규칙).
+  const me = useMe(roster.find((m) => m.isMe));
   const [showBirthSheet, setShowBirthSheet] = useState(false);
   const { stage, slot } = meeting;
 
@@ -285,6 +288,7 @@ export function HomeScreen({
         tone="y"
         title={team.name}
         sub={team.dday ?? undefined}
+        leading={me.mbti ? <Avatar mbti={me.mbti} name={me.name} size={44} /> : null}
         action="bell"
         actionLabel={unread > 0 ? `알림 ${unread}건` : "알림"}
         actionBadge={unread || undefined}
