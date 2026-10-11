@@ -31,6 +31,8 @@ import type {
   ContribKind,
   ContribRecord,
   CushionTone,
+  DiceClashRound,
+  DiceDrawDetail,
   DmThread,
   DriveLimits,
   FileKind,
@@ -91,7 +93,6 @@ import {
   CUSHION_SAMPLE_OUTPUT,
   CUSHION_TONES,
   ICE_GAMES,
-  MENU_OPTIONS,
   PRESENT_SAMPLE_DRAFT,
   PRESENT_SAMPLE_INPUT,
   RANDOM_TOOLS,
@@ -229,8 +230,46 @@ export async function getIceRoster(): Promise<{ id: string; name: string }[]> {
   });
 }
 
-export async function getMenuOptions(_teamId: string): Promise<string[]> {
-  return MENU_OPTIONS;
+/**
+ * 팀의 추첨 후보 — 저장한 값을 순서대로 돌려준다. 없으면 빈 목록이다.
+ *
+ * 기본 목록을 두지 않는다. 팀이 정하는 것이 후보의 전부라, 코드에 박힌 값이
+ * 있으면 "지웠는데 또 나온다"는 어긋남이 생긴다.
+ */
+export async function getMenuOptions(teamId: string): Promise<string[]> {
+  const rows = await db.drawOption.findMany({
+    where: { teamId },
+    select: { label: true },
+    orderBy: { position: "asc" },
+  });
+  return rows.map((row) => row.label);
+}
+
+/** `menuDetail` 이 주사위 게임 기록이면 그 값을, 아니면 null. 깨진 값도 null. */
+function parseDiceDetail(raw: string | null): DiceDrawDetail | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { rounds, winner } = parsed as { rounds?: unknown; winner?: unknown };
+    if (typeof winner !== "string" || !Array.isArray(rounds)) return null;
+    for (const round of rounds) {
+      if (typeof round !== "object" || round === null || !Array.isArray((round as { rolls?: unknown }).rolls))
+        return null;
+      for (const roll of (round as { rolls: unknown[] }).rolls) {
+        if (
+          typeof roll !== "object" ||
+          roll === null ||
+          typeof (roll as { name?: unknown }).name !== "string" ||
+          typeof (roll as { value?: unknown }).value !== "number"
+        )
+          return null;
+      }
+    }
+    return { rounds: rounds as DiceClashRound[], winner };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -244,12 +283,16 @@ export async function getMenuOptions(_teamId: string): Promise<string[]> {
  */
 export async function getMenuDraw(
   teamId: string,
-): Promise<{ pick: string | null; tool: string | null }> {
+): Promise<{ pick: string | null; tool: string | null; detail: DiceDrawDetail | null }> {
   const team = await db.team.findUnique({
     where: { id: teamId },
-    select: { menuPick: true, menuTool: true },
+    select: { menuPick: true, menuTool: true, menuDetail: true },
   });
-  return { pick: team?.menuPick ?? null, tool: team?.menuTool ?? null };
+  return {
+    pick: team?.menuPick ?? null,
+    tool: team?.menuTool ?? null,
+    detail: parseDiceDetail(team?.menuDetail ?? null),
+  };
 }
 export async function getScheduleOptions(): Promise<{
   kinds: BusyKind[];
