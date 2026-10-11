@@ -43,7 +43,13 @@ export async function readInviteToken(): Promise<string | null> {
   return (await cookies()).get(INVITE_COOKIE)?.value ?? null;
 }
 
-/** 소비되었거나 불일치하는 초대 토큰 쿠키를 삭제한다. */
+/**
+ * 소비되었거나 불일치하는 초대 토큰 쿠키를 삭제한다.
+ *
+ * ⚠️ `remember`·`forget` 은 서버 액션·라우트 핸들러에서만 부른다. 서버 컴포넌트 렌더 중에
+ * 부르면 개발 서버는 500 으로 죽고, 운영은 오류 없이 `Set-Cookie` 를 내지 않는다.
+ * `/join` 은 `actions/invite-cookie.ts` 를 거친다.
+ */
 export async function forgetInviteToken(): Promise<void> {
   (await cookies()).delete(INVITE_COOKIE);
 }

@@ -438,6 +438,26 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     });
     check("비활성화된 초대는 출처로 기록되지 않는다", reqB3?.inviteId, null);
 
+    /* ── 13) `/join` 이 렌더 중에 못 하는 쿠키 쓰기를 대신하는 액션 ───── */
+    console.log("\n초대 쿠키 동기화 (서버 액션 경계)");
+    const cookieActions = await import("../../src/server/actions/invite-cookie.js");
+
+    session.as(await tokenOf(leaderB.id));
+    const inviteB2 = await inviteActions.createInviteLink({ label: "팀B쿠키", maxUses: 5, expiresInDays: 7 });
+    truthy("쿠키용 초대 생성 성공", inviteB2.ok);
+    if (!inviteB2.ok) throw new Error("inviteB2 생성 실패");
+
+    session.clearAll();
+    session.asBrowser(`anon-b4-${suffix}`);
+    await cookieActions.syncInviteCookie("bad_token_xxx");
+    check("틀린 토큰은 심지 않는다", session.getCookie("cd_invite"), undefined);
+    await cookieActions.syncInviteCookie(inviteB.token);
+    check("폐기된 초대는 심지 않는다", session.getCookie("cd_invite"), undefined);
+    await cookieActions.syncInviteCookie(inviteB2.token);
+    check("유효한 초대는 심는다", session.getCookie("cd_invite"), inviteB2.token);
+    await cookieActions.syncInviteCookie(null);
+    check("null 이면 지운다", session.getCookie("cd_invite"), undefined);
+
     session.nobody();
   } finally {
     for (const teamId of teamIds) {
