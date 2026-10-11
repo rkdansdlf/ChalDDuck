@@ -4,7 +4,8 @@ import { useState } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * 하단 임시 알림. 탭바 바로 위(`--cd-tabbar` + 10px)에 뜬다.
+ * 하단 임시 알림. 하단 바(`--cd-tabbar`, 탭바·입력줄) 위에 뜨고, 흐름 안의 `Dock` 이 있으면
+ * 그 높이(`--cd-dock-h`)만큼 더 올라간다. 바가 없는 화면에서는 화면 아래에서 10px 위에 뜬다.
  *
  * `role="status"` 라 스크린 리더가 화면 전환 없이 내용을 읽어 준다 —
  * 눈으로만 확인되는 알림은 없어야 한다.
@@ -35,7 +36,7 @@ export function Toast({ msg }: { msg?: string | null }) {
         "keep-all absolute inset-x-4 z-40 rounded-control bg-ink-800 px-4 py-3 font-semibold text-[14px] leading-[1.45] text-on-action shadow-lg",
         closing ? "animate-slide-down animate-fade-out" : "animate-slide-up",
       )}
-      style={{ bottom: "calc(var(--cd-tabbar) + 10px)" }}
+      style={{ bottom: "calc(var(--cd-tabbar) + var(--cd-dock-h, 0px) + 10px)" }}
     >
       {current}
     </div>
