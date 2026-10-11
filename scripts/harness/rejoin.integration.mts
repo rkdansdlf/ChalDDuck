@@ -75,6 +75,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
   const suffix = randomUUID().slice(0, 6).toUpperCase();
   const teamIds: string[] = [];
   const attemptKeys: string[] = [];
+  const testEmails: string[] = [];
 
   async function makeTeam(label: string, withCode = true) {
     session.reset();
@@ -251,9 +252,56 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const checkApproved = await rejoin.checkRejoinApproval();
     check("승인 확인 시 approved", checkApproved, "approved");
 
+    /* ── 10) 이메일 재입장은 팀 · 이름 · 이메일이 같은 한 사람에게만 ── */
+    console.log("\n이메일 재입장은 팀 · 이름 · 이메일이 같은 한 사람에게만 된다");
+    session.reset();
+    session.asBrowser(randomUUID());
+    const G = await makeTeam("이메일");
+    const G2 = await makeTeam("이메일 다른팀");
+    // 소문자로 — 토큰 표는 `normalizeEmail` 로 소문자만 저장한다. `suffix` 가 대문자라 그대로 쓰면
+    // 세는 쪽 질문이 빗나가 "토큰이 없다"가 거짓으로 맞는다(처음 돌렸을 때 그랬다).
+    const mailA = `rejoin-a-${suffix}@example.com`.toLowerCase();
+    const mailB = `rejoin-b-${suffix}@example.com`.toLowerCase();
+    const mailC = `rejoin-c-${suffix}@example.com`.toLowerCase();
+    testEmails.push(mailA, mailB, mailC);
+    // G: 이서연 ↔ A, 박도윤 ↔ B, 김민준은 이메일 없음. G2: 이서연 ↔ C (같은 이름, 다른 팀).
+    await db.member.update({ where: { id: G.mate.id }, data: { email: mailA } });
+    await db.member.update({ where: { id: G.noCode.id }, data: { email: mailB } });
+    await db.member.update({ where: { id: G2.mate.id }, data: { email: mailC } });
+
+    // 결과를 한 단어로 — 성공이면 "ok", 아니면 이유.
+    const why = (r: Awaited<ReturnType<typeof rejoin.requestRejoinEmailCode>>) => (r.ok ? "ok" : r.reason);
+
+    check("등록되지 않은 이름은 '그런 사람 아님'", why(await rejoin.requestRejoinEmailCode(G.code, `없는사람${suffix}`, mailA)), "unknown");
+    check("이메일이 없는 사람은 no-email", why(await rejoin.requestRejoinEmailCode(G.code, `김민준${suffix}`, mailA)), "no-email");
+    check("다른 사람의 이메일로는 보내지 않는다", why(await rejoin.requestRejoinEmailCode(G.code, `박도윤${suffix}`, mailA)), "mismatch");
+    check("다른 팀에만 있는 이메일은 이 팀 사람이 아니다", why(await rejoin.requestRejoinEmailCode(G.code, `이서연${suffix}`, mailC)), "mismatch");
+    check("같은 이름·이메일도 다른 팀이면 그 팀 사람이 아니다", why(await rejoin.requestRejoinEmailCode(G2.code, `이서연${suffix}`, mailA)), "mismatch");
+    // 틀린 이메일은 찍기 시도로 센다 — 맞힐 수 없는 값이라 잠금에 넣는다.
+    check("틀린 이메일은 실패로 센다", await attemptsFor(G.code, `박도윤${suffix}`), 1);
+    // 아무 이메일로 보내 본 것이 아무 메일도 나가게 하지 않았다 — 토큰이 생기지 않았다.
+    check("맞지 않는 이메일로는 인증 토큰이 생기지 않는다", await db.emailAuthToken.count({ where: { email: mailA } }), 0);
+
+    const sent = await rejoin.requestRejoinEmailCode(G.code, `이서연${suffix}`, mailA);
+    check("맞는 이메일이면 인증번호를 보낸다", sent.ok, true);
+    const code = sent.ok ? sent.previewCode : undefined;
+    truthy("테스트에서는 인증번호가 화면으로 돌아온다", code);
+
+    check("틀린 인증번호는 틀렸다고 한다", await rejoin.rejoinWithEmailCode(G.code, `이서연${suffix}`, mailA, "000000"), "wrong");
+    // 세 값 중 하나라도 어긋나면 인증번호가 맞아도 들어가지 않고, 토큰도 소모하지 않는다.
+    check("이름이 다르면 맞는 인증번호라도 안 된다", await rejoin.rejoinWithEmailCode(G.code, `박도윤${suffix}`, mailA, code!), "mismatch");
+    check("팀이 다르면 맞는 인증번호라도 안 된다", await rejoin.rejoinWithEmailCode(G2.code, `이서연${suffix}`, mailA, code!), "mismatch");
+    check("거절된 시도는 인증번호를 소모하지 않는다", await db.emailAuthToken.count({ where: { email: mailA } }), 1);
+
+    check("맞는 팀·이름·이메일·인증번호로 들어간다", await rejoin.rejoinWithEmailCode(G.code, `이서연${suffix}`, mailA, code!), "ok");
+    truthy("이서연의 세션이 만들어졌다", (await db.session.count({ where: { memberId: G.mate.id } })) >= 1);
+    truthy("이메일 인증 시각이 남았다", (await db.member.findUniqueOrThrow({ where: { id: G.mate.id } })).emailVerifiedAt);
+    check("같은 인증번호는 한 번 쓰면 끝이다", await rejoin.rejoinWithEmailCode(G.code, `이서연${suffix}`, mailA, code!), "expired");
+
     void hashRejoinCode;
     void attemptKeys;
   } finally {
+    await db.emailAuthToken.deleteMany({ where: { email: { in: testEmails } } });
     for (const teamId of teamIds) {
       await db.memberClaim.deleteMany({ where: { member: { teamId } } });
       await db.rejoinAttempt.deleteMany({ where: { key: { contains: teamId } } });
