@@ -9,7 +9,7 @@ import {
 } from "@/data/catalog";
 import type { ClerkDraft, PresentDraft, PresentMode, ResearchResult } from "@/lib/types";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
-import { levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
+import { isSafetyLabel, levelGuide, type PurifyContext, type PurifyItem } from "@/lib/read-cushion";
 import { orNull, shapeClerkDraft, shapePresentDraft } from "@/lib/ai-draft-shape";
 import { renderTeamContext, type TeamToolContext } from "@/lib/team-tool-context";
 import type { CushionLevelKey } from "@/lib/types";
@@ -97,6 +97,9 @@ export async function rewriteWithCushion(text: string, tone: string, model?: str
     system: cushionPrompt(tone),
     user: text,
     maxTokens: 512,
+    // 안전 라벨은 **답이 아니다.** 그대로 보여 주면 사용자는 자기 말의 번역 대신 분류 결과를
+    // 받고, 기록에는 성공으로 남는다(2026-10-10 실측). 폴백이 다른 모델로 한 번 더 시도한다.
+    usable: (rewritten) => !isSafetyLabel(rewritten),
   });
 }
 
@@ -125,6 +128,7 @@ export async function rewriteWithCushionStreaming(
     user: text,
     maxTokens: 512,
     onDelta,
+    usable: (rewritten) => !isSafetyLabel(rewritten),
   });
 }
 
@@ -638,6 +642,8 @@ export async function convertSentence(text: string, mode: string, model?: string
     system: sentencePrompt(mode),
     user: text,
     maxTokens: 1024,
+    // 쿠션 번역기와 같은 이유다 — 바꾼 문장이 아니라 분류 라벨이 오는 일이 같은 라우터에서 난다.
+    usable: (converted) => !isSafetyLabel(converted),
   });
 }
 
@@ -664,5 +670,6 @@ export async function convertSentenceStreaming(
     user: text,
     maxTokens: 1024,
     onDelta,
+    usable: (converted) => !isSafetyLabel(converted),
   });
 }

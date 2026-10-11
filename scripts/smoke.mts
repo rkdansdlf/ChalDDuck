@@ -158,6 +158,7 @@ import {
   displayTextOf,
   isCushionDone,
   isRefusal,
+  isSafetyLabel,
   judgeAll,
   levelGuide,
   maskRiskyParts,
@@ -1628,6 +1629,36 @@ console.log("\n누가 하지");
     const b = await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { menuPick: true } });
     check("팀에 하나만 저장된다", a.menuPick, b.menuPick);
     await db.team.update({ where: { id: team.id }, data: { menuPick: before } });
+
+    // 팀별 추첨 후보 — 같은 팀에 같은 이름은 하나로 센다.
+    await db.drawOption.createMany({
+      data: [
+        { teamId: team.id, label: "갑", position: 0 },
+        { teamId: team.id, label: "을", position: 1 },
+      ],
+    });
+    const opts = await db.drawOption.findMany({
+      where: { teamId: team.id },
+      orderBy: { position: "asc" },
+    });
+    check("후보가 순서대로 나온다", opts.map((o) => o.label), ["갑", "을"]);
+    let dupBlocked = false;
+    await db.drawOption
+      .create({ data: { teamId: team.id, label: "갑", position: 2 } })
+      .catch(() => {
+        dupBlocked = true;
+      });
+    check("같은 팀에 같은 후보는 두 번 넣지 못한다", dupBlocked, true);
+    await db.drawOption.deleteMany({ where: { teamId: team.id } });
+
+    // 주사위 게임 기록 자리 — 룰렛·제비·사다리는 비워 둔다.
+    await db.team.update({
+      where: { id: team.id },
+      data: { menuDetail: JSON.stringify({ rounds: [{ rolls: [{ name: "김", value: 6 }] }], winner: "김" }) },
+    });
+    const detail = await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { menuDetail: true } });
+    check("주사위 기록이 남는다", JSON.parse(detail.menuDetail ?? "{}").winner, "김");
+    await db.team.update({ where: { id: team.id }, data: { menuDetail: null } });
   }
 }
 
@@ -2622,6 +2653,18 @@ console.log("\n읽기 순화: id 기반 계약");
 
   check("거절 문구를 알아본다", [isRefusal("User Safety: unsafe"), isRefusal("Sorry, I can't help"), isRefusal(" 抱歉，我无法协助")], [true, true, true]);
   check("순화문은 거절이 아니다", isRefusal('{"items":[{"id":"m1","text":"다듬은 말"}]}'), false);
+
+  // 안전 라벨 — **쿠션 번역기의 실패 모드다**(2026-10-10: 배포가 무료 라우터로 떨어져
+  // 가드 모델이 `User Safety: safe` 를 돌려줬고, 그 라벨이 "다듬은 말" 로 보였다).
+  check(
+    "안전 분류 라벨을 알아본다",
+    [isSafetyLabel("User Safety: safe"), isSafetyLabel("User Safety: unsafe (Profanity)"), isSafetyLabel("unsafe\nS1"), isSafetyLabel("safe")],
+    [true, true, true, true],
+  );
+  check("다듬은 말은 라벨이 아니다", isSafetyLabel("내일까지 자료 주시면 좋겠어요"), false);
+  // ⚠️ **`isRefusal` 을 그대로 쓰면 이 자리가 오탐이다.** 사과로 시작하는 다듬은 말은
+  // 정상적인 사용이다 — 라벨 검사는 그걸 걸러서는 안 된다.
+  check("사과로 시작하는 다듬은 말을 라벨로 보지 않는다", [isSafetyLabel("Sorry, 내일은 어려울 것 같아요"), isRefusal("Sorry, 내일은 어려울 것 같아요")], [false, true]);
 }
 
 console.log("\n읽기 순화: 항목별 판정 (묶음 전체를 버리지 않는다)");
