@@ -647,6 +647,25 @@ export function isRefusal(raw: unknown): boolean {
   return typeof raw === "string" && REFUSAL_MARKS.test(raw.trim());
 }
 
+/**
+ * 모델이 번역·변환 대신 **안전 분류 라벨**을 돌려준 것인가.
+ *
+ * 실측(2026-10-10): 배포 환경이 `openrouter/free` 로 떨어졌고, 라우터가 고른 가드 모델이
+ * `User Safety: safe` 를 돌려줬다. 그 글자가 그대로 "다듬은 말" 로 보였다 — 사용자는 자기
+ * 말의 번역이 아니라 **분류 결과**를 받았고, 기록에는 성공으로 남았다.
+ *
+ * ## 왜 `isRefusal` 을 그대로 쓰지 않는가
+ *
+ * `isRefusal` 은 `sorry,` `i can't` 도 거절로 본다. 읽기 도움에서는 맞다 — 남의 말을 다듬는
+ * 결과가 "Sorry," 로 시작할 일이 없다. **쿠션 번역기는 다르다.** 사과를 보내려는 것이
+ * 정상적인 사용이고, 다듬은 결과가 "Sorry, 내일은 어려울 것 같아요" 로 시작할 수 있다.
+ * 그래서 여기서는 **분류 라벨의 서명만** 본다 — 라벨은 어떤 사용자의 말을 다듬은 결과일 수
+ * 없으므로 오탐이 사실상 없다.
+ */
+export function isSafetyLabel(raw: unknown): boolean {
+  return typeof raw === "string" && /^\s*(user safety|safety categories|unsafe\b|safe\s*$)/i.test(raw.trim());
+}
+
 /* ── 결정론적 가림 (AI 실패 시) ─────────────────────────────── */
 
 /**
