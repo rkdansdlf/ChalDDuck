@@ -9,7 +9,7 @@ import { useAction } from "@/lib/use-action";
 import { setTeamCode } from "./onboarding-state";
 
 /** 00 팀 만들기 — 팀 이름·과목만 적으면 초대 코드가 발급된다. */
-export function NewTeamScreen() {
+export function NewTeamScreen({ inviteOrigin }: { inviteOrigin?: string }) {
   const router = useRouter();
 
   const [teamName, setTeamName] = useState("");
@@ -47,10 +47,16 @@ export function NewTeamScreen() {
    * 공유하는 값이라 되돌리면 정상적으로 나간 모든 공유까지 죽는다. 코드는 "직접 옮겨 적는
    * 길"로 남기고, 링크는 되돌릴 수 있는 쪽으로 보낸다.
    */
+  const origin =
+    inviteOrigin && inviteOrigin.length > 0
+      ? inviteOrigin.replace(/\/$/, "")
+      : typeof window === "undefined"
+        ? ""
+        : window.location.origin;
   const inviteUrl = created
     ? created.inviteToken
-      ? `${typeof window === "undefined" ? "" : window.location.origin}/join?t=${created.inviteToken}`
-      : `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${created.code}`
+      ? `${origin}/join?t=${created.inviteToken}`
+      : `${origin}/join?code=${created.code}`
     : "";
 
   const copyCode = async () => {
