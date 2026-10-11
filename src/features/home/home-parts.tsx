@@ -12,7 +12,7 @@ import type { BriefingLine } from "./briefing";
  * ## **아무 말도 없으면 그리지 않는다**
  *
  * 할 일이 없는 팀에 "오늘 다 괜찮아요" 라는 빈 상자를 띄우면 그게 잡음이 된다 — 그리고 그
- * 상태를 사용자가 "앱이 뭔가 말 안 하네" 로 오해한다. 아래 "내 확인이 필요한 일" 의 빈 상태
+ * 상태를 사용자가 "앱이 뭔가 말 안 하네" 로 오해한다. 위 "내 확인이 필요한 일" 의 빈 상태
  * 패널이 이미 그 자리를 하고 있다. **두 곳에 "괜찮아요" 를 쓰지 않는다.**
  *
  * ## 숫자를 여기서 만들지 않는다
@@ -82,37 +82,49 @@ export function BriefingCard({ lines, onOpen }: { lines: BriefingLine[]; onOpen:
   );
 }
 
-/**
- * AI 도구 바로가기 한 칸 — 이름만이 아니라 **무엇을 해 주는지**(`note`)를 함께 보여 준다.
- *
- * 이름만 있는 칸은 "쿠션 번역기" 가 뭘 하는지 모르는 사람에게 눌러볼 이유를 주지 못한다.
- * 아이콘 색은 전체 보기(`AiHubScreen`)와 같은 코랄이다 — 같은 도구가 화면마다 다른 색이면 안 된다.
- */
-export function AiToolTile({
-  icon,
-  name,
-  note,
-  onOpen,
-}: {
+/** 홈 "바로가기" 한 칸. `surface` 는 아이콘 칩의 면·글자 색(`Todo.surface` 와 같은 규칙). */
+export type HomeShortcut = {
+  key: string;
   icon: IconName;
-  name: string;
-  note: string;
-  onOpen: () => void;
-}) {
+  label: string;
+  href: string;
+  surface: string;
+  /** 0 이거나 없으면 배지를 그리지 않는다. 숫자는 호출한 쪽이 실제 목록에서 센 값이다. */
+  badge?: number;
+};
+
+/**
+ * 홈의 바로가기 네 칸 — 자주 가는 곳으로 바로 들어가는 자리.
+ *
+ * AI 도구는 전용 탭이 없고 여기서만 들어간다(도구 목록은 `/tools`).
+ */
+export function HomeShortcuts({ items, onOpen }: { items: HomeShortcut[]; onOpen: (href: string) => void }) {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex min-h-[92px] cursor-pointer flex-col items-start gap-1.5 rounded-2xl border border-line bg-card p-3 text-left select-none transition-all duration-150 hover:-translate-y-0.5 hover:bg-cr-25 active:scale-95 [&:nth-child(odd):last-child]:col-span-2"
-    >
-      <span className="flex items-center gap-2">
-        <span className="grid size-[30px] flex-none place-items-center rounded-[10px] bg-coral-100 text-coral-700">
-          <Icon name={icon} size={16} />
-        </span>
-        <span className="keep-all font-bold text-[13.5px] leading-[1.3] text-txt-strong">{name}</span>
-      </span>
-      <span className="keep-all font-medium text-[12px] leading-[1.5] text-txt-muted">{note}</span>
-    </button>
+    <div className="mb-[18px] grid grid-cols-4 gap-2">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          onClick={() => onOpen(item.href)}
+          className="flex min-h-11 cursor-pointer flex-col items-center gap-[7px] border-none bg-transparent py-1 select-none"
+        >
+          <span
+            className={cn(
+              "relative grid size-14 place-items-center rounded-[18px] transition-transform duration-150 hover:scale-105",
+              item.surface,
+            )}
+          >
+            <Icon name={item.icon} size={24} />
+            {item.badge ? (
+              <span className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-coral-400 px-[5px] font-bold text-[12px] leading-none text-ink-900">
+                {item.badge}
+              </span>
+            ) : null}
+          </span>
+          <span className="keep-all font-semibold text-[13px] leading-[1.3] text-txt-strong">{item.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -160,7 +172,12 @@ export function useRefreshWhenStale(rendered: string, polled: string | null) {
   }, [rendered, polled, router]);
 }
 
-/** 가까운 회의 한 칸 — 09/10 화면의 제안 상태를 그대로 비춘다. */
+/**
+ * 가까운 회의 한 칸 — 09/10 화면의 제안 상태를 그대로 비춘다.
+ *
+ * 요일과 시간이 정해진 회의(제안·확정)는 요일 칩으로 보여 주고, 제안 중이면 동의 현황을 점으로 함께 둔다.
+ * 아직 정해지지 않은 상태는 칩 없이 한 줄로 말한다.
+ */
 export function UpcomingMeeting({
   stage,
   day,
@@ -177,6 +194,7 @@ export function UpcomingMeeting({
   onOpen: () => void;
 }) {
   const isActionable = stage === "proposed" || (stage === "confirmed" && Boolean(day && time));
+  const scheduled = (stage === "proposed" || stage === "confirmed") && Boolean(day && time);
   const content =
     stage === "proposed" && day && time
       ? { title: `${day}요일 ${time}`, note: `제안 대기 중 · 동의 ${agreed}명 / 미응답 ${pending}명` }
@@ -188,31 +206,48 @@ export function UpcomingMeeting({
 
   return (
     <Panel
-      s="fill"
+      s={scheduled ? "card" : "fill"}
       pad={14}
-      r={16}
-      className={cn("heroCard mb-[18px]", isActionable && "cursor-pointer")}
+      r={20}
+      className={cn("heroCard mb-[18px] flex items-center gap-3.5", isActionable && "cursor-pointer")}
       onClick={onOpen}
     >
-      <div className="flex items-center gap-2.5">
+      {scheduled ? (
+        <span className="w-14 flex-none rounded-[14px] bg-yellow-100 py-2 text-center">
+          <span className="block font-extrabold text-[20px] leading-[1.25] text-txt-strong">{day}</span>
+          <span className="block font-semibold text-[12px] leading-[1.2] text-yellow-700">요일</span>
+        </span>
+      ) : (
         <span className="relative flex-none text-txt-muted">
           {stage === "proposed" ? (
             <span className="heroPulse absolute -inset-1 rounded-full text-yellow-500 pointer-events-none" />
           ) : null}
           <Icon name="calendar-clock" size={17} className="relative z-1" />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="keep-all block font-bold text-[14.5px] leading-[1.4] text-txt-strong">
-            {content.title}
-          </span>
-          <span className="keep-all mt-0.5 block font-medium text-[12.5px] leading-[1.4] text-txt-muted">
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="keep-all block font-bold text-[15px] leading-[1.4] text-txt-strong">
+          {scheduled ? time : content.title}
+        </span>
+        <span className="mt-1 flex items-center gap-2">
+          {stage === "proposed" && scheduled ? (
+            <span className="flex flex-none gap-1" aria-hidden>
+              {Array.from({ length: agreed }, (_, i) => (
+                <span key={`ok-${i}`} className="size-2.5 rounded-full bg-ok" />
+              ))}
+              {Array.from({ length: pending }, (_, i) => (
+                <span key={`off-${i}`} className="size-2.5 rounded-full bg-cr-200" />
+              ))}
+            </span>
+          ) : null}
+          <span className="keep-all min-w-0 font-medium text-[12.5px] leading-[1.4] text-txt-muted">
             {content.note}
           </span>
         </span>
-        <span className="flex-none text-txt-muted">
-          <Icon name="chevron-right" size={16} />
-        </span>
-      </div>
+      </span>
+      <span className="flex-none text-txt-muted">
+        <Icon name="chevron-right" size={16} />
+      </span>
     </Panel>
   );
 }

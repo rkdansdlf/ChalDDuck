@@ -117,6 +117,21 @@
   --animate-message-in-other: message-in-other 180ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   --animate-cushion-swap: cushion-swap 160ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   --animate-hero-pulse: hero-pulse 2.4s ease-out infinite;
+  /* 재입장 화면 — 아바타 부유, 승인 대기 중 퍼지는 링, 코드 칸의 커서 */
+  --animate-float: float 3s ease-in-out infinite;
+  --animate-ring-out: ring-out 2.8s ease-out infinite both;
+  --animate-caret: caret 1s steps(1) infinite;
+
+  @keyframes float {
+    50% { transform: translateY(-5px); }
+  }
+  @keyframes ring-out {
+    0% { transform: scale(0.55); opacity: 0.55; }
+    100% { transform: scale(1.5); opacity: 0; }
+  }
+  @keyframes caret {
+    50% { opacity: 0; }
+  }
 
   @keyframes shimmer {
     0% { transform: translateX(-100%); }

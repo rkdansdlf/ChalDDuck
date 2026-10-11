@@ -77,6 +77,64 @@ export async function issueEmailToken(email: string): Promise<{
   return { code, token, isCooldown: false };
 }
 
+export type EmailOtpCheck =
+  | { status: "ok" }
+  | { status: "wrong"; remainingAttempts: number }
+  | { status: "expired" | "locked" };
+
+/**
+ * 인증번호 한 개를 대조한다. 맞으면 토큰을 소모하지만 **로그인은 하지 않는다.**
+ *
+ * 로그인하는 길은 둘이다 — 일반 로그인(`verifyEmailAuthCode`, 그 주소의 모든 팀)과 재입장
+ * (`rejoinWithEmailCode`, 한 팀의 한 사람). 대조는 여기 한 곳이라 시도 횟수도 두 길이 같은
+ * 표를 쓴다. 로그인 자체는 각 호출부가 한다.
+ *
+ * 이 파일은 `"use server"` 가 아니라서 여기 있는 함수는 클라이언트에서 부를 수 없다.
+ */
+export async function checkEmailOtp(email: string, code: string): Promise<EmailOtpCheck> {
+  const norm = normalizeEmail(email);
+  const cleanCode = code.trim();
+
+  if (!isValidEmail(norm) || cleanCode.length !== 6) {
+    return { status: "wrong", remainingAttempts: MAX_OTP_ATTEMPTS };
+  }
+
+  // 대기 중인 토큰 조회
+  const record = await db.emailAuthToken.findFirst({
+    where: { email: norm },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (!record) return { status: "expired" };
+
+  if (record.expiresAt.getTime() <= Date.now()) {
+    await db.emailAuthToken.delete({ where: { id: record.id } });
+    return { status: "expired" };
+  }
+
+  if (record.attempts >= MAX_OTP_ATTEMPTS) {
+    await db.emailAuthToken.delete({ where: { id: record.id } });
+    return { status: "locked" };
+  }
+
+  if (record.codeHash !== hashOtp(cleanCode)) {
+    const newAttempts = record.attempts + 1;
+    if (newAttempts >= MAX_OTP_ATTEMPTS) {
+      await db.emailAuthToken.delete({ where: { id: record.id } });
+      return { status: "locked" };
+    }
+    await db.emailAuthToken.update({
+      where: { id: record.id },
+      data: { attempts: newAttempts },
+    });
+    return { status: "wrong", remainingAttempts: MAX_OTP_ATTEMPTS - newAttempts };
+  }
+
+  // 맞았다: 토큰 소모
+  await db.emailAuthToken.delete({ where: { id: record.id } });
+  return { status: "ok" };
+}
+
 /**
  * 이메일에 찍을 우리 주소(매직 링크의 기준점).
  *
@@ -189,4 +247,39 @@ export async function sendEmailOtp(
   if (sent.ok) return { success: true };
 
   return undelivered(email, magicLink, code, sent.reason);
+}
+
+/**
+ * 재입장용 인증번호 메일 — **로그인 링크를 넣지 않는다.**
+ *
+ * 일반 메일의 "바로 로그인하기" 링크는 `/join/verify` 로 가서 그 주소의 **모든** 팀에 로그인시킨다.
+ * 재입장은 한 팀의 한 사람에게만 묶여야 하므로, 그 길을 열어 두면 귀속 규칙이 우회된다. 그래서
+ * 인증번호만 보낸다. 인증번호는 재입장 화면에서 팀·이름과 함께 대조된다(`rejoinWithEmailCode`).
+ */
+export async function sendRejoinEmailCode(
+  email: string,
+  code: string,
+): Promise<{ success: boolean; previewCode?: string }> {
+  const sent = await sendMail({
+    to: email,
+    subject: `[찰떡] 재입장 인증번호 [${code}]`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #f0f0f0; border-radius: 16px;">
+        <h2 style="color: #1a1a1a; margin-top: 0;">찰떡 재입장 인증번호</h2>
+        <p style="color: #666; font-size: 15px; line-height: 1.6;">
+          재입장 화면에 아래 인증번호 6자리를 입력해 주세요.<br/>인증번호는 10분간 유효합니다.
+        </p>
+        <div style="background: #FFF9E6; border: 1px solid #FFE082; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0;">
+          <span style="font-size: 28px; font-weight: 800; letter-spacing: 6px; color: #D97706; font-family: monospace;">${code}</span>
+        </div>
+        <p style="color: #999; font-size: 12px; margin-top: 32px; text-align: center;">
+          본인이 요청하지 않았다면 이 메일을 무시해 주세요.
+        </p>
+      </div>
+    `,
+  });
+
+  if (sent.ok) return { success: true };
+
+  return undelivered(email, "(재입장 메일에는 링크가 없습니다)", code, sent.reason);
 }

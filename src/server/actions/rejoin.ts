@@ -6,6 +6,13 @@ import { revalidatePath } from "next/cache";
 import { normalizeName } from "@/features/roles/roster-model";
 import { attemptKey, clearAttempts, countFailure, isLocked } from "@/server/auth/attempts";
 import { issueRejoinCode } from "@/server/auth/issue";
+import {
+  checkEmailOtp,
+  isValidEmail,
+  issueEmailToken,
+  normalizeEmail,
+  sendRejoinEmailCode,
+} from "@/server/auth/email-token";
 import { normalizeRejoinCode, verifyRejoinCode } from "@/server/auth/rejoin-code";
 import { db } from "@/server/db";
 import { REJOIN_EXPIRED } from "@/lib/rejoin-expire";
@@ -19,9 +26,11 @@ import { describeDevice, deviceIdOf, requireLeader, requireSessionMember, startS
  * 예전에는 이름만 적으면 그대로 통과했다. 초대 코드를 아는 사람이 팀원을 사칭할 수 있었고,
  * 온보딩이 `upsert` 라 사칭한 사람이 상대의 희망 역할까지 덮어썼다(= 역할 추첨 결과가 바뀐다).
  *
- * 이제 두 갈래만 있다:
+ * 이제 세 갈래만 있다:
  * 1. **재입장 코드** — 첫 입장 때 받은 코드를 적으면 바로 들어온다.
- * 2. **팀장 승인** — 코드가 없으면 요청을 만들고 팀장이 승인해야 들어온다.
+ * 2. **등록한 이메일** — 팀 · 이름 · 이메일이 모두 맞는 한 사람에게 인증번호를 보내고, 그 번호로 들어온다
+ *    (`requestRejoinEmailCode` · `rejoinWithEmailCode`).
+ * 3. **팀장 승인** — 코드도 이메일도 없으면 요청을 만들고 팀장이 승인해야 들어온다.
  *
  * 처음 들어오는 사람(새 이름)은 예전과 똑같이 아무 마찰이 없다. 사칭이 일어나는 곳은
  * 재입장뿐이라 거기만 조인다.
@@ -79,6 +88,130 @@ export async function rejoinWithCode(
   await clearAttempts(key);
   // 나갔던 사람이 돌아오는 경우 — 재입장 문(코드·승인)을 거쳤으니 명단에 되돌린다.
   if (member.leftAt) await db.member.update({ where: { id: member.id }, data: { leftAt: null } });
+  await startSession(member.id);
+  return "ok";
+}
+
+/**
+ * 이메일로 본인을 확인한다 — **팀 · 이름 · 이메일 세 가지가 모두 같은 한 사람**에게만 된다.
+ *
+ * 등록해 둔 이메일로 인증번호를 받는다. 일반 이메일 로그인(`verifyEmailAuthCode`)은 그 주소의
+ * **모든** 팀에 로그인시키므로 재입장은 그 길을 쓰지 않는다. 인증번호 메일에도 로그인 링크를
+ * 넣지 않는다(`sendRejoinEmailCode`) — 링크가 있으면 그 링크가 팀·이름 없이 로그인시킨다.
+ *
+ * 두 액션(요청·확인)은 **둘 다** 세 값을 처음부터 다시 맞춘다. 요청 때 맞았더라도 확인 때 화면이
+ * 보낸 값을 믿지 않는다 — 확인은 요청과 별개의 호출이다.
+ */
+
+export type RejoinEmailRequestResult =
+  | { ok: true; previewCode?: string }
+  | {
+      ok: false;
+      reason:
+        | "invalid-email"
+        | "unknown"
+        | "no-email"
+        | "mismatch"
+        | "locked"
+        | "cooldown"
+        | "send-failed";
+    };
+
+export type RejoinEmailVerifyResult =
+  | "ok"
+  | "wrong"
+  | "expired"
+  | "locked"
+  | "unknown"
+  | "no-email"
+  | "mismatch";
+
+/**
+ * (팀 코드, 이름, 이메일)이 한 사람을 가리키는지 본다.
+ *
+ * 같은 이름이 팀에 둘이어도 **등록된 이메일로 한 명을 고른다** — 재입장 코드가 사람을 고르는 것과
+ * 같은 이유다. 이메일은 팀 안에서 활성 멤버 사이에 겹치지 않도록 `updateMemberEmail` 이 막는다.
+ */
+async function matchByEmail(
+  teamCode: string,
+  name: string,
+  email: string,
+): Promise<{ member: Awaited<ReturnType<typeof findMembers>>[number] } | { reason: "unknown" | "no-email" | "mismatch" }> {
+  const candidates = await findMembers(teamCode, name);
+  if (candidates.length === 0) return { reason: "unknown" };
+
+  const withEmail = candidates.filter((m) => m.email);
+  if (withEmail.length === 0) return { reason: "no-email" };
+
+  const norm = normalizeEmail(email);
+  const member = withEmail.find((m) => normalizeEmail(m.email as string) === norm);
+  if (!member) return { reason: "mismatch" };
+
+  return { member };
+}
+
+/** 1단계 — 등록된 이메일로 인증번호를 보낸다. 맞지 않는 이메일이면 보내지 않는다. */
+export async function requestRejoinEmailCode(
+  teamCode: string,
+  name: string,
+  email: string,
+): Promise<RejoinEmailRequestResult> {
+  if (!isValidEmail(email)) return { ok: false, reason: "invalid-email" };
+
+  const key = attemptKey(teamCode, name);
+  if (await isLocked(key)) return { ok: false, reason: "locked" };
+
+  const match = await matchByEmail(teamCode, name, email);
+  if ("reason" in match) {
+    // 그런 사람이 없거나 이메일을 등록하지 않은 사람은 세지 않는다(재입장 코드 경로와 같은 이유).
+    // 등록된 이메일과 **다른** 주소를 적은 것만 센다 — 이메일을 찍어 맞히는 시도다.
+    // 2026-10-11 결정: 불일치도 잠금에 넣는다(틀린 코드와 같은 취급). 팀 코드와 이름을 아는 사람이
+    // 그 사람을 10분 잠글 수 있다는 점은 재입장 코드 경로와 같은 위험으로 받아들였다.
+    if (match.reason === "mismatch") await countFailure(key);
+    return { ok: false, reason: match.reason };
+  }
+
+  const norm = normalizeEmail(email);
+  const issued = await issueEmailToken(norm);
+  if (issued.isCooldown) return { ok: false, reason: "cooldown" };
+
+  const sent = await sendRejoinEmailCode(norm, issued.code);
+  if (!sent.success) return { ok: false, reason: "send-failed" };
+
+  return { ok: true, previewCode: sent.previewCode };
+}
+
+/** 2단계 — 받은 인증번호로 들어온다. 세 값이 한 사람에게 맞을 때만 세션을 만든다. */
+export async function rejoinWithEmailCode(
+  teamCode: string,
+  name: string,
+  email: string,
+  code: string,
+): Promise<RejoinEmailVerifyResult> {
+  const key = attemptKey(teamCode, name);
+  if (await isLocked(key)) return "locked";
+
+  const match = await matchByEmail(teamCode, name, email);
+  if ("reason" in match) {
+    if (match.reason === "mismatch") await countFailure(key);
+    return match.reason;
+  }
+
+  const check = await checkEmailOtp(normalizeEmail(email), code);
+  if (check.status === "wrong") {
+    await countFailure(key);
+    return "wrong";
+  }
+  if (check.status !== "ok") return check.status;
+
+  const { member } = match;
+  await clearAttempts(key);
+  // 나갔던 사람이 돌아오는 경우 — 재입장 문을 거쳤으니 명단에 되돌린다(코드·승인 경로와 같다).
+  // 이메일을 확인했으니 인증 시각도 남긴다.
+  await db.member.update({
+    where: { id: member.id },
+    data: { emailVerifiedAt: new Date(), ...(member.leftAt ? { leftAt: null } : {}) },
+  });
   await startSession(member.id);
   return "ok";
 }

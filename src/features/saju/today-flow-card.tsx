@@ -23,12 +23,14 @@ export function TodayFlowCard({
   meetingToday,
   dueSoon,
   onOpen,
+  onRegisterSaju,
 }: {
   saju: TeamSaju | null;
   today: string;
   meetingToday: boolean;
   dueSoon: boolean;
   onOpen: (href: string) => void;
+  onRegisterSaju?: () => void;
 }) {
   const me = saju?.members.find((m) => m.isMe) ?? null;
 
@@ -45,7 +47,13 @@ export function TodayFlowCard({
 
   if (!flow) {
     return (
-      <Panel s="fill" pad={14} r={18} className="mb-[18px]" onClick={() => onOpen("/team/access")}>
+      <Panel
+        s="fill"
+        pad={14}
+        r={18}
+        className="mb-[18px]"
+        onClick={onRegisterSaju ?? (() => onOpen("/team/access"))}
+      >
         <div className="flex items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-2.5">
             <Icon name="sparkles" size={17} className="flex-none text-txt-muted" />

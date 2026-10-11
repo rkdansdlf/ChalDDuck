@@ -251,6 +251,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     } = await import("../../src/server/actions/ai.js");
     const F = await makeTeam("액션");
 
+    // 이 구간은 액션 경계를 본다 — 모델의 답이 아니다. 진입점이 키를 비워(`withoutAi`) 항상 샘플 길로 가므로 환경(키 유무,
+    // 무료 모델의 그날 상태)에 따라 결과가 갈리지 않는다. 모델 품질은 `npm run tool:bench` 가 잰다.
+    const { isAiConfigured } = await import("../../src/server/ai/model.js");
+    check("이 하네스는 모델 키를 비웠다(진입점의 withoutAi)", isAiConfigured(), false);
+
     // 문장 변환 예시의 키는 summary·email·peer_request·notice 다. `academic` 은 발표 모드 이름이라
     // 여기서는 빈 문장이 돌아온다(처음 이 검사는 그 이름을 써서 main 에서도 실패하고 있었다).
     const sample = await as(F.leaderToken, () => getSentenceSample("summary"));

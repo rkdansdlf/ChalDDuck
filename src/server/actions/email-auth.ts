@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { db } from "@/server/db";
 import { startSession } from "@/server/session";
 import {
-  hashOtp,
+  checkEmailOtp,
   isValidEmail,
   issueEmailToken,
   MAX_OTP_ATTEMPTS,
@@ -123,46 +123,11 @@ export async function verifyEmailAuthCode(
     return { status: "wrong", remainingAttempts: MAX_OTP_ATTEMPTS };
   }
 
-  // 1. 대기 중인 토큰 조회
-  const record = await db.emailAuthToken.findFirst({
-    where: { email: norm },
-    orderBy: { createdAt: "desc" },
-  });
+  // 대조와 시도 횟수는 재입장과 같은 함수가 한다(`checkEmailOtp`) — 두 길이 같은 표를 센다.
+  const check = await checkEmailOtp(norm, cleanCode);
+  if (check.status !== "ok") return check;
 
-  if (!record) {
-    return { status: "expired" };
-  }
-
-  if (record.expiresAt.getTime() <= Date.now()) {
-    await db.emailAuthToken.delete({ where: { id: record.id } });
-    return { status: "expired" };
-  }
-
-  if (record.attempts >= MAX_OTP_ATTEMPTS) {
-    await db.emailAuthToken.delete({ where: { id: record.id } });
-    return { status: "locked" };
-  }
-
-  // 6자리 해시 일치 여부 확인
-  const expectedHash = hashOtp(cleanCode);
-  if (record.codeHash !== expectedHash) {
-    const newAttempts = record.attempts + 1;
-    if (newAttempts >= MAX_OTP_ATTEMPTS) {
-      await db.emailAuthToken.delete({ where: { id: record.id } });
-      return { status: "locked" };
-    } else {
-      await db.emailAuthToken.update({
-        where: { id: record.id },
-        data: { attempts: newAttempts },
-      });
-      return { status: "wrong", remainingAttempts: MAX_OTP_ATTEMPTS - newAttempts };
-    }
-  }
-
-  // 인증 성공: 토큰 소모
-  await db.emailAuthToken.delete({ where: { id: record.id } });
-
-  // 해당 이메일의 활성 멤버들 조회
+  // 인증 성공: 토큰은 `checkEmailOtp` 가 이미 소모했다. 해당 이메일의 활성 멤버들을 찾는다.
   return completeEmailLogin(norm);
 }
 
