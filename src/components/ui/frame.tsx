@@ -76,6 +76,8 @@ export type AppBarProps = {
   onAction?: () => void;
   /** 우측 영역에 커스텀 액션 버튼들을 나열할 때 쓴다. */
   right?: ReactNode;
+  /** 제목 왼쪽의 로고 자리. 홈의 내 캐릭터처럼 브랜드를 보여 줄 때 쓴다. */
+  leading?: ReactNode;
   tone?: "y";
   /**
    * 넓은 화면에서 뒤로가기를 숨긴다.
@@ -95,6 +97,7 @@ export function AppBar({
   actionBadge,
   onAction,
   right,
+  leading,
   tone,
   hideBackOnWide,
 }: AppBarProps) {
@@ -135,6 +138,7 @@ export function AppBar({
           <Icon name="chevron-left" size={22} />
         </button>
       ) : null}
+      {leading ? <div className="flex-none pr-1">{leading}</div> : null}
       <div className="min-w-0 flex-1">
         <div className="t-bar keep-all text-txt-strong">{title}</div>
         {sub ? <div className="font-medium text-[13px] leading-[1.35] text-txt-muted">{sub}</div> : null}
