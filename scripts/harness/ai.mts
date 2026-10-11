@@ -8,10 +8,13 @@
 import "../load-env.mjs";
 
 import { installRequestContext, session } from "./request-context.mjs";
-import { assertLocalOnly } from "./safety.mjs";
+import { assertLocalOnly, withoutAi } from "./safety.mjs";
 
 // AI 한도 검사는 저장소를 건드리지 않는다 — DB 행만 만든다.
 assertLocalOnly();
+
+// 외부 모델도 부르지 않는다 — 키가 있는 로컬에서만 검사가 모델의 기분에 달리던 것을 막는다(`safety.mjs` 참고).
+withoutAi();
 
 installRequestContext();
 

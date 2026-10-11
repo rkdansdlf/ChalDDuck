@@ -54,3 +54,24 @@ export function withoutStorage() {
     process.env[name] = "";
   }
 }
+
+/**
+ * 이 하네스는 **외부 AI 모델을 부르지 않는다** — 키가 있어도.
+ *
+ * ## 왜 필요한가 — 2026-10-11
+ *
+ * `ai` 하네스의 "AI 서버 액션" 구간은 `summarizeMeeting`·`searchResearch`·`refineScript` 를 **실제 액션 경계로** 부르고
+ * "성공하거나 샘플을 반환한다" 를 확인한다. 서버는 `OPENROUTER_KEY` 가 있으면 진짜 무료 모델을 부르고, 없으면 샘플을 돌려준다.
+ * 그래서 키가 있는 로컬(`.env`)에서만 **외부 모델의 그날 기분**에 검사가 달렸다 — 모델이 도구 호출 없이 답하면
+ * (`도구 호출이 없는 응답`) 액션이 실패로 돌아가 푸시 전 훅이 막혔다. 키가 없는 CI 는 항상 샘플 길이라 통과했다.
+ * **같은 코드가 환경에 따라 다른 검사를 했고**, 그 때문에 `--no-verify` 가 반복됐다 — 저장소 키(`withoutStorage`)와 같은 모양이다.
+ *
+ * 이 하네스가 보는 것은 모델의 답이 아니라 **액션 경계와 기록**이다. 모델의 품질은 `npm run tool:bench` 가 같은 코퍼스로 잰다.
+ * 그래서 서버가 모델을 쓰는지 판단하는 값(`OPENROUTER_KEY`)을 비운다. `ai-actions` 하네스는 같은 이유로 스스로 지우고 시작한다.
+ *
+ * `load-env.mjs` 가 읽은 **뒤에** 부른다(dotenv 는 이미 있는 값을 덮어쓰지 않으므로 비운 값이 그대로 남는다).
+ * 서버의 `isAiConfigured()` 는 부를 때마다 이 값을 읽는다.
+ */
+export function withoutAi() {
+  process.env.OPENROUTER_KEY = "";
+}
