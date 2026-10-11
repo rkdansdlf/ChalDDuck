@@ -329,3 +329,28 @@ export function unresolvedClashes(
     ),
   );
 }
+
+/**
+ * 이야기로 정해야 하는 역할 — 희망자가 2명 이상이고, 추첨도 동의 대기도 없는 상태.
+ *
+ * 07 상단의 "내 차례 · 이야기해서 정하기" 카드는 이 목록으로만 뜬다. 확정됐거나, 추첨 결과를
+ * 받는 중이거나, 동의를 기다리는 중이거나, 희망자가 1명뿐이면 이야기할 일이 없으므로 카드를
+ * 띄우지 않는다. 예전에는 겹친 역할이 없으면 첫 역할로 떨어뜨려서 역할을 다 정한 뒤에도
+ * 카드가 사라지지 않았다.
+ */
+export function negotiatingRoles(
+  roles: Role[],
+  members: Member[],
+  draws: Partial<Record<RoleKey, RoleDrawResult>>,
+  consents: Partial<Record<RoleKey, DrawConsent>> = {},
+  now: Date = new Date(),
+): Role[] {
+  return roles.filter(
+    (role) =>
+      roleViewOf(
+        wantersOf(members, role.key).length,
+        draws[role.key] ?? null,
+        consentViewOf(consents[role.key], now),
+      ).kind === "negotiating",
+  );
+}

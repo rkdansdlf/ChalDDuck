@@ -290,6 +290,10 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("버전이 하나 생긴다", v1.length, 1);
     check("이름은 v1 이고 PDF 문서다", [v1[0]?.label, v1[0]?.file.kind], ["v1", "pdf"]);
     check("저장한 사람이 올린 사람이다", v1[0]?.authorId, D.mate.id);
+    // 이 하네스는 저장소 키가 없는 상태를 전제로 한다 — 진입점이 키를 비운다(`withoutStorage`). 키가 남아 있으면 아래
+    // 항목이 "객체 경로가 있다" 로 어긋나는데, 그 이유가 바로 보이도록 전제를 먼저 확인한다.
+    const { isStorageConfigured } = await import("../../src/server/storage/client.js");
+    check("이 하네스는 저장소 키를 비웠다(진입점의 withoutStorage)", isStorageConfigured(), false);
     check("저장소 키가 없으면 객체 경로를 남기지 않는다", v1[0]?.storagePath, null);
     check("바이트 수가 기록된다", (v1[0]?.bytes ?? 0) > 0, true);
     const records = await savedBy(D.mate.id);

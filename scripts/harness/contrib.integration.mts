@@ -211,15 +211,14 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       },
     });
     const evUrl = await as(A.otherToken, () => contrib.getEvidenceUrl(evRec.id));
-    // 서명 주소는 저장소(Supabase)가 만든다 — 키가 없는 환경에서는 `null` 이 정직한 답이다. 그 경우
-    // 이 검사는 **건너뛰었다고 말한다**(조용히 통과시키면 안 본 것을 본 것처럼 보인다).
+    // 이 하네스는 저장소에 손대지 않는다(진입점이 키를 비운다 — `withoutStorage`). 서명 주소는 저장소가 만드는데,
+    // 파일을 올린 적이 없으니 키가 있어도 저장소는 `Object not found` 로 거절한다 — 키 유무에 따라 결과가 갈리던
+    // 것이 이 검사가 환경마다 다르게 돌던 원인이었다. 그래서 키를 비워 **항상 같은 답(null)** 을 확인한다.
+    // 진짜 저장소에서의 발급은 `npm run test:drive` 가 개발 버킷으로 본다.
     const { isStorageConfigured } = await import("../../src/server/storage/client.js");
-    if (isStorageConfigured()) {
-      check("증빙 파일이 있는 기록의 서명 URL 발급 성공", typeof evUrl, "string");
-    } else {
-      console.log("  - (저장소 키가 없어 건너뜀: 증빙 서명 URL 발급 — npm run test:drive 가 진짜 저장소로 본다)");
-      check("저장소 키가 없으면 서명 URL 은 null 이다", evUrl, null);
-    }
+    check("이 하네스는 저장소 키를 비웠다(진입점의 withoutStorage)", isStorageConfigured(), false);
+    console.log("  - (저장소를 쓰지 않는다: 증빙 서명 URL 발급 — npm run test:drive 가 진짜 저장소로 본다)");
+    check("저장소를 쓰지 않으면 서명 URL 은 null 이다", evUrl, null);
 
     /* ── 7) 확인 목록 폴링 ───────────────────────────────────── */
     console.log("\n확인 점검 목록 폴링");
