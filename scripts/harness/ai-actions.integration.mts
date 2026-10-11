@@ -370,10 +370,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       "주사위 게임은 전원 굴리기로 정해 주세요.",
     );
 
-    // 후보는 팀이 정한다 — 저장한 값이 다음 돌림부터 쓰인다.
+    // 후보는 하나씩 적어 둘 수 있다 — 돌리기는 두 개부터다.
+    await as(I.asLeader, () => social.saveDrawOptions(["혼자"]));
     check(
-      "후보 하나로는 저장하지 않는다",
-      await blocked(() => as(I.asLeader, () => social.saveDrawOptions(["혼자"]))),
+      "하나로는 돌리지 못한다",
+      await blocked(() => as(I.asMate, () => social.spinMenu("룰렛"))),
       "후보를 두 개 이상 적어 주세요.",
     );
     await as(I.asLeader, () => social.saveDrawOptions(["갑", "을"]));

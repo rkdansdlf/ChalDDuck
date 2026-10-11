@@ -142,9 +142,9 @@ export function RouletteScreen({
     });
   };
 
-  /** 후보 지우기 — 둘은 남긴다. 실패하면 화면도 되돌린다. */
+  /** 후보 지우기 — 다 지우면 빈 목록이다. 실패하면 화면도 되돌린다. */
   const handleRemoveCandidate = (name: string) => {
-    if (spinning || list.length <= 2) return;
+    if (spinning) return;
     const prev = list;
     const next = prev.filter((item) => item !== name);
     setList(next);
@@ -375,7 +375,7 @@ export function RouletteScreen({
                       <button
                         type="button"
                         onClick={() => handleRemoveCandidate(item)}
-                        disabled={spinning || Boolean(busy.edit) || list.length <= 2}
+                        disabled={spinning || Boolean(busy.edit)}
                         aria-label={`${item} 지우기`}
                         className="ml-0.5 cursor-pointer rounded-full p-1 text-txt-faint hover:text-txt disabled:cursor-default disabled:opacity-40"
                       >
