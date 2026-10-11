@@ -13,6 +13,8 @@ import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
 import { isRoleKey, roleKeySet } from "@/features/roles/roster-model";
 import { rolesOf } from "./team-roles";
+import { workSummaryOf } from "./role-work";
+import { readWorkBuckets } from "@/server/contrib/work-buckets";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -342,7 +344,7 @@ export async function getAcceptedRoleAssignments(
 
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
-  const [draws, rejections, consents, members, session, estimateRows, teamRoleList] = await Promise.all([
+  const [draws, rejections, consents, members, session, estimateRows, teamRoleList, workBuckets] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
       include: { winner: { select: { id: true, name: true, leftAt: true } } },
@@ -366,10 +368,11 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
     getSessionMember(),
     db.roleEstimate.findMany({ where: { teamId }, select: { role: true, hours: true } }),
     rolesOf(db, teamId),
+    readWorkBuckets(teamId),
   ]);
   const knownRoles = roleKeySet(teamRoleList);
 
-  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {}, estimates: {} };
+  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {}, estimates: {}, work: {} };
 
   for (const d of draws) {
     result.draws[d.role as RoleKey] = {
@@ -407,6 +410,17 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
   // 모르는 역할 값이 들어 있으면 조용히 뺀다 — 없는 이름을 지어내지 않는다.
   for (const e of estimateRows) {
     if (isRoleKey(e.role, knownRoles)) result.estimates[e.role] = e.hours;
+  }
+
+  // 수행 기록 요약 — **확정된** 역할을 가진 현재 팀원마다. 받기 대기·희망은 아직 그 사람의 일이 아니다.
+  // 추첨·균형 추천은 이 값을 읽지 않는다(`proposeBalancedRoles` 는 `ContribRecord` 를 건드리지 않는다).
+  const heldBy = new Map<string, RoleKey[]>();
+  for (const d of draws) {
+    if (!d.accepted || !knownRoles.has(d.role)) continue;
+    heldBy.set(d.winnerId, [...(heldBy.get(d.winnerId) ?? []), d.role]);
+  }
+  for (const m of members) {
+    result.work[m.id] = workSummaryOf(teamRoleList, heldBy.get(m.id) ?? [], workBuckets.get(m.id) ?? []);
   }
 
   return result;

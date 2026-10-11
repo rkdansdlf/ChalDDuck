@@ -61,7 +61,8 @@ import {
   type MafiaPhase,
 } from "../src/lib/mafia-rules.js";
 import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "../src/lib/task-permission.js";
-import { roleWorkOf } from "../src/data/role-work.js";
+import { roleWorkOf, workSummaryOf } from "../src/data/role-work.js";
+import { WORK_CAPTION, othersLineOf, workLineOf } from "../src/features/roles/work-copy.js";
 import { BALANCE_TOOL, balancePlan, recommendBalance, roleWeights } from "../src/features/roles/balance-model.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
@@ -1104,6 +1105,59 @@ console.log("\n역할별 기여 기록");
   const src = readCode("../src/data/role-work.ts");
   truthy("역할별 기록은 비율·점수를 계산하지 않는다", /ratio|percent|score|rank|\* 100|\/ total/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
   truthy("역할별 기록은 MBTI·사주를 읽지 않는다", /mbti|saju|birth/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
+}
+
+/* ── 07 수행 기록 요약 ────────────────────────────────────── */
+
+console.log("\n07 수행 기록 요약");
+{
+  const b = (roleKey: string | null, state: string, n: number) => ({ roleKey, state, n });
+  const sum = (held: string[], buckets: ReturnType<typeof b>[]) => workSummaryOf(ROLES, held, buckets);
+
+  const full = sum(["research"], [b("research", "ok", 2), b("research", "pending", 1), b("research", "disputed", 4), b("deck", "ok", 1), b("deck", "disputed", 9)]);
+  check("확정된 역할만 줄이 된다", full.roles.map((r) => r.key), ["research"]);
+  check("확인된·대기 건수", [full.roles[0]!.confirmed, full.roles[0]!.pending], [2, 1]);
+  check("보이는 기록이 있으면 의견 차이는 어디에도 없다", [full.roles[0]!.underReview, JSON.stringify(full).includes("4"), "disputed" in full.roles[0]!], [false, false, false]);
+  check("맡지 않은 역할은 합친 수만 준다(의견 차이 제외)", [full.others, JSON.stringify(full).includes("deck")], [1, false]);
+
+  check("의견 달린 기록만 있으면 '확인 중' 이지 0건이 아니다", sum(["deck"], [b("deck", "disputed", 2)]).roles[0]!.underReview, true);
+  check("확인 대기가 있으면 '확인 중' 을 따로 말하지 않는다", sum(["deck"], [b("deck", "pending", 1), b("deck", "disputed", 2)]).roles[0]!.underReview, false);
+  check("역할이 없는 기록은 존재만 알린다", [sum(["deck"], [b(null, "ok", 3)]).hasUnlinked, sum(["deck"], [b(null, "ok", 3)]).others], [true, 0]);
+  check("지워진 역할의 기록도 연결되지 않은 기록이다", sum([], [b("r-gone0000", "ok", 1)]), { roles: [], others: 0, hasUnlinked: true });
+  check("기록이 하나도 없으면 전부 비어 있다", sum(["deck"], [])?.hasUnlinked, false);
+  check("맡았는데 기록이 없으면 줄은 있다", sum(["deck", "research"], []).roles.map((r) => [r.key, r.confirmed, r.pending]), [["research", 0, 0], ["deck", 0, 0]]);
+  check("줄 순서는 역할 목록 순서다(기록 수가 아니다)", sum(["deck", "research"], [b("deck", "ok", 9), b("research", "ok", 1)]).roles.map((r) => r.key), ["research", "deck"]);
+
+  // 문구 — 비어 보이는 이유를 구분해 말한다.
+  const role = (o: Partial<ReturnType<typeof sum>["roles"][number]> = {}) => ({ key: "deck", name: "PPT 제작", kind: "core" as const, confirmed: 0, pending: 0, underReview: false, ...o });
+  const lines = {
+    counts: workLineOf(role({ confirmed: 2, pending: 1 }), false),
+    pendingOnly: workLineOf(role({ pending: 3 }), false),
+    review: workLineOf(role({ underReview: true }), false),
+    unlinked: workLineOf(role(), true),
+    none: workLineOf(role(), false),
+  };
+  check("확인된 기록과 확인 대기를 구분한다", lines.counts, "확인된 기록 2건 · 확인 대기 1건");
+  check("대기만 있으면 확인된 기록을 말하지 않는다", lines.pendingOnly, "확인 대기 3건");
+  check("빈 상태 세 가지가 서로 다른 말이다", new Set([lines.review, lines.unlinked, lines.none]).size, 3);
+  check("의견 차이만 있으면 없다고 말하지 않는다", /없/.test(lines.review), false);
+  check("연결되지 않은 기록이 있으면 그 사실을 말한다", lines.unlinked.includes("연결되지 않은 기록"), true);
+  check("다른 역할 줄은 0이면 만들지 않는다", [othersLineOf(0), othersLineOf(2)], [null, "다른 역할로 수행한 기록 2건"]);
+  const allText = Object.values(lines).join(" ") + WORK_CAPTION;
+  truthy("문구에 의견 차이·평가어·비율이 없다", /의견 차이|분쟁|부족|우수|성실|%|점수|순위/.test(allText.replace("성실도를 따지는 숫자가 아니에요", "")) === false);
+  truthy("안내 문구가 평가가 아님을 밝힌다", WORK_CAPTION.includes("성실도를 따지는 숫자가 아니에요"));
+
+  // 원칙을 소스에서 고정한다.
+  const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const rolesSrc = readCode("../src/server/actions/roles.ts");
+  const balanceFn = rolesSrc.slice(rolesSrc.indexOf("export async function proposeBalancedRoles"), rolesSrc.indexOf("/* ── 역할 편집"));
+  truthy("균형 추천은 기여 기록·수행 요약을 읽지 않는다", /contribRecord|role-work|work-buckets|workSummary/i.test(strip(balanceFn)) === false);
+  truthy("균형 추천 모델은 수행 기록을 읽지 않는다", /contrib|role-work|work-buckets/i.test(strip(readCode("../src/features/roles/balance-model.ts"))) === false);
+  truthy("추첨 후보는 수행 기록을 읽지 않는다", /contribRecord|work-buckets/i.test(strip(rolesSrc.slice(rolesSrc.indexOf("async function candidatesFor"), rolesSrc.indexOf("export type DrawResult")))) === false);
+  truthy("탭 배지는 수행 기록 조회를 하지 않는다", /role-work|work-buckets/.test(readCode("../src/server/nav/badges.ts")) === false);
+  const panelSrc = strip(readCode("../src/features/roles/workload-panel.tsx"));
+  truthy("부담 패널은 기록 수로 사람을 정렬하지 않는다", /\.sort\(|toSorted\(/.test(panelSrc) === false);
+  truthy("수행 요약은 비율·점수를 만들지 않는다", /ratio|percent|score|rank|\* 100/i.test(strip(readCode("../src/data/role-work.ts")).replace(/OVERLOAD_RATIO/g, "")) === false);
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */

@@ -3,10 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Btn, Field, Icon, Input, Note, Panel, SecTitle, Sheet, type IconName } from "@/components/ui";
-import type { Role, RoleKey } from "@/lib/types";
+import type { MemberWorkSummary, Role, RoleKey } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import type { useAction } from "@/lib/use-action";
 import { setRoleEstimate } from "@/server/actions/roles";
+import { WORK_CAPTION, othersLineOf, workLineOf } from "./work-copy";
 import {
   MAX_ESTIMATE_HOURS,
   MIN_ESTIMATE_HOURS,
@@ -32,10 +33,13 @@ const hoursText = (h: number) => `${Number.isInteger(h) ? h : h.toFixed(1)}시�
 export function WorkloadPanel({
   workload,
   memberCount,
+  work,
   onEdit,
 }: {
   workload: Workload;
   memberCount: number;
+  /** 사람 id → 수행 기록 요약. 확정된 역할이 있는 사람 줄에만 쓴다. */
+  work: Record<string, MemberWorkSummary>;
   onEdit: () => void;
 }) {
   const { members, target, overloaded, pending, gaps, coreCovered } = workload;
@@ -71,10 +75,21 @@ export function WorkloadPanel({
       <Panel s="card" pad={0} r={18}>
         <ul className="m-0 list-none divide-y divide-line/60 p-0">
           {members.map((m) => (
-            <MemberRow key={m.id} load={m} scale={scale} target={target} over={overloaded.includes(m)} />
+            <MemberRow
+              key={m.id}
+              load={m}
+              scale={scale}
+              target={target}
+              over={overloaded.includes(m)}
+              summary={work[m.id]}
+            />
           ))}
         </ul>
       </Panel>
+
+      {members.some((m) => m.roles.length > 0) ? (
+        <p className="m-0 mt-2 text-[12px] leading-snug text-txt-muted">{WORK_CAPTION}</p>
+      ) : null}
 
       {overloaded.length > 0 && target !== null ? (
         <Note tone="warn" icon="scale" className="mt-3" title="한 사람에게 몰려 있어요">
@@ -115,11 +130,13 @@ function MemberRow({
   scale,
   target,
   over,
+  summary,
 }: {
   load: MemberLoad;
   scale: number;
   target: number | null;
   over: boolean;
+  summary: MemberWorkSummary | undefined;
 }) {
   const hasHours = load.hours > 0;
   const pct = Math.min(100, (load.hours / scale) * 100);
@@ -166,6 +183,22 @@ function MemberRow({
             />
           ) : null}
         </div>
+      ) : null}
+
+      {/* 수행 기록 — 계획(위의 시간 막대)과 **나란히 두되 합치지 않는다.** 시간과 건수는 단위가 달라
+          비율을 만들면 틀리고, 진척률처럼 읽힌다. 순서도 기록 수로 바꾸지 않는다(줄은 명단 순서 그대로). */}
+      {summary && (summary.roles.length > 0 || summary.others > 0) ? (
+        <ul className="m-0 mt-2 list-none space-y-1 p-0">
+          {summary.roles.map((r) => (
+            <li key={r.key} className="text-[12.5px] leading-snug text-txt-muted">
+              <span className="font-semibold text-txt-strong">{r.name}</span>{" "}
+              <span>{workLineOf(r, summary.hasUnlinked)}</span>
+            </li>
+          ))}
+          {othersLineOf(summary.others) ? (
+            <li className="text-[12.5px] leading-snug text-txt-muted">{othersLineOf(summary.others)}</li>
+          ) : null}
+        </ul>
       ) : null}
     </li>
   );

@@ -742,6 +742,7 @@ export function RosterScreen({
         <WorkloadPanel
           workload={workload}
           memberCount={members.length}
+          work={negotiation.work}
           onEdit={() => setEstimateOpen(true)}
         />
 

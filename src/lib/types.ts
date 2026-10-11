@@ -910,6 +910,38 @@ export type RoleWork = {
   disputed: number;
 };
 
+/**
+ * 07 에 보이는 **한 사람의 수행 기록 요약** — 확정된 역할마다 한 줄과 나머지 두 값.
+ *
+ * 역할 재분배를 협의할 때 보는 **참고 자료**이지 성실도를 판정하는 근거가 아니다. 그래서 의견 차이는
+ * 상세로 싣지 않고(`underReview` 가 "확인 중" 이라는 사실만 말한다), 기록 수로 사람을 정렬하거나 비율을
+ * 만들지 않는다. 계산은 `data/role-work.ts` 의 `workSummaryOf` 한 곳에 있다.
+ */
+export type MemberWorkSummary = {
+  /** **확정된** 역할만 — 받기 대기·희망은 아직 그 사람의 일이 아니다. */
+  roles: {
+    key: RoleKey;
+    name: string;
+    kind: RoleKind;
+    /** 팀원이 확인한 기록. */
+    confirmed: number;
+    /** 팀원 확인을 기다리는 기록. 확인된 것과 구분해 보인다. */
+    pending: number;
+    /**
+     * 의견이 달려 **확인 중인 기록이 있다** — 그 사실만. 건수·내용은 07 에 싣지 않는다(17·18 에서 본다).
+     * 확인됐거나 대기 중인 기록이 하나라도 있으면 쓰이지 않는다.
+     */
+    underReview: boolean;
+  }[];
+  /** 맡지 않은 다른 역할로 쌓은 기록(확인됨 + 대기). 어느 역할인지·누구 몫인지는 밝히지 않는다. */
+  others: number;
+  /**
+   * 어느 역할에도 연결되지 않은 기록이 있다(회의 참석·직접 추가·역할이 지워진 기록 등).
+   * "기록이 없다" 와 "연결된 기록이 없다" 를 구분하려고 둔다 — 건수는 싣지 않는다.
+   */
+  hasUnlinked: boolean;
+};
+
 /** 외부 공개용 기여 기록 리포트 묶음 데이터 */
 export type PublicReportData = {
   teamName: string;
@@ -1191,6 +1223,11 @@ export type RoleNegotiation = {
    * 부담 비교(`workloadOf`)는 이 값이 있는 역할만 합친다.
    */
   estimates: Partial<Record<RoleKey, number>>;
+  /**
+   * 팀원별 수행 기록 요약(사람 id → 요약). **모든 팀원에게 같은 값이 내려간다** — 모두가 같은 정보를
+   * 가지고 역할을 협의해야 하기 때문이다. 추첨·균형 추천에는 쓰이지 않는다(`proposeBalancedRoles` 는 읽지 않는다).
+   */
+  work: Record<string, MemberWorkSummary>;
 };
 
 /** 07 추첨 동의 제안 — 팀 화면이 읽는 모양. */
