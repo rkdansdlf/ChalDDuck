@@ -61,6 +61,7 @@ import {
   type MafiaPhase,
 } from "../src/lib/mafia-rules.js";
 import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "../src/lib/task-permission.js";
+import { roleWorkOf } from "../src/data/role-work.js";
 import { BALANCE_TOOL, balancePlan, recommendBalance, roleWeights } from "../src/features/roles/balance-model.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
@@ -1076,6 +1077,33 @@ console.log("\n균형 추천");
   truthy("균형 추천은 MBTI 를 읽지 않는다", /mbti/i.test(balanceSrc) === false);
   truthy("균형 추천은 가능한 시간(BusyBlock)을 읽지 않는다", /busy/i.test(balanceSrc) === false);
   truthy("균형 추천은 사주를 읽지 않는다", /saju|birth/i.test(balanceSrc) === false);
+}
+
+/* ── 18 역할별 기여 기록 ──────────────────────────────────── */
+
+console.log("\n역할별 기여 기록");
+{
+  const b = (roleKey: string, state: string, n: number) => ({ roleKey, state, n });
+  const keysOf = (rows: ReturnType<typeof roleWorkOf>) => rows.map((r) => r.key);
+
+  const mixed = roleWorkOf(ROLES, ["research", "deck"], [b("research", "ok", 2), b("research", "pending", 1), b("script", "ok", 1)]);
+  check("역할 목록 순서대로 나온다", keysOf(mixed), ["research", "deck", "script"]);
+  check("맡은 역할의 상태별 수", [mixed[0]!.confirmed, mixed[0]!.pending, mixed[0]!.disputed], [2, 1, 0]);
+  check("맡았는데 기록이 없으면 0건으로 남는다", [mixed[1]!.held, mixed[1]!.confirmed + mixed[1]!.pending + mixed[1]!.disputed], [true, 0]);
+  check("맡지 않은 역할의 기록도 줄이 생긴다", [mixed[2]!.key, mixed[2]!.held, mixed[2]!.confirmed], ["script", false, 1]);
+  check("맡지도 않고 기록도 없는 역할은 없다", keysOf(mixed).includes("manage"), false);
+
+  check("지워진 역할의 기록은 어느 역할로도 세지 않는다", keysOf(roleWorkOf(ROLES, [], [b("r-gone0000", "ok", 3)])), []);
+  check("모르는 상태는 어느 칸에도 넣지 않는다", roleWorkOf(ROLES, ["deck"], [b("deck", "weird", 4)])[0], {
+    key: "deck", name: "PPT 제작", kind: "core", held: true, confirmed: 0, pending: 0, disputed: 0,
+  });
+  check("같은 역할의 묶음은 합쳐진다", roleWorkOf(ROLES, [], [b("deck", "ok", 1), b("deck", "ok", 2)])[0]?.confirmed, 3);
+  check("기록도 역할도 없으면 비어 있다", roleWorkOf(ROLES, [], []), []);
+
+  // 점수·비율을 만들지 않는다 — 리포트의 첫 원칙.
+  const src = readCode("../src/data/role-work.ts");
+  truthy("역할별 기록은 비율·점수를 계산하지 않는다", /ratio|percent|score|rank|\* 100|\/ total/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
+  truthy("역할별 기록은 MBTI·사주를 읽지 않는다", /mbti|saju|birth/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
 }
 
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */

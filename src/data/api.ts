@@ -1681,15 +1681,18 @@ export async function getDmThread(teamId: string, threadId: string): Promise<DmT
 
 /* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
-export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
+export async function getMyContrib(teamId: string): Promise<ContribRecord[]> {
   const session = await getSessionMember();
   if (!session) return [];
 
-  const rows = await db.contribRecord.findMany({
-    where: { memberId: session.id },
-    // 같은 초에 들어간 행이 있으면 정렬이 흔들려 목록 순서가 조회마다 달라진다.
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.contribRecord.findMany({
+      where: { memberId: session.id },
+      // 같은 초에 들어간 행이 있으면 정렬이 흔들려 목록 순서가 조회마다 달라진다.
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    rolesOf(db, teamId),
+  ]);
 
   return rows.map((r) => ({
     id: r.id,
@@ -1699,6 +1702,7 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
     // 사람이 적을 설명이 있으면 그것을, 없으면 실제로 추가한 시각을 보여 준다.
     when: r.whenLabel ?? formatWhen(r.createdAt),
     source: r.source as ContribRecord["source"],
+    role: teamRoleList.find((role) => role.key === r.roleKey)?.name ?? null,
     // **`disputed` 를 `pending` 으로 접지 않는다.** 접으면 팀원이 내 기록에 반박했는데
     // 내 화면에는 "팀원 확인을 거칩니다" 라고만 떠, 반대된 사실이 감춰진다. 본인은
     // 알림 말고 여기서 알아야 한다.
@@ -1744,16 +1748,22 @@ export async function getTasks(teamId: string): Promise<Task[]> {
   // 담당자가 나인지 알아야 한다 — 내 업무를 나에게 찌를 수는 없고(서버가 막는다),
   // 화면에 그 버튼이 떠 있으면 실패만 눌러 보게 된다.
   const session = await getSessionMember();
-  const rows = await db.task.findMany({
-    where: { teamId },
-    include: { assignee: { select: { id: true, name: true, mbti: true, leftAt: true } } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.task.findMany({
+      where: { teamId },
+      include: { assignee: { select: { id: true, name: true, mbti: true, leftAt: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    rolesOf(db, teamId),
+  ]);
+  const knownRoles = roleKeySet(teamRoleList);
 
   return rows.map((t) => ({
     id: t.id,
     title: t.title,
     kind: t.kind as Task["kind"],
+    // 지워진 역할의 키가 남아 있어도 어느 역할로도 읽지 않는다.
+    role: t.role !== null && knownRoles.has(t.role) ? t.role : null,
     assignee: t.assignee?.name ?? null,
     mbti: toMbti(t.assignee?.mbti),
     // 팀을 나간 담당자도 이름은 남는다 — 기록은 남겨야 하되, 알림은 갈 수 없다.

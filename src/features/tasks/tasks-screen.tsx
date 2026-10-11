@@ -20,7 +20,7 @@ import {
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { Member, Task, TaskKind, TaskKindKey } from "@/lib/types";
+import type { Member, Role, Task, TaskKind, TaskKindKey } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
 import { addTask, cycleTaskStatus, updateTask } from "@/server/actions/tasks";
 
@@ -36,11 +36,14 @@ export function TasksScreen({
   tasks,
   kinds,
   roster,
+  roles,
 }: {
   tasks: Task[];
   kinds: TaskKind[];
   /** 담당자를 고르는 명단. 지금 팀에 있는 사람만 담긴다. */
   roster: Member[];
+  /** 이 팀의 역할 — 할 일이 어느 역할의 일인지 고르는 데 쓴다(선택). */
+  roles: Role[];
 }) {
   const router = useRouter();
 
@@ -78,6 +81,7 @@ export function TasksScreen({
       title: task.title,
       kind: task.kind,
       assignee: task.assignee ?? "",
+      role: task.role ?? "",
       due: task.due === "미정" ? "" : task.due,
     });
   };
@@ -222,6 +226,7 @@ export function TasksScreen({
                         담당자 미정
                       </Chip>
                     )}
+                    {task.role ? <Chip icon="list-checks">{roles.find((r) => r.key === task.role)?.name}</Chip> : null}
                     <Chip icon="calendar-clock">{task.due}</Chip>
                     <StatusBadge status={task.status} />
                     {task.source === "clerk" ? (
@@ -264,6 +269,7 @@ export function TasksScreen({
                 async () => {
                   await addTask(draft.kind, draft.title, {
                     assignee: draft.assignee || null,
+                    role: draft.role || null,
                     due: draft.due,
                   });
                   setAdding(false);
@@ -285,6 +291,7 @@ export function TasksScreen({
           onChange={setDraft}
           kinds={kinds}
           assignable={assignable}
+          roles={roles}
         />
       </Sheet>
 
@@ -305,6 +312,7 @@ export function TasksScreen({
                   await updateTask(editing.id, {
                     title: editingDraft.title,
                     assignee: editingDraft.assignee || null,
+                    role: editingDraft.role || null,
                     due: editingDraft.due,
                   });
                   setEditingId(null);
@@ -324,6 +332,7 @@ export function TasksScreen({
           onChange={setEditingDraft}
           kinds={kinds}
           assignable={assignable}
+          roles={roles}
         />
       </Sheet>
 
@@ -344,22 +353,26 @@ type TaskDraft = {
   kind: TaskKindKey;
   /** 이름. 비면 미정. */
   assignee: string;
+  /** 묶인 역할의 키. 비면 어느 역할에도 묶지 않는다. */
+  role: string;
   /** 비어 있으면 미정으로 저장된다. */
   due: string;
 };
 
-const EMPTY_DRAFT: TaskDraft = { title: "", kind: "team", assignee: "", due: "" };
+const EMPTY_DRAFT: TaskDraft = { title: "", kind: "team", assignee: "", role: "", due: "" };
 
 function TaskFields({
   draft,
   onChange,
   kinds,
   assignable,
+  roles,
 }: {
   draft: TaskDraft;
   onChange: (next: TaskDraft) => void;
   kinds: TaskKind[];
   assignable: Member[];
+  roles: Role[];
 }) {
   return (
     <>
@@ -424,6 +437,36 @@ function TaskFields({
         </div>
         <div className="t-cap text-pretty-keep mt-1.5 text-txt-muted">
           비워 두면 미정으로 남습니다. 담당자가 정해져야 콕 찌르기가 됩니다.
+        </div>
+      </div>
+
+      <div className="mb-3.5">
+        <div className="t-label mb-1.5 block text-txt-strong">
+          어느 역할의 일인가요 <span className="font-medium text-txt-muted">· 선택</span>
+        </div>
+        <div role="group" aria-label="역할" className="flex flex-wrap gap-[7px]">
+          <button
+            type="button"
+            aria-pressed={draft.role === ""}
+            onClick={() => onChange({ ...draft, role: "" })}
+            className={chipClass(draft.role === "")}
+          >
+            없음
+          </button>
+          {roles.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              aria-pressed={draft.role === r.key}
+              onClick={() => onChange({ ...draft, role: r.key })}
+              className={chipClass(draft.role === r.key)}
+            >
+              {r.name}
+            </button>
+          ))}
+        </div>
+        <div className="t-cap text-pretty-keep mt-1.5 text-txt-muted">
+          완료하면 그 역할의 기여 기록으로 쌓여요. 비워 두면 어느 역할에도 묶이지 않아요.
         </div>
       </div>
 

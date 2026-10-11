@@ -721,6 +721,11 @@ export type ContribRecord = {
   detail: string;
   when: string;
   source: "auto" | "self";
+  /**
+   * 이 기록이 쌓인 **역할 이름**. 출처(할 일의 역할·올린 제출함의 역할)에서 물려받고, 없으면 어느
+   * 역할에도 묶이지 않은 기록이다. 지워진 역할이면 비운다 — 없는 이름을 지어내지 않는다.
+   */
+  role: string | null;
   /** `disputed` = 팀원이 사실과 다르다고 적은 것. 본인이 알아야 한다 — 접으면 숨겨진다. */
   state: "ok" | "pending" | "disputed";
   evidence: ContribEvidence | null;
@@ -883,6 +888,26 @@ export type ContribReportRow = {
   unresolved: number;
   /** 확인된 주요 활동 항목 요약 (최대 3건) */
   highlights?: string[];
+  /**
+   * **역할별** 기여 기록 — 맡은 역할과 그 역할로 쌓인 기록을 나란히 둔다(`data/role-work.ts`).
+   * 역할을 맡았다는 사실과 실제로 한 일을 구분하기 위해서다. 비율·순위는 만들지 않는다.
+   */
+  work: RoleWork[];
+};
+
+/**
+ * 한 사람의 **맡은 역할** 하나와 그 역할로 쌓인 기여 기록 수 — `ContribReportRow.work` 의 한 줄.
+ * 계산은 `data/role-work.ts`(`roleWorkOf`) 한 곳에 있다.
+ */
+export type RoleWork = {
+  key: RoleKey;
+  name: string;
+  kind: RoleKind;
+  /** 이 사람이 그 역할을 맡았는가 — 확정된 배정이다(받기까지 끝난 것). */
+  held: boolean;
+  confirmed: number;
+  pending: number;
+  disputed: number;
 };
 
 /** 외부 공개용 기여 기록 리포트 묶음 데이터 */
@@ -916,6 +941,11 @@ export type Task = {
   id: string;
   title: string;
   kind: TaskKindKey;
+  /**
+   * 이 할 일이 묶인 역할(`TeamRole.key`). 선택이라 비어 있을 수 있다. 완료하면 생기는 기여 기록이 이
+   * 값을 물려받아 리포트가 "맡은 역할" 과 "그 역할로 한 일" 을 나란히 보여 준다.
+   */
+  role: RoleKey | null;
   /** 담당자. 아직 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다. */
   assignee: string | null;
   mbti: MbtiType | null;

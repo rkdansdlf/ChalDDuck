@@ -217,6 +217,24 @@ export function ContribReportScreen({
                   )}
                 </div>
 
+                {/* 역할별 — 맡은 역할과 그 역할로 쌓인 기록을 나란히 둔다. 역할을 맡았다는 사실과 실제로 한
+                    일은 다른 이야기라 한 줄로 섞지 않는다. 점수·비율은 만들지 않는다. */}
+                {row.work.length > 0 && (
+                  <ul className="m-0 mt-2 list-none space-y-0.5 p-0 text-[12px] text-zinc-700">
+                    {row.work.map((w) => (
+                      <li key={w.key} className="flex flex-wrap items-baseline gap-x-1.5">
+                        <span className="font-semibold text-zinc-800">{w.name}</span>
+                        <span className="text-zinc-500">{w.held ? "맡음" : "맡지 않은 역할"}</span>
+                        <span>
+                          · {w.confirmed > 0 ? `확인된 기록 ${w.confirmed}건` : "확인된 기록 없음"}
+                          {mode === "internal" && w.pending > 0 ? ` · 미확인 ${w.pending}건` : ""}
+                          {mode === "internal" && w.disputed > 0 ? ` · 의견 차이 ${w.disputed}건` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
                 {/* 주요 성과 하이라이트 */}
                 {row.highlights && row.highlights.length > 0 && (
                   <div className="mt-2 rounded bg-zinc-50 px-2.5 py-1.5 text-[12px] text-zinc-700">

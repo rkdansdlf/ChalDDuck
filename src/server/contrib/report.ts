@@ -5,12 +5,13 @@ import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
 import { rolesOf } from "@/data/team-roles";
 import { contribTotals } from "@/data/contrib-report-totals";
 import { acceptedRoleAssignments } from "@/data/accepted-roles";
+import { roleWorkOf, type RoleStateBucket } from "@/data/role-work";
 import type { ContribReportRow, PublicReportData } from "@/lib/types";
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 같은 표에서 센다. */
 export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
   const teamRoleList = await rolesOf(db, teamId);
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
+  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords, roleCounts] = await Promise.all([
     db.member.findMany({
       where: { teamId },
       select: { id: true, name: true, leftAt: true },
@@ -39,7 +40,21 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       select: { memberId: true, title: true },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     }),
+    // 역할에 묶인 기록만 — 묶이지 않은 기록(회의 참석·직접 추가)은 위 합계에만 들어간다.
+    db.contribRecord.groupBy({
+      by: ["memberId", "roleKey", "state"],
+      where: { member: { teamId }, roleKey: { not: null } },
+      _count: { _all: true },
+    }),
   ]);
+
+  const roleBucketsByMember = new Map<string, RoleStateBucket[]>();
+  for (const r of roleCounts) {
+    if (r.roleKey === null) continue;
+    const list = roleBucketsByMember.get(r.memberId) ?? [];
+    list.push({ roleKey: r.roleKey, state: r.state, n: r._count._all });
+    roleBucketsByMember.set(r.memberId, list);
+  }
 
   const totals = contribTotals({
     states: stateCounts.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
@@ -70,6 +85,7 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       participations: bucket?.participations ?? 0,
       unresolved: bucket?.unresolved ?? 0,
       highlights: highlightsByMember.get(m.id) ?? [],
+      work: roleWorkOf(teamRoleList, roles, roleBucketsByMember.get(m.id) ?? []),
     };
   });
 }

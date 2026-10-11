@@ -34,6 +34,7 @@ export function ContribRow({ record, kinds }: { record: ContribRecord; kinds: Co
           <Chip icon={record.source === "auto" ? "wand-sparkles" : "user-round"}>
             {record.source === "auto" ? "앱이 수집" : "내가 추가"}
           </Chip>
+          {record.role ? <Chip icon="list-checks">{record.role} 역할</Chip> : null}
           {record.state === "ok" ? (
             <Chip tone="ok" icon="check">
               확인함

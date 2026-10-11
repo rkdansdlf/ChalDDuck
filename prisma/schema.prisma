@@ -1103,6 +1103,12 @@ model ContribRecord {
   originType    String?
   /// 자동 수집 출처 id: Task.id | FileVersion.id
   originId      String?
+  /// 이 기록이 **어느 역할의 일**인지(`TeamRole.key`). 출처에서 물려받는다 — 할 일은 `Task.role`,
+  /// 드라이브 버전은 올린 제출함의 역할. 회의 참석·직접 추가한 기록은 비어 있다.
+  ///
+  /// 분류일 뿐 사실이 아니다 — 팀원 확인·의견과 상관없이 출처의 역할이 바뀌면 따라 바뀐다. 리포트는
+  /// 이 값으로 "맡은 역할" 옆에 "그 역할로 쌓인 기록" 을 놓는다(역할을 맡았다는 사실과 실제로 한 일을 구분한다).
+  roleKey       String?
   createdAt     DateTime @default(now())
 
   member         Member                 @relation("ContribOwner", fields: [memberId], references: [id], onDelete: Cascade)
@@ -1115,6 +1121,7 @@ model ContribRecord {
   @@unique([originType, originId, memberId])
   @@index([memberId])
   @@index([originType, originId])
+  @@index([memberId, roleKey])
 }
 
 /// 한 사람이 한 기록에 남긴 의견 하나.
@@ -1216,6 +1223,12 @@ model Task {
   /// 누가 넣었나. **담당자 지정 권한의 근거** — `server/actions/tasks.ts` 의 `canEditTask`.
   /// 기존 행은 `null` 이고, 그 할 일은 팀장만 고칠 수 있다(주인이 누구인지 되돌릴 수 없으므로).
   createdById String?
+  /// 이 할 일이 **어느 역할의 일인지**(`TeamRole.key`). 선택이고, 비어 있으면 어느 역할에도 묶이지 않는다.
+  ///
+  /// 완료하면 만들어지는 기여 기록이 이 값을 물려받아(`ContribRecord.roleKey`) 리포트가 "맡은 역할"과
+  /// "실제로 한 일"을 나란히 놓을 수 있다. 역할이 지워져도(`removeTeamRole`) 값은 남지만 어느 역할에도
+  /// 읽히지 않는다 — 읽는 쪽이 그 팀의 역할 목록에 있는 키만 인정한다.
+  role        String?
   createdAt   DateTime @default(now())
 
   team      Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
