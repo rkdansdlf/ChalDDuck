@@ -19,6 +19,9 @@ export default async function TeamPage() {
   // 비교해 상태를 정하는데, 클라이언트가 새벽에 `new Date()` 로 다시 재면 서버가 그린 것과
   // 다른 그림이 그려진다(하이드레이션 불일치). 시각은 읽는 곳에서 한 번만 정한다.
   const now = new Date().toISOString();
+  // 휴대폰에서 QR을 찍을 수 있어야 초대가 통한다 — localhost 링크는 휴대폰에서 안 열리므로
+  // 운영/LAN 주소(APP_URL)를 초대 링크의 기점으로 쓴다. 없으면 지금 주소가 그대로 쓰인다.
+  const inviteOrigin = process.env.APP_URL?.replace(/\/$/, "") || undefined;
   const [roles, roster, tools, negotiation, rejoinRequests, joinRequests, invites] =
     await Promise.all([
       getRoles(),
@@ -43,6 +46,7 @@ export default async function TeamPage() {
           클라이언트도 알아야 해서 여기도 본다 — 못 보면 버튼을 아예 띄우지 않는다. */
       invites={session?.isLeader ? invites : []}
       isLeader={session?.isLeader ?? false}
+      inviteOrigin={inviteOrigin}
     />
   );
 }
