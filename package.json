@@ -31,6 +31,7 @@
     "test:schedule": "tsx --conditions=react-server scripts/harness/schedule.mts",
     "test:badges": "tsx --conditions=react-server scripts/harness/badges.mts",
     "test:drive-save": "tsx --conditions=react-server scripts/harness/drive-save.mts",
+    "test:drive-save-pdf": "tsx --conditions=react-server scripts/harness/drive-save-pdf.mts",
     "test:ai-actions": "tsx --conditions=react-server scripts/harness/ai-actions.mts",
     "test:email-auth": "tsx --conditions=react-server scripts/harness/email-auth.mts",
     "test:report-share": "tsx --conditions=react-server scripts/harness/report-share.mts",
@@ -56,6 +57,7 @@
     "test:contrib-dispute": "tsx --conditions=react-server scripts/harness/contrib-dispute.mts"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@supabase/supabase-js": "^2.116.0",
@@ -63,6 +65,7 @@
     "next": "16.3.5",
     "nodemailer": "^10.0.12",
     "openai": "^7.19.0",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",

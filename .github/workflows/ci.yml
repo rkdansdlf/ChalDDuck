@@ -144,6 +144,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `test:drive-save-pdf` 는 만든 PDF 를 `pdftotext`·`pdfinfo`·`pdffonts` 로 열어 읽는다. 러너 이미지에
+      # 들어 있다고 기대하지 않고 직접 설치한다 — 없으면 그 하네스는 건너뛰지 않고 실패한다.
+      - name: Install poppler (PDF 읽기 검사)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Deploy Database Migrations
         run: npm run db:deploy
 

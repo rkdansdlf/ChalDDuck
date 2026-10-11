@@ -57,6 +57,7 @@ const TESTS = [
   "scripts/harness/schedule.integration.mts",
   "scripts/harness/badges.integration.mts",
   "scripts/harness/drive-save.integration.mts",
+  "scripts/harness/drive-save-pdf.integration.mts",
   "scripts/harness/ai-actions.integration.mts",
 ];
 
