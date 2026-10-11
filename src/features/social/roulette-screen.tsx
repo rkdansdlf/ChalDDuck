@@ -7,6 +7,7 @@ import {
   Body,
   Btn,
   Chip,
+  DiceClashStage,
   DrawStage,
   Icon,
   Note,
@@ -14,86 +15,92 @@ import {
   type IconName,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { RandomTool } from "@/lib/types";
+import type { DiceClashRound, RandomTool } from "@/lib/types";
 import { useAction } from "@/lib/use-action";
-import { spinMenu } from "@/server/actions/social";
+import { rollDiceClash, saveDrawOptions, shareDrawToChat, spinMenu } from "@/server/actions/social";
 
 /**
  * 이 화면이 어디까지 왔는지.
  *
  * 세 단계로 나눈 이유는 **각 단계의 소유자가 다르기 때문**이다. `waiting` 의 끝은 서버가
- * 정하고, `rolling` 의 끝은 연출(=` DrawStage`, 자기 타이머)이 정하고, `done` 은 사람이
- * 다음을 누를 때까지다. 예전처럼 전부 클라이언트 타이머로 굴리면 서버 호출이 실패했을 때
- * 멈출 자리가 사라져, 이름이 무한히 바뀌면서 "정하는 중…" 버튼이 계속 꺼져 있었다.
+ * 정하고, `rolling` 의 끝은 연출(=`DrawStage`·`DiceClashStage`, 자기 타이머)이 정하고,
+ * `done` 은 사람이 다음을 누를 때까지다.
  */
 type Spin =
-  /** 서버가 아직 답하지 않았다 — 결과를 알기 전에 연출을 시작할 수는 없다. */
   | { at: "waiting" }
-  /** 서버가 정했고, 지금 그 결과를 고른 도구로 보여 주는 중. */
-  | { at: "rolling"; tool: RandomTool; pick: string }
-  /** 연출이 끝났다. 결과를 내보여도 된다. */
-  | { at: "done"; tool: RandomTool; pick: string };
+  | { at: "rolling"; tool: RandomTool; pick: string; rounds?: DiceClashRound[] }
+  | { at: "done"; tool: RandomTool; pick: string; rounds?: DiceClashRound[] };
 
 /**
  * 29 친목 · 누가 하지.
  *
- * **결정은 팀에 하나다.** 예전에는 폰마다 `Math.random()` 으로 따로 돌렸고 서버를 부르지도
- * 않았다 — 팀원 네 명이 각자 다른 메뉴를 보고 무엇을 먹을지 합의가 되지 않았고, 새로고침하면
- * 또 다른 값이 나왔다. 이제 서버가 한 번 뽑아 저장하고 모두가 그 값을 본다.
+ * **결정은 팀에 하나다.** 서버가 한 번 뽑아 저장하고 모두가 그 값을 본다.
  *
- * **도구도 골라도 된다** — 룰렛·주사위·제비뽑기·사다리타기(`RANDOM_TOOLS` 네 가지). 역할 조율(07)의
- * 추첨이 쓰던 것과 **같은 연출**(`DrawStage`)을 그대로 빌린다. 다만 여기 뽑히는 건 사람이
- * 아니라 밥이라 `Avatar` 붙은 당첨자 카드가 없고, 결과는 이 화면이 그린다.
- *
- * 도구는 고르지만 **결과는 고르지 않는다** — 어떤 도구를 골라도 나오는 값은 `MENU_OPTIONS`
- * 안에서 서버가 뽑는다. 도구를 바꾸고 싶다고 다시 돌리면 팀의 밥도 바뀐다.
- *
- * 결과에 따라 순위를 매기지 않는다 — 친목 기능이 점수가 되면 친목이 아니게 된다.
+ * 후보는 **목록 하나**다. 정하고 싶은 것을 직접 적는다 — 기본값도 예시도 없다.
+ * 목록을 바꾸면 팀에 바로 저장되므로, 다음에 들어온 팀원도 같은 목록을 본다.
+ * 도구는 룰렛·주사위·제비뽑기·사다리타기 네 가지인데, 주사위만 후보 뽑기가 아니라
+ * 팀원 전원이 굴려 눈이 가장 높은 사람이 이기는 게임이다.
  */
 export function RouletteScreen({
   options,
   tools,
-  pick,
   tool,
+  members = [],
 }: {
+  /** 팀의 추첨 후보 — 팀이 적어 둔 값 그대로. 없으면 빈 목록이다. */
   options: string[];
-  /** 고를 수 있는 추첨 도구. 역할 조율과 같은 목록이라 키도 같다. */
   tools: RandomTool[];
-  /** 팀이 이미 정한 밥. 없으면 아직 아무도 돌리지 않았다. */
-  pick: string | null;
-  /** 그 밥을 어떤 도구로 정했는지. `pick` 이 있으면 같이 온다. */
+  /** 팀이 마지막으로 쓴 도구. 없으면 목록의 첫 도구다. */
   tool: string | null;
+  members?: string[];
 }) {
   const router = useRouter();
   const { toast, busy, run } = useAction();
 
   const [spin, setSpin] = useState<Spin | null>(null);
-  /**
-   * 이 화면에서 고른 도구. 저장된 값(`tool`)으로 시작해 팀이 마지막으로 쓴 도구가 곧
-   * 기본값이다 — 아무도 정하지 않았으면 목록의 첫 도구다.
-   */
   const [toolKey, setToolKey] = useState<string>(tool ?? tools[0]?.key ?? "roulette");
 
+  /** 팀의 후보 목록. 바꾸면 서버에 바로 저장된다 — 팀에 하나이므로. */
+  const [list, setList] = useState<string[]>(options);
+  /** 추첨에서 뺀 후보. 저장하지 않는다 — 이번 돌림에만 적용되는 가벼운 제외다. */
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [newLabel, setNewLabel] = useState("");
+  const [shared, setShared] = useState(false);
+
   /**
-   * 서버에 이미 던졌는가.
-   *
-   * `disabled` 은 **다음 렌더에서야** 눌린다. 그 틈에 들어온 두 번째 탭은 `useAction.run` 의
-   * `running` 집합이 조용히 막는데, 막힌 쪽은 `false` 를 돌려준다(`use-action.ts`). 막힌 것까지
-   * "실패한 것"으로 보면 `waiting` 을 되돌려 **남의 굴림을 죽인다.** 그래서 여기로 직접 한 번
-   * 더 막고, 이 참이 **실제로** 서버에서 실패했을 때만 되돌린다.
+   * 서버 값이 바뀌면(다른 팀원이 목록을 고쳤다) 따라간다. 제외 표는 남은 후보에만
+   * 남긴다 — 사라진 후보의 제외는 의미가 없다. 렌더 중에 조정한다(이펙트가 아니라):
+   * 내용이 같으면 손대지 않으므로 연출·입력 도중에 덮어쓰지 않는다.
    */
+  const optionsKey = JSON.stringify(options);
+  const [syncedKey, setSyncedKey] = useState(optionsKey);
+  if (optionsKey !== syncedKey) {
+    setSyncedKey(optionsKey);
+    setList(options);
+    setExcluded((prev) => new Set([...prev].filter((name) => options.includes(name))));
+  }
+
   const fired = useRef(false);
 
   const chosen = tools.find((t) => t.key === toolKey);
   const spinning = spin !== null && spin.at !== "done";
+  /**
+   * 이번에 돌려 끝낸 결과. 저장된 지난 결과는 첫 화면에 보여주지 않는다 —
+   * 들어오자마자 옛 당첨이 뜨면 "지금 정한 것"으로 읽힌다. 돌린 뒤의 표시는
+   * 이 자리에서 끝낸 것에만 붙는다.
+   */
+  const doneResult = spin !== null && spin.at === "done" ? spin : null;
 
-  /** 지금 화면에 보여 줄 값. 서버가 정한 것이 우선이다. */
-  const shown = spin === null || spin.at === "waiting" ? pick : spin.pick;
-  /** 그 값이 어떤 도구로 나왔는지. */
-  const shownTool = spin === null || spin.at === "waiting" ? tool : spin.tool.name;
+  const activeCandidates = useMemo(() => list.filter((item) => !excluded.has(item)), [list, excluded]);
+  const candidates = useMemo(() => activeCandidates.map((name) => ({ name })), [activeCandidates]);
 
-  /** 바퀴·제비·사다리는 이름만 읽는다 — `MENU_OPTIONS` 에 MBTI 는 없다. */
-  const candidates = useMemo(() => options.map((name) => ({ name })), [options]);
+  /**
+   * 주사위는 후보 뽑기가 아니라 전원 굴림이다. 후보 목록과 무관하게 팀원 전원이
+   * 굴리고 눈이 가장 높은 사람이 이긴다(`rollDiceClash`) — 서버가 팀원 명단으로 굴린다.
+   */
+  const isDiceMode = chosen?.key === "dice";
+  /** 이번 굴림의 라운드 — 연출과 단톡방 공유가 같은 값을 본다. */
+  const spinRounds = spin !== null && spin.at !== "waiting" ? (spin.rounds ?? null) : null;
 
   /** 실패해도 반드시 빠져나갈 수 있는 유일한 자리 — 실제 실패는 `run` 의 `false` 다. */
   const release = (ok: boolean) => {
@@ -102,40 +109,135 @@ export function RouletteScreen({
     setSpin(null);
   };
 
+  /** 후보 토글 (제외 / 포함) — 둘은 남긴다. 하나면 추첨이 아니라 지명이다. */
+  const toggleCandidate = (name: string) => {
+    if (spinning) return;
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        if (list.length - next.size <= 2) return prev;
+        next.add(name);
+      }
+      return next;
+    });
+  };
+
+  /** 후보 추가 — 곧바로 팀에 저장한다. 실패하면 화면도 되돌린다. */
+  const handleAddCandidate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newLabel.trim();
+    if (!trimmed || spinning || list.includes(trimmed)) return;
+    const prev = list;
+    const next = [...prev, trimmed];
+    setList(next);
+    setNewLabel("");
+    void run("edit", () => saveDrawOptions(next), "추가하지 못했습니다.").then((ok) => {
+      if (!ok) {
+        setList(prev);
+        setNewLabel(trimmed);
+      }
+      router.refresh();
+    });
+  };
+
+  /** 후보 지우기 — 둘은 남긴다. 실패하면 화면도 되돌린다. */
+  const handleRemoveCandidate = (name: string) => {
+    if (spinning || list.length <= 2) return;
+    const prev = list;
+    const next = prev.filter((item) => item !== name);
+    setList(next);
+    setExcluded((old) => {
+      const copy = new Set(old);
+      copy.delete(name);
+      return copy;
+    });
+    void run("edit", () => saveDrawOptions(next), "지우지 못했습니다.").then((ok) => {
+      if (!ok) setList(prev);
+      router.refresh();
+    });
+  };
+
+  // 추첨 실행 — 주사위는 전원 굴림, 나머지는 후보 중 하나를 뽑는다.
   const spinMenuPick = () => {
-    if (fired.current || !chosen || options.length === 0) return;
-    const tool = chosen;
+    if (fired.current || !chosen || spinning) return;
+    if (chosen.key === "dice") {
+      if (members.length < 2) return;
+      const toolToUse = chosen;
+      fired.current = true;
+      setSpin({ at: "waiting" });
+      setShared(false);
+
+      void run(
+        "spin",
+        async () => {
+          const result = await rollDiceClash();
+          setSpin({ at: "rolling", tool: toolToUse, pick: result.winner, rounds: result.rounds });
+          router.refresh();
+        },
+        "굴리지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
+      ).then(release);
+      return;
+    }
+    if (activeCandidates.length < 2) return;
+    const toolToUse = chosen;
     fired.current = true;
     setSpin({ at: "waiting" });
+    setShared(false);
 
-    // **서버가 먼저 뽑는다.** 여기는 그 결과를 도구별 연출로 천천히 보여 줄 뿐이다 — 예전에는
-    // 여기가 뽑아서, 팀원이 몇 명인지에 따라 모두 다른 답이 나왔다.
     void run(
       "spin",
       async () => {
-        const picked = await spinMenu(tool.name);
-        setSpin({ at: "rolling", tool, pick: picked });
-        // 알림은 서버가 팀 전체에 보냈다. 여기서는 다시 말하지 않는다.
+        const picked = await spinMenu(toolToUse.name, activeCandidates);
+        setSpin({ at: "rolling", tool: toolToUse, pick: picked });
         router.refresh();
       },
       "정하지 못했습니다. 잠시 뒤 다시 눌러 주세요.",
     ).then(release);
   };
 
-  /** 연출이 끝나면 결과를 내보인다. 타이머는 `DrawStage` 가 가지고 있다. */
   const onLanded = () => {
     fired.current = false;
-    setSpin((prev) => (prev?.at === "rolling" ? { at: "done", tool: prev.tool, pick: prev.pick } : prev));
+    setSpin((prev) =>
+      prev?.at === "rolling" ? { at: "done", tool: prev.tool, pick: prev.pick, rounds: prev.rounds } : prev,
+    );
+  };
+
+  // 팀 단톡방에 공유하기 — 주사위는 마지막 라운드의 참가자를 후보로 적는다.
+  const handleShareToChat = async () => {
+    if (!doneResult || shared) return;
+    const shareCandidates =
+      doneResult.rounds && doneResult.rounds.length > 0
+        ? (doneResult.rounds[doneResult.rounds.length - 1]?.rolls.map((r) => `${r.name}(${r.value})`) ?? [])
+        : activeCandidates;
+    await run(
+      "share",
+      async () => {
+        const res = await shareDrawToChat({
+          title: doneResult.tool.key === "dice" ? "주사위 게임" : "팀 추첨",
+          toolName: doneResult.tool.name,
+          pick: doneResult.pick,
+          candidates: shareCandidates,
+        });
+        if (res.ok) {
+          setShared(true);
+        } else {
+          throw new Error(res.error);
+        }
+      },
+      "단톡방 공유에 실패했습니다.",
+    );
   };
 
   return (
     <>
-      <AppBar title="누가 하지" sub="오늘 밥 정하기" onBack={() => router.push("/team")} />
+      <AppBar title="누가 하지" sub={isDiceMode ? "주사위 게임" : "팀 추첨"} onBack={() => router.push("/team")} />
 
       <Body dense className="flex flex-col">
         <p className="text-pretty-keep mt-1 mb-[18px] text-[14.5px] leading-[1.62] text-txt">
-          여기서 정한 건 <b>팀에 하나</b>입니다. 정하기 전에는 누구도 볼 수 없고, 정한 뒤에는 모두
-          같은 값을 봅니다. 순위는 매기지 않습니다.
+          여기서 정한 건 <b>팀에 하나</b>입니다. 후보를 직접 정할 수 있고, 바꾸면 팀 전체에 바로
+          적용됩니다. 순위는 매기지 않습니다.
         </p>
 
         <p className="t-note-title keep-all mb-[9px] text-txt-strong">무엇으로 정할까요</p>
@@ -171,17 +273,13 @@ export function RouletteScreen({
         <div
           // 결과가 바뀌면 스크린 리더가 읽어 준다 — 애니메이션만으로는 알 수 없다.
           role="status"
-          className="mb-[18px] flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-card bg-yellow-100 px-4 text-center transition-all duration-300"
+          className="mb-[18px] flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-card bg-yellow-100 px-4 py-3 text-center transition-all duration-300"
         >
           {spin === null ? (
-            shown ? (
-              <div className="animate-pop flex flex-col items-center gap-1">
-                <span className="t-cap-strong text-yellow-700" style={{ letterSpacing: ".06em" }}>
-                  ✨ 오늘은 이거!
-                </span>
-                <span className="font-extrabold text-[26px] leading-[1.3] text-ink-900 animate-jelly">
-                  {shown}
-                </span>
+            toolKey === "ladder" && activeCandidates.length >= 2 ? (
+              <div className="flex w-full flex-col items-center">
+                <span className="t-cap-strong mb-1 text-yellow-700">🪜 사다리 발판 준비 완료</span>
+                <DrawStage toolKey="ladder" candidates={candidates} preview />
               </div>
             ) : (
               <span className="font-semibold text-[14px] leading-[1.4] text-yellow-700">
@@ -197,45 +295,148 @@ export function RouletteScreen({
                 고르는 중…
               </span>
             </div>
+          ) : spin.tool.key === "dice" && spinRounds ? (
+            <DiceClashStage rounds={spinRounds} winner={spin.pick} onLanded={onLanded} />
           ) : (
-            <DrawStage
-              toolKey={spin.tool.key}
-              candidates={candidates}
-              winner={spin.pick}
-              onLanded={onLanded}
-            />
+            <DrawStage toolKey={spin.tool.key} candidates={candidates} winner={spin.pick} onLanded={onLanded} />
           )}
         </div>
 
-        {shown && !spinning ? (
-          <Note tone="info" icon="users-round" className="mb-[18px]">
-            지금 정해진 건 <b>{shown}</b>
-            {shownTool ? (
-              <>
-                {" "}
-                (<b>{shownTool}</b>로)
-              </>
-            ) : null}{" "}
-            입니다. 다시 돌리면 전체가 함께 바뀝니다 — 지금 정한 대로 갈 수도 있습니다.
-          </Note>
+        {doneResult ? (
+          <div className="mb-[18px] flex flex-col gap-2">
+            <Note tone="info" icon="users-round">
+              지금 정해진 건 <b>{doneResult.pick}</b> (<b>{doneResult.tool.name}</b>로) 입니다. 다시
+              돌리면 전체가 함께 바뀝니다 — 지금 정한 대로 갈 수도 있습니다.
+            </Note>
+
+            <button
+              type="button"
+              onClick={handleShareToChat}
+              disabled={busy.share || shared}
+              className={cn(
+                "flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-3 text-[14px] font-bold transition-all",
+                shared
+                  ? "border-ok bg-ok-bg text-ok cursor-default"
+                  : "border-line bg-card text-txt-strong hover:bg-fill active:scale-[0.98] cursor-pointer",
+              )}
+            >
+              <Icon name={shared ? "check" : "share-2"} size={16} />
+              <span>{shared ? "단톡방에 공유 완료" : "팀 단톡방에 결과 공유하기"}</span>
+            </button>
+          </div>
         ) : null}
 
-        <div className="mb-[18px] flex flex-wrap gap-1.5">
-          {options.map((option) => (
-            <Chip key={option} tone={option === shown ? "y" : undefined}>
-              {option}
-            </Chip>
-          ))}
-        </div>
+        {isDiceMode ? (
+          <div className="mb-[18px]">
+            <p className="t-note-title mb-2 text-txt-strong">참가자 ({members.length}명 전원)</p>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {members.map((name) => (
+                <Chip key={name}>{name}</Chip>
+              ))}
+            </div>
+            <Note tone="info" icon="dices">
+              버튼을 누르면 <b>전원이 한 번씩 굴리고</b>, 눈이 가장 높은 사람이 이깁니다. 동점이면
+              동점자끼리 다시 굴립니다.
+            </Note>
+            {members.length < 2 ? (
+              <p className="mt-2 text-center text-xs font-semibold text-coral-600">
+                주사위 게임은 팀원이 두 명부터 할 수 있습니다.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="t-note-title text-txt-strong">
+                {list.length === 0 ? "추첨 후보" : `추첨 후보 (${activeCandidates.length}개 선택됨)`}
+              </p>
+              {list.length > 0 ? (
+                <span className="text-[12px] text-txt-muted">칩을 눌러 제외/포함</span>
+              ) : null}
+            </div>
+
+            {list.length === 0 ? (
+              <Note tone="info" icon="ticket" className="mb-3">
+                아직 후보가 없습니다. 아래에 <b>두 개 이상</b> 적으면 바로 추첨할 수 있습니다.
+              </Note>
+            ) : (
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {list.map((item) => {
+                  const isExcluded = excluded.has(item);
+                  const isWinner = doneResult !== null && item === doneResult.pick;
+                  return (
+                    <span key={item} className={cn("inline-flex items-center", isExcluded && "opacity-60")}>
+                      <button
+                        type="button"
+                        onClick={() => toggleCandidate(item)}
+                        disabled={spinning}
+                        aria-pressed={!isExcluded}
+                        title={isExcluded ? "다시 포함하기" : "이번 추첨에서 빼기"}
+                        className="cursor-pointer transition-all active:scale-95 disabled:cursor-default"
+                      >
+                        <Chip tone={isWinner && !isExcluded ? "y" : undefined}>
+                          <span className={cn(isExcluded && "line-through")}>{item}</span>
+                        </Chip>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCandidate(item)}
+                        disabled={spinning || Boolean(busy.edit) || list.length <= 2}
+                        aria-label={`${item} 지우기`}
+                        className="ml-0.5 cursor-pointer rounded-full p-1 text-txt-faint hover:text-txt disabled:cursor-default disabled:opacity-40"
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            <form onSubmit={handleAddCandidate} className="mb-[18px] flex gap-2">
+              <input
+                type="text"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                disabled={spinning || Boolean(busy.edit)}
+                placeholder={chosen?.key === "ladder" ? "사다리에 올릴 항목 추가 (예: 커피 사기, 1조)" : "새 후보 추가"}
+                maxLength={20}
+                aria-label="새 후보"
+                className="flex-1 rounded-xl border border-line bg-card px-3 py-2 text-[13.5px] text-txt-strong outline-none focus:border-yellow-500"
+              />
+              <Btn type="submit" size="sm" v="outline" icon="plus" disabled={!newLabel.trim() || spinning}>
+                추가
+              </Btn>
+            </form>
+
+            {list.length > 0 && activeCandidates.length < 2 ? (
+              <p className="mb-3 text-center text-xs font-semibold text-coral-600">
+                추첨을 하려면 후보가 2개 이상 선택되어 있어야 합니다.
+              </p>
+            ) : null}
+          </>
+        )}
 
         <Btn
           full
           size="lg"
           icon={(chosen?.icon ?? "dices") as IconName}
           onClick={spinMenuPick}
-          disabled={busy.spin || spinning || !chosen}
+          disabled={
+            busy.spin || spinning || !chosen || (isDiceMode ? members.length < 2 : activeCandidates.length < 2)
+          }
         >
-          {spinning ? "정하는 중…" : shown ? "다른 거로 정하기" : "정하기"}
+          {spinning
+            ? isDiceMode
+              ? "굴리는 중…"
+              : "정하는 중…"
+            : isDiceMode
+              ? doneResult
+                ? "다시 전원 굴리기"
+                : "전원 주사위 굴리기"
+              : doneResult
+                ? "다른 거로 다시 정하기"
+                : `${chosen?.name ?? "제비뽑기"}로 정하기`}
         </Btn>
       </Body>
 

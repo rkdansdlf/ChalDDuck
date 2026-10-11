@@ -39,6 +39,10 @@ model Team {
   /// 도구를 버리면 팀원마다 "저 건 무슨 것으로 뽑혔지"가 달라져, "정한 건 팀에 하나"라는
   /// 화면의 약속이 그 자리에서 어긋난다.
   menuTool       String?
+  /// 29 누가 하지의 **결과 상세**(JSON). 주사위 게임처럼 한 번에 끝나지 않는 추첨의
+  /// 라운드 기록(`{ rounds: [{ rolls: [{ name, value }] }], winner }`)을 둔다.
+  /// 룰렛·제비·사다리는 후보 하나를 고르면 끝나므로 비어 있다. 화면이 그릴 때만 읽는다.
+  menuDetail     String?
   /// 기록이 `ok` 되려면 몇 명이 확인해야 하는가 — **팀이 정하는 값**이다.
   ///
   /// 예전에는 코드 상수(`CONFIRMS_NEEDED = 1`)였다. 상수로 두면 기준을 정하는 사람이
@@ -66,6 +70,7 @@ model Team {
   aiCalls         AiCall[]
   iceRounds       IceRound[]
   drawConsents    RoleDrawConsent[]
+  drawOptions     DrawOption[]
 }
 
 /// 팀에 들어올 수 있는 **초대 한 장.** 공유 한 번을 독립된 행으로 세운다.
@@ -670,6 +675,27 @@ model RoleConsentResponse {
   member  Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([consentId, memberId])
+}
+
+/// 29 누가 하지의 **팀별 추첨 후보.** 룰렛·제비뽑기·사다리타기가 여기서 고른다.
+///
+/// 예전에는 `MENU_OPTIONS` 일곱 개(밥)가 코드에 박혀 있었다 — 밥이 아닌 것을 정하고
+/// 싶어도 고를 자리가 없었다. 기본 목록은 두지 않는다. 행이 없으면 빈 목록이다.
+/// 주사위는 후보를 쓰지 않는다(팀원이 곧 후보라 전원 굴림이다).
+model DrawOption {
+  id        String   @id @default(cuid())
+  teamId    String
+  /// 화면에 보이는 후보 이름("국밥", "발표 순서 1번" …).
+  label     String
+  /// 화면 순서. 0부터 빈틈없이 매긴다.
+  position  Int
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  /// 같은 팀에 같은 이름은 하나로 센다 — 두 "국밥"이 있으면 당첨이 어느 쪽인지 모른다.
+  @@unique([teamId, label])
+  @@index([teamId])
 }
 
 /// 역할별 제출함. 마감이 지나도 잠그지 않고 라벨만 붙인다.

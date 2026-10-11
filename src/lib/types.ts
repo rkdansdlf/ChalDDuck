@@ -191,6 +191,18 @@ export type RandomTool = {
   icon: string;
 };
 
+/**
+ * 주사위 게임 한 라운드 — 누가 몇을 굴렸는지.
+ *
+ * **기록이다.** 이름은 굴린 순간의 값이라, 나중에 팀원이 이름을 바꾸면 옛 이름으로
+ * 남는다. 역할 추첨과 달리 수락·거절이 없어 이름이 바뀌어도 다시 판정할 일이 없다.
+ */
+export type DiceClashRoll = { name: string; value: number };
+export type DiceClashRound = { rolls: DiceClashRoll[] };
+
+/** `Team.menuDetail` 에 JSON 으로 들어가는 주사위 게임 상세. */
+export type DiceDrawDetail = { rounds: DiceClashRound[]; winner: string };
+
 /** 온보딩에서 사용자가 입력한 값 — 마지막 단계에서 한 번에 서버로 보낸다. */
 export type OnboardingDraft = {
   name: string;

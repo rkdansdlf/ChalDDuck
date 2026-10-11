@@ -9,7 +9,7 @@ export { Avatar } from "./avatar";
 export { Btn, IconButton, type ButtonSize, type ButtonVariant } from "./button";
 export { Chip, STATUS, StatusBadge, type ChipTone, type StatusKey } from "./chip";
 export { CompareCard } from "./compare-card";
-export { DrawGame, DrawStage, type DrawCandidate } from "./draw-game";
+export { DiceClashStage, DrawGame, DrawStage, MiniDie, type DrawCandidate } from "./draw-game";
 export { Failure } from "./failure";
 export { Field, Input, Textarea } from "./field";
 export { AppBar, AppFrame, Body, Dock, TopInset } from "./frame";

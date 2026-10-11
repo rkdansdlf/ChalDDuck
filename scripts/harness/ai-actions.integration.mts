@@ -40,7 +40,6 @@ import {
   AI_POLICY,
   AI_TOOL_NAMES,
   CLERK_SAMPLE_DRAFT,
-  MENU_OPTIONS,
   RANDOM_TOOLS,
   SENTENCE_SAMPLE_INPUT,
 } from "../../src/data/catalog.js";
@@ -322,7 +321,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     const teamRow = (id: string) =>
       db.team.findUniqueOrThrow({
         where: { id },
-        select: { menuPick: true, menuTool: true, menuDrawnBy: true, menuPickedAt: true },
+        select: { menuPick: true, menuTool: true, menuDrawnBy: true, menuPickedAt: true, menuDetail: true },
       });
 
     check("세션이 없으면 돌릴 수 없다", await blocked(() => social.spinMenu(toolNames[0]!)), "로그인이 필요합니다.");
@@ -335,8 +334,15 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("거절되면 아무것도 저장하지 않는다", [untouched.menuPick, untouched.menuTool, untouched.menuDrawnBy], [null, null, null]);
     check("거절되면 알림도 없다", (await noticeFor(I.mate.id)).length, 0);
 
+    // 후보가 없으면 돌릴 수 없다 — 기본 목록을 두지 않으므로.
+    check(
+      "빈 목록으로는 정하지 못한다",
+      await blocked(() => as(I.asMate, () => social.spinMenu(toolNames[0]!))),
+      "후보를 두 개 이상 적어 주세요.",
+    );
+    await as(I.asLeader, () => social.saveDrawOptions(["국밥", "마라탕", "돈까스"]));
     const picked = await as(I.asMate, () => social.spinMenu(toolNames[0]!));
-    check("고른 결과는 메뉴 목록 안에 있다", MENU_OPTIONS.includes(picked), true);
+    check("고른 결과는 저장한 후보 안에 있다", ["국밥", "마라탕", "돈까스"].includes(picked), true);
     const saved = await teamRow(I.id);
     check("결과·도구·정한 사람이 함께 저장된다", [saved.menuPick, saved.menuTool, saved.menuDrawnBy], [picked, toolNames[0], I.mate.id]);
     check("정한 시각이 남는다", saved.menuPickedAt instanceof Date, true);
@@ -349,28 +355,56 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("다른 팀은 영향을 받지 않는다", [(await teamRow(J.id)).menuPick, (await noticeFor(J.leader.id)).length], [null, 0]);
 
     // 다시 정하면 값은 여전히 하나이고, 무엇을 대신했는지 알린다.
-    const second = await as(I.asThird, () => social.spinMenu(toolNames[1]!));
+    // 주사위는 후보 뽑기가 아니라 전원 굴림이다 — 같은 "다시 정하기" 자리에서 굴린다.
+    const dice = await as(I.asThird, () => social.rollDiceClash());
     const replaced = await teamRow(I.id);
-    check("다시 정해도 값은 하나다 — 마지막 결과로 바뀐다", [replaced.menuPick, replaced.menuTool, replaced.menuDrawnBy], [second, toolNames[1], I.third.id]);
+    check("다시 정해도 값은 하나다 — 마지막 결과로 바뀐다", [replaced.menuPick, replaced.menuTool, replaced.menuDrawnBy], [dice.winner, "주사위", I.third.id]);
     const afterRe = await noticeFor(I.leader.id);
-    check("다시 정하면 무엇을 대신했는지 말한다", afterRe[1]?.body, `${toolNames[1]} · ${picked} 대신 → ${second}`);
+    check("다시 정하면 승자를 말한다", (afterRe[1]?.body ?? "").includes(dice.winner), true);
+    check("주사위 승자는 팀원 중 하나다", [I.leader.name, I.mate.name, I.third.name].includes(dice.winner), true);
+    check("굴린 기록이 남는다", dice.rounds.length >= 1, true);
+    check("주사위 기록이 함께 저장된다", (JSON.parse(replaced.menuDetail ?? "{}") as { winner?: string }).winner, dice.winner);
+    check(
+      "주사위로 후보 뽑기를 부르면 굴리기로 돌려보낸다",
+      await blocked(() => as(I.asLeader, () => social.spinMenu("주사위"))),
+      "주사위 게임은 전원 굴리기로 정해 주세요.",
+    );
 
-    // 무작위가 한 값에 붙어 있지 않다 — 메뉴 일곱 개를 육십 번 돌리면 둘 이상은 나온다.
+    // 후보는 팀이 정한다 — 저장한 값이 다음 돌림부터 쓰인다.
+    check(
+      "후보 하나로는 저장하지 않는다",
+      await blocked(() => as(I.asLeader, () => social.saveDrawOptions(["혼자"]))),
+      "후보를 두 개 이상 적어 주세요.",
+    );
+    await as(I.asLeader, () => social.saveDrawOptions(["갑", "을"]));
+    const custom = await as(I.asMate, () => social.spinMenu("룰렛"));
+    check("저장한 후보 중에서 나온다", ["갑", "을"].includes(custom), true);
+    // 그 자리에서 고른 임시 목록으로도 돌릴 수 있다 — 저장은 그대로다.
+    const adHoc = await as(I.asMate, () => social.spinMenu("제비뽑기", ["당번", "청소"]));
+    check("임시 목록 중에서 나온다", ["당번", "청소"].includes(adHoc), true);
+    const kept = await as(I.asMate, () => social.spinMenu("사다리타기"));
+    check("임시 목록은 저장되지 않는다", ["갑", "을"].includes(kept), true);
+
+    // 무작위가 한 값에 붙어 있지 않다 — 후보 두 개를 육십 번 돌리면 둘 다 나온다.
     const seen = new Set<string>();
     for (let i = 0; i < 60; i += 1) seen.add(await as(I.asLeader, () => social.spinMenu(toolNames[2]!)));
     check("돌릴 때마다 같은 값만 나오지 않는다", seen.size > 1, true);
-    check("나온 값은 모두 메뉴 목록 안에 있다", [...seen].every((m) => MENU_OPTIONS.includes(m)), true);
+    check("나온 값은 모두 저장한 후보 안에 있다", [...seen].every((m) => ["갑", "을"].includes(m)), true);
 
-    // 동시에 돌려도 한 번의 돌림에서 나온 한 벌이어야 한다: (룰렛 · 팀장) 이거나 (주사위 · 팀원).
+    // 동시에 돌려도 한 번의 돌림에서 나온 한 벌이어야 한다: (룰렛 · 팀장) 이거나 (제비뽑기 · 팀원).
     const K = await makeTeam("동시메뉴");
-    const results = await Promise.all([
+    await as(K.asLeader, () => social.saveDrawOptions(["산", "바다"]));
+    const diceClash = await as(K.asMate, () => social.rollDiceClash());
+    const clashNames = [K.leader.name, K.mate.name, K.third.name];
+    check("주사위 승자는 그 팀 사람이다", clashNames.includes(diceClash.winner), true);
+    const [raceA, raceB] = await Promise.all([
       as(K.asLeader, () => social.spinMenu("룰렛")),
-      as(K.asMate, () => social.spinMenu("주사위")),
+      as(K.asMate, () => social.spinMenu("제비뽑기")),
     ]);
     const finalRow = await teamRow(K.id);
     const consistent =
-      (finalRow.menuTool === "룰렛" && finalRow.menuDrawnBy === K.leader.id && finalRow.menuPick === results[0]) ||
-      (finalRow.menuTool === "주사위" && finalRow.menuDrawnBy === K.mate.id && finalRow.menuPick === results[1]);
+      (finalRow.menuTool === "룰렛" && finalRow.menuDrawnBy === K.leader.id && finalRow.menuPick === raceA) ||
+      (finalRow.menuTool === "제비뽑기" && finalRow.menuDrawnBy === K.mate.id && finalRow.menuPick === raceB);
     check("동시에 돌려도 결과·도구·정한 사람이 섞이지 않는다", consistent, true);
   } finally {
     if (savedKey === undefined) delete process.env.OPENROUTER_KEY;
