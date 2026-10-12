@@ -22,7 +22,7 @@ export default async function TabsLayout({ children }: LayoutProps<"/">) {
 
   return (
     <AppShell
-      sideNav={<AppNav as="side" initial={badges} />}
+      sideNav={<AppNav as="side" initial={badges} me={{ name: me.name, mbti: me.mbti ?? null }} />}
       tabBar={<AppNav as="tabs" initial={badges} />}
     >
       {children}
