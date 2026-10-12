@@ -583,7 +583,7 @@ export function MyTimeScreen({
               type="file"
               accept=".ics,text/calendar"
               onChange={handleFileUpload}
-              className="t-micro-strong block w-full text-txt-muted file:mr-2.5 file:rounded-lg file:border-0 file:bg-fill file:px-3 file:py-1.5 file:file:file:text-txt"
+              className="block w-full text-[12px] text-txt-muted file:mr-2.5 file:rounded-lg file:border-0 file:bg-fill file:px-3 file:py-1.5 file:text-[12px] file:font-semibold file:text-txt"
             />
           </div>
 
