@@ -30,7 +30,6 @@ import type {
   BusyKind,
   CalendarEvent,
   ChatMessage,
-  ChatPurified,
   CushionLevelKey,
   ContribKind,
   ContribRecord,
@@ -84,7 +83,7 @@ import { askedTodayBy } from "@/server/meetings/schedule-ask";
 import { currentSessionToken, deviceIdOf, getSessionMember } from "@/server/session";
 import { notificationsFor } from "@/server/notify/inbox";
 import { pushConfigured } from "@/server/notify/push";
-import { READ_CUSHION_DEFAULT, isCushionTone, levelOf, type ReadCushionSetting } from "@/lib/read-cushion";
+import { READ_CUSHION_DEFAULT, isCushionTone, levelOf, toPurifiedView, type ReadCushionSetting } from "@/lib/read-cushion";
 import { confirmsPolicy, teamCheckRecords } from "@/server/contrib/team-check";
 import {
   AI_POLICY,
@@ -1346,31 +1345,6 @@ function driveHref(boxId: string, fileId: string, versionId: string): string {
   return `/drive/${boxId}/${fileId}/${versionId}`;
 }
 
-/** 저장된 읽기 도움 상태를 화면 값으로 옮긴다. 실패는 글 없이 상태만 남는다. */
-function toChatPurified(row: CushionRow): ChatPurified {
-  if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
-    return {
-      status: row.status,
-      text: row.text,
-      kind: row.source === "mask" ? "mask" : "ai",
-      reason: null,
-      retryAfter: null,
-    };
-  }
-  // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
-  // 저장되지 않은 status 값(옛 데이터·손으로 넣은 값)은 실패로 본다. 모르는 상태를
-  // "읽기 도움됨"으로 그리는 일은 없어야 한다.
-  const status: "PENDING" | "REJECTED" | "FAILED" =
-    row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
-  return {
-    status,
-    text: null,
-    kind: null,
-    reason: row.reason,
-    retryAfter: row.retryAfter ? row.retryAfter.toISOString() : null,
-  };
-}
-
 function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
   const counts = new Map<string, number>();
   for (const r of m.reactions) counts.set(r.icon, (counts.get(r.icon) ?? 0) + 1);
@@ -1387,7 +1361,7 @@ function toChatMessage(m: MessageRow, meId: string | null): ChatMessage {
     viaCushion: m.viaCushion,
     // 읽기 도움 상태가 없으면 null — **화면은 그때 원문을 본다.** 실패도 상태로 실려 오고,
     // 실패한 말은 `text: null` 이라 화면에서 원문으로 넘어간다.
-    purified: m.purifications[0] ? toChatPurified(m.purifications[0]) : null,
+    purified: m.purifications[0] ? toPurifiedView(m.purifications[0]) : null,
     reactions: counts.size > 0 ? [...counts].map(([icon, count]) => ({ icon, count })) : undefined,
     attachment:
       m.attachPath && m.attachName

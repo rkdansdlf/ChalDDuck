@@ -179,6 +179,35 @@ async function main() {
     check("둘 다 라벨이면 쓸 수 없는 응답으로 실패", caught?.name, "UnusableOutputError");
     check("라벨도 두 번에서 멈춘다", calls, ["model-a", "model-b"]);
   }
+  // 무료 라우터는 부를 때마다 **다른 모델**을 고른다 — 폴백 슬러그가 같아도 한 번 더 부르는 것이 맞다.
+  // (예전에는 같은 슬러그면 막아서, 라우터가 나쁜 모델을 고른 날 한 번도 다시 부르지 못했다.)
+  {
+    const calls: string[] = [];
+    const res = await withFallback("read-cushion", "openrouter/free", "openrouter/free", async (m) => {
+      calls.push(m);
+      if (calls.length === 1) throw new Error("빈 응답");
+      return "성공";
+    });
+    check("라우터는 같은 슬러그라도 한 번 더 부른다", [res, calls.length], ["성공", 2]);
+  }
+  {
+    const calls: string[] = [];
+    try {
+      await withFallback("clerk", "vendor/model", "vendor/model", async (m) => {
+        calls.push(m);
+        throw new Error("빈 응답");
+      });
+    } catch {
+      // 최종 실패는 아래에서 호출 수로 본다.
+    }
+    check("라우터가 아닌 모델은 같은 슬러그로 다시 부르지 않는다", calls.length, 1);
+  }
+  // 글을 돌려받는 호출은 추론을 끈다 — 추론 모델이 `max_tokens` 를 먼저 써 `content` 가 빈 채로 오는 것을 막는다.
+  {
+    const modelCode = readCode("../src/server/ai/model.ts");
+    check("일반 호출이 추론을 끈다", /max_tokens: input\.maxTokens \?\? 1024,\s*\.\.\.REASONING_OFF/.test(modelCode), true);
+    check("스트리밍 호출도 추론을 끈다", /stream: true,\s*\.\.\.REASONING_OFF/.test(modelCode), true);
+  }
   {
     // 라우터가 답했을 때 **실제 답한 모델**을 적기 위한 통로가 코드에 있는지.
     // (여기서 실행하면 세션이 없어 조용히 넘어가므로 구조로 고정한다.)
@@ -243,6 +272,14 @@ async function main() {
   const toolsCode = readCode("../src/server/ai/tools.ts");
   check("발표 정제 모드 3종 정의", /academic[\s\S]*conversational[\s\S]*concise/.test(toolsCode), true);
   check("답변은 적지 않고 질문만 뽑는 규칙 유지", /질문만 적고 답은.*적지 않는다/.test(toolsCode), true);
+
+  // 읽기 도움 프롬프트: 공통 지침은 보존·출력 계약만, 완화 범위는 강도 지시만 정한다.
+  // 공통에 "비꼼·조롱을 남기지 마라" 가 있으면 LIGHT("탓하는 말·조롱은 건드리지 마라")와 정면으로 부딪힌다.
+  const soften = toolsCode.slice(toolsCode.indexOf("# 반드시 지킬 것"), toolsCode.indexOf("# 이번 읽기 강도"));
+  check("읽기 도움 공통 지침을 찾는다", soften.length > 0, true);
+  check("공통 지침에 완화 범위가 없다(강도 지시가 정한다)", /비꼼|조롱|니 탓/.test(soften), false);
+  check("공통 지침이 기한·요구·부정·책임의 보존을 말한다", [/까지/, /꼭\/반드시/, /뒤집지/, /반대편/].every((re) => re.test(soften)), true);
+  check("완화 범위는 강도 지시만 정한다고 적는다", /이번 읽기 강도.*만 정한다/.test(soften), true);
 
   const chatCode = readCode("../src/server/actions/chat.ts");
   check("예상 질문 단톡방 공유 액션 존재", /shareQuestionsToChat/.test(chatCode), true);

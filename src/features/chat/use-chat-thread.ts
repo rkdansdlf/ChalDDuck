@@ -215,6 +215,17 @@ export function useChatThread(
   // 읽기 도움이 켜져 있는가 — **값**으로 만들어 놓는다(아래 효과의 주석 참고).
   const cushionOn = !cushionOff(cushion);
 
+  /**
+   * 다듬지 못해 **원문으로 보이는 말**이 방에 있는가.
+   *
+   * 거절·검사 탈락·시간 초과를 말마다 설명하지 않는다 — 읽는 사람이 알아야 하는 것은 "이 말들은 다듬어지지
+   * 않았다" 하나뿐이고, 이유는 운영 로그에서 본다(`reason` 은 화면에 내려오지만 보이지 않는다).
+   * 규칙으로 가린 말(`FALLBACK`)은 이미 칩이 붙으므로 여기 세지 않는다.
+   */
+  const purifyPartial =
+    cushionOn &&
+    messages.some((message) => message.purified?.status === "FAILED" || message.purified?.status === "REJECTED");
+
   useEffect(() => {
     // **꺼져 있으면 후보를 만들지 않는다.** 서버도 부르지 않지만, 화면이 부르는 것까지
     // 막아야 "조용히 안 쓰는 것" 이지 "조용히 쓰는 것" 이 아니다.
@@ -508,6 +519,7 @@ export function useChatThread(
     discard,
     purifyWorking,
     purifyNotice,
+    purifyPartial,
     retryPurify,
     fileLostText: FILE_LOST_TEXT,
     hasMore: cursor !== null,

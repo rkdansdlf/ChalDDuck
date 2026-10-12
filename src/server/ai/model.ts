@@ -116,16 +116,18 @@ export function fallbackModelFor(tool: AiToolKey): string {
 }
 
 /**
- * 지금 쓰는 모델의 id.
+ * 읽기 도움이 **실제로 부르는** 모델의 id.
  *
- * 읽기 도움 결과와 실패 상태에 **함께 남긴다** — "이건 어느 모델이 만든 것인가" 를 나중에
- * 알 수 없으면, 모델을 바꿨을 때 무엇을 다시 만들어야 하는지 판단할 수 없다.
+ * 읽기 도움 결과의 지문(`purifyPolicyHash`)과 결과 행에 **함께 남긴다** — "이건 어느 모델이 만든
+ * 것인가" 를 나중에 알 수 없으면, 모델을 바꿨을 때 무엇을 다시 만들어야 하는지 판단할 수 없다.
  *
- * ⚠️ **도구 이름 없이 부르지 말 것.** 이 인자는 "전체 기본값"을 본다. 도구가 자기 모델을
- * 고르는 데 이미 `modelFor` 가 있으니, 여기서는 **기본값이 바뀌었는지** 볼 때만 쓴다.
+ * 예전에는 전체 기본값(`OPENROUTER_MODEL`)만 보는 `activeModelId()` 를 썼다. 그런데 호출은
+ * `modelFor("read-cushion")` 을 따르므로, `OPENROUTER_MODEL_READ_CUSHION` 을 따로 두면 **부르는
+ * 모델과 지문의 모델이 갈라졌다** — 모델을 바꿔도 예전 모델의 결과가 새 모델의 것으로 공유됐다.
+ * 그래서 이름 없는 `activeModelId` 는 지웠다. 지문과 호출이 **같은 함수**를 본다.
  */
-export function activeModelId(): string {
-  return process.env.OPENROUTER_MODEL?.trim() || FREE_ROUTER;
+export function readCushionModelId(): string {
+  return modelFor("read-cushion");
 }
 
 /** 키가 없으면 도구는 샘플로 돌아간다 — 화면이 그 사실을 감추지 않는다. */
@@ -182,7 +184,11 @@ const deadline = () => ({ signal: AbortSignal.timeout(TIMEOUT_MS) });
  * 한국어로 알리고, 원인은 서버 로그에 남긴다.
  */
 export class AiUnavailableError extends Error {
-  constructor(message = "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.") {
+  constructor(
+    message = "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    /** 호출한 쪽이 문구를 읽지 않고 종류를 알 수 있게 한다(`runTool` → `AiFailureCode`). */
+    readonly kind: "timeout" | "error" = "error",
+  ) {
     super(message);
     this.name = "AiUnavailableError";
   }
@@ -204,6 +210,7 @@ function fail(where: string, error: unknown): never {
     timedOut
       ? `AI 응답이 ${Math.round(TIMEOUT_MS / 1000)}초 안에 오지 않았습니다. 잠시 후 다시 시도해 주세요.`
       : undefined,
+    timedOut ? "timeout" : "error",
   );
 }
 

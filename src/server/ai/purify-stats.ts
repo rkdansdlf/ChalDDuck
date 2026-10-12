@@ -74,7 +74,7 @@ export async function purificationStats(teamId: string, at = Date.now()): Promis
     }),
   ]);
 
-  const buckets = { done: 0, masked: 0, refused: 0, rejected: 0, failed: 0, pending: 0 } as Record<
+  const buckets = { done: 0, masked: 0, unchanged: 0, refused: 0, rejected: 0, failed: 0, pending: 0 } as Record<
     CushionBucket,
     number
   >;

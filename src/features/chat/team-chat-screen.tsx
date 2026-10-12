@@ -111,7 +111,7 @@ export function TeamChatScreen({
    */
   const cushionUsage = useCushionUsageToday(cushion.enabled);
 
-  const { messages, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
+  const { messages, setCushions, send, sendFile, retry, discard, fileLostText, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, purifyPartial, retryPurify } =
     useChatThread(TEAM_THREAD_ID, fromServer, initialCursor, me, cushion, lostFileRef);
   const { toast, flash, run } = useAction();
 
@@ -290,6 +290,12 @@ export function TeamChatScreen({
           >
             다시 시도
           </button>
+        </div>
+      ) : null}
+
+      {!purifyNotice && purifyPartial ? (
+        <div className="mx-4 mt-2 rounded-xl bg-fill px-3 py-1.5 text-[12px] text-txt-muted">
+          일부 메시지는 다듬지 못해 원문으로 표시됩니다
         </div>
       ) : null}
 

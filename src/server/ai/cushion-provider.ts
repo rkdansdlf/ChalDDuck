@@ -1,6 +1,6 @@
 import "server-only";
 
-import { buildPurifyRequest, isRefusal, type PurifyItem } from "@/lib/read-cushion";
+import { buildPurifyRequest, isRefusal, PURIFY_OUTPUT_TOKENS, type PurifyItem } from "@/lib/read-cushion";
 import { askText, isAiConfigured } from "./model";
 
 /**
@@ -40,7 +40,8 @@ function openRouterProvider(id: string): CushionProvider {
         tool: "read-cushion",
         system,
         user: buildPurifyRequest(items),
-        maxTokens: 1200,
+        // 묶음을 짜는 쪽(`packPurifyItems`)이 같은 값으로 출력 예산을 센다.
+        maxTokens: PURIFY_OUTPUT_TOKENS,
         // provider 가 id 를 직접 받았을 때만 그 슬러그를 쓴다. 기본 provider 는 id 가
         // **비어 있고**(`defaultProvider` 아래 참고), 그러면 `modelFor("read-cushion")` 이
         // `.env` 의 도구별 설정을 그대로 고른다 — 라우팅과 벤치가 한 값을 본다.

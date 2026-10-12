@@ -9,6 +9,7 @@
  * 6. 메시지 페이징 및 폴링 (`loadOlderMessages`, `pollNewMessages`, `pollSidebarThreads`)
  * 7. 읽음 처리 (`markThreadRead`)
  * 8. 읽기 도움 쿠션 설정 및 조회 (`setReadCushion`, `softenThreadMessages`)
+ * 9. 읽기 도움 선점·재시도 (보낸 말만 선점 · 만료된 PENDING 복구 · 백오프 뒤 재선점)
  *
  *   npm run test:chat
  */
@@ -261,6 +262,97 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     // 순화 처리 조회
     const softenRes = await as(T.asMate, () => chat.softenThreadMessages("team"));
     check("스레드 메시지 순화 조회 성공", softenRes.ok, true);
+
+    /* ── 6) 읽기 도움 선점: 보낸 말만 선점하고, 재시도는 실제로 다시 선점된다 ─────── */
+    console.log("\n6) 읽기 도움 선점·재시도");
+    const R = await makeTeam("읽기 도움");
+    const base = Date.now() - 60_000;
+    await db.message.createMany({
+      data: Array.from({ length: 12 }, (_, i) => ({
+        teamId: R.id,
+        threadKey: "team",
+        authorId: R.leader.id,
+        text: `확인 부탁해요 ${i + 1}번`,
+        whenLabel: "10:00",
+        createdAt: new Date(base + i * 1000),
+      })),
+    });
+    const rowsOf = () => db.messagePurification.findMany({ where: { message: { teamId: R.id } }, orderBy: { createdAt: "asc" } });
+
+    // 모델 키를 치운다 — 호출은 **부르기 전에** 막히고(NO_MODEL), 네트워크에 닿지 않는다.
+    const savedKey = process.env.OPENROUTER_KEY;
+    delete process.env.OPENROUTER_KEY;
+    try {
+      const first = await as(R.asMate, () => chat.softenThreadMessages("team"));
+      check("첫 요청이 성공 응답이다", first.ok, true);
+      const afterFirst = await rowsOf();
+      // 12개가 대상이지만 한 번에 보내는 건 상한(10)까지다. **보내지 않은 말은 선점하지 않는다.**
+      check("보낸 만큼만 선점한다", afterFirst.length, 10);
+      check("보내지 않은 말에는 행이 없다", first.ok && first.remaining, 2);
+      check("키가 없으면 NO_MODEL 로 적는다", [...new Set(afterFirst.map((row) => row.reason))], ["NO_MODEL"]);
+      check("모델을 부르지 못한 실패는 시도로 세지 않는다", [...new Set(afterFirst.map((row) => row.attemptCount))], [0]);
+      check("선점 토큰은 비워 둔다", afterFirst.every((row) => row.claimToken === null), true);
+
+      // 남은 두 개를 마저 처리한다. 앞의 열 개는 백오프 안이라 다시 부르지 않는다.
+      const second = await as(R.asMate, () => chat.softenThreadMessages("team"));
+      check("남은 말을 이어서 처리한다", second.ok && second.remaining, 0);
+      check("이제 열두 개 모두 상태가 있다", (await rowsOf()).length, 12);
+
+      // **P0: 재시도 가능한 행이 실제로 다시 선점된다.** 백오프가 지난 실패를 다시 열어 본다.
+      const stale = new Date(Date.now() - 60_000);
+      await db.messagePurification.updateMany({ where: { message: { teamId: R.id } }, data: { retryAfter: stale } });
+      const third = await as(R.asMate, () => chat.softenThreadMessages("team"));
+      check("백오프가 지난 실패를 다시 시도한다", third.ok, true);
+      const afterThird = await rowsOf();
+      const retried = afterThird.filter((row) => (row.retryAfter?.getTime() ?? 0) > Date.now());
+      check("다시 시도한 행은 새 백오프를 받는다", retried.length, 10);
+      check("선점이 비워져 있다", afterThird.every((row) => row.claimToken === null && row.status === "FAILED"), true);
+
+      // **P0: 만료된 PENDING 은 영영 남지 않는다.** 죽은 요청이 남긴 선점을 가져간다.
+      const victim = afterThird[0];
+      await db.messagePurification.update({
+        where: { id: victim.id },
+        data: { status: "PENDING", claimToken: "dead-request", attemptCount: 1, retryAfter: new Date(Date.now() - 1000), reason: null },
+      });
+      await as(R.asMate, () => chat.softenThreadMessages("team"));
+      const recovered = await db.messagePurification.findUniqueOrThrow({ where: { id: victim.id } });
+      check("만료된 PENDING 은 다시 처리되어 닫힌다", recovered.status, "FAILED");
+      check("죽은 요청의 토큰이 남지 않는다", recovered.claimToken, null);
+
+      // 아직 유효한 선점은 건드리지 않는다.
+      await db.messagePurification.update({
+        where: { id: victim.id },
+        data: { status: "PENDING", claimToken: "alive-request", retryAfter: new Date(Date.now() + 60_000) },
+      });
+      await as(R.asMate, () => chat.softenThreadMessages("team"));
+      const kept = await db.messagePurification.findUniqueOrThrow({ where: { id: victim.id } });
+      check("유효한 선점은 가져가지 않는다", [kept.status, kept.claimToken], ["PENDING", "alive-request"]);
+
+      // **모델이 필요 없는 말은 모델을 거치지 않는다.** 키가 없어도(=모델을 못 불러도) 닫힌다.
+      const N = await makeTeam("사전 판정");
+      const created = await Promise.all(
+        ["넵 감사합니다", "이번 자료는 제가 정리할게요", "내일 3시까지 보내줘"].map((text, i) =>
+          db.message.create({
+            data: { teamId: N.id, threadKey: "team", authorId: N.leader.id, text, whenLabel: "10:00", createdAt: new Date(base + i * 1000) },
+          }),
+        ),
+      );
+      const natural = await as(N.asMate, () => chat.softenThreadMessages("team"));
+      const byText = async (text: string) =>
+        db.messagePurification.findFirst({ where: { message: { teamId: N.id, text } } });
+      check("사전 판정된 말은 UNCHANGED 로 닫힌다", (await byText("넵 감사합니다"))?.status, "UNCHANGED");
+      check("약속하는 말도 닫힌다", (await byText("이번 자료는 제가 정리할게요"))?.status, "UNCHANGED");
+      check("닫힌 말은 시도로 세지 않는다", (await byText("넵 감사합니다"))?.attemptCount, 0);
+      check("애매한 말은 모델로 간다(키가 없어 NO_MODEL)", (await byText("내일 3시까지 보내줘"))?.reason, "NO_MODEL");
+      check("화면에는 UNCHANGED 로 내려간다", natural.ok && natural.cushions[created[0].id]?.status, "UNCHANGED");
+      check("UNCHANGED 에는 그릴 글이 없다", natural.ok && natural.cushions[created[0].id]?.text, null);
+      // 닫혔으니 다시 후보가 되지 않는다.
+      const again = await as(N.asMate, () => chat.softenThreadMessages("team"));
+      check("닫힌 말은 다시 후보가 아니다", again.ok && again.called, 0);
+    } finally {
+      if (savedKey === undefined) delete process.env.OPENROUTER_KEY;
+      else process.env.OPENROUTER_KEY = savedKey;
+    }
   } finally {
     for (const id of teamIds) {
       await db.message.deleteMany({ where: { teamId: id } });

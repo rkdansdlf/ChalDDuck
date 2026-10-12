@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { db } from "@/server/db";
-import { activeModelId } from "@/server/ai/model";
+import { readCushionModelId } from "@/server/ai/model";
 import { CUSHION_DEFAULT_MODE } from "@/data/catalog";
 import { levelOf, toneOf, PROMPT_VERSION, VALIDATOR_VERSION } from "@/lib/read-cushion";
 import type { CushionLevelKey } from "@/lib/types";
@@ -88,7 +88,7 @@ export async function resolveReadPolicy(
     policyHash: purifyPolicyHash({
       level,
       tone: toneOf({ tone: row?.tone ?? null }),
-      model: activeModelId(),
+      model: readCushionModelId(),
       promptVersion: PROMPT_VERSION,
       validatorVersion: VALIDATOR_VERSION,
     }),

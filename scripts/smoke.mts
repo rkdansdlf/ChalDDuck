@@ -171,6 +171,13 @@ import {
   needsMask,
   packPurifyItems,
   PURIFY_CONTEXT_MESSAGES,
+  PURIFY_BATCH_LIMIT,
+  PURIFY_MAX_TEXT_CHARS,
+  PURIFY_OUTPUT_TOKENS,
+  claimExpiresAt,
+  isPurifiableText,
+  isClearlyNatural,
+  toPurifiedView,
   parsePurifyResponse,
   purificationAiShare,
   remainingPurify,
@@ -182,7 +189,9 @@ import {
   type CushionReason,
   type CushionStatus,
 } from "../src/lib/read-cushion.js";
-import { purifyPolicyHash } from "../src/server/ai/purify-policy.js";
+import { purifyPolicyHash, resolveReadPolicy } from "../src/server/ai/purify-policy.js";
+import { claimPurifyRows } from "../src/server/ai/purify-claim.js";
+import { readCushionModelId } from "../src/server/ai/model.js";
 import type { ChatMessage, IcePhase, IceRole, Member, MeetingProposal, Role, RoleDrawResult, RoleKey, Task } from "../src/lib/types.js";
 import { LIAR_PROMPT_CATEGORIES, LIAR_PROMPTS } from "../src/data/liar-prompts.js";
 import {
@@ -2838,7 +2847,21 @@ console.log("\n읽기 순화: 언제 다시 부르는가 (무한 재호출 차�
   const pending = { ...failed, status: "PENDING" as const, retryAfter: soon(CLAIM_TTL_MS), createdAt: ago(1000) };
   check("선점 유효 시간 안이면 건드리지 않는다", canRetry(pending, now), false);
   // 부르던 사람이 사라졌다(탭을 닫음)면 선점을 가져갈 수 있다 — 아니면 영영 "처리 중"이다.
-  check("선점이 사라지면 다시 가져간다", canRetry({ ...pending, createdAt: ago(CLAIM_TTL_MS + 1000) }, now), true);
+  // 만료는 **선점이 적은 시각(`retryAfter`)** 이 말한다. 행을 처음 만든 시각이 아니다.
+  check("선점이 사라지면 다시 가져간다", canRetry({ ...pending, retryAfter: ago(1) }, now), true);
+  // 예전 구현은 `createdAt` 만 봤다: 오래전에 만든 행의 선점을 방금 가져가도 곧바로 또 만료로 보였다.
+  check(
+    "방금 가져간 선점은 행이 오래됐어도 유효하다",
+    canRetry({ ...pending, createdAt: ago(CLAIM_TTL_MS * 10), retryAfter: soon(CLAIM_TTL_MS) }, now),
+    false,
+  );
+  check("만료 시각이 없으면 행의 마지막 갱신으로 본다", claimExpiresAt({ retryAfter: null, updatedAt: ago(1000) }), now.at - 1000 + CLAIM_TTL_MS);
+  // 서버가 계속 죽는 말을 영영 다시 부르지는 않는다.
+  check(
+    "만료된 선점도 시도를 다 쓰면 포기한다",
+    canRetry({ ...pending, retryAfter: ago(1), attemptCount: MAX_ATTEMPTS }, now),
+    false,
+  );
 
   check("성공과 가림만 끝난 상태다", [isCushionDone("PURIFIED"), isCushionDone("FALLBACK"), isCushionDone("FAILED")], [true, true, false]);
 }
@@ -2878,6 +2901,65 @@ console.log("\n읽기 순화: 남은 수 (언제 멈추는가)");
   // 돌아오고, 그때를 기다리지 않고 내가 가져간 경우가 바로 위의 `remainingPurify(2, 2)` 다.
   check("선점이 사라지면 가져갈 수 있다", canRetry(pendingByOther, { ...now, at: now.at + CLAIM_TTL_MS + 1 }), true);
   check("내가 가져간 것과 상대가 끝난 것은 남은 수가 없다", remainingPurify(2, 2), 0);
+}
+
+console.log("\n읽기 순화: 보낼 묶음은 선점하기 전에 정한다");
+{
+  const short = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `cm${String(i).padStart(22, "0")}`, text: "내일까지 자료 부탁해요" }));
+  const long = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `cl${String(i).padStart(22, "0")}`, text: "가".repeat(300) }));
+
+  check("짧은 말은 상한까지 한 묶음에 든다", packPurifyItems(short(15)).length, PURIFY_BATCH_LIMIT);
+  // 출력 예산: 300자짜리 열 개는 1200 토큰 안에 JSON 으로 돌아올 수 없다. 입력은 한참 남아 있어도 줄여야 한다.
+  const packedLong = packPurifyItems(long(10));
+  check("긴 말은 출력 예산에서 먼저 끊긴다", packedLong.length > 0 && packedLong.length <= 3, true);
+  check("묶음이 줄어도 앞에서부터 순서대로다", packedLong.map((i) => i.id), long(10).slice(0, packedLong.length).map((i) => i.id));
+
+  // 앞 문맥도 입력이다 — 말은 짧아도 문맥이 크면 같은 8000자 상한에 걸린다.
+  const withBefore = Array.from({ length: 10 }, (_, i) => ({
+    id: `cb${String(i).padStart(22, "0")}`,
+    text: "짧은 말",
+    before: [{ text: "나".repeat(300) }, { text: "다".repeat(300) }],
+  }));
+  const packedBefore = packPurifyItems(withBefore);
+  check("문맥도 입력 크기에 센다", packedBefore.length < 10 || withBefore.length * 650 < 8000, true);
+
+  // 한 말은 혼자서 항상 들어가야 한다 — 안 들어가는 말이 대상이면 맨 앞에서 영영 막힌다.
+  const widest = { id: "cw".padEnd(24, "0"), text: "가".repeat(PURIFY_MAX_TEXT_CHARS), before: [{ text: "나".repeat(300) }, { text: "다".repeat(300) }] };
+  check("대상이 될 수 있는 가장 긴 말도 혼자서는 들어간다", packPurifyItems([widest]).length, 1);
+  check("그보다 긴 말은 대상이 아니다", isPurifiableText("가".repeat(PURIFY_MAX_TEXT_CHARS + 1)), false);
+  check("상한 길이는 대상이다", isPurifiableText("가".repeat(PURIFY_MAX_TEXT_CHARS)), true);
+  check("출력 토큰 상한은 호출과 같은 값이다", PURIFY_OUTPUT_TOKENS, 1200);
+}
+
+console.log("\n읽기 순화: 실패 이유를 가른다");
+{
+  const row = (reason: CushionReason) => cushionBucketOf({ status: "FAILED", reason, source: null });
+  // 시간 초과는 모델의 거절이 아니다 — 거절로 세면 "모델을 바꿔라" 로 읽힌다.
+  check("답을 못 받은 것은 거절이 아니다", row(CUSHION_REASON.MODEL_ERROR), "failed");
+  check("거절은 거절이다", row(CUSHION_REASON.MODEL_REFUSAL), "refused");
+}
+
+console.log("\n읽기 순화: 지문과 호출이 같은 모델을 본다");
+{
+  // `OPENROUTER_MODEL_READ_CUSHION` 만 바꿔도 지문이 바뀌어야 한다. 예전에는 전체 기본값만 지문에
+  // 들어가서, 부르는 모델을 바꿔도 예전 모델의 결과가 새 모델의 것으로 공유됐다.
+  const saved = { all: process.env.OPENROUTER_MODEL, one: process.env.OPENROUTER_MODEL_READ_CUSHION };
+  try {
+    delete process.env.OPENROUTER_MODEL;
+    delete process.env.OPENROUTER_MODEL_READ_CUSHION;
+    const base = readCushionModelId();
+    const hashFor = (model: string) =>
+      purifyPolicyHash({ level: "NORMAL", tone: "soft", model, promptVersion: PROMPT_VERSION, validatorVersion: VALIDATOR_VERSION });
+    process.env.OPENROUTER_MODEL_READ_CUSHION = "vendor/other-model:free";
+    check("읽기 도움 전용 모델이 지문에 들어간다", readCushionModelId(), "vendor/other-model:free");
+    check("모델이 바뀌면 지문이 바뀐다", hashFor(readCushionModelId()) === hashFor(base), false);
+    check("전용 모델이 전체 기본값보다 우선한다", (process.env.OPENROUTER_MODEL = "vendor/all"), "vendor/all");
+    check("그래도 읽기 도움은 전용 모델이다", readCushionModelId(), "vendor/other-model:free");
+    void resolveReadPolicy;
+  } finally {
+    if (saved.all === undefined) delete process.env.OPENROUTER_MODEL; else process.env.OPENROUTER_MODEL = saved.all;
+    if (saved.one === undefined) delete process.env.OPENROUTER_MODEL_READ_CUSHION; else process.env.OPENROUTER_MODEL_READ_CUSHION = saved.one;
+  }
 }
 
 console.log("\n읽기 순화: id 기반 계약");
@@ -2964,7 +3046,7 @@ console.log("\n읽기 순화: 항목별 판정 (묶음 전체를 버리지 않�
   check("묶음 전체를 버리지 않는다", judged.filter((j) => j.status === "PURIFIED").length, 1);
 
   check("빈 결과는 빈 응답으로 기록된다", judgeAll([{ id: "x", text: "안 올렸어요" }], { items: new Map(), unknown: [] })[0].reason, CUSHION_REASON.EMPTY_RESPONSE);
-  check("길이 폭주는 버려진다", rejectsPurified("안 올려", "가".repeat(200)), CUSHION_REASON.TOO_LONG);
+  check("길이 폭주는 버려진다", rejectsPurified("안 올려", "이 부분은 조금 더 확인이 필요해서 말씀드립니다. ".repeat(6)), CUSHION_REASON.TOO_LONG);
   check("빈 글은 버려진다", rejectsPurified("안 올렸어요", "   "), CUSHION_REASON.EMPTY_OUTPUT);
   // 감정 표현은 순화 대상이 아니다 — 지우면 사람이 한 말을 사람이 안 한 것처럼 읽힌다.
   check("감정 표현은 남아도 통과한다", rejectsPurified("짜증나 죽겠어", "정말 힘들 것 같아요"), null);
@@ -3036,13 +3118,124 @@ console.log("\n읽기 순화: AI 실패 시 결정론적 가림");
   check("문장 구조는 지켜진다", profanity.text, "야 •• 니가 제대로 했어야지");
 
   check("사람에게 붙인 비꼼도 가린다", maskRiskyParts("너는 진짜 좀비같아").masked > 0, true);
-  check("원인을 돌리는 말도 가린다", maskRiskyParts("다 니 탓인데").masked > 0, true);
+  check("원인을 돌리는 말도 가린다", maskRiskyParts("다 니 탓인데 자료는 언제까지야").masked > 0, true);
   check("비웃음 기호도 가린다", maskRiskyParts("역시 대충이네 ㅋㅋ").masked > 0, true);
   // 위험한 말이 없으면 **가린다고 말하지 않는다.**
   check("깨끗한 말은 그대로 둔다", maskRiskyParts("내일 회의 몇 시로 할까요?"), { text: "내일 회의 몇 시로 할까요?", masked: 0 });
   // **요구는 남는다** — 일은 굴러가야 한다.
   const keep = maskRiskyParts("씨발 내일까지 자료 안 오면 그냥 니가 혼자 해");
   check("가려도 마감과 요구는 남는다", [keep.text.includes("내일까지"), keep.text.includes("자료")], [true, true]);
+}
+
+console.log("\n읽기 순화: 문맥을 보는 검사 (낱말표는 후보만 찾는다)");
+{
+  const R = (original: string, purified: string, level: "LIGHT" | "NORMAL" | "STRONG" = "NORMAL") =>
+    rejectsPurified(original, purified, level);
+
+  // 친근한 웃음 — 감사가 함께 있고 다른 위험이 없으면 조롱으로 보지 않는다. 가리지도 않는다.
+  check("친근한 ㅋㅋ 는 남아도 된다", R("ㅋㅋ 고마워!", "ㅋㅋ 고마워요!"), null);
+  check("친근한 ㅋㅋ 는 가리지 않는다", maskRiskyParts("ㅋㅋ 고마워!", "NORMAL").masked, 0);
+  // 비꼼과 구분되지 않는 ㅋㅋ 는 예전처럼 거른다.
+  check("비꼬는 ㅋㅋ 는 남으면 버린다", R("역시 대충이네 ㅋㅋ", "역시 대충이네 ㅋㅋ"), CUSHION_REASON.TOXICITY_REMAINED);
+  check("판단이 애매한 ㅋㅋ 도 거른다", R("우리 팀 분위기 진짜 좋다 ㅋㅋ", "우리 팀 분위기 진짜 좋다 ㅋㅋ"), CUSHION_REASON.TOXICITY_REMAINED);
+  check("욕설이 함께 있으면 감사가 있어도 거른다", R("ㅋㅋ 씨발 고마워", "ㅋㅋ 고마워요"), CUSHION_REASON.TOXICITY_REMAINED);
+
+  // 일에 대한 감정은 감정이고, 사람을 향한 말일 때만 공격이다.
+  check("일에 대한 실망은 감정 표현이다", R("이번 발표는 실망이다", "이번 발표는 실망이다"), null);
+  check("사람을 향한 실망은 거른다", R("너 진짜 실망이다", "너 진짜 실망이다"), CUSHION_REASON.TOXICITY_REMAINED);
+  check("LIGHT 는 문맥 의존 표현을 건드리지 않는다", R("너 진짜 실망이다 ㅋㅋ", "너 진짜 실망이다 ㅋㅋ", "LIGHT"), null);
+}
+
+console.log("\n읽기 순화: 언어가 섞이거나 글이 깨진 결과");
+{
+  const R = (original: string, purified: string) => rejectsPurified(original, purified, "NORMAL");
+  check("영어가 섞인 결과는 번역이다", R("내일 PPT 수정해서 보내줘", "Please 내일까지 PPT를 수정해서 보내주세요"), CUSHION_REASON.LANGUAGE_DRIFT);
+  check("원문의 업무 용어는 허용한다", R("내일 PPT 수정해서 보내줘", "내일까지 PPT 수정해서 보내줄 수 있을까요?"), null);
+  check("개발 대화의 영어는 그대로 통과한다", R("API 배포 확인했어", "API 배포 확인했어요"), null);
+  check("원문에 있던 영어 낱말의 활용은 같은 말이다", R("deploy 확인했어", "deployed 확인했어요"), null);
+  check("원문에 없던 한자 표현도 번역이다", R("내일 자료 보내줘", "內日 자료 보내 주세요"), CUSHION_REASON.LANGUAGE_DRIFT);
+  check("원문에 있던 한자는 허용한다", R("各自 파트 확인해줘", "各自 파트 확인해 주세요"), null);
+
+  check("대체 문자가 섞이면 깨진 글이다", R("내일 자료 보내줘", "내일 자료 보내 주세요\uFFFD"), CUSHION_REASON.GARBLED);
+  check("같은 글자가 맴돌면 깨진 글이다", R("내일 자료 보내줘", "내일 자료 보내 주세요요요요요요요"), CUSHION_REASON.GARBLED);
+  check("같은 말이 반복되면 깨진 글이다", R("내일 자료 보내줘", "내일 자료 보내 주세요 보내 주세요 보내 주세요 보내 주세요"), CUSHION_REASON.GARBLED);
+}
+
+console.log("\n읽기 순화: 낱말은 남았는데 뜻이 바뀐 결과");
+{
+  const R = (original: string, purified: string) => rejectsPurified(original, purified, "NORMAL");
+  // 기한
+  check("까지 가 사라지면 기한이 아니다", R("내일 3시까지 보내", "내일 3시에 보내 주세요"), CUSHION_REASON.MEANING_CHANGED);
+  check("기한을 지킨 부드러운 요청은 통과한다", R("내일 3시까지 보내", "내일 3시까지 보내 줄 수 있을까요?"), null);
+  check("원문에 없던 날짜 낱말은 기한 변경이다", R("3시까지 보내줘", "오늘 3시까지 보내 주세요"), CUSHION_REASON.MEANING_CHANGED);
+  check("줄임말은 같은 날짜다", R("낼까지 보내줘 3시", "내일 3시까지 보내 주세요"), null);
+  check("한글로 쓴 수는 숫자로 옮겨도 같다", R("세 시까지 보내줘", "3시까지 보내 주세요"), null);
+  check("원문에 없던 숫자는 기한 변경이다", R("5시까지 보내줘 자료 좀", "자료 6시까지 보내 주세요"), CUSHION_REASON.INFO_LOST);
+  check("숫자가 새로 생기면 지어낸 것이다", R("자료 빨리 보내줘 내일까지", "자료 내일까지, 5시 전에 보내 주세요"), CUSHION_REASON.MEANING_CHANGED);
+  // 요구 강도
+  check("꼭 해야 한다는 요구가 사라지면 약해진 것이다", R("꼭 내일까지 보내", "내일까지 보내 주시면 좋겠어요"), CUSHION_REASON.MEANING_CHANGED);
+  check("요구 강도를 지킨 말은 통과한다", R("꼭 내일까지 보내", "꼭 내일까지 보내 주세요"), null);
+  // 부정
+  check("금지가 긍정으로 뒤집히면 왜곡이다", R("이거 하지 마", "이거 해 주세요"), CUSHION_REASON.MEANING_CHANGED);
+  check("금지를 부드럽게 바꾼 것은 왜곡이 아니다", R("이거 하지 마", "이건 하지 않았으면 좋겠어요"), null);
+  check("거절을 다른 말로 한 것도 왜곡이 아니다", R("그건 못 해", "그건 조금 어려울 것 같아요"), null);
+  // 책임
+  check("남을 탓한 말이 내 탓이 되면 뒤바뀐 것이다", R("너 때문에 발표 망했잖아", "제가 잘못해서 발표가 망했어요"), CUSHION_REASON.MEANING_CHANGED);
+  check("내 사과가 남의 탓이 되면 뒤바뀐 것이다", R("내 탓이야 미안, 발표 망했어", "발표가 망한 건 네 잘못이에요"), CUSHION_REASON.MEANING_CHANGED);
+  check("책임을 빼고 사실만 남긴 말은 통과한다", R("너 때문에 발표 망했잖아", "발표가 아쉽게 됐어요. 어떤 부분이 어긋났는지 같이 봐요"), null);
+}
+
+console.log("\n읽기 순화: 가림이 문장을 깨뜨리지 않는다");
+{
+  const dup = maskRiskyParts("씨발 씨발 병신 내일 자료 줘");
+  check("이웃한 가림은 하나로 합친다", dup.text, "•• 내일 자료 줘");
+  check("합쳐도 가린 개수는 센다", dup.masked, 3);
+  // 예전에는 가림 표시가 있으면 깨짐 검사를 건너뛰어, 아래가 전부 "가렸다" 로 나왔다.
+  check("전부 가려지면 가림본을 만들지 않는다", maskRiskyParts("씨발", "NORMAL"), { text: "씨발", masked: 0 });
+  check("조사만 남으면 가림본을 만들지 않는다", maskRiskyParts("씨발야", "NORMAL").masked, 0);
+  check("어미만 남으면 가림본을 만들지 않는다", maskRiskyParts("씨발이야", "NORMAL").masked, 0);
+  const ok = maskRiskyParts("병신이네 정말 이게 뭐야");
+  check("뜻이 남으면 가린다", ok.masked > 0 && ok.text.includes("정말 이게 뭐야"), true);
+}
+
+console.log("\n읽기 순화: 모델이 필요 없는 말은 부르지 않는다");
+{
+  // 통과시키는 것은 **알려진 안전한 모양**뿐이다. 위험 낱말이 없다는 것만으로는 통과시키지 않는다.
+  for (const text of ["넵", "넵 감사합니다!", "확인했습니다", "네 알겠습니다 ㅎㅎ", "수고하셨습니다~", "이번 자료는 제가 정리할게요", "제가 내일 올릴게요"]) {
+    check(`자연스러운 말: ${text}`, isClearlyNatural(text), true);
+  }
+  // 조용한 압박·비꼼은 낱말표에 걸리지 않는다 — 그래서 모양이 안전하지 않으면 모델로 보낸다.
+  for (const text of [
+    "그래 알겠어", // 모양이 응답이 아니다(애매하면 보낸다)
+    "제가 다 할게요", // 비꼼일 수 있다
+    "제가 혼자 할게요",
+    "알겠습니다 그렇게 하세요 뭐", // 응답 낱말 밖의 말이 섞였다
+    "네 알겠습니다 ㅋㅋ",
+    "확인했습니다?",
+    "너는 확인했어?",
+    "넵 알겠습니다 안 할게요",
+    "내일 3시까지 보내줘",
+    "씨발 알겠어",
+    "",
+  ]) {
+    check(`모델로 보낸다: ${text || "(빈 말)"}`, isClearlyNatural(text), false);
+  }
+  check("긴 말은 사전 판정하지 않는다", isClearlyNatural("제가 " + "정리".repeat(40) + "할게요"), false);
+
+  // 끝난 상태지만 그릴 글은 없다 — AI 가 다듬은 것처럼 보이면 안 된다.
+  check("UNCHANGED 는 끝난 상태다", isCushionDone("UNCHANGED"), true);
+  check("UNCHANGED 는 글이 없다", toPurifiedView({ status: "UNCHANGED", text: null, source: null, reason: null, retryAfter: null }), {
+    status: "UNCHANGED", text: null, kind: null, reason: null, retryAfter: null,
+  });
+  check("UNCHANGED 는 원문을 그린다", displayTextOf({ text: "넵", purified: toPurifiedView({ status: "UNCHANGED", text: null, source: null, reason: null, retryAfter: null }) }, false), { text: "넵", kind: null });
+  check("글이 있는 PURIFIED 는 그대로", toPurifiedView({ status: "PURIFIED", text: "안녕", source: "ai", reason: null, retryAfter: null }).status, "PURIFIED");
+  check("모르는 상태는 실패로 본다", toPurifiedView({ status: "???", text: null, source: null, reason: null, retryAfter: null }).status, "FAILED");
+  check("UNCHANGED 는 다시 부르지 않는다", canRetry({ status: "UNCHANGED", reason: null, attemptCount: 0, retryAfter: null, model: "m", promptVersion: PROMPT_VERSION }, { model: "m", promptVersion: PROMPT_VERSION, at: 1 }), false);
+  // 할 일이 없던 말은 두 비율의 분모에서 뺀다 — 인사말이 많은 방이 "AI 가 못한다" 로 읽히면 안 된다.
+  const idle = { done: 2, masked: 1, unchanged: 50, refused: 0, rejected: 1, failed: 0, pending: 0 };
+  check("사전 판정된 말은 커버리지 분모에서 뺀다", purificationCoverage(idle), 0.75);
+  check("사전 판정된 말은 AI 비율 분모에서 뺀다", purificationAiShare(idle), 0.5);
+  check("사전 판정된 말은 그 자체의 칸에 센다", cushionBucketOf({ status: "UNCHANGED", reason: null, source: null }), "unchanged");
 }
 
 console.log("\n읽기 순화: 무엇을 그릴 것인가");
@@ -3111,11 +3304,11 @@ console.log("\n읽기 순화: 지표가 말해주는 것");
 
   // 실측에서 나온 모양: 협조적 말은 다 이어지고, 다툰 말은 **규칙 가림**으로 버틴다.
   // 커버리지는 높지만 AI 비율은 낮다 — 두 숫자를 따로 봐야 "모델을 바꿀까" 를 알 수 있다.
-  const counts = { done: 11, masked: 2, refused: 0, rejected: 3, failed: 0, pending: 0 };
+  const counts = { done: 11, masked: 2, unchanged: 0, refused: 0, rejected: 3, failed: 0, pending: 0 };
   check("커버리지 = 순화 + 가림", purificationCoverage(counts), 0.813);
   check("AI 비율은 따로 본다", purificationAiShare(counts), 0.688);
   check("커버리지만 높아도 AI 가 한 일은 적다", purificationCoverage(counts) > purificationAiShare(counts), true);
-  check("아무것도 없으면 0 으로 나누지 않는다", purificationCoverage({ done: 0, masked: 0, refused: 0, rejected: 0, failed: 0, pending: 0 }), 0);
+  check("아무것도 없으면 0 으로 나누지 않는다", purificationCoverage({ done: 0, masked: 0, unchanged: 0, refused: 0, rejected: 0, failed: 0, pending: 0 }), 0);
 }
 
 console.log("\n읽기 순화: 회귀 코퍼스(모델 없이 검사하는 부분)");
@@ -3300,6 +3493,66 @@ console.log("\n읽기 순화 (DB)");
     check("선점 토큰은 하나만 남는다", [claimed[0].claimToken === "token-a", claimed[0].claimToken === "token-b"].filter(Boolean).length, 1);
     await db.messagePurification.deleteMany({ where: { messageId: claimMessage.id } });
     await db.message.delete({ where: { id: claimMessage.id } });
+
+    /**
+     * **재시도할 수 있다고 판단한 행은 실제로 다시 선점된다.**
+     *
+     * `createMany({ skipDuplicates })` 는 이미 있는 행을 건드리지 않아서, 만료된 `PENDING` 이나
+     * 백오프가 지난 실패가 새 토큰을 못 받았다 — `canRetry` 는 "예" 인데 아무도 모델을 부르지 못했다.
+     */
+    const retryMsg = await db.message.create({
+      data: { teamId: team.id, threadKey: "team", authorId: viewer.id, text: "재선점 확인용", whenLabel: "14:04" },
+    });
+    const policy = { policyHash: "claim-policy", level: "NORMAL", tone: "soft", model: "openrouter/free" };
+    const stored = async () =>
+      new Map(
+        (await db.messagePurification.findMany({ where: { messageId: retryMsg.id, policyHash: policy.policyHash } })).map((row) => [
+          row.messageId,
+          { status: row.status, claimToken: row.claimToken, attemptCount: row.attemptCount },
+        ]),
+      );
+    const rows = [{ id: retryMsg.id, sourceHash: "h" }];
+    const row = () => db.messagePurification.findUniqueOrThrow({ where: { messageId_policyHash: { messageId: retryMsg.id, policyHash: policy.policyHash } } });
+    const at = Date.now();
+
+    // 새 말: 만든다.
+    const fresh = await claimPurifyRows({ rows, stored: await stored(), policy, at });
+    check("새 말은 선점한다", fresh.mine, [retryMsg.id]);
+    check("선점은 시도 하나로 센다", (await row()).attemptCount, 1);
+    check("선점은 만료 시각을 적는다", (await row()).retryAfter?.getTime(), at + CLAIM_TTL_MS);
+
+    // 만료된 PENDING: 새 토큰을 받는다.
+    await db.messagePurification.updateMany({ where: { messageId: retryMsg.id }, data: { retryAfter: new Date(at - 1000) } });
+    const expired = await claimPurifyRows({ rows, stored: await stored(), policy, at });
+    check("만료된 선점은 다시 가져온다", expired.mine, [retryMsg.id]);
+    check("다시 가져오면 토큰이 바뀐다", (await row()).claimToken, expired.claimToken);
+    check("다시 가져오면 시도가 오른다", (await row()).attemptCount, 2);
+
+    // 실패 + 백오프 지남: 새 토큰을 받고, 지난 결과는 비운다.
+    await db.messagePurification.updateMany({
+      where: { messageId: retryMsg.id },
+      data: { status: "FAILED", reason: CUSHION_REASON.MODEL_ERROR, claimToken: null, attemptCount: 1, retryAfter: new Date(at - 1000), text: "묵은 글", source: "ai" },
+    });
+    const failedBefore = await stored();
+    const reopened = await claimPurifyRows({ rows, stored: failedBefore, policy, at });
+    check("백오프가 지난 실패는 다시 선점된다", reopened.mine, [retryMsg.id]);
+    const reopenedRow = await row();
+    check("다시 선점하면 PENDING 이다", reopenedRow.status, "PENDING");
+    check("지난 글은 비운다", [reopenedRow.text, reopenedRow.reason, reopenedRow.source], [null, null, null]);
+
+    // 동시에 같은 만료 행을 가져가려 하면 **한쪽만** 이긴다.
+    await db.messagePurification.updateMany({ where: { messageId: retryMsg.id }, data: { retryAfter: new Date(at - 1000) } });
+    const snapshot = await stored();
+    const [one, two] = await Promise.all([
+      claimPurifyRows({ rows, stored: snapshot, policy, at }),
+      claimPurifyRows({ rows, stored: snapshot, policy, at }),
+    ]);
+    check("동시에 가져가도 한쪽만 이긴다", one.mine.length + two.mine.length, 1);
+    check("이긴 쪽의 토큰이 행에 남는다", (await row()).claimToken, one.mine.length === 1 ? one.claimToken : two.claimToken);
+
+    check("빈 목록은 아무것도 선점하지 않는다", (await claimPurifyRows({ rows: [], stored: new Map(), policy, at })).mine, []);
+    await db.messagePurification.deleteMany({ where: { messageId: retryMsg.id } });
+    await db.message.delete({ where: { id: retryMsg.id } });
 
     /**
      * **문맥이 있어도 캐시가 깨지지 않는다 (P2).**
@@ -3985,6 +4238,12 @@ console.log("\nAI 재시도 정책");
   check("메시지에 429 가 있어도 그렇다", isTransient(new Error("429 Too Many Requests")), false);
   check("키가 없으면 다시 시도하지 않는다", isTransient(err(401, "AuthenticationError", "invalid api key")), false);
   check("잘못된 요청도 다시 시도하지 않는다", isTransient(err(400, "BadRequestError")), false);
+  // "추론을 끌 수 없는 모델" 의 400 은 요청이 아니라 **그 모델**의 문제다 — 라우터가 다른 모델을 고르게 다시 부른다.
+  check(
+    "추론을 끌 수 없다는 400 은 다시 시도한다",
+    isTransient(err(400, "BadRequestError", "Reasoning is mandatory for this endpoint and cannot be disabled.")),
+    true,
+  );
 
   // withFallback 계약 테스트 (1차 일시실패 → 정확히 1회 폴백 모델 호출 → 성공 또는 최종 실패)
   {

@@ -14,13 +14,13 @@ import {
 } from "@/data/api";
 import {
   CUSHION_REASON,
-  CLAIM_TTL_MS,
   FAILURE_BACKOFF_MS,
   PROMPT_VERSION,
-  PURIFY_BATCH_LIMIT,
+  PURIFY_CONTEXT_MAX_CHARS,
   PURIFY_CONTEXT_MESSAGES,
   VALIDATOR_VERSION,
   canRetry,
+  isClearlyNatural,
   isCushionTone,
   isPurifiableText,
   isRefusal,
@@ -31,18 +31,20 @@ import {
   parsePurifyResponse,
   remainingPurify,
   toneOf,
+  toPurifiedView,
   type CushionReason,
   type CushionStatus,
   type ReadCushionSetting,
 } from "@/lib/read-cushion";
-import type { ChatMessage, DmThread } from "@/lib/types";
+import type { ChatMessage, ChatPurified, DmThread } from "@/lib/types";
 import { db } from "@/server/db";
 import { markLastCallRefused } from "@/server/ai/call-context";
 import { runTool } from "@/server/ai/run";
 import { softenIncoming } from "@/server/ai/tools";
 import { requireSessionMember } from "@/server/session";
-import { activeModelId } from "@/server/ai/model";
-import { randomUUID, createHash } from "node:crypto";
+import { isAiConfigured, readCushionModelId } from "@/server/ai/model";
+import { claimPurifyRows } from "@/server/ai/purify-claim";
+import { createHash } from "node:crypto";
 import { signTeamFileUrl, signTeamUpload, verifyTeamUpload } from "@/server/storage/team-upload";
 import type { PrepareUploadResult, UploadRejection } from "@/server/actions/drive";
 
@@ -75,6 +77,9 @@ async function resolveThread(threadId: string, meId: string, teamId: string) {
  * 남아 원문이 그대로 손에 있다.
  */
 const MAX_MESSAGE = 2000;
+
+/** 모델을 부르지 않고 `UNCHANGED` 로 닫는 말의 한 번 호출당 상한 — AI 는 안 쓰지만 DB 는 쓴다. */
+const UNCHANGED_PER_CALL = 100;
 
 /** 화면에 보일 시각 문자열. 서버가 포맷해야 사람마다 다르게 보이지 않는다. */
 function nowLabel() {
@@ -510,9 +515,7 @@ export async function setReadCushion(
 }
 
 /** 읽기 도움 상태 하나 — 화면이 그대로 그리는 값. */
-export type CushionView =
-  | { status: "PURIFIED" | "FALLBACK"; text: string; kind: "ai" | "mask"; reason: null; retryAfter: null }
-  | { status: "PENDING" | "REJECTED" | "FAILED"; text: null; kind: null; reason: string | null; retryAfter: string | null };
+export type CushionView = ChatPurified;
 
 export type SoftenThreadResult =
   | {
@@ -531,37 +534,6 @@ export type SoftenThreadResult =
     }
   | { ok: false; message: string };
 
-/** 한 말의 현재 상태를 화면 값으로 옮긴다. */
-function toCushionView(row: {
-  status: string;
-  text: string | null;
-  source: string | null;
-  reason: string | null;
-  retryAfter: Date | null;
-}): CushionView {
-  if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
-    return {
-      status: row.status,
-      text: row.text,
-      kind: row.source === "mask" ? "mask" : "ai",
-      reason: null,
-      retryAfter: null,
-    };
-  }
-  // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
-  // 모르는 status(옛 데이터·손으로 넣은 값)는 실패로 본다. 모르는 상태를 "읽기 도움됨"으로
-  // 그리는 일은 없어야 한다.
-  const status: "PENDING" | "REJECTED" | "FAILED" =
-    row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
-  return {
-    status,
-    text: null,
-    kind: null,
-    reason: row.reason,
-    retryAfter: row.retryAfter ? row.retryAfter.toISOString() : null,
-  };
-}
-
 /** 원문 지문. 캐시가 "같은 입력으로 만든 것인가" 를 판정하는 기준이다. */
 function hashSource(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -579,12 +551,14 @@ function hashSource(text: string): string {
  *
  * 1. **지금 다시 부를 수 있는지** 저장된 상태에 물어본다(`canRetry`). 성공·백오프·시도 횟수·
  *    프롬프트/모델 버전을 본다.
- * 2. **선점한다.** `PENDING` 행을 먼저 만들고 `claimToken` 을 심는다. **토큰이 내 것인
- *    항목만 모델을 부른다** — 두 탭이 동시에 열려도 한 번만 부른다.
- * 3. **묶어서 한 번 부른다**(최대 10개, AI 한도 1회).
- * 4. **항목별로 판정한다**(`judgeAll`). 개수·순서가 아니라 `id` 로 맞춘다.
- * 5. **거절·실패한 항목은 규칙 가림으로 이어받는다**(`FALLBACK`). AI 결과인 척 하지 않는다.
- * 6. **전부 저장한다** — 성공도 실패도. 다음 화면은 이 표를 보고 더 부를지 말지 정한다.
+ * 2. **보낼 묶음을 먼저 정한다.** 항목 수·입력 크기·출력 예산에 맞춰 줄인다(`packPurifyItems`).
+ * 3. **그 묶음만 선점한다.** `PENDING` 으로 만들고(이미 있는 행은 조건부로 가져오고) `claimToken` 을
+ *    심는다. **토큰이 내 것인 항목만 모델을 부른다** — 두 탭이 동시에 열려도 한 번만 부른다.
+ *    보내지 않을 말을 선점하면 만료될 때까지 아무도 못 건드리므로, 순서가 이렇다.
+ * 4. **묶어서 한 번 부른다**(AI 한도 1회).
+ * 5. **항목별로 판정한다**(`judgeOne`). 개수·순서가 아니라 `id` 로 맞춘다.
+ * 6. **거절·실패한 항목은 규칙 가림으로 이어받는다**(`FALLBACK`). AI 결과인 척 하지 않는다.
+ * 7. **전부 저장한다** — 성공도 실패도. 다음 화면은 이 표를 보고 더 부를지 말지 정한다.
  *
  * 실패하면 그 말은 **원문이 보인다**. 가릴 수 있는 표현이면 규칙이 가린본을 보여 준다.
  */
@@ -592,7 +566,7 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   const me = await requireSessionMember();
   const threadKey = await resolveThread(threadId, me.id, me.teamId);
   const at = Date.now();
-  const model = activeModelId();
+  const model = readCushionModelId();
 
   /**
    * **무엇을 다듬을지는 서버가 정한다.** 화면은 "이 방을 봐줘" 라고만 한다.
@@ -620,7 +594,8 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
   const contextOf = (index: number) =>
     rows
       .slice(Math.max(0, index - PURIFY_CONTEXT_MESSAGES), index)
-      .map((row) => ({ text: row.text.trim() }))
+      // 긴 말 하나가 묶음의 입력을 먹지 않게 자른다. 같은 말은 어디서 읽어도 같게 잘리므로 캐시는 그대로 맞는다.
+      .map((row) => ({ text: row.text.trim().slice(0, PURIFY_CONTEXT_MAX_CHARS) }))
       .filter((row) => row.text.length > 0);
 
   const texts = rows
@@ -685,70 +660,113 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
     ),
   );
 
-  // 2) 선점한다. **내가 Token 을 심은 행만 내 것** — 남의 선점을 덮어쓰지 않는다.
-  const claimToken = randomUUID();
-  const claimIds = claimable.slice(0, PURIFY_BATCH_LIMIT).map((row) => row.id);
+  // 2) 모델이 필요 없는 말을 **먼저** 가른다. 명백히 자연스러운 말("넵", "확인했습니다")은 AI 를 부르지 않고
+  //    `UNCHANGED` 로 닫는다 — 닫아 두지 않으면 매번 후보로 돌아온다. 애매한 말은 전부 모델로 간다.
+  const isNatural = (id: string) => isClearlyNatural(textOf.get(id) ?? "");
+  const beforeOf = new Map(texts.map((row) => [row.id, row.before]));
   const sourceOf = new Map(texts.map((row) => [row.id, row.text]));
-  if (claimIds.length > 0) {
-    await db.messagePurification.createMany({
-      data: claimIds.map((id) => {
-        const source = sourceOf.get(id) ?? "";
-        return {
-          messageId: id,
-          policyHash,
-          level,
-          status: "PENDING",
-          sourceHash: hashSource(source),
-          tone,
-          model,
-          promptVersion: PROMPT_VERSION,
-          validatorVersion: VALIDATOR_VERSION,
-          claimToken,
-          retryAfter: new Date(at + CLAIM_TTL_MS),
-        };
-      }),
-      skipDuplicates: true,
+  const textOf = new Map(texts.map((row) => [row.id, row.text.trim()]));
+  const naturalAll = claimable.filter((row) => isNatural(row.id));
+  const naturalIds = new Set(naturalAll.map((row) => row.id));
+  // 한 번에 닫는 수는 묶는다 — 모델은 안 부르지만 DB 는 쓴다.
+  const natural = naturalAll.slice(0, UNCHANGED_PER_CALL);
+
+  // 3) 보낼 묶음을 정한다. 선점은 그 다음에, 그 묶음에만 한다.
+  //    (예전에는 열 개를 먼저 선점하고 입력 크기에 맞춰 줄였다 — 나머지는 아무도 처리하지 않는 채 묶였다.)
+  const packed = packPurifyItems(
+    claimable
+      .filter((row) => !naturalIds.has(row.id))
+      .map((row) => ({ id: row.id, text: textOf.get(row.id) ?? "", before: beforeOf.get(row.id) ?? [] })),
+  );
+
+  // 4) 선점한다. **내가 토큰을 심은 행만 내 것** — 남의 선점을 덮어쓰지 않는다.
+  const { claimToken, mine: mineIds } = await claimPurifyRows({
+    rows: [...natural.map((row) => row.id), ...packed.map((item) => item.id)].map((id) => ({
+      id,
+      sourceHash: hashSource(sourceOf.get(id) ?? ""),
+    })),
+    stored: new Map(
+      existing.map((row) => [row.messageId, { status: row.status, claimToken: row.claimToken, attemptCount: row.attemptCount }]),
+    ),
+    policy: { policyHash, level, tone, model },
+    at,
+  });
+  const mine = new Set(mineIds);
+
+  const modelId = model;
+  /** 선점하기 전의 시도 횟수. 모델을 부르지 않았거나 못 부른 경우는 이 값으로 되돌린다. */
+  const attemptsBefore = (id: string) => stored.get(id)?.attemptCount ?? 0;
+  /** 묶음의 호출 시간. 모델을 부른 뒤에 채운다 — 모델을 부르지 않은 행은 `null` 이다. */
+  let latencyMs: number | null = null;
+
+  /**
+   * 이 항목의 결과를 저장한다. 실패도 저장한다 — 안 하면 다시 부른다.
+   *
+   * **내 선점이 아직 내 것일 때만 쓴다**(`claimToken`). 모델이 선점 시간보다 오래 걸려 다른 요청이
+   * 이 말을 가져갔다면, 늦게 도착한 내 결과가 그 요청의 결과를 덮어쓰면 안 된다.
+   */
+  const save = async (
+    id: string,
+    view: CushionView,
+    extra: {
+      reason?: CushionReason | null;
+      text?: string;
+      source?: "ai" | "mask";
+      /** 모델을 부르지 못한(또는 부르지 않은) 경우 — 선점하며 올린 시도 횟수를 되돌린다. */
+      refundAttempt?: boolean;
+    } = {},
+  ) => {
+    const { count } = await db.messagePurification.updateMany({
+      where: { messageId: id, policyHash, claimToken },
+      data: {
+        status: view.status,
+        reason: extra.reason ?? null,
+        text: extra.text ?? null,
+        source: extra.source ?? null,
+        model: modelId,
+        promptVersion: PROMPT_VERSION,
+        validatorVersion: VALIDATOR_VERSION,
+        ...(extra.refundAttempt ? { attemptCount: attemptsBefore(id) } : {}),
+        latencyMs,
+        claimToken: null,
+        // 실패는 **같은 설정으로는 다시 부르지 않게** 닫아 둔다. `canRetry` 가 버전을 보고
+        // 열어 준다 — 프롬프트를 고쳤거나 모델을 바꿨을 때만.
+        retryAfter: view.status === "PENDING" || view.status === "UNCHANGED" ? null : new Date(at + FAILURE_BACKOFF_MS),
+      },
     });
-  }
+    if (count > 0) cushions[id] = view;
+  };
 
   const afterClaim = await db.messagePurification.findMany({
     where: { messageId: { in: texts.map((row) => row.id) }, policyHash },
   });
-  const mine = afterClaim.filter((row) => row.claimToken === claimToken).map((row) => row.messageId);
-  const textOf = new Map(texts.map((row) => [row.id, row.text.trim()]));
-
   const cushions: Record<string, CushionView> = {};
-  for (const row of afterClaim) cushions[row.messageId] = toCushionView(row);
+  for (const row of afterClaim) cushions[row.messageId] = toPurifiedView(row);
 
-  /**
-   * 내가 선점을 못 가져간 말은 **남은 일로 센다.**
-   *
-   * 같은 사람이 두 탭에서 같은 방을 보고 있으면 그럴 수 있고, 그 말은 이 요청이 못 가져간 것이지
-   * 사라진 것이 아니다. `canRetry` 이 아직 유효한 `PENDING` 을 걸러내므로, 상대가 끝난 다음
-   * 부름에서 이 수는 0 이 되고 그때까지 화면은 AI 를 추가로 쓰지 않는다.
-   */
-  const uncontested = remainingPurify(claimable.length, mine.length);
+  // 5) 내가 선점한 자연스러운 말을 닫는다. 모델을 부르지 않았으므로 시도로 세지 않는다.
+  let settled = 0;
+  for (const row of natural) {
+    if (!mine.has(row.id)) continue;
+    await save(row.id, { status: "UNCHANGED", text: null, kind: null, reason: null, retryAfter: null }, { refundAttempt: true });
+    settled += 1;
+  }
 
-  if (mine.length === 0) return { ok: true, cushions, called: 0, remaining: uncontested };
-
-  // 3) 묶어서 한 번 부른다.
-  const beforeOf = new Map(texts.map((row) => [row.id, row.before]));
-  const items = packPurifyItems(
-    mine.map((id) => ({ id, text: textOf.get(id) ?? "", before: beforeOf.get(id) ?? [] })),
-  );
-  const modelId = model;
-  const attempt = claimable.find((row) => mine.includes(row.id));
-  const priorAttempts = attempt ? (stored.get(attempt.id)?.attemptCount ?? 0) : 0;
+  // 보낼 묶음 — 이미 크기에 맞춘 묶음이라 선점한 것만 추리면 그대로 들어간다.
+  const items = packed.filter((item) => mine.has(item.id));
 
   /**
    * 이 묶음을 보낸 뒤 **앞으로 더 손대야 할 말**이 몇 개 남았나.
    *
-   * `claimable` 에서 **이번에 처리한 것만** 뺀다. `mine` 을 한 번 더 빼면(내 이전 버그) 이 값이
-   * 음수가 되고, 화면은 `remaining !== 0` 이니 계속 묶음을 부른다 — AI 를 쓸 이유가 없는
-   * 상태로. 화면이 멈추는 기준이 이 값이라 **음수가 나면 안 된다.**
+   * `claimable` 에서 **이번에 처리한 것만** 뺀다(닫은 말 + 모델에 보낸 말). `mine` 을 한 번 더 빼면
+   * (내 이전 버그) 이 값이 음수가 되고, 화면은 `remaining !== 0` 이니 계속 묶음을 부른다 — AI 를 쓸
+   * 이유가 없는 상태로. 화면이 멈추는 기준이 이 값이라 **음수가 나면 안 된다.**
+   *
+   * 선점에서 진 말은 **남은 일로 센다.** 같은 사람이 두 탭에서 같은 방을 보고 있으면 그럴 수 있고,
+   * 그 말은 이 요청이 못 가져간 것이지 사라진 것이 아니다. `canRetry` 가 아직 유효한 `PENDING` 을
+   * 걸러내므로, 상대가 끝난 다음 부름에서 이 수는 0 이 되고 그때까지 화면은 AI 를 추가로 쓰지 않는다.
    */
-  const remaining = remainingPurify(claimable.length, items.length);
-
+  const remaining = remainingPurify(claimable.length, settled + items.length);
+  if (items.length === 0) return { ok: true, cushions, called: 0, remaining };
 
   /**
    * 이 묶음의 **호출 시간**을 잰다.
@@ -759,40 +777,21 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
    */
   const calledAt = Date.now();
   const result = await runTool("read-cushion", () => softenIncoming(items, tone, level));
-  const latencyMs = result.ok ? Date.now() - calledAt : null;
-
-  /** 이 항목의 결과를 저장한다. 실패도 저장한다 — 안 하면 다시 부른다. */
-  const save = async (
-    id: string,
-    view: CushionView,
-    extra: { reason?: CushionReason | null; text?: string; source?: "ai" | "mask" } = {},
-  ) => {
-    cushions[id] = view;
-    await db.messagePurification.update({
-      where: { messageId_policyHash: { messageId: id, policyHash } },
-      data: {
-        status: view.status,
-        reason: extra.reason ?? null,
-        text: extra.text ?? null,
-        source: extra.source ?? null,
-        model: modelId,
-        promptVersion: PROMPT_VERSION,
-        validatorVersion: VALIDATOR_VERSION,
-        attemptCount: priorAttempts + 1,
-        latencyMs,
-        claimToken: null,
-        // 실패는 **같은 설정으로는 다시 부르지 않게** 닫아 둔다. `canRetry` 가 버전을 보고
-        // 열어 준다 — 프롬프트를 고쳤거나 모델을 바꿨을 때만.
-        retryAfter: view.status === "PENDING" ? null : new Date(at + FAILURE_BACKOFF_MS),
-      },
-    });
-  };
+  latencyMs = result.ok ? Date.now() - calledAt : null;
 
   if (!result.ok) {
     // 한도·타임아웃처럼 **묶음 전체가 실패**했다. 항목별로 되돌린다.
-    const reason: CushionReason = result.message.includes("한도") || result.message.includes("횟수")
+    // 종류는 문구가 아니라 **실패 코드**로 가른다 — 문구에서 "한도" 를 찾던 때는 시간 초과가 전부
+    // 모델 거절로 적혔다.
+    const limited = result.code === "LIMIT";
+    const unconfigured = !isAiConfigured();
+    const reason: CushionReason = limited
       ? CUSHION_REASON.RATE_LIMITED
-      : CUSHION_REASON.MODEL_REFUSAL;
+      : unconfigured
+        ? CUSHION_REASON.NO_MODEL
+        : CUSHION_REASON.MODEL_ERROR;
+    // 한도에 걸렸거나 키가 없어 **모델을 부르지 않았다면** 시도로 세지 않는다.
+    const refundAttempt = limited || unconfigured;
     for (const item of items) {
       const masked = maskRiskyParts(item.text, level);
       if (masked.masked > 0) {
@@ -802,10 +801,10 @@ export async function softenThreadMessages(threadId: string): Promise<SoftenThre
           kind: "mask",
           reason: null,
           retryAfter: null,
-        }, { reason, text: masked.text, source: "mask" });
+        }, { reason, text: masked.text, source: "mask", refundAttempt });
         continue;
       }
-      await save(item.id, { status: "FAILED", text: null, kind: null, reason, retryAfter: null }, { reason });
+      await save(item.id, { status: "FAILED", text: null, kind: null, reason, retryAfter: null }, { reason, refundAttempt });
     }
     return { ok: true, cushions, called: 1, remaining };
   }
