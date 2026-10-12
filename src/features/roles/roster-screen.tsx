@@ -635,12 +635,12 @@ export function RosterScreen({
                       겹침 · 이야기 중
                     </span>
                   ) : wanters.length === 1 ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-txt-muted">
+                    <span className="t-micro-strong inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-txt-muted">
                       <Icon name="user-round" size={12} />
                       한 명 원함
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-txt-muted">
+                    <span className="t-micro-strong inline-flex items-center gap-1 rounded-full bg-fill px-2.5 py-0.5 text-txt-muted">
                       <Icon name="circle" size={11} />
                       원하는 사람 없음
                     </span>
@@ -684,7 +684,7 @@ export function RosterScreen({
                             "정하지 못했습니다.",
                           )
                         }
-                        className="flex-none rounded-lg border border-line bg-card px-2.5 py-1 text-[12px] font-semibold text-txt-strong hover:bg-fill cursor-pointer active:scale-95"
+                        className="t-micro-strong flex-none rounded-lg border border-line bg-card px-2.5 py-1 text-txt-strong hover:bg-fill cursor-pointer active:scale-95"
                       >
                         {wanters[0].isMe ? "내가 맡기" : `${wanters[0].name}님으로 정하기`}
                       </button>
@@ -707,7 +707,7 @@ export function RosterScreen({
                 {/* 받기 대기 상태인 경우 */}
                 {view.kind === "awaiting" && result ? (
                   <div className="mt-2.5 rounded-xl bg-fill p-2.5">
-                    <div className="mb-2 text-[12px] font-semibold text-txt">
+                    <div className="t-micro-strong mb-2 text-txt">
                       {result.tool} 결과 · {result.winner}님에게 확인 요청 중
                       {excluded.length > 0 ? ` (제외: ${excluded.join(", ")})` : ""}
                     </div>
@@ -871,7 +871,7 @@ export function RosterScreen({
           />
         ) : (
           <>
-            <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">
+            <p className="t-card text-pretty-keep m-0 mb-3.5 text-txt">
               결과는 <b>바로 확정되지 않습니다.</b> 배정된 사람이 받아들여야 최종 확정됩니다. 피할 일로
               고른 사람은 추첨 대상에서 뺍니다.
             </p>
@@ -1117,7 +1117,7 @@ function InviteManager({
           {live.map((invite) => (
             <div key={invite.id} className="flex items-start gap-[11px] px-[15px] py-[13px]">
               <div className="min-w-0 flex-1">
-                <div className="font-bold text-[14.5px] leading-[1.4] text-txt-strong">
+                <div className="t-card-title text-txt-strong">
                   {invite.label}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-[5px]">

@@ -28,7 +28,7 @@ export function PairingPanel({
   if (others.length === 0) {
     return (
       <Panel s="cream" pad={16} className="mb-4">
-        <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">{PAIRING_NEED_OTHERS}</p>
+        <p className="text-pretty-keep m-0 t-card text-txt">{PAIRING_NEED_OTHERS}</p>
       </Panel>
     );
   }
@@ -61,7 +61,7 @@ export function PairingPanel({
             >
               <span className="flex min-w-0 items-center gap-2.5">
                 <Avatar name={m.name} mbti={m.mbti} size={32} />
-                <span className="text-[15px] font-semibold text-txt-strong">{m.name}</span>
+                <span className="t-body-strong text-txt-strong">{m.name}</span>
               </span>
               {on ? (
                 <span className="t-cap-strong flex items-center gap-1 text-txt-strong">
@@ -79,12 +79,12 @@ export function PairingPanel({
           <div className="t-cap-strong text-txt-muted">
             나 × {picked.name} · {DAY_MASTER_COPY[me.stem].name} ↔ {DAY_MASTER_COPY[picked.stem].name}
           </div>
-          <div className="mt-1 text-[17px] font-extrabold text-txt-strong">{pairing.copy.title}</div>
+          <div className="mt-1 t-title text-txt-strong">{pairing.copy.title}</div>
           <div className="t-cap mt-1 text-txt-muted">
             {PAIR_TITLE[pairing.pairKey]} · 나의 오늘 “{pairing.mine}” · {picked.name}의 오늘 “{pairing.theirs}”
           </div>
-          <p className="text-pretty-keep m-0 mt-2 text-[14.5px] leading-[1.6] text-txt">{pairing.copy.line}</p>
-          <p className="text-pretty-keep m-0 mt-1 text-[14.5px] leading-[1.6] text-txt">{pairing.copy.tip}</p>
+          <p className="text-pretty-keep m-0 mt-2 t-card text-txt">{pairing.copy.line}</p>
+          <p className="text-pretty-keep m-0 mt-1 t-card text-txt">{pairing.copy.tip}</p>
         </Panel>
       ) : null}
     </div>

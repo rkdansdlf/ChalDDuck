@@ -148,7 +148,7 @@ export function MeetingChemistrySheet({
           ) : undefined
         }
       >
-        <p className="text-pretty-keep m-0 mb-3.5 text-[13.5px] leading-[1.6] text-txt-muted">
+        <p className="text-pretty-keep m-0 mb-3.5 t-cap text-txt-muted">
           {MEETING_CHEMISTRY_NOTICE}
         </p>
 
@@ -160,14 +160,14 @@ export function MeetingChemistrySheet({
           </Note>
         ) : !data.meRegistered ? (
           <Panel s="cream" pad={16}>
-            <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
+            <p className="text-pretty-keep m-0 mb-3 t-card text-txt">{TEAM_NEED_MINE}</p>
             <Btn full v="outline" onClick={() => setShowBirthSheet(true)}>
               내 사주 등록하기
             </Btn>
           </Panel>
         ) : data.members.length < 2 || !summary ? (
           <Panel s="cream" pad={16}>
-            <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">
+            <p className="text-pretty-keep m-0 t-card text-txt">
               {MEETING_ATTENDEE_WORD} {data.activeCount}명 중 사주를 등록한 사람이 {data.registeredCount}명이에요. 두 명
               이상 등록하면 볼 수 있어요.
             </p>
@@ -194,12 +194,12 @@ export function MeetingChemistrySheet({
               {plan.steps.map((s) => (
                 <div key={s.n}>
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[15px] font-bold text-txt-strong">
+                    <span className="t-sec text-txt-strong">
                       {String(s.n).padStart(2, "0")} {s.title}
                     </span>
                     <span className="t-cap flex-none text-txt-muted">{s.minutes}분</span>
                   </div>
-                  <p className="text-pretty-keep m-0 mt-0.5 text-[14px] leading-[1.55] text-txt">{s.desc}</p>
+                  <p className="text-pretty-keep m-0 mt-0.5 t-note text-txt">{s.desc}</p>
                 </div>
               ))}
             </Panel>
@@ -211,7 +211,7 @@ export function MeetingChemistrySheet({
                   {summary.lowest.slice(0, 2).map((e) => (
                     <div key={e}>
                       <div className="t-cap-strong text-txt-muted">가장 적게 센 오행 · {ELEMENT_KO[e]}</div>
-                      <p className="text-pretty-keep m-0 mt-0.5 text-[14.5px] leading-[1.6] text-txt">{MEETING_TIP[e]}</p>
+                      <p className="text-pretty-keep m-0 mt-0.5 t-card text-txt">{MEETING_TIP[e]}</p>
                     </div>
                   ))}
                 </Panel>

@@ -55,7 +55,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
 
         {!data.meRegistered ? (
           <Panel s="cream" pad={18} className="mb-4">
-            <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
+            <p className="text-pretty-keep m-0 mb-3 t-card text-txt">{TEAM_NEED_MINE}</p>
             <p className="t-cap mb-3 text-txt-muted">지금 {data.registeredCount}명이 등록했어요.</p>
             <Btn full onClick={() => setShowBirthSheet(true)}>
               내 사주 등록하기
@@ -63,7 +63,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
           </Panel>
         ) : data.members.length < 2 ? (
           <Panel s="cream" pad={18} className="mb-4">
-            <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">
+            <p className="text-pretty-keep m-0 t-card text-txt">
               아직 나만 등록했어요. 한 명 더 등록하면 팀 분포와 1:1 케미를 볼 수 있어요.
             </p>
           </Panel>
@@ -94,7 +94,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
                   {summary.lowest.slice(0, 2).map((e) => (
                     <div key={e} className="px-4 py-3">
                       <div className="t-cap-strong text-txt-muted">가장 적게 센 오행 · {ELEMENT_KO[e]}</div>
-                      <p className="text-pretty-keep m-0 mt-0.5 text-[14.5px] leading-[1.6] text-txt">
+                      <p className="text-pretty-keep m-0 mt-0.5 t-card text-txt">
                         {MEETING_TIP[e]}
                       </p>
                     </div>
@@ -112,7 +112,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
                     <div className="flex min-w-0 items-center gap-2.5">
                       <Avatar name={m.name} mbti={m.mbti} size={36} />
                       <div className="min-w-0">
-                        <div className="text-[15px] font-semibold text-txt-strong">
+                        <div className="t-body-strong text-txt-strong">
                           {m.name}
                           {m.isMe ? <span className="t-cap ml-1.5 text-txt-muted">나</span> : null}
                         </div>
@@ -161,7 +161,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
           >
             <span className="flex items-center gap-2.5">
               <Icon name="dices" size={17} className="text-txt-strong" />
-              <span className="text-[15px] font-semibold text-txt-strong">사주 놀이</span>
+              <span className="t-body-strong text-txt-strong">사주 놀이</span>
               <span className="t-cap text-txt-muted">오늘의 궁합 · 맞히기 · 밸런스 게임</span>
             </span>
             <Icon name="chevron-right" size={16} className="text-txt-muted" />
@@ -202,18 +202,18 @@ function ChemistrySheet({
         </Btn>
       }
     >
-      <p className="text-pretty-keep m-0 mb-3.5 text-[13.5px] leading-[1.6] text-txt-muted">{CHEMISTRY_NOTICE}</p>
+      <p className="text-pretty-keep m-0 mb-3.5 t-cap text-txt-muted">{CHEMISTRY_NOTICE}</p>
 
       <Panel s="cream" pad={16} className="mb-3.5">
         <div className="t-cap-strong text-txt-muted">
           {mine.name} ↔ {theirs.name}
         </div>
-        <div className="mt-1 text-[17px] font-extrabold text-txt-strong">{PAIR_TITLE[chem.pairKey]}</div>
+        <div className="mt-1 t-title text-txt-strong">{PAIR_TITLE[chem.pairKey]}</div>
         <div className="t-cap mt-1 text-txt-muted">
           {ELEMENT_KO[elementOfStem(me.stem)]} · {ELEMENT_KO[elementOfStem(other.stem)]} ·{" "}
           {copy.label} · 음양이 {chem.samePolarity ? "같아요" : "달라요"}
         </div>
-        <p className="text-pretty-keep m-0 mt-2 text-[14.5px] leading-[1.6] text-txt">{copy.line}</p>
+        <p className="text-pretty-keep m-0 mt-2 t-card text-txt">{copy.line}</p>
       </Panel>
 
       <div className="mb-3.5 flex flex-col gap-3">
@@ -229,7 +229,7 @@ function Block({ title, text }: { title: string; text: string }) {
   return (
     <div>
       <div className="t-cap-strong text-txt-muted">{title}</div>
-      <p className="text-pretty-keep m-0 mt-0.5 text-[14.5px] leading-[1.6] text-txt">{text}</p>
+      <p className="text-pretty-keep m-0 mt-0.5 t-card text-txt">{text}</p>
     </div>
   );
 }

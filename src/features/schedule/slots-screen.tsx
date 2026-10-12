@@ -477,7 +477,7 @@ export function SlotsScreen({
                 </div>
 
                 <div className="mb-2.5">
-                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                  <label className="t-micro-strong mb-1 block text-txt-muted">
                     회의 소요 시간
                   </label>
                   <div className="flex gap-1.5">
@@ -500,7 +500,7 @@ export function SlotsScreen({
                 </div>
 
                 <div className="mb-2.5">
-                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                  <label className="t-micro-strong mb-1 block text-txt-muted">
                     회의 장소 또는 접속 링크
                   </label>
                   <input
@@ -514,7 +514,7 @@ export function SlotsScreen({
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[12px] font-semibold text-txt-muted">
+                  <label className="t-micro-strong mb-1 block text-txt-muted">
                     회의 안건 (목표)
                   </label>
                   <input

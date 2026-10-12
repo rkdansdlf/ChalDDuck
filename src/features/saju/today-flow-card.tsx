@@ -78,16 +78,16 @@ export function TodayFlowCard({
       <div className="t-cap text-txt-muted">
         오늘은 {flow.pillarKo}일 {flow.pillarHanja}
       </div>
-      <div className="mt-0.5 text-[16px] font-extrabold text-txt-strong">{flow.title}</div>
-      <p className="text-pretty-keep m-0 mt-1 text-[14.5px] leading-[1.6] text-txt">{flow.line}</p>
-      <p className="text-pretty-keep m-0 mt-1 text-[14.5px] leading-[1.6] text-txt">{flow.tip}</p>
+      <div className="mt-0.5 t-title text-txt-strong">{flow.title}</div>
+      <p className="text-pretty-keep m-0 mt-1 t-card text-txt">{flow.line}</p>
+      <p className="text-pretty-keep m-0 mt-1 t-card text-txt">{flow.tip}</p>
 
       {flow.missions.length > 0 ? (
         <div className="mt-3 rounded-xl bg-fill px-3 py-2.5">
           <div className="t-cap-strong text-txt-muted">오늘의 팀 미션</div>
           <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
             {flow.missions.map((m) => (
-              <li key={m} className="text-pretty-keep text-[14px] leading-[1.55] text-txt">
+              <li key={m} className="text-pretty-keep t-note text-txt">
                 {m}
               </li>
             ))}

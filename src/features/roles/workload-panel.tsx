@@ -145,7 +145,7 @@ function MemberRow({
   return (
     <li className="px-3.5 py-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-[14.5px] font-bold text-txt-strong">
+        <span className="t-card-title min-w-0 truncate text-txt-strong">
           {load.isMe ? `${load.name} 나` : load.name}
         </span>
         <span className="flex flex-none items-center gap-1 text-[13px] font-semibold text-txt-strong">

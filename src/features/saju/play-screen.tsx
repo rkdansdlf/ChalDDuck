@@ -35,7 +35,7 @@ export function SajuPlayScreen({
 
   const needMine = (
     <Panel s="cream" pad={16} className="mb-4">
-      <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
+      <p className="text-pretty-keep m-0 mb-3 t-card text-txt">{TEAM_NEED_MINE}</p>
       <Btn full v="outline" onClick={() => setShowBirthSheet(true)}>
         내 사주 등록하기
       </Btn>

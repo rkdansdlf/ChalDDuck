@@ -295,6 +295,30 @@
   font: var(--w-bold) 19px / 1.35 var(--font-sans);
   letter-spacing: -0.02em;
 }
+/* 카드 안 본문 — 프로토타입에서 가장 많이 쓰인 설명 글(14.5px). 15px 의 t-body 와 반 픽셀 차이지만
+   카드 안에서는 이 값으로 그려진 원본이라 따로 둔다. */
+@utility t-card {
+  font: var(--w-regular) 14.5px / 1.6 var(--font-sans);
+}
+@utility t-card-title {
+  font: var(--w-bold) 14.5px / 1.4 var(--font-sans);
+}
+/* 가장 작은 보조 글 — 막대 라벨·메타 줄 */
+@utility t-micro {
+  font: var(--w-medium) 12px / 1.4 var(--font-sans);
+}
+@utility t-micro-strong {
+  font: var(--w-semibold) 12px / 1.4 var(--font-sans);
+}
+/* 카드 안 소제목 — 일간 이름·궁합 제목처럼 본문보다 한 단계 큰 한 줄 */
+@utility t-title {
+  font: var(--w-extrabold) 17px / 1.35 var(--font-sans);
+  letter-spacing: -0.02em;
+}
+/* 사주 기둥의 한자 — 글자 하나를 크게 보이는 자리 */
+@utility t-glyph {
+  font: var(--w-extrabold) 22px / 1 var(--font-sans);
+}
 /* 상단 앱바 제목 */
 @utility t-bar {
   font: var(--w-semibold) 15px / 1.35 var(--font-sans);

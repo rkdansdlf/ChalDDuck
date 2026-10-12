@@ -85,7 +85,7 @@ export function BirthSheet({
         </div>
       }
     >
-      <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">{SAJU_PRIVACY}</p>
+      <p className="text-pretty-keep m-0 mb-3.5 t-card text-txt">{SAJU_PRIVACY}</p>
 
       <Field label="생년월일" required error={error}>
         {(props) => <Input {...props} type="date" value={date} onChange={setDate} error={Boolean(error)} />}

@@ -63,10 +63,10 @@ export function BalancePanel({
                 return (
                   <li key={s.role} className="px-3.5 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[14.5px] font-bold text-txt-strong">
+                      <span className="t-card-title text-txt-strong">
                         {role?.name ?? "역할"}
                         {role ? (
-                          <span className="ml-1.5 text-[12px] font-semibold text-txt-muted">
+                          <span className="t-micro-strong ml-1.5 text-txt-muted">
                             {ROLE_KIND_LABEL[role.kind]}
                           </span>
                         ) : null}

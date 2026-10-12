@@ -58,14 +58,14 @@ export function OnboardingSaju({
       <Panel s="card" pad={16} r={18} className="mt-3 shadow-xs border border-yellow-200/70">
         <div className="t-cap-strong text-yellow-800">내 찰떡 프로필</div>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
-          <span className="font-mono text-[18px] font-extrabold text-txt-strong">{mbti}</span>
-          <span className="text-[16px] text-txt-muted">×</span>
-          <span className="text-[18px] font-extrabold text-txt-strong">{master.name}</span>
+          <span className="font-mono t-title text-txt-strong">{mbti}</span>
+          <span className="t-body text-txt-muted">×</span>
+          <span className="t-title text-txt-strong">{master.name}</span>
         </div>
         <div className="t-cap mt-0.5 text-txt-muted">
           {master.image} · {ELEMENT_KO[chart.dayMaster.element]} {ELEMENT_WORD[chart.dayMaster.element].hanja}
         </div>
-        <p className="text-pretty-keep m-0 mt-2 text-[14px] leading-[1.55] text-txt">{master.nature}</p>
+        <p className="text-pretty-keep m-0 mt-2 t-note text-txt">{master.nature}</p>
 
         <dl className="m-0 mt-3 flex flex-col gap-1.5 border-t border-line/60 pt-3">
           <div className="flex gap-2">
@@ -114,7 +114,7 @@ export function OnboardingSaju({
           <span className="flex min-w-0 items-center gap-2.5">
             <Icon name="sparkles" size={17} className="flex-none text-yellow-700" />
             <span className="min-w-0">
-              <span className="block text-[14.5px] font-bold text-txt-strong">사주도 더해 볼까요? · 선택</span>
+              <span className="block t-card-title text-txt-strong">사주도 더해 볼까요? · 선택</span>
               <span className="t-cap block text-txt-muted">생년월일을 넣으면 내 일간을 함께 보여 드려요</span>
             </span>
           </span>
@@ -130,7 +130,7 @@ export function OnboardingSaju({
         <Icon name="sparkles" size={16} />
         <span>찰떡 사주 · 선택</span>
       </div>
-      <p className="text-pretty-keep m-0 mb-3 text-[13.5px] leading-[1.55] text-txt-muted">{SAJU_PRIVACY}</p>
+      <p className="text-pretty-keep m-0 mb-3 t-cap text-txt-muted">{SAJU_PRIVACY}</p>
 
       <Field label="생년월일" required error={error}>
         {(props) => <Input {...props} type="date" value={date} onChange={setDate} error={Boolean(error)} />}

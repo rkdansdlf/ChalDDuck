@@ -22,7 +22,7 @@ export function ElementBar({
   const w = ELEMENT_WORD[element];
   return (
     <div>
-      <div className="mb-1 flex justify-between text-[12px] font-medium text-txt-muted">
+      <div className="mb-1 flex justify-between t-micro text-txt-muted">
         <span className={cn(top && "font-bold text-txt-strong")}>
           {ELEMENT_KO[element]} {w.hanja} · {w.keyword}
         </span>
@@ -32,7 +32,7 @@ export function ElementBar({
       </div>
       <div className="h-2.5 w-full overflow-hidden rounded-full bg-line">
         <div
-          className={cn("h-full transition-all duration-300", top ? "bg-yellow-500" : "bg-amber-200")}
+          className={cn("h-full transition-all duration-300", top ? "bg-yellow-500" : "bg-yellow-200")}
           style={{ width: `${percent}%` }}
         />
       </div>

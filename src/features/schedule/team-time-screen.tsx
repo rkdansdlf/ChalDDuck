@@ -219,7 +219,7 @@ export function TeamTimeScreen({
         <ScheduleTabs current="team" />
         <WeekPicker weeks={weeks} value={week} onChange={setWeek} />
 
-        <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">
+        <p className="t-card text-pretty-keep m-0 mb-3 text-txt">
           칸의 숫자는 그 시간에 <b>되는 사람 수</b>입니다. 칸을 누르면 누가 되는지 보입니다.
         </p>
 

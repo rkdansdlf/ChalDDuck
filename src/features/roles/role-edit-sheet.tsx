@@ -227,9 +227,9 @@ export function RoleEditSheet({
                   className="flex min-h-[56px] w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left"
                 >
                   <span className="min-w-0">
-                    <span className="block text-[14.5px] font-bold text-txt-strong">
+                    <span className="t-card-title block text-txt-strong">
                       {r.name}
-                      <span className="ml-1.5 text-[12px] font-semibold text-txt-muted">{ROLE_KIND_LABEL[r.kind]}</span>
+                      <span className="t-micro-strong ml-1.5 text-txt-muted">{ROLE_KIND_LABEL[r.kind]}</span>
                     </span>
                     {r.note ? <span className="block truncate text-[12.5px] text-txt-muted">{r.note}</span> : null}
                   </span>

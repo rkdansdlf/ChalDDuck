@@ -85,7 +85,7 @@ export function MeetingNoteSheet({
             <button
               type="button"
               onClick={() => setRawMeetingId(showRaw ? null : meetingId)}
-              className="text-[12px] font-semibold text-action underline cursor-pointer"
+              className="t-micro-strong text-action underline cursor-pointer"
             >
               {showRaw ? "요약본 보기" : "원문 메모 보기"}
             </button>

@@ -301,7 +301,7 @@ export function MyTimeScreen({
             void saveAndGo(href);
           }}
         />
-        <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">
+        <p className="t-card text-pretty-keep m-0 mb-3 text-txt">
           <b>안 되는 시간</b>을 눌러 표시해 주세요. 표시하지 않은 시간은 가능한 시간으로 봅니다.
         </p>
 
@@ -583,7 +583,7 @@ export function MyTimeScreen({
               type="file"
               accept=".ics,text/calendar"
               onChange={handleFileUpload}
-              className="block w-full text-[12px] text-txt-muted file:mr-2.5 file:rounded-lg file:border-0 file:bg-fill file:px-3 file:py-1.5 file:text-[12px] file:font-semibold file:text-txt"
+              className="t-micro-strong block w-full text-txt-muted file:mr-2.5 file:rounded-lg file:border-0 file:bg-fill file:px-3 file:py-1.5 file:file:file:text-txt"
             />
           </div>
 

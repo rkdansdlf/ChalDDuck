@@ -59,7 +59,7 @@ export function MySajuCard({ saju }: { saju: MySaju | null }) {
             <div className="t-cap-strong text-txt-muted">내 일간</div>
             {saju && master ? (
               <div className="mt-0.5 flex items-baseline gap-2">
-                <span className="text-[15px] font-extrabold text-txt-strong">{master.name}</span>
+                <span className="t-sec text-txt-strong">{master.name}</span>
                 <span className="t-body keep-all truncate text-txt-muted">{master.image}</span>
               </div>
             ) : (
@@ -95,18 +95,18 @@ function DetailSheet({ saju, onClose }: { saju: MySaju; onClose: () => void }) {
 
   return (
     <Sheet open title="내 사주" onClose={onClose}>
-      <p className="text-pretty-keep m-0 mb-3.5 text-[13.5px] leading-[1.6] text-txt-muted">{SAJU_NOTICE}</p>
+      <p className="text-pretty-keep m-0 mb-3.5 t-cap text-txt-muted">{SAJU_NOTICE}</p>
 
       <PillarTable chart={chart} />
 
       <Panel s="card" pad={16} className="mb-3.5">
         <div className="t-cap-strong text-txt-muted">재미 해석 · 일간</div>
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-[16px] font-extrabold text-txt-strong">{master.name}</span>
+          <span className="t-title text-txt-strong">{master.name}</span>
           <span className="t-body keep-all text-txt-muted">{master.image}</span>
         </div>
-        <p className="text-pretty-keep m-0 mt-2 text-[14.5px] leading-[1.6] text-txt">{master.nature}</p>
-        <p className="text-pretty-keep m-0 mt-1.5 text-[14.5px] leading-[1.6] text-txt">
+        <p className="text-pretty-keep m-0 mt-2 t-card text-txt">{master.nature}</p>
+        <p className="text-pretty-keep m-0 mt-1.5 t-card text-txt">
           <b>회의에서는</b> {master.meetingTip}
         </p>
       </Panel>
@@ -197,7 +197,7 @@ function PillarCell({ pillar, gods, master }: { pillar: Pillar | null; gods: Pil
         master ? "border-yellow-600 bg-yellow-100" : "border-line bg-card",
       )}
     >
-      <div className="text-[22px] font-extrabold leading-none text-txt-strong">{pillarHanja(pillar)}</div>
+      <div className="t-glyph text-txt-strong">{pillarHanja(pillar)}</div>
       <div className="t-cap mt-1 text-txt">
         {STEMS[pillar.stem]}
         {BRANCHES[pillar.branch]}

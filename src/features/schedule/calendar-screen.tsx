@@ -440,14 +440,14 @@ function EventCard({
               <button
                 type="button"
                 onClick={() => onOpenNote?.(event.meetingId!, event.title)}
-                className="text-[12px] font-semibold text-brand underline cursor-pointer"
+                className="t-micro-strong text-brand underline cursor-pointer"
               >
                 회의록 보기
               </button>
             ) : (
               <Link
                 href={`/tools/clerk?meetingId=${event.meetingId}`}
-                className="text-[12px] font-semibold text-txt-muted hover:text-action underline"
+                className="t-micro-strong text-txt-muted hover:text-action underline"
               >
                 회의록 정리
               </Link>
@@ -456,7 +456,7 @@ function EventCard({
           {event.href && (
             <Link
               href={event.href}
-              className="text-[12px] font-semibold text-action no-underline hover:underline"
+              className="t-micro-strong text-action no-underline hover:underline"
             >
               보기 &gt;
             </Link>

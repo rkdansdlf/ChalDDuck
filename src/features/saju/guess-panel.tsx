@@ -34,7 +34,7 @@ export function GuessPanel({
   if (rounds.length === 0) {
     return (
       <Panel s="cream" pad={16} className="mb-4">
-        <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">{GUESS_NEED_MORE}</p>
+        <p className="text-pretty-keep m-0 t-card text-txt">{GUESS_NEED_MORE}</p>
       </Panel>
     );
   }
@@ -42,7 +42,7 @@ export function GuessPanel({
   if (!started) {
     return (
       <Panel s="cream" pad={16} className="mb-4">
-        <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{GUESS_INTRO}</p>
+        <p className="text-pretty-keep m-0 mb-3 t-card text-txt">{GUESS_INTRO}</p>
         <Btn
           full
           v="soft"
@@ -65,7 +65,7 @@ export function GuessPanel({
     const right = rounds.filter((r, i) => answers[i] === r.targetId).length;
     return (
       <Panel s="card" pad={16} className="mb-4">
-        <div className="text-[17px] font-extrabold text-txt-strong">
+        <div className="t-title text-txt-strong">
           {rounds.length}문제 중 {right}문제 맞혔어요
         </div>
         <p className="t-cap mt-1 mb-3 text-txt-muted">같은 날에는 같은 문제가 나와요. 내일 다시 해 보세요.</p>
@@ -87,13 +87,13 @@ export function GuessPanel({
       <div className="t-cap-strong text-txt-muted">
         문제 {index + 1} / {rounds.length}
       </div>
-      <div className="mt-1 text-[15px] font-bold text-txt-strong">이 오행 수는 누구의 사주일까요?</div>
+      <div className="mt-1 t-sec text-txt-strong">이 오행 수는 누구의 사주일까요?</div>
 
       <ul className="m-0 mt-2.5 grid list-none grid-cols-5 gap-1.5 p-0" aria-label="연·월·일 여섯 글자의 오행 수">
         {ELEMENTS.map((e) => (
           <li key={e} className="rounded-xl bg-fill px-1 py-2 text-center">
             <div className="t-cap text-txt-muted">{ELEMENT_KO[e]}</div>
-            <div className="text-[18px] font-extrabold text-txt-strong">{target.elements[e]}</div>
+            <div className="t-title text-txt-strong">{target.elements[e]}</div>
           </li>
         ))}
       </ul>
@@ -126,7 +126,7 @@ export function GuessPanel({
               onClick={() => setAnswers((prev) => [...prev.slice(0, index), id])}
               className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-3 px-4 py-2 text-left hover:bg-fill disabled:cursor-default disabled:hover:bg-transparent"
             >
-              <span className="text-[15px] font-semibold text-txt-strong">{opt.name}</span>
+              <span className="t-body-strong text-txt-strong">{opt.name}</span>
               {answered && isAnswer ? (
                 <span className="t-cap-strong flex items-center gap-1 text-txt-strong">
                   <Icon name="check" size={15} />
@@ -145,7 +145,7 @@ export function GuessPanel({
 
       {answered ? (
         <div className="mt-3">
-          <p role="status" className="m-0 mb-2.5 text-[14.5px] font-bold text-txt-strong">
+          <p role="status" className="m-0 mb-2.5 t-card-title text-txt-strong">
             {correct ? "맞아요!" : `아쉬워요. 정답은 ${target.name} 님이에요.`}
           </p>
           <Btn
