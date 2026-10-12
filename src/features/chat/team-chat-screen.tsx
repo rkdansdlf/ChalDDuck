@@ -159,7 +159,7 @@ export function TeamChatScreen({
   // 쿠션 번역기에서 "단톡방 입력창에 담기"로 복귀했을 때 토스트 알림을 띄우고 스토어를 비운다.
   useEffect(() => {
     if (composerDraft) {
-      flash("쿠션어로 다듬은 말을 입력창에 담았습니다 ✨");
+      flash("말투를 고쳐 쓴 말을 입력창에 담았습니다 ✨");
       clearComposerDraft();
     }
   }, [composerDraft, flash]);
@@ -169,7 +169,7 @@ export function TeamChatScreen({
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("from") === "cushion-sent") {
-        flash("쿠션어로 다듬은 메시지를 단톡방에 보냈습니다 ✨");
+        flash("말투를 고쳐 쓴 메시지를 단톡방에 보냈습니다 ✨");
         stick();
         const url = new URL(window.location.href);
         url.searchParams.delete("from");

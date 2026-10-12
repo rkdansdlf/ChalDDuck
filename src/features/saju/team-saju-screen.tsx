@@ -198,7 +198,7 @@ function ChemistrySheet({
       onClose={onClose}
       footer={
         <Btn full v="outline" icon="messages-square" onClick={() => router.push("/tools/cushion")}>
-          쿠션 번역기로 말 다듬기
+          말투 고쳐 쓰기로 말 다듬기
         </Btn>
       }
     >

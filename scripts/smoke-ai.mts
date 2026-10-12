@@ -1,7 +1,7 @@
 import { check, finish, readCode, truthy } from "./db-test-base.mjs";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { detectAiAnomalies } from "../src/server/ai/call-stats.js";
-import { withFallback } from "../src/server/ai/model.js";
+import { REASONING_OFF, withFallback } from "../src/server/ai/model.js";
 import { isSafetyLabel } from "../src/lib/read-cushion.js";
 import { estimateSpeechSeconds, formatSpeechSeconds, getSpeechPacingInfo } from "../src/lib/present-pacing.js";
 import { shapePresentDraft } from "../src/lib/ai-draft-shape.js";
@@ -89,6 +89,54 @@ async function main() {
     }
     check("429 같은 비일시적 오류는 폴백 없이 즉시 중단", calls, ["model-a"]);
     check("429 예외 유지", caught?.message, "429 Too Many Requests");
+  }
+
+  // 3-0. 무료 라우터는 **다시 부르면 다른 모델이 답한다** — 같은 슬러그라도 폴백이 돈다.
+  //
+  // 실측(2026-10-12): 쿠션 번역기가 `openrouter/free` 로 가자 라우터가 가드 모델을 골랐고,
+  // 폴백이 `fallback === primary` 에 막혀 한 번도 돌지 않은 채 실패했다.
+  {
+    const calls: string[] = [];
+    const res = await withFallback(
+      "cushion",
+      "openrouter/free",
+      "openrouter/free",
+      async (m) => {
+        calls.push(m);
+        return calls.length === 1 ? "User Safety: unsafe" : "내일까지 자료 주실 수 있을까요?";
+      },
+      (text) => !isSafetyLabel(text),
+    );
+    check("무료 라우터는 같은 슬러그로 한 번 더 부른다", res, "내일까지 자료 주실 수 있을까요?");
+    check("무료 라우터 재시도는 두 번 부른다", calls, ["openrouter/free", "openrouter/free"]);
+  }
+  {
+    // 고정 슬러그는 같은 모델이 같은 답을 내므로 다시 부르지 않는다 — 시간만 두 배가 된다.
+    const calls: string[] = [];
+    try {
+      await withFallback("clerk", "model-a", "model-a", async (m) => {
+        calls.push(m);
+        throw new Error("빈 응답");
+      });
+    } catch {
+      // 기대한 실패다 — 아래에서 호출 횟수만 본다.
+    }
+    check("고정 슬러그가 같으면 다시 부르지 않는다", calls, ["model-a"]);
+  }
+  // 추론을 끈다 — 추론이 `max_tokens` 를 먼저 쓰면 글이 빈 채로 온다(실측 12번 중 6번).
+  check("텍스트 호출은 추론을 끈다", REASONING_OFF.reasoning.effort, "none");
+  {
+    const model = readCode("../src/server/ai/model.ts");
+    // 일반·스트리밍 두 호출이 모두 같은 설정을 쓴다 — 한쪽만 빠지면 두 길의 결과가 갈린다.
+    truthy("일반 호출이 추론 끄기를 쓴다", model.includes("max_tokens: input.maxTokens ?? 1024,\n            ...REASONING_OFF,"));
+    truthy("스트리밍 호출이 추론 끄기를 쓴다", model.includes("stream: true,\n          ...REASONING_OFF,"));
+    truthy("재시도 판단은 한 곳(retryModelFor)에서 한다", model.split("retryModelFor(primary, fallback, error)").length === 3);
+    // 스트리밍 재시도는 첫 시도의 조각을 버리고 시작해야 한다 — 아니면 두 글이 이어 붙는다.
+    truthy("스트리밍 재시도 직전에 화면을 비운다", model.includes("input.onReset?.();"));
+    const route = readCode("../src/app/api/ai/stream/route.ts");
+    truthy("경로가 조각 비우기 프레임을 보낸다", route.includes("() => push(frame({ reset: true }))"));
+    const client = readCode("../src/features/tools/ai-stream-client.ts");
+    truthy("클라이언트가 비우기 프레임에서 모은 글을 버린다", client.includes("if (reset === true)") && client.includes('state.partial = "";'));
   }
 
   // 3-1. 결과로 쓸 수 없는 응답 — 안전 라벨 가드.

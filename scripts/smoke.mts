@@ -453,6 +453,11 @@ const LEGACY_PRODUCT_COPY: { legacy: string; canonical: string; comments?: true 
   { legacy: "순화됨", canonical: "다듬어 읽음" },
   { legacy: "순화문", canonical: "다듬어 읽은 말" },
   { legacy: "순화 몫", canonical: "읽기 도움 몫" },
+  // 쓰는 쪽 도구의 예전 이름. `쿠션 번역` 은 `쿠션 번역기` 도 함께 잡는다.
+  { legacy: "쿠션 번역", canonical: "말투 고쳐 쓰기" },
+  { legacy: "쿠션어로 다듬", canonical: "말투 고쳐 쓰기" },
+  // 회의 메모를 할 일로 정리하는 도구의 예전 이름.
+  { legacy: "AI 서기", canonical: "회의록 정리" },
   // `거절하기` 와 `반대하기` 는 둘 다 넣지 않는다 — 재입장 승인이 `거절`, 팀 동의가
   // `반대` 로 **각각 맞는 용어**다. 전역 금지로 두면 다른 화면을 망가뜨리는 검사가 된다.
   // 역할 쪽만 `안 받기` 로 바꿨고, 그 옆의 `수락하기` 만 금지한다.
@@ -3865,8 +3870,8 @@ console.log("\nAI 사용 내역 내려받기");
     check("팀 요약에 이름이 없다", teamCsv.includes(leader.name) || teamCsv.includes(mate.name), false);
     check("팀 요약은 두 도구를 센다", teamCsv.trim().split("\r\n").length - 1, 2);
     // 쿠션 2회(둘이 각각) · 서기 1회 — 사람이 아니라 횟수만 말한다.
-    truthy("쿠션 횟수를 합쳐 센다", /쿠션 번역기,2/.test(teamCsv));
-    truthy("서기 횟수를 센다", /AI 서기,1/.test(teamCsv));
+    truthy("쿠션 횟수를 합쳐 센다", /말투 고쳐 쓰기,2/.test(teamCsv));
+    truthy("서기 횟수를 센다", /회의록 정리,1/.test(teamCsv));
 
     await db.aiUsage.deleteMany({ where: { teamId: team.id } });
   }
@@ -3968,6 +3973,12 @@ console.log("\nAI 재시도 정책");
   check("연결 오류는 다시 시도한다", isTransient(err(500, "InternalServerError")), true);
   check("빈 응답은 다시 시도한다", isTransient(new Error("빈 응답")), true);
   check("도구 호출이 없으면 다시 시도한다", isTransient(new Error("도구 호출이 없는 응답")), true);
+  // 실측(2026-10-12): 라우터가 추론을 끌 수 없는 모델을 골랐다 — 요청 문제가 아니라 모델 문제다.
+  check(
+    "추론을 끌 수 없다는 400 은 다른 모델로 다시 부른다",
+    isTransient(err(400, "BadRequestError", "400 Reasoning is mandatory for this endpoint and cannot be disabled.")),
+    true,
+  );
 
   // 다시 해도 같은 것 — 시도하지 않는다. **무료 티어에서 429 가 가장 흔하다.**
   check("429 는 다시 시도하지 않는다", isTransient(err(429, "RateLimitError", "Provider returned error")), false);

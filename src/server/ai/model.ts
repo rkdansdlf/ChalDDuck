@@ -52,6 +52,27 @@ const ENV_SUFFIX: Record<AiToolKey, string> = {
 const FREE_ROUTER = "openrouter/free";
 
 /**
+ * 추론(reasoning)을 끈다 — 글 하나를 돌려받는 호출에는 추론이 필요 없다.
+ *
+ * ## 왜 필요한가 (2026-10-12 실측)
+ *
+ * `openrouter/free` 가 고르는 무료 모델은 상당수가 추론 모델이라, 추론 토큰이 `max_tokens`
+ * 를 **먼저 다 쓴다.** 그러면 `finish_reason: "length"` 에 `content` 는 빈 문자열로 온다.
+ * 같은 요청 12번 중 6번이 이랬다. 같은 설정에서 추론을 끄면 16번 중 빈 응답은 0번이었다.
+ *
+ * `reasoning.effort: "none"` 은 OpenRouter 가 공통으로 받는 필드라 공급자마다 모양을 고르지
+ * 않아도 된다. 추론을 지원하지 않는 모델은 이 필드를 무시한다.
+ *
+ * ⚠️ **일부 모델은 추론을 끌 수 없어서 `400 Reasoning is mandatory…` 를 돌려준다.** 그래서
+ * `minimal` 로 낮추는 길도 재어 봤다 — 400 은 사라지지만 추론이 토큰을 먼저 써서 빈 응답이
+ * 늘었다(20번 중 7건, 끝까지 오는 시간도 길다). 빈 응답이 더 느리므로 `none` 을 유지하고,
+ * 400 은 `isTransient` 가 다른 모델로 다시 부르게 한다.
+ *
+ * 스프레드로만 쓴다 — SDK 타입에는 없는 필드라 객체 리터럴에 직접 적으면 타입 검사가 막는다.
+ */
+export const REASONING_OFF = { reasoning: { effort: "none" } } as const;
+
+/**
  * 그 도구를 부를 때 **어느 모델로** 부르는가.
  *
  * ## 세 겹으로 고른다
@@ -227,6 +248,11 @@ export function isTransient(error: unknown): boolean {
   const text = error instanceof Error ? `${error.name} ${error.message}` : "";
   if (/timeout|timed out|etimedout|abort/i.test(text)) return true;
 
+  // "추론을 끌 수 없다" 는 400 — 요청이 잘못된 것이 아니라 **이 모델이** 추론 끄기를 받지
+  // 않는 것이다. 다른 모델은 받을 수 있으므로, 라우터가 다른 모델을 고르게 다시 부른다.
+  // (실측 2026-10-12: 스트리밍 20번 중 이 400 이 6건. 빠르게 떨어지므로 다시 부르는 값이 싸다.)
+  if (/reasoning is mandatory/i.test(text)) return true;
+
   // 4xx 는 전부 다시 해도 같다. 429 는 특히 그렇다(무료 라우터의 한도를 이미 쓴 상태).
   if (status >= 400 && status < 500) return false;
   if (status >= 500) return true;
@@ -261,6 +287,23 @@ export class UnusableOutputError extends Error {
     super(`${tool}: 결과로 쓸 수 없는 응답`);
     this.name = "UnusableOutputError";
   }
+}
+
+/**
+ * 실패한 첫 시도를 **한 번 더** 부를 모델. 부르지 않으면 `null`.
+ *
+ * 폴백 슬러그가 첫 모델과 같으면 보통은 다시 부르지 않는다 — 같은 모델은 같은 답을 낸다.
+ * 하지만 **무료 라우터는 예외다.** `openrouter/free` 는 부를 때마다 다른 모델을 고르므로,
+ * 같은 슬러그라도 다시 부르면 다른 모델이 답할 수 있다.
+ *
+ * 예전에는 이 예외가 없어서, 라우터가 **안전 가드 모델**을 고른 날 폴백이 한 번도 돌지 않고
+ * 바로 실패했다(`AiCall` 에 `nemotron-3.5-content-safety` · `failed` · `retried=false` 로 남았다).
+ * 이 함수가 스트리밍과 일반 호출의 **같은 판단**이어야 두 길이 같은 결과를 낸다.
+ */
+function retryModelFor(primary: string, fallback: string | null, error: unknown): string | null {
+  if (!fallback) return null;
+  if (fallback === primary && primary !== FREE_ROUTER) return null;
+  return isTransient(error) ? fallback : null;
 }
 
 /**
@@ -322,15 +365,16 @@ export async function withFallback<T>(
   try {
     return await attempt(primary, false);
   } catch (error: unknown) {
-    if (!fallback || fallback === primary || !isTransient(error)) {
+    const retryWith = retryModelFor(primary, fallback, error);
+    if (!retryWith) {
       console.error(`[ai:${tool}] ${primary} 실패 — 다시 시도하지 않습니다:`, error);
       throw error;
     }
-    console.error(`[ai:${tool}] ${primary} 실패 — ${fallback} 로 한 번 더 시도합니다:`, error);
+    console.error(`[ai:${tool}] ${primary} 실패 — ${retryWith} 로 한 번 더 시도합니다:`, error);
     // `retried` 로 남긴다 — **두 시도 모두** 그렇다. 첫 줄은 "폴백이 일어났다" 는 사실이고
     // 둘째 줄은 "폴백으로 이 모델이 답했다" 는 사실이다. 첫 줄만 세면 폴백이 몇 번
     // 먹혔는지 알 수 없다.
-    return attempt(fallback, true);
+    return attempt(retryWith, true);
   }
 }
 
@@ -423,6 +467,7 @@ export async function askText(input: {
           {
             model,
             max_tokens: input.maxTokens ?? 1024,
+            ...REASONING_OFF,
             messages: [
               { role: "system", content: input.system },
               { role: "user", content: clampInput(input.user) },
@@ -474,6 +519,11 @@ export async function askTextStreaming(input: {
   /** 조각이 올 때마다 부른다. 화면에 곧바로 보이게 하려는 통로. */
   onDelta: (delta: string) => void;
   /**
+   * 폴백으로 다시 부르기 **직전**에 한 번 부른다. 첫 시도가 흘린 조각은 되돌릴 수 없으므로,
+   * 받는 쪽은 여기서 지금까지 모은 글을 비워야 한다 — 안 그러면 두 시도의 글이 이어 붙는다.
+   */
+  onReset?: () => void;
+  /**
    * 결과로 쓸 수 있는가. `false` 면 폴백이 돈다.
    *
    * ⚠️ **끝에서만 검사한다.** 라벨이라고 중간에 판정할 수 없고(글자가 조각으로 온다),
@@ -495,6 +545,7 @@ export async function askTextStreaming(input: {
           model,
           max_tokens: input.maxTokens ?? 1024,
           stream: true,
+          ...REASONING_OFF,
           messages: [
             { role: "system", content: input.system },
             { role: "user", content: clampInput(input.user) },
@@ -528,13 +579,16 @@ export async function askTextStreaming(input: {
     try {
       return await attempt(primary, false);
     } catch (error: unknown) {
-      // 폴백에도 `onDelta` 를 그대로 넘긴다 — 화면은 "어느 모델의 것인지" 모르고 알 필요도 없다.
-      if (!fallback || fallback === primary || !isTransient(error)) {
+      const retryWith = retryModelFor(primary, fallback, error);
+      if (!retryWith) {
         console.error(`[ai:${input.tool}] ${primary} 실패 — 다시 시도하지 않습니다:`, error);
         throw error;
       }
-      console.error(`[ai:${input.tool}] ${primary} 실패 — ${fallback} 로 한 번 더 시도합니다:`, error);
-      return attempt(fallback, true);
+      console.error(`[ai:${input.tool}] ${primary} 실패 — ${retryWith} 로 한 번 더 시도합니다:`, error);
+      // 첫 시도가 흘린 조각을 화면에서 먼저 치운다 — 아니면 두 시도의 글이 이어 붙는다.
+      input.onReset?.();
+      // 폴백에도 `onDelta` 를 그대로 넘긴다 — 화면은 "어느 모델의 것인지" 모르고 알 필요도 없다.
+      return attempt(retryWith, true);
     }
   } catch (error) {
     return fail("askTextStreaming", error);

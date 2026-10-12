@@ -152,7 +152,7 @@ export function CushionScreen({
   return (
     <>
       <AppBar
-        title="쿠션 번역기"
+        title="말투 고쳐 쓰기"
         sub={subTitle}
         onBack={() => router.push(returnPath)}
       />
@@ -232,12 +232,12 @@ export function CushionScreen({
               {working ? (
                 <>
                   <span className="text-sm">✨</span>
-                  <span>쿠션어로 다듬는 중…</span>
+                  <span>말투 고쳐 쓰는 중…</span>
                 </>
               ) : (
                 <>
                   <span className="text-sm">✨</span>
-                  <span>{stale ? "고친 말 다시 다듬기" : "쿠션어로 다듬기"}</span>
+                  <span>{stale ? "고친 말 다시 다듬기" : "말투 고쳐 쓰기"}</span>
                 </>
               )}
             </button>
@@ -279,7 +279,7 @@ export function CushionScreen({
                 ) : (
                   <span className="inline-flex items-center gap-2 text-txt-muted">
                     <span className="animate-wiggle text-base">🪄</span>
-                    <span>쿠션어로 다듬는 중…</span>
+                    <span>말투 고쳐 쓰는 중…</span>
                   </span>
                 )
               ) : (

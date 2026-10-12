@@ -449,7 +449,7 @@ function EventCard({
                 href={`/tools/clerk?meetingId=${event.meetingId}`}
                 className="text-[12px] font-semibold text-txt-muted hover:text-action underline"
               >
-                AI 서기 작성
+                회의록 정리
               </Link>
             )
           )}

@@ -40,7 +40,7 @@ export function DmListScreen({ threads: fromServer }: { threads: DmThread[] }) {
         </Rows>
 
         <Note tone="info" icon="lock" className="mt-3.5">
-          DM은 두 사람만 봅니다. 쿠션 번역기로 다듬어 보낸 말에는 단톡방과 똑같이 표시가 남습니다.
+          DM은 두 사람만 봅니다. 말투 고쳐 쓰기로 다듬어 보낸 말에는 단톡방과 똑같이 표시가 남습니다.
         </Note>
 
         {/* 2026-10-03 정해졌다 — 그래서 `<Undecided>` 가 아니라 규칙을 말한다. */}

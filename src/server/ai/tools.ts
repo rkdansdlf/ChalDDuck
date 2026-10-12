@@ -70,7 +70,7 @@ const TONE_GUIDE: Record<string, string> = {
 function cushionPrompt(tone: string): string {
   return `${BASE}
 
-너는 쿠션 번역기다. 팀원에게 하려던 말을 **말투만** 바꿔 다시 적는다.
+너는 말투를 고쳐 쓰는 도구다. 팀원에게 하려던 말을 **말투만** 바꿔 다시 적는다.
 
 지켜야 할 것:
 - 요구하는 내용을 그대로 유지한다. 무엇이 필요한지, 언제까지인지를 빼거나 늦추지 않는다.
@@ -115,6 +115,7 @@ export async function rewriteWithCushionStreaming(
   text: string,
   tone: string,
   onDelta: (delta: string) => void,
+  onReset?: () => void,
 ): Promise<string> {
   if (!isAiConfigured()) {
     const sample = CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
@@ -128,6 +129,7 @@ export async function rewriteWithCushionStreaming(
     user: text,
     maxTokens: 512,
     onDelta,
+    onReset,
     usable: (rewritten) => !isSafetyLabel(rewritten),
   });
 }
@@ -247,7 +249,7 @@ ${hasContext ? BEFORE_GUIDE : NO_CONTEXT_GUIDE}
 function clerkPrompt(context?: TeamToolContext): string {
   const head = `${BASE}
 
-너는 AI 서기다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
+너는 회의록을 정리하는 도구다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
 
 지켜야 할 것:
 - summary 는 두 문장을 넘기지 않는다. 메모에 없는 결론을 덧붙이지 않는다.
@@ -657,6 +659,7 @@ export async function convertSentenceStreaming(
   text: string,
   mode: string,
   onDelta: (delta: string) => void,
+  onReset?: () => void,
 ): Promise<string> {
   if (!isAiConfigured()) {
     const sample = SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
@@ -670,6 +673,7 @@ export async function convertSentenceStreaming(
     user: text,
     maxTokens: 1024,
     onDelta,
+    onReset,
     usable: (converted) => !isSafetyLabel(converted),
   });
 }

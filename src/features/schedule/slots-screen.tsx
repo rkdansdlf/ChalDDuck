@@ -275,7 +275,7 @@ export function SlotsScreen({
                   className="flex-1"
                   onClick={() => router.push(proposal.id ? `/tools/clerk?meetingId=${proposal.id}` : "/tools/clerk")}
                 >
-                  {proposal.hasNote ? "AI 서기 다시 작성" : "AI 서기로 회의록 작성하기"}
+                  {proposal.hasNote ? "회의록 다시 정리하기" : "회의록 정리로 작성하기"}
                 </Btn>
               </div>
 

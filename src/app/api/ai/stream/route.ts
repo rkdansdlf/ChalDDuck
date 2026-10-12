@@ -32,6 +32,8 @@ import type { ResearchResult } from "@/lib/types";
  * ## 프로토콜 — 줄바꿈으로 나뉜 JSON 한 줄씩
  *
  * - `{"delta":"..."}` — 조각. 화면은 이걸 이어 붙여 **만드는 중** 글자를 보여 준다.
+ * - `{"reset":true}` — 첫 시도가 흘린 조각을 **버린다.** 폴백으로 다시 부르기 직전에 온다.
+ *   이걸 무시하면 두 시도의 글이 한 줄로 이어져 화면에 남는다.
  * - `{"source":"ai"|"sample","value":"..."}` — **마지막 줄.** 화면이 최종적으로 보여 줄 글과
  *   그것이 예시인지 모델 것인지.
  * - `{"phase":"searching"|"shaping"}` — (구조화 도구만) 지금 어느 단계인지.
@@ -58,7 +60,15 @@ const STREAMABLE = {
   cushion: rewriteWithCushionStreaming,
   sentence: convertSentenceStreaming,
 } satisfies Partial<
-  Record<AiToolKey, (text: string, variant: string, onDelta: (delta: string) => void) => Promise<string>>
+  Record<
+    AiToolKey,
+    (
+      text: string,
+      variant: string,
+      onDelta: (delta: string) => void,
+      onReset: () => void,
+    ) => Promise<string>
+  >
 >;
 
 type StreamableTool = keyof typeof STREAMABLE;
@@ -137,9 +147,12 @@ export async function POST(request: Request) {
     if (tool === "research") {
       return searchResearch(text.trim(), undefined, (phase) => push(frame({ phase })));
     }
-    return STREAMABLE[tool](text, typeof variant === "string" ? variant : "", (delta) => {
-      push(frame({ delta }));
-    });
+    return STREAMABLE[tool](
+      text,
+      typeof variant === "string" ? variant : "",
+      (delta) => push(frame({ delta })),
+      () => push(frame({ reset: true })),
+    );
   });
 
   if (result.ok) push(frame({ source: result.source, value: result.value }));

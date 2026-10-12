@@ -129,13 +129,13 @@ export function ClerkScreen({
   return (
     <>
       <AppBar
-        title="AI 서기"
+        title="회의록 정리"
         sub={STEP_LABELS[step]}
         onBack={() => (step === 0 ? router.push("/tools") : setStep(step - 1))}
       />
 
       <Body dense>
-        <Progress step={step + 1} total={3} label="AI 서기 진행 단계" className="mb-4" />
+        <Progress step={step + 1} total={3} label="회의록 정리 진행 단계" className="mb-4" />
 
         {aiReady ? null : <SampleNote className="mb-3.5" />}
         {error ? <AiErrorNote message={error} className="mb-3.5" /> : null}

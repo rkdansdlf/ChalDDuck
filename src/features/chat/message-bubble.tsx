@@ -131,8 +131,8 @@ export const MessageBubble = memo(function MessageBubble({
             <Icon name="wand-sparkles" size={13} className="text-yellow-700 flex-none animate-wiggle" />
             <span className="leading-snug">
               {mine
-                ? "쿠션 번역기로 부드럽게 다듬어 보낸 메시지입니다."
-                : `${message.author}님이 배려를 담아 쿠션 번역기로 다듬어 보낸 메시지입니다.`}
+                ? "말투 고쳐 쓰기로 부드럽게 다듬어 보낸 메시지입니다."
+                : `${message.author}님이 배려를 담아 말투 고쳐 쓰기로 다듬어 보낸 메시지입니다.`}
             </span>
             <button
               type="button"
@@ -150,12 +150,12 @@ export const MessageBubble = memo(function MessageBubble({
             <button
               type="button"
               onClick={() => setShowCushionTip((prev) => !prev)}
-              title="쿠션 번역 안내 보기"
+              title="말투 고쳐 쓰기 안내 보기"
               aria-expanded={showCushionTip}
               className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-yellow-300/70 bg-yellow-100/90 px-2 py-0.5 text-[11px] font-semibold text-yellow-800 transition-all hover:bg-yellow-200 active:scale-95 select-none"
             >
               <Icon name="wand-sparkles" size={11} className="animate-wiggle text-yellow-700" />
-              <span>쿠션 번역</span>
+              <span>말투 고쳐 쓰기</span>
             </button>
           ) : null}
 
