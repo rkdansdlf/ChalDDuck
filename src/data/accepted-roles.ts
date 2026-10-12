@@ -53,5 +53,11 @@ export async function acceptedRoleAssignments(
     const role = draw.role as RoleKey;
     byMember.set(draw.winnerId, [...(byMember.get(draw.winnerId) ?? []), role]);
   }
+  // DB 는 행 순서를 보장하지 않는다(UPDATE 가 행 위치를 바꾼다). 순서를 역할 목록 순서로 고정해,
+  // 같은 배정이 실행마다 "research·present" 와 "present·research" 로 바뀌지 않게 한다.
+  const rank = new Map(known.map((key, i) => [key, i]));
+  for (const roles of byMember.values()) {
+    roles.sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+  }
   return byMember;
 }

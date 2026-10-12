@@ -89,6 +89,7 @@ export function RosterScreen({
   negotiation,
   now: nowIso,
   rejoinPending,
+  awaitingMyConfirm = 0,
   invites,
   isLeader,
   inviteOrigin,
@@ -107,6 +108,8 @@ export function RosterScreen({
   now: string;
   /** 팀장이 승인해 줘야 하는 재입장 요청 수. 팀장이 아니면 0. */
   rejoinPending: number;
+  /** 내가 확인해 줘야 하는 기여 기록 수. */
+  awaitingMyConfirm?: number;
   /** 팀이 나눈 초대들. 팀장이 아니면 빈 목록 — 링크를 다시 보여줄 수는 없다(아래 주석). */
   invites: InviteRow[];
   isLeader: boolean;
@@ -348,53 +351,166 @@ export function RosterScreen({
   return (
     <>
       <AppBar
-        title="역할 조율"
+        title="팀"
         sub={team.name}
         action="user-plus"
         actionLabel="팀원 초대하기"
         onAction={() => setInviteOpen(true)}
       />
       <Body dense>
-        {/* 상단 진행도 및 마감 디데이 헤더 */}
-        <div className="mb-4">
-          <div className="mb-2 flex items-center justify-between text-[13.5px]">
-            <span className="font-bold text-txt-strong">
+        {/* 팀 관리 섹션 */}
+        <div className="mb-2 flex items-center justify-between">
+          <span className="font-bold text-[15px] text-txt-strong">팀 메뉴</span>
+        </div>
+        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden shadow-2xs">
+          {/* 기여 기록 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/contrib")}
+            className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-amber-100 text-amber-800">
+                <Icon name="clipboard-check" size={18} />
+              </span>
+              <div className="min-w-0 flex flex-col">
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">기여 기록</span>
+                <span className="text-[12px] text-txt-muted truncate">역할 수행 내역 및 상호 확인</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-none pl-2">
+              {awaitingMyConfirm > 0 ? (
+                <span className="rounded-full bg-yellow-100 px-2.5 py-0.5 text-[12px] font-bold text-yellow-800">
+                  확인할 것 {awaitingMyConfirm}
+                </span>
+              ) : null}
+              <Icon name="chevron-right" size={16} className="text-txt-muted" />
+            </div>
+          </button>
+
+          {/* 계정과 기기 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/access")}
+            className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-coral-100 text-coral-800">
+                <Icon name="lock" size={18} />
+              </span>
+              <div className="min-w-0 flex flex-col">
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">계정과 기기</span>
+                <span className="text-[12px] text-txt-muted truncate">가입·재입장 승인 및 기기 관리</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-none pl-2">
+              {rejoinPending > 0 ? (
+                <span className="rounded-full bg-err-bg px-2.5 py-0.5 text-[12px] font-bold text-veto">
+                  승인 요청 {rejoinPending}건
+                </span>
+              ) : null}
+              <Icon name="chevron-right" size={16} className="text-txt-muted" />
+            </div>
+          </button>
+
+          {/* 우리 팀 사주 — 역할 배정과는 관계없다. 이 화면(07)에는 데이터를 올리지 않고 문만 둔다. */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/saju")}
+            className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-purple-100 text-purple-700">
+                <Icon name="sparkles" size={18} />
+              </span>
+              <div className="min-w-0 flex flex-col">
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">우리 팀 사주</span>
+                <span className="text-[12px] text-txt-muted truncate">재미로 보는 팀 케미와 오행 분석</span>
+              </div>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted flex-none pl-2" />
+          </button>
+
+          {/* 아이스브레이킹 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/icebreak")}
+            className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-emerald-100 text-emerald-800">
+                <Icon name="drama" size={18} />
+              </span>
+              <div className="min-w-0 flex flex-col">
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">아이스브레이킹</span>
+                <span className="text-[12px] text-txt-muted truncate">미니게임으로 팀 분위기 풀기</span>
+              </div>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted flex-none pl-2" />
+          </button>
+
+          {/* 메뉴 룰렛 */}
+          <button
+            type="button"
+            onClick={() => router.push("/team/roulette")}
+            className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="grid size-9 flex-none place-items-center rounded-xl bg-sky-100 text-sky-800">
+                <Icon name="disc-3" size={18} />
+              </span>
+              <div className="min-w-0 flex flex-col">
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">메뉴 룰렛</span>
+                <span className="text-[12px] text-txt-muted truncate">식사 메뉴 정하기 및 팀 추첨</span>
+              </div>
+            </div>
+            <Icon name="chevron-right" size={16} className="text-txt-muted flex-none pl-2" />
+          </button>
+        </div>
+
+        {/* 역할 조율 섹션 */}
+        <div className="mt-7 mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-[15px] text-txt-strong">역할 조율</span>
+            <span className="rounded-full bg-fill px-2 py-0.5 text-[11.5px] font-semibold text-txt-muted">
               역할 {roles.length}개 중 {confirmedCount}개 정해짐
             </span>
-            <div className="flex items-center gap-2">
-              {isLeader ? (
-                <button
-                  type="button"
-                  onClick={() => setRolesEditOpen(true)}
-                  className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-line bg-card px-2.5 text-[12.5px] font-semibold text-txt-strong hover:bg-fill cursor-pointer"
-                >
-                  <Icon name="pencil" size={12} />
-                  역할 편집
-                </button>
-              ) : null}
-              <span className="font-medium text-txt-muted">중간발표 D-12</span>
-            </div>
           </div>
-          <div className="flex gap-1.5">
-            {roles.map((r) => {
-              const isConfirmed =
-                roleViewOf(wantersOf(members, r.key).length, draws[r.key] ?? null).kind === "confirmed";
-              return (
-                <div
-                  key={r.key}
-                  className={cn(
-                    "h-1.5 flex-1 rounded-full transition-colors",
-                    isConfirmed ? "bg-ok" : "bg-line-strong/40",
-                  )}
-                />
-              );
-            })}
+          <div className="flex items-center gap-2">
+            {isLeader ? (
+              <button
+                type="button"
+                onClick={() => setRolesEditOpen(true)}
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-line bg-card px-2.5 text-[12.5px] font-semibold text-txt-strong hover:bg-fill cursor-pointer"
+              >
+                <Icon name="pencil" size={12} />
+                역할 편집
+              </button>
+            ) : null}
+            <span className="text-[12.5px] font-medium text-txt-muted">중간발표 D-12</span>
           </div>
+        </div>
+
+        {/* 진행도 게이지 */}
+        <div className="mb-3.5 flex gap-1.5">
+          {roles.map((r) => {
+            const isConfirmed =
+              roleViewOf(wantersOf(members, r.key).length, draws[r.key] ?? null).kind === "confirmed";
+            return (
+              <div
+                key={r.key}
+                className={cn(
+                  "h-1.5 flex-1 rounded-full transition-colors",
+                  isConfirmed ? "bg-ok" : "bg-line-strong/40",
+                )}
+              />
+            );
+          })}
         </div>
 
         {/* 상단 히어로 액션 카드 (내 차례 / 협의 진행 배너) */}
         {heroRole ? (
-          <div className="heroCard mb-5 rounded-[20px] border border-yellow-200/90 bg-yellow-50/80 p-4 shadow-2xs">
+          <div className="heroCard mb-4 rounded-[20px] border border-yellow-200/90 bg-yellow-50/80 p-4 shadow-2xs">
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="relative inline-flex items-center gap-1 rounded-full bg-yellow-200/90 px-2 py-0.5 text-[11.5px] font-bold text-yellow-900">
                 <span className="heroPulse absolute inset-0 rounded-full text-yellow-600 pointer-events-none" />
@@ -483,9 +599,8 @@ export function RosterScreen({
           </div>
         ) : null}
 
-        {/* 역할 목록 섹션 */}
-        <div className="mb-2 text-[15px] font-bold text-txt-strong">역할</div>
-        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
+        {/* 역할 목록 */}
+        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden shadow-2xs">
           {roles.map((role) => {
             const wanters = wantersOf(members, role.key);
             const vetoers = members.filter((m) => m.veto === role.key);
@@ -656,87 +771,6 @@ export function RosterScreen({
               </div>
             );
           })}
-        </div>
-
-        {/* 팀 관리 섹션 (아코디언 형태 그룹 리스트) */}
-        <div className="t-sec mt-6 mb-2.5 font-bold text-txt-strong">팀</div>
-        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
-          {/* 기여 기록 */}
-          <button
-            type="button"
-            onClick={() => router.push("/team/contrib")}
-            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon name="clipboard-check" size={17} className="text-txt-strong" />
-              <span className="font-semibold text-[15px] text-txt-strong">기여 기록</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[12px] font-bold text-yellow-800">
-                확인할 것 2
-              </span>
-              <Icon name="chevron-right" size={16} className="text-txt-muted" />
-            </div>
-          </button>
-
-          {/* 계정과 기기 */}
-          <button
-            type="button"
-            onClick={() => router.push("/team/access")}
-            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon name="lock" size={17} className="text-txt-strong" />
-              <span className="font-semibold text-[15px] text-txt-strong">계정과 기기</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {rejoinPending > 0 ? (
-                <span className="rounded-full bg-err-bg px-2 py-0.5 text-[12px] font-bold text-veto">
-                  승인 요청 {rejoinPending}건
-                </span>
-              ) : null}
-              <Icon name="chevron-right" size={16} className="text-txt-muted" />
-            </div>
-          </button>
-
-          {/* 우리 팀 사주 — 역할 배정과는 관계없다. 이 화면(07)에는 데이터를 올리지 않고 문만 둔다. */}
-          <button
-            type="button"
-            onClick={() => router.push("/team/saju")}
-            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon name="sparkles" size={17} className="text-txt-strong" />
-              <span className="font-semibold text-[15px] text-txt-strong">우리 팀 사주</span>
-            </div>
-            <Icon name="chevron-right" size={16} className="text-txt-muted" />
-          </button>
-
-          {/* 아이스브레이킹 */}
-          <button
-            type="button"
-            onClick={() => router.push("/team/icebreak")}
-            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon name="drama" size={17} className="text-txt-strong" />
-              <span className="font-semibold text-[15px] text-txt-strong">아이스브레이킹</span>
-            </div>
-            <Icon name="chevron-right" size={16} className="text-txt-muted" />
-          </button>
-
-          {/* 메뉴 룰렛 */}
-          <button
-            type="button"
-            onClick={() => router.push("/team/roulette")}
-            className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-fill cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon name="disc-3" size={17} className="text-txt-strong" />
-              <span className="font-semibold text-[15px] text-txt-strong">메뉴 룰렛</span>
-            </div>
-            <Icon name="chevron-right" size={16} className="text-txt-muted" />
-          </button>
         </div>
 
         <WorkloadPanel
