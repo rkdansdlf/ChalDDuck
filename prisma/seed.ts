@@ -34,7 +34,8 @@ if (!isLocal && process.env.ALLOW_REMOTE_SEED !== "1") {
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
-const TEAM_CODE = "CD3-7F2Q";
+// 앱이 만드는 초대 코드는 `CD-` + 6자(CODE_ALPHABET)다. 그 형식을 따른다 — 아니면 입력 칸으로 찾을 수 없다.
+const TEAM_CODE = "CD-3K7F2Q";
 
 /**
  * 로컬에서 데모 팀원으로 들어가는 재입장 코드(/join/rejoin — 초대 코드 + 이름 + 이 코드).
@@ -58,11 +59,12 @@ async function main() {
 
   const [minjun, seoyeon, jiho, yuna] = await Promise.all(
     [
-      // 팀을 만든 사람이 팀장이다. 시드에서는 "나"인 김민준이 만든 것으로 본다.
-      { name: "김민준", mbti: "INFJ", wantRole: "research", vetoRole: "present", isLeader: true },
-      { name: "이서연", mbti: "ENFP", wantRole: "deck", vetoRole: "manage", isLeader: false },
-      { name: "박지호", mbti: "ISTJ", wantRole: "manage", vetoRole: "present", isLeader: false },
-      { name: "최유나", mbti: null, wantRole: "research", vetoRole: null, isLeader: false },
+      // 팀을 만든 사람이 팀장이다. 시드에서는 "나"인 홍길동이 만든 것으로 본다.
+      // 이름은 명확한 가명을 쓴다 — 실명처럼 보이면 데모 화면이 실제 사람처럼 읽힌다.
+      { name: "홍길동", mbti: "INFJ", wantRole: "research", vetoRole: "present", isLeader: true },
+      { name: "김철수", mbti: "ENFP", wantRole: "deck", vetoRole: "manage", isLeader: false },
+      { name: "이영희", mbti: "ISTJ", wantRole: "manage", vetoRole: "present", isLeader: false },
+      { name: "박영수", mbti: null, wantRole: "research", vetoRole: null, isLeader: false },
     ].map((m) =>
       prisma.member.create({
         data: { ...m, teamId: team.id, rejoinCodeHash: isLocal ? hashRejoinCode(DEMO_REJOIN_CODE) : null },
@@ -269,7 +271,7 @@ async function main() {
       messages: [
         {
           authorId: minjun.id,
-          text: "대본 초안 기록에 박지호님이 의견을 남겼어요. 한번 봐주실 수 있을까요?",
+          text: "대본 초안 기록에 이영희님이 의견을 남겼어요. 한번 봐주실 수 있을까요?",
           whenLabel: "9/14 22:01",
         },
         { authorId: yuna.id, text: "대본 초안 부분은 저도 같이 썼는데요", whenLabel: "9/14 22:05" },
@@ -289,7 +291,7 @@ async function main() {
       });
     }
   }
-  // 박지호와의 대화는 이미 읽은 것으로 둔다 — 안 읽음이 전부 0 이면 배지를 확인할 수 없다.
+  // 이영희와의 대화는 이미 읽은 것으로 둔다 — 안 읽음이 전부 0 이면 배지를 확인할 수 없다.
   await prisma.readMark.create({
     data: { memberId: minjun.id, threadKey: dmKey(minjun.id, jiho.id) },
   });
@@ -337,7 +339,7 @@ async function main() {
       {
         memberId: minjun.id,
         kind: "help",
-        title: "이서연님 PPT 오류 수정 도움",
+        title: "김철수님 PPT 오류 수정 도움",
         detail: "오프라인 작업 — 내가 직접 추가",
         whenLabel: "9/14",
         source: "self",
@@ -406,7 +408,7 @@ async function main() {
 
   console.log(`데모 팀을 넣었습니다 — ${team.name} (초대 코드 ${team.code})`);
   if (isLocal) {
-    console.log(`로컬 로그인: /join/rejoin 에서 초대 코드 ${team.code} · 이름(김민준 등) · 재입장 코드 ${DEMO_REJOIN_CODE}`);
+    console.log(`로컬 로그인: /join/rejoin 에서 초대 코드 ${team.code} · 이름(홍길동 등) · 재입장 코드 ${DEMO_REJOIN_CODE}`);
   }
 }
 
