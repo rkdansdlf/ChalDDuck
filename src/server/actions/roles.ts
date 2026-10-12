@@ -1,12 +1,16 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { RANDOM_TOOLS, ROLES } from "@/data/catalog";
-import { drawPoolOf, toRoleKey, type NoDrawPool } from "@/features/roles/roster-model";
+import { RANDOM_TOOLS } from "@/data/catalog";
+import { ensureTeamRoles, rolesOf } from "@/data/team-roles";
+import { MAX_ROLES, checkRoleInput, type RoleInputError } from "@/features/roles/role-rules";
+import { BALANCE_TOOL, balancePlan, type PlanDraw } from "@/features/roles/balance-model";
+import { drawPoolOf, isEstimateHours, roleKeySet, toRoleKey, type NoDrawPool } from "@/features/roles/roster-model";
 import { db } from "@/server/db";
 import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
-import type { RoleKey } from "@/lib/types";
+import type { Role, RoleKey } from "@/lib/types";
 
 /**
  * 07 역할 조율 서버 액션.
@@ -28,13 +32,21 @@ import type { RoleKey } from "@/lib/types";
  * 실패는 던지지 않고 돌려준다 — 운영 빌드는 던진 오류의 문구를 지운다.
  */
 
-const ROLE_KEYS = new Set<string>(ROLES.map((r) => r.key));
 const TOOL_NAMES = new Set<string>(RANDOM_TOOLS.map((t) => t.name));
 
 /** 동의 응답 마감까지의 시간. 회의 제안과 같은 기준이다(24시간이 적당한지는 미정인 정책). */
 const CONSENT_WINDOW_HOURS = 24;
 
-const roleName = (role: string) => ROLES.find((r) => r.key === role)?.name ?? "역할";
+/**
+ * **그 팀의** 역할 목록과 키 집합. 역할은 팀마다 다르므로(`TeamRole`) 코드의 고정 목록으로 검사하지
+ * 않고, 액션이 돌 때마다 그 팀의 것을 읽는다 — 지워진 역할이나 다른 팀의 키가 통과하지 못하게.
+ */
+async function teamRoles(teamId: string): Promise<{ roles: Role[]; keys: ReadonlySet<string> }> {
+  const roles = await rolesOf(db, teamId);
+  return { roles, keys: roleKeySet(roles) };
+}
+
+const roleNameIn = (roles: readonly Role[], role: string) => roles.find((r) => r.key === role)?.name ?? "역할";
 
 /**
  * 이 역할의 동의 제안 — **마감을 지났어도** 돌려준다.
@@ -55,7 +67,7 @@ async function consentFor(teamId: string, role: RoleKey) {
  * 규칙 자체는 `roster-model` 의 `drawPoolOf` 다 — 07 화면의 연출 후보와 여기서
  * 어긋나면 룰렛이 엉뚱한 사람을 가리키므로 한 함수를 함께 쓴다.
  */
-async function candidatesFor(teamId: string, role: RoleKey) {
+async function candidatesFor(teamId: string, role: RoleKey, keys: ReadonlySet<string>) {
   const [wanters, rejections] = await Promise.all([
     // 팀을 나간 사람은 뽑지 않는다 — 뽑혀도 수락할 사람이 없다.
     db.member.findMany({
@@ -66,7 +78,7 @@ async function candidatesFor(teamId: string, role: RoleKey) {
   ]);
 
   return drawPoolOf(
-    wanters.map((w) => ({ id: w.id, name: w.name, veto: toRoleKey(w.vetoRole) })),
+    wanters.map((w) => ({ id: w.id, name: w.name, veto: toRoleKey(w.vetoRole, keys) })),
     role,
     new Set(rejections.map((r) => r.memberId)),
   );
@@ -108,7 +120,8 @@ function awaitingConsent(consent: { respondBy: Date } | null): boolean {
  */
 export async function proposeRoleDraw(role: RoleKey, toolName: string): Promise<ProposeResult> {
   const me = await requireSessionMember();
-  if (!ROLE_KEYS.has(role)) throw new Error("알 수 없는 역할입니다.");
+  const { roles, keys } = await teamRoles(me.teamId);
+  if (!keys.has(role)) throw new Error("알 수 없는 역할입니다.");
   if (!TOOL_NAMES.has(toolName)) throw new Error("알 수 없는 추첨 도구입니다.");
 
   const existing = await db.roleDraw.findUnique({
@@ -139,7 +152,7 @@ export async function proposeRoleDraw(role: RoleKey, toolName: string): Promise<
     to: await teamMemberIds(me.teamId),
     kind: "role-consent",
     title: `${me.name}님이 추첨을 제안했습니다`,
-    body: `${roleName(role)}를 ${toolName}으로 정하려고 해요 — 반대하면 진행되지 않습니다.`,
+    body: `${roleNameIn(roles, role)}를 ${toolName}으로 정하려고 해요 — 반대하면 진행되지 않습니다.`,
     href: "/team",
     actorId: me.id,
   });
@@ -165,6 +178,7 @@ export async function respondRoleDraw(role: RoleKey, agree: boolean): Promise<Co
   const me = await requireSessionMember();
   const consent = await consentFor(me.teamId, role);
   if (!awaitingConsent(consent)) return "closed";
+  const { roles } = await teamRoles(me.teamId);
 
   if (agree) {
     await db.roleConsentResponse.upsert({
@@ -179,7 +193,7 @@ export async function respondRoleDraw(role: RoleKey, agree: boolean): Promise<Co
       to: await teamMemberIds(me.teamId),
       kind: "role-consent",
       title: `${me.name}님이 반대했습니다`,
-      body: `${roleName(role)} 추첨은 진행되지 않습니다`,
+      body: `${roleNameIn(roles, role)} 추첨은 진행되지 않습니다`,
       href: "/team",
       actorId: me.id,
       // **이미 끝난 일** — 다시 열 길이 없으므로 앱 안 알림에만 둔다(푸시 정책의 `settled`).
@@ -204,7 +218,8 @@ export async function respondRoleDraw(role: RoleKey, agree: boolean): Promise<Co
  */
 export async function drawForRole(role: RoleKey, toolName: string): Promise<DrawResult> {
   const me = await requireSessionMember();
-  if (!ROLE_KEYS.has(role)) throw new Error("알 수 없는 역할입니다.");
+  const { keys } = await teamRoles(me.teamId);
+  if (!keys.has(role)) throw new Error("알 수 없는 역할입니다.");
   if (!TOOL_NAMES.has(toolName)) throw new Error("알 수 없는 추첨 도구입니다.");
 
   const consent = await consentFor(me.teamId, role);
@@ -229,7 +244,7 @@ export async function drawForRole(role: RoleKey, toolName: string): Promise<Draw
     await db.roleDraw.delete({ where: { id: existing.id } });
   }
 
-  const { pool, noPool } = await candidatesFor(me.teamId, role);
+  const { pool, noPool } = await candidatesFor(me.teamId, role, keys);
   if (pool.length === 0) return { status: "empty", noPool: noPool ?? "no-wanters" };
 
   const winner = pool[Math.floor(Math.random() * pool.length)];
@@ -349,7 +364,8 @@ export async function rejectRoleDraw(role: RoleKey): Promise<AnswerResult> {
  */
 export async function claimSoleRole(role: RoleKey): Promise<AnswerResult> {
   const me = await requireSessionMember();
-  if (!ROLE_KEYS.has(role)) throw new Error("알 수 없는 역할입니다.");
+  const { keys } = await teamRoles(me.teamId);
+  if (!keys.has(role)) throw new Error("알 수 없는 역할입니다.");
 
   const [wanters, taken] = await Promise.all([
     db.member.findMany({
@@ -381,4 +397,372 @@ export async function claimSoleRole(role: RoleKey): Promise<AnswerResult> {
   revalidatePath("/team");
   revalidatePath("/drive", "layout");
   return "ok";
+}
+
+/** 예상 시간 저장의 결과. `invalid` 는 범위 밖이거나 알 수 없는 역할이다. */
+export type EstimateResult = "ok" | "invalid";
+
+/**
+ * 역할 하나의 **예상 작업 시간**을 적는다. `null` 이면 지운다(다시 "미정" 이 된다).
+ *
+ * 팀원이면 누구나 고칠 수 있다 — 추첨 후보에는 쓰이지 않고(희망·Veto 만), 팀원별 부담을 비교하는
+ * 재료일 뿐이다. 다만 누가 고쳐도 되는지는 기획안에 없어 화면의 `<Undecided>` 가 가리킨다.
+ *
+ * 값은 서버가 다시 거른다 — 서버 액션은 POST 로 바로 불린다.
+ */
+export async function setRoleEstimate(role: RoleKey, hours: number | null): Promise<EstimateResult> {
+  const me = await requireSessionMember();
+  const { keys } = await teamRoles(me.teamId);
+  if (!keys.has(role)) return "invalid";
+
+  if (hours === null) {
+    await db.roleEstimate.deleteMany({ where: { teamId: me.teamId, role } });
+  } else {
+    if (!isEstimateHours(hours)) return "invalid";
+    await db.roleEstimate.upsert({
+      where: { teamId_role: { teamId: me.teamId, role } },
+      create: { teamId: me.teamId, role, hours },
+      update: { hours },
+    });
+  }
+
+  revalidatePath("/team");
+  return "ok";
+}
+
+/** 내 희망 저장의 결과. `invalid` 는 이 팀에 없는 역할이거나 서로 겹치는 값이다. */
+export type RoleChoicesResult = "ok" | "invalid";
+
+/**
+ * 내 **희망 역할**을 고친다 — 첫 희망 · 두 번째 희망(선택) · 피할 역할(선택).
+ *
+ * ## 왜 가입 뒤에도 고칠 수 있어야 하나
+ *
+ * 역할이 팀마다 바뀐다(`TeamRole`). 팀장이 역할을 더하면 이미 들어온 팀원은 그 역할을 **고를 길이
+ * 없었고**, 역할을 지우면 그 역할을 첫 희망으로 골랐던 사람의 희망이 비워진다. 고르는 곳이 가입
+ * 화면뿐이면 어느 쪽이든 막다른 길이다.
+ *
+ * 이미 올라간 추첨은 건드리지 않는다 — 당첨자가 자기 첫 희망을 바꾼 뒤에도 남아 있는 추첨은
+ * `roleViewOf` 가 이미 다룬다(추첨 결과가 있으면 희망 수보다 먼저 본다). 새 후보 계산은 그때그때 DB 의
+ * 희망을 읽으므로 바뀐 값이 다음 추첨부터 적용된다.
+ *
+ * 겹치는 값(첫 희망 = 피할 역할 등)은 서버가 막는다 — 서버 액션은 화면 없이 POST 로 불릴 수 있다.
+ */
+export async function setMyRoleChoices(choices: {
+  want: RoleKey;
+  want2: RoleKey | null;
+  veto: RoleKey | null;
+}): Promise<RoleChoicesResult> {
+  const me = await requireSessionMember();
+  const { keys } = await teamRoles(me.teamId);
+  const { want, want2, veto } = choices;
+  if (typeof want !== "string" || !keys.has(want)) return "invalid";
+  for (const other of [want2, veto]) {
+    if (other !== null && (typeof other !== "string" || !keys.has(other))) return "invalid";
+  }
+  if (veto !== null && veto === want) return "invalid";
+  if (want2 !== null && (want2 === want || want2 === veto)) return "invalid";
+
+  await db.member.update({
+    where: { id: me.id },
+    data: { wantRole: want, wantRole2: want2, vetoRole: veto },
+  });
+  revalidatePath("/team");
+  revalidatePath("/home");
+  return "ok";
+}
+
+/** 균형 추천을 올린 결과. `none` 은 새로 채울 역할이나 후보가 없는 경우다. */
+export type BalanceResult = { status: "ok"; proposed: { role: RoleKey; name: string }[] } | { status: "none" };
+
+/**
+ * 아직 정해지지 않은 역할 전부에 **균형 추천**을 올린다.
+ *
+ * 추천은 **서버가 다시 계산한다**(`balancePlan`) — 화면이 보낸 사람을 믿지 않는다. 결과는 추첨과 같은
+ * 자리(`RoleDraw`, 받기 대기)에 도구 이름 "균형 추천" 으로 남으므로 **받기·안 받기가 그대로 적용된다.**
+ * 당사자가 받아야 확정되고, 안 받으면 그 사람은 그 역할의 다음 추천에서 빠진다 — 다시 올리면 그 사람을
+ * 뺀 안이 나온다.
+ *
+ * 팀 동의를 받는 중인 역할은 건드리지 않는다. 두 사람이 동시에 올려도 역할마다 행이 하나뿐이라
+ * (`@@unique([teamId, role])`) 먼저 들어간 쪽이 남는다.
+ */
+export async function proposeBalancedRoles(): Promise<BalanceResult> {
+  const me = await requireSessionMember();
+  const teamId = me.teamId;
+  const { roles: teamRoleList, keys } = await teamRoles(teamId);
+
+  const [members, draws, rejections, consents, estimateRows] = await Promise.all([
+    db.member.findMany({
+      where: { teamId, leftAt: null },
+      select: { id: true, name: true, wantRole: true, wantRole2: true, vetoRole: true },
+    }),
+    db.roleDraw.findMany({
+      where: { teamId },
+      select: { id: true, role: true, winnerId: true, accepted: true, winner: { select: { leftAt: true } } },
+    }),
+    db.roleRejection.findMany({ where: { teamId }, select: { role: true, memberId: true } }),
+    db.roleDrawConsent.findMany({ where: { teamId }, select: { role: true, respondBy: true } }),
+    db.roleEstimate.findMany({ where: { teamId }, select: { role: true, hours: true } }),
+  ]);
+
+  const planDraws: Partial<Record<RoleKey, PlanDraw>> = {};
+  const staleIds = new Map<RoleKey, string>();
+  for (const d of draws) {
+    const key = toRoleKey(d.role, keys);
+    if (!key) continue;
+    const stale = d.winner.leftAt !== null;
+    planDraws[key] = { winnerId: d.winnerId, accepted: d.accepted, stale };
+    if (stale && !d.accepted) staleIds.set(key, d.id);
+  }
+  const rejected: Partial<Record<RoleKey, Set<string>>> = {};
+  for (const r of rejections) {
+    const key = toRoleKey(r.role, keys);
+    if (key) (rejected[key] ??= new Set()).add(r.memberId);
+  }
+  const estimates: Partial<Record<RoleKey, number>> = {};
+  for (const e of estimateRows) {
+    const key = toRoleKey(e.role, keys);
+    if (key) estimates[key] = e.hours;
+  }
+  const liveConsent = new Set(
+    consents.flatMap((c) => {
+      const key = toRoleKey(c.role, keys);
+      return key && awaitingConsent(c) ? [key] : [];
+    }),
+  );
+
+  const plan = balancePlan({
+    roles: teamRoleList,
+    members: members.map((m) => ({
+      id: m.id,
+      name: m.name,
+      want: toRoleKey(m.wantRole, keys),
+      want2: toRoleKey(m.wantRole2, keys),
+      veto: toRoleKey(m.vetoRole, keys),
+    })),
+    draws: planDraws,
+    liveConsent,
+    rejected,
+    estimates,
+  });
+
+  const proposed: { role: RoleKey; name: string }[] = [];
+  for (const s of plan) {
+    try {
+      await db.$transaction(async (tx) => {
+        // 당첨자가 나간 받기 전 추첨은 자리를 비운다 — 확정된 것은 `balancePlan` 이 애초에 채우지 않는다.
+        const stale = staleIds.get(s.role);
+        if (stale) await tx.roleDraw.deleteMany({ where: { id: stale, accepted: false } });
+        await tx.roleDraw.create({
+          data: { teamId, role: s.role, tool: BALANCE_TOOL, winnerId: s.memberId },
+        });
+      });
+    } catch (error) {
+      // 동시에 올린 사람이 먼저 들어갔다 — 그 결과를 따른다.
+      if ((error as { code?: string }).code === "P2002") continue;
+      throw error;
+    }
+    proposed.push({ role: s.role, name: s.name });
+    await notify({
+      to: [s.memberId],
+      // 누군가 나에게 일을 맡기려 한다 — `task-assigned` 와 같은 자리다(받을지 정할 기회가 핵심).
+      kind: "task-assigned",
+      title: `${roleNameIn(teamRoleList, s.role)}을(를) 맡아 달라고 추천했어요`,
+      body: "받으면 확정되고, 안 받으면 다른 사람에게 추천돼요 — 팀 화면에서 답해 주세요.",
+      href: "/team",
+      actorId: me.id,
+    });
+  }
+
+  if (proposed.length === 0) return { status: "none" };
+  revalidatePath("/team");
+  revalidatePath("/home");
+  return { status: "ok", proposed };
+}
+
+/* ── 역할 편집 (팀장) ─────────────────────────────────────────── */
+
+/** 역할 편집의 결과. 실패는 던지지 않고 이유를 돌려준다 — 운영 빌드는 던진 오류의 문구를 지운다. */
+export type RoleEditResult =
+  | { status: "ok"; key: RoleKey }
+  /** 입력이 규칙에 맞지 않는다 — `ROLE_ERROR_TEXT` 가 그 말을 가진다. */
+  | { status: "invalid"; error: RoleInputError }
+  /** 팀장이 아니다. */
+  | { status: "forbidden" }
+  /** 이미 없는 역할이다(다른 기기에서 지웠다). */
+  | { status: "gone" }
+  /**
+   * 지울 수 없다.
+   * - `confirmed`: 확정된 담당이 있다 — 지우면 담당자와 기여 기록의 역할이 사라진다.
+   * - `box`: 드라이브 제출함이 이 역할에 묶여 있다 — 올라온 파일의 주인이 정해지지 않게 된다.
+   * - `last`: 역할이 하나도 없는 팀은 없다.
+   */
+  | { status: "blocked"; reason: "confirmed" | "box" | "last" };
+
+/** 팀장이 팀의 역할을 바꿨다는 사실을 팀에 남긴다. 앱 안에만 — 이미 끝난 일이다. */
+async function announceRoleEdit(me: { id: string; teamId: string; name: string }, title: string, body: string) {
+  await notify({
+    to: await teamMemberIds(me.teamId),
+    kind: "role-edit",
+    title,
+    body,
+    href: "/team",
+    actorId: me.id,
+  });
+}
+
+/**
+ * 역할을 하나 더한다. 새 역할은 `r-` 로 시작하는 임의의 키를 받고 목록 맨 끝에 붙는다.
+ *
+ * 처음 편집하는 팀이면 기본 다섯 개를 `TeamRole` 로 옮긴 뒤 더한다(`ensureTeamRoles`).
+ * **팀장만** 한다 — 역할 목록은 모두의 희망·추첨·추천이 걸린 구조다.
+ */
+export async function addTeamRole(input: { name: string; note: string; kind: string }): Promise<RoleEditResult> {
+  const me = await requireSessionMember();
+  if (!me.isLeader) return { status: "forbidden" };
+
+  try {
+    const added = await db.$transaction(async (tx): Promise<
+      { ok: true; key: string; name: string } | { ok: false; error: RoleInputError }
+    > => {
+      await ensureTeamRoles(tx, me.teamId);
+      const current = await rolesOf(tx, me.teamId);
+      if (current.length >= MAX_ROLES) return { ok: false, error: "too-many" };
+      const checked = checkRoleInput(input, current);
+      if (!checked.ok) return { ok: false, error: checked.error };
+
+      const last = await tx.teamRole.aggregate({ where: { teamId: me.teamId }, _max: { position: true } });
+      const key = `r-${randomUUID().slice(0, 8)}`;
+      await tx.teamRole.create({
+        data: {
+          teamId: me.teamId,
+          key,
+          name: checked.name,
+          note: checked.note,
+          kind: checked.kind,
+          position: (last._max.position ?? -1) + 1,
+        },
+      });
+      return { ok: true, key, name: checked.name };
+    });
+    if (!added.ok) return { status: "invalid", error: added.error };
+
+    await announceRoleEdit(me, `${me.name}님이 역할을 더했습니다`, `${added.name} — 팀 화면에서 희망 역할을 다시 골라 보세요.`);
+    revalidateRoleViews();
+    return { status: "ok", key: added.key };
+  } catch (error) {
+    // 같은 이름을 동시에 더했다 — 먼저 들어간 쪽이 남는다.
+    if ((error as { code?: string }).code === "P2002") return { status: "invalid", error: "name-taken" };
+    throw error;
+  }
+}
+
+/** 역할의 이름·설명·유형을 고친다. **키는 그대로**라 기존 배정과 기록이 이어진다. */
+export async function updateTeamRole(
+  key: RoleKey,
+  input: { name: string; note: string; kind: string },
+): Promise<RoleEditResult> {
+  const me = await requireSessionMember();
+  if (!me.isLeader) return { status: "forbidden" };
+
+  try {
+    const result = await db.$transaction(async (tx): Promise<
+      | { kind: "gone" }
+      | { kind: "invalid"; error: RoleInputError }
+      | { kind: "done"; before: Role; after: { name: string; kind: string } }
+    > => {
+      await ensureTeamRoles(tx, me.teamId);
+      const current = await rolesOf(tx, me.teamId);
+      const target = current.find((r) => r.key === key);
+      if (!target) return { kind: "gone" };
+      const checked = checkRoleInput(input, current.filter((r) => r.key !== key));
+      if (!checked.ok) return { kind: "invalid", error: checked.error };
+
+      await tx.teamRole.update({
+        where: { teamId_key: { teamId: me.teamId, key } },
+        data: { name: checked.name, note: checked.note, kind: checked.kind },
+      });
+      return { kind: "done", before: target, after: checked };
+    });
+    if (result.kind === "gone") return { status: "gone" };
+    if (result.kind === "invalid") return { status: "invalid", error: result.error };
+
+    const changed =
+      result.before.name !== result.after.name || result.before.kind !== result.after.kind;
+    if (changed) {
+      await announceRoleEdit(
+        me,
+        `${me.name}님이 역할을 고쳤습니다`,
+        result.before.name !== result.after.name
+          ? `${result.before.name} → ${result.after.name}`
+          : `${result.after.name}의 유형을 바꿨습니다`,
+      );
+    }
+    revalidateRoleViews();
+    return { status: "ok", key };
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2002") return { status: "invalid", error: "name-taken" };
+    throw error;
+  }
+}
+
+/**
+ * 역할을 지운다.
+ *
+ * **확정된 담당이 있거나 제출함이 묶인 역할은 지우지 않는다** — 그 둘은 기록의 근거라서다. 나머지는
+ * 그 역할에 걸린 것(받기 대기 추첨·동의·안 받은 기록·예상 시간)을 함께 치우고, **그 역할을 희망하거나
+ * 피하던 팀원의 값은 비운다.** 비워진 사람은 새로 골라야 하므로 팀에 알린다.
+ */
+export async function removeTeamRole(key: RoleKey): Promise<RoleEditResult> {
+  const me = await requireSessionMember();
+  if (!me.isLeader) return { status: "forbidden" };
+
+  const result = await db.$transaction(async (tx): Promise<
+    | { kind: "gone" }
+    | { kind: "blocked"; reason: "confirmed" | "box" | "last" }
+    | { kind: "done"; name: string }
+  > => {
+    await ensureTeamRoles(tx, me.teamId);
+    const current = await rolesOf(tx, me.teamId);
+    const target = current.find((r) => r.key === key);
+    if (!target) return { kind: "gone" };
+    if (current.length <= 1) return { kind: "blocked", reason: "last" };
+
+    const [confirmed, boxes] = await Promise.all([
+      tx.roleDraw.count({ where: { teamId: me.teamId, role: key, accepted: true } }),
+      tx.submissionBox.count({ where: { teamId: me.teamId, role: key } }),
+    ]);
+    if (confirmed > 0) return { kind: "blocked", reason: "confirmed" };
+    if (boxes > 0) return { kind: "blocked", reason: "box" };
+
+    const teamScope = { teamId: me.teamId };
+    await tx.roleDraw.deleteMany({ where: { ...teamScope, role: key } });
+    await tx.roleRejection.deleteMany({ where: { ...teamScope, role: key } });
+    // 동의 응답은 `onDelete: Cascade` 로 함께 지워진다.
+    await tx.roleDrawConsent.deleteMany({ where: { ...teamScope, role: key } });
+    await tx.roleEstimate.deleteMany({ where: { ...teamScope, role: key } });
+    await tx.member.updateMany({ where: { ...teamScope, wantRole: key }, data: { wantRole: null } });
+    await tx.member.updateMany({ where: { ...teamScope, wantRole2: key }, data: { wantRole2: null } });
+    await tx.member.updateMany({ where: { ...teamScope, vetoRole: key }, data: { vetoRole: null } });
+    await tx.joinRequest.updateMany({ where: { ...teamScope, wantRole: key }, data: { wantRole: null } });
+    await tx.teamRole.delete({ where: { teamId_key: { teamId: me.teamId, key } } });
+    return { kind: "done", name: target.name };
+  });
+
+  if (result.kind === "gone") return { status: "gone" };
+  if (result.kind === "blocked") return { status: "blocked", reason: result.reason };
+
+  await announceRoleEdit(
+    me,
+    `${me.name}님이 역할을 지웠습니다`,
+    `${result.name} — 이 역할을 희망했다면 팀 화면에서 다시 골라 주세요.`,
+  );
+  revalidateRoleViews();
+  return { status: "ok", key };
+}
+
+function revalidateRoleViews() {
+  revalidatePath("/team");
+  revalidatePath("/home");
+  revalidatePath("/drive", "layout");
 }

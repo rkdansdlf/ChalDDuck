@@ -68,6 +68,8 @@ export type NotifyKind =
   | "who-does-it"
   /** 07 역할 추첨을 시작해도 된다고 팀이 응답해야 한다. */
   | "role-consent"
+  /** 팀장이 팀의 역할 목록을 바꿨다(더함·고침·지움). */
+  | "role-edit"
   /** 팀원이 드라이브에 올리거나 복원했다. */
   | "drive";
 
@@ -122,6 +124,7 @@ export function pushPolicy(kind: NotifyKind, context: NotifyContext = {}): PushP
 
     // 3. 빈도가 무관하다. 드라이브 업로드는 하루에도 여러 번 온다.
     case "drive":
+    case "role-edit":
     case "contrib-participation":
     case "icebreak":
     case "who-does-it":

@@ -18,6 +18,7 @@ import {
   consentViewOf,
   drawPoolOf,
   isRoleKey,
+  roleKeySet,
   isUnresolvedClash,
   negotiatingRoles,
   normalizeName,
@@ -26,6 +27,9 @@ import {
   unresolvedClashes,
   toRoleKey,
   voidedText,
+  OVERLOAD_RATIO,
+  isEstimateHours,
+  workloadOf,
 } from "../src/features/roles/roster-model.js";
 import {
   CUSHION_DEFAULT_MODE,
@@ -33,7 +37,7 @@ import {
   AI_TOOLS,
   ICE_GAMES,
   RANDOM_TOOLS,
-  ROLES,
+  DEFAULT_ROLES as ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
 } from "../src/data/catalog.js";
@@ -57,6 +61,9 @@ import {
   type MafiaPhase,
 } from "../src/lib/mafia-rules.js";
 import { canEditTask, shouldNotifyAssignee, taskEditBlock } from "../src/lib/task-permission.js";
+import { roleWorkOf, workSummaryOf } from "../src/data/role-work.js";
+import { WORK_CAPTION, othersLineOf, workLineOf } from "../src/features/roles/work-copy.js";
+import { BALANCE_TOOL, balancePlan, recommendBalance, roleWeights } from "../src/features/roles/balance-model.js";
 import { acceptedRoleAssignments } from "../src/data/accepted-roles.js";
 import { contribTotals } from "../src/data/contrib-report-totals.js";
 import {
@@ -157,6 +164,7 @@ import {
   displayTextOf,
   isCushionDone,
   isRefusal,
+  isSafetyLabel,
   judgeAll,
   levelGuide,
   maskRiskyParts,
@@ -899,15 +907,273 @@ console.log("\n추첨 동의 · 배지");
   );
 }
 
+/* ── 07 팀원별 부담 ───────────────────────────────────────── */
+
+console.log("\n팀원별 부담");
+{
+  const NOW = new Date("2026-10-11T00:00:00Z");
+  const people = (
+    [
+      ["1", "김민준", "research"],
+      ["2", "최유나", "deck"],
+      ["3", "박지호", "script"],
+      ["4", "이서연", "present"],
+    ] as const
+  ).map(([id, name, want]) => ({ id, name, want, veto: null, isMe: id === "1" })) as unknown as Member[];
+  const done = (winnerId: string, winner: string): RoleDrawResult => ({
+    tool: "담당",
+    winner,
+    winnerId,
+    accepted: true,
+    stale: false,
+  });
+  const confirmed = {
+    research: done("1", "김민준"),
+    deck: done("2", "최유나"),
+    script: done("3", "박지호"),
+    present: done("4", "이서연"),
+  };
+
+  // 카탈로그가 곧 제품의 역할 목록이다 — 여기서는 일정 관리(운영)만 담당 공백으로 남는다.
+  const w = workloadOf(ROLES, people, confirmed, {}, {}, NOW);
+  check("핵심 업무를 맡은 사람을 센다", w.coreCovered, 4);
+  check("일정 관리는 운영이다", ROLES.find((r) => r.key === "manage")?.kind, "ops");
+  check("아무도 안 고른 역할은 담당 공백이다", w.gaps.map((r) => r.key), ["manage"]);
+  check("예상 시간이 없으면 목표를 만들지 않는다", w.target, null);
+  check("목표가 없으면 몰림을 말하지 않는다", w.overloaded.length, 0);
+  check("시간이 없으면 합계는 0, 빠진 역할을 알려 준다", [w.members[0]!.hours, w.members[0]!.unestimated.map((r) => r.key)], [0, ["research"]]);
+
+  // 일부만 적힌 합을 인원으로 나누면 목표가 낮게 나와 정상인 사람이 몰린 사람이 된다.
+  const partial = workloadOf(ROLES, people, confirmed, { research: 10 }, {}, NOW);
+  check("일부만 적혔으면 목표를 만들지 않는다", partial.target, null);
+
+  const all = { research: 10, deck: 10, script: 6, present: 2, manage: 2 }; // 합 30 / 4명 = 7.5
+  const full = workloadOf(ROLES, people, confirmed, all, {}, NOW);
+  check("모든 역할에 시간이 있으면 목표는 평균이다", full.target, 7.5);
+  check("목표의 배율 경계: 7.5 × 1.5 = 11.25 이하는 몰림이 아니다", full.overloaded.length, 0);
+  check("배율은 기획에 없는 임시 값이다(바꾸면 이 검사도 함께 본다)", OVERLOAD_RATIO, 1.5);
+
+  const heavy = workloadOf(ROLES, people, confirmed, { ...all, research: 12 }, {}, NOW); // 합 32 / 4 = 8 → 12 는 1.5배 = 12 (넘지 않음)
+  check("정확히 경계(1.5배)는 몰림이 아니다", heavy.overloaded.length, 0);
+  const heavier = workloadOf(ROLES, people, confirmed, { ...all, research: 14 }, {}, NOW); // 합 34 / 4 = 8.5 → 12.75 초과
+  check("경계를 넘으면 그 사람이 몰린 사람이다", heavier.overloaded.map((m) => m.name), ["김민준"]);
+
+  // 보조는 핵심을 대신하지 않는다.
+  const support = ROLES.map((r) => (r.key === "research" ? { ...r, kind: "support" as const } : r));
+  const noCore = workloadOf(support, people, confirmed, {}, {}, NOW);
+  check("보조 업무만 맡으면 핵심 담당이 아니다", noCore.withoutCore.map((m) => m.name), ["김민준"]);
+
+  // 받기 대기는 아직 그 사람의 일이 아니다 — 부담에 넣지 않고 정해지는 중으로 센다.
+  const waiting = workloadOf(
+    ROLES,
+    people,
+    { ...confirmed, research: { ...done("1", "김민준"), accepted: false } },
+    all,
+    {},
+    NOW,
+  );
+  check("받기 대기는 부담에 넣지 않는다", waiting.members[0]!.roles.length, 0);
+  check("받기 대기는 정해지는 중이다", waiting.pending.map((r) => r.key), ["research"]);
+
+  // 확정된 담당자가 팀을 떠났다 — 명단에 없으므로 담당 공백이다(이력은 지우지 않는다).
+  const left = workloadOf(ROLES, people.slice(1), confirmed, all, {}, NOW);
+  check("떠난 담당자의 역할은 담당 공백이다", left.gaps.map((r) => r.key), ["research", "manage"]);
+
+  check("예상 시간은 정수만", [isEstimateHours(6), isEstimateHours(0), isEstimateHours(2.5), isEstimateHours("6")], [true, false, false, false]);
+  check("범위의 끝", [isEstimateHours(1), isEstimateHours(99), isEstimateHours(100)], [true, true, false]);
+
+  // 부담은 추첨 후보를 고르는 데 쓰이지 않는다 — 희망·Veto 만 본다(CLAUDE.md 의 제품 약속).
+  const rolesActionSrc = readCode("../src/server/actions/roles.ts");
+  const drawFn = rolesActionSrc.slice(rolesActionSrc.indexOf("async function candidatesFor"), rolesActionSrc.indexOf("export type DrawResult"));
+  truthy("추첨 후보는 예상 시간·부담을 읽지 않는다", /estimate|workload/i.test(drawFn) === false);
+}
+
+/* ── 07 균형 추천 ─────────────────────────────────────────── */
+
+console.log("\n균형 추천");
+{
+  const mk = (id: string, name: string, want: RoleKey | null = null, veto: RoleKey | null = null, want2: RoleKey | null = null) => ({
+    id,
+    name,
+    want,
+    want2,
+    veto,
+  });
+  const four = [mk("a", "가"), mk("b", "나"), mk("c", "다"), mk("d", "라")];
+  const hours = { research: 10, deck: 10, script: 6, present: 2, manage: 2 };
+  const coreKeys = ROLES.filter((r) => r.kind === "core").map((r) => r.key);
+  const all = ROLES.map((r) => r.key);
+  const plan = (members = four, extra: Partial<Parameters<typeof balancePlan>[0]> = {}) =>
+    balancePlan({ roles: ROLES, members, draws: {}, liveConsent: new Set(), rejected: {}, estimates: hours, ...extra });
+
+  // 희망이 아무도 없어도 핵심 업무는 한 사람에게 하나씩 간다.
+  const flat = plan();
+  const coreHolders = flat.filter((s) => coreKeys.includes(s.role)).map((s) => s.memberId);
+  check("핵심 업무는 서로 다른 사람에게 간다", new Set(coreHolders).size, 4);
+  check("역할 전부에 안이 나온다", flat.map((s) => s.role), all);
+  check("희망 없이 고른 추천은 이유를 밝힌다", flat.every((s) => s.reasons.includes("no-wish")), true);
+
+  // 부담: 일정 관리(운영)는 가장 가벼운 사람 — 발표(2시간)를 맡은 사람에게 간다.
+  const manage = flat.find((s) => s.role === "manage")!;
+  const presenter = flat.find((s) => s.role === "present")!;
+  check("운영 업무는 가장 가벼운 사람에게 간다", manage.memberId, presenter.memberId);
+
+  // 희망은 점수에 들어가지만 부담과 합산된다.
+  const wantDeck = plan([mk("a", "가", "deck"), mk("b", "나"), mk("c", "다"), mk("d", "라")]);
+  check("희망한 역할은 그 사람에게 간다", wantDeck.find((s) => s.role === "deck")?.memberId, "a");
+  check("그 이유는 희망 역할이다", wantDeck.find((s) => s.role === "deck")?.reasons.includes("want"), true);
+  const second = plan([mk("a", "가", "research", null, "deck"), mk("b", "나", "research"), mk("c", "다"), mk("d", "라")]);
+  check("겹친 첫 희망 대신 두 번째 희망이 쓰인다", second.find((s) => s.role === "deck")?.reasons.includes("want2"), true);
+
+  // 두 번째 희망 때문에 첫 희망을 양보하지 않는다 — 그 역할을 더 원하는 사람이 따로 있으면.
+  const strong = plan([mk("a", "가", "research", null, "deck"), mk("b", "나", "research"), mk("c", "다", "deck"), mk("d", "라")]);
+  check("더 원하는 사람이 있는 역할은 그 사람에게 간다", strong.find((s) => s.role === "deck")?.memberId, "c");
+  check("그래서 두 번째 희망 때문에 첫 희망을 잃지 않는다", strong.find((s) => s.role === "research")?.reasons.includes("want"), true);
+  check("첫 희망이 같은 두 사람 중 하나는 받는다", ["a", "b"].includes(strong.find((s) => s.role === "research")!.memberId), true);
+
+  // 강제할 수 없는 사람은 후보가 아니다.
+  const vetoed = plan([mk("a", "가", null, "deck"), mk("b", "나", null, "deck"), mk("c", "다", null, "deck"), mk("d", "라")]);
+  check("피할 역할로 고른 사람은 그 역할을 받지 않는다", vetoed.find((s) => s.role === "deck")?.memberId, "d");
+  const nobody = plan(four.map((m) => ({ ...m, veto: "deck" as RoleKey })));
+  check("모두가 피하면 추천하지 않는다(강제하지 않는다)", nobody.some((s) => s.role === "deck"), false);
+  const refused = plan(four, { rejected: { deck: new Set(["a", "b", "c"]) } });
+  check("이미 안 받은 사람은 다시 추천받지 않는다", refused.find((s) => s.role === "deck")?.memberId, "d");
+
+  // 같은 입력은 늘 같은 답이다 — 명단 순서와 상관없이.
+  check("명단 순서가 바뀌어도 같은 추천", plan([...four].reverse()), flat);
+
+  // 이미 걸린 역할은 그 사람의 부담으로 세고 채우지 않는다.
+  const withHeld = plan(four, {
+    draws: {
+      research: { winnerId: "a", accepted: true, stale: false },
+      deck: { winnerId: "a", accepted: false, stale: false },
+    },
+  });
+  check("확정·받기 대기 역할은 다시 채우지 않는다", withHeld.map((s) => s.role), ["script", "present", "manage"]);
+  check("이미 20시간을 진 사람에게는 더 주지 않는다", withHeld.some((s) => s.memberId === "a"), false);
+  check(
+    "동의를 받는 중인 역할은 가로채지 않는다",
+    plan(four, { liveConsent: new Set<RoleKey>(["deck"]) }).some((s) => s.role === "deck"),
+    false,
+  );
+  check(
+    "당첨자가 나간 받기 전 추첨은 다시 채운다",
+    plan(four, { draws: { deck: { winnerId: "z", accepted: false, stale: true } } }).some((s) => s.role === "deck"),
+    true,
+  );
+  check(
+    "당첨자가 나갔어도 확정된 것은 건드리지 않는다",
+    plan(four, { draws: { deck: { winnerId: "z", accepted: true, stale: true } } }).some((s) => s.role === "deck"),
+    false,
+  );
+
+  // 시간이 하나라도 비면 역할 수로만 센다 — 적힌 것만 무거워 보이지 않게.
+  check("일부만 적힌 시간은 쓰지 않는다", Object.values(roleWeights(ROLES, { research: 10 })), [1, 1, 1, 1, 1]);
+  check("모두 적히면 시간을 쓴다", roleWeights(ROLES, hours).research, 10);
+  check("명단이 비면 추천도 없다", recommendBalance({ roles: ROLES, members: [], held: {}, open: all, rejected: {}, estimates: {} }), []);
+  check("균형 추천의 도구 이름", BALANCE_TOOL, "균형 추천");
+
+  // 제품 약속 — 추천도 희망·Veto·시간·맡은 일만 본다.
+  const balanceSrc = readCode("../src/features/roles/balance-model.ts");
+  truthy("균형 추천은 MBTI 를 읽지 않는다", /mbti/i.test(balanceSrc) === false);
+  truthy("균형 추천은 가능한 시간(BusyBlock)을 읽지 않는다", /busy/i.test(balanceSrc) === false);
+  truthy("균형 추천은 사주를 읽지 않는다", /saju|birth/i.test(balanceSrc) === false);
+}
+
+/* ── 18 역할별 기여 기록 ──────────────────────────────────── */
+
+console.log("\n역할별 기여 기록");
+{
+  const b = (roleKey: string, state: string, n: number) => ({ roleKey, state, n });
+  const keysOf = (rows: ReturnType<typeof roleWorkOf>) => rows.map((r) => r.key);
+
+  const mixed = roleWorkOf(ROLES, ["research", "deck"], [b("research", "ok", 2), b("research", "pending", 1), b("script", "ok", 1)]);
+  check("역할 목록 순서대로 나온다", keysOf(mixed), ["research", "deck", "script"]);
+  check("맡은 역할의 상태별 수", [mixed[0]!.confirmed, mixed[0]!.pending, mixed[0]!.disputed], [2, 1, 0]);
+  check("맡았는데 기록이 없으면 0건으로 남는다", [mixed[1]!.held, mixed[1]!.confirmed + mixed[1]!.pending + mixed[1]!.disputed], [true, 0]);
+  check("맡지 않은 역할의 기록도 줄이 생긴다", [mixed[2]!.key, mixed[2]!.held, mixed[2]!.confirmed], ["script", false, 1]);
+  check("맡지도 않고 기록도 없는 역할은 없다", keysOf(mixed).includes("manage"), false);
+
+  check("지워진 역할의 기록은 어느 역할로도 세지 않는다", keysOf(roleWorkOf(ROLES, [], [b("r-gone0000", "ok", 3)])), []);
+  check("모르는 상태는 어느 칸에도 넣지 않는다", roleWorkOf(ROLES, ["deck"], [b("deck", "weird", 4)])[0], {
+    key: "deck", name: "PPT 제작", kind: "core", held: true, confirmed: 0, pending: 0, disputed: 0,
+  });
+  check("같은 역할의 묶음은 합쳐진다", roleWorkOf(ROLES, [], [b("deck", "ok", 1), b("deck", "ok", 2)])[0]?.confirmed, 3);
+  check("기록도 역할도 없으면 비어 있다", roleWorkOf(ROLES, [], []), []);
+
+  // 점수·비율을 만들지 않는다 — 리포트의 첫 원칙.
+  const src = readCode("../src/data/role-work.ts");
+  truthy("역할별 기록은 비율·점수를 계산하지 않는다", /ratio|percent|score|rank|\* 100|\/ total/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
+  truthy("역할별 기록은 MBTI·사주를 읽지 않는다", /mbti|saju|birth/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "")) === false);
+}
+
+/* ── 07 수행 기록 요약 ────────────────────────────────────── */
+
+console.log("\n07 수행 기록 요약");
+{
+  const b = (roleKey: string | null, state: string, n: number) => ({ roleKey, state, n });
+  const sum = (held: string[], buckets: ReturnType<typeof b>[]) => workSummaryOf(ROLES, held, buckets);
+
+  const full = sum(["research"], [b("research", "ok", 2), b("research", "pending", 1), b("research", "disputed", 4), b("deck", "ok", 1), b("deck", "disputed", 9)]);
+  check("확정된 역할만 줄이 된다", full.roles.map((r) => r.key), ["research"]);
+  check("확인된·대기 건수", [full.roles[0]!.confirmed, full.roles[0]!.pending], [2, 1]);
+  check("보이는 기록이 있으면 의견 차이는 어디에도 없다", [full.roles[0]!.underReview, JSON.stringify(full).includes("4"), "disputed" in full.roles[0]!], [false, false, false]);
+  check("맡지 않은 역할은 합친 수만 준다(의견 차이 제외)", [full.others, JSON.stringify(full).includes("deck")], [1, false]);
+
+  check("의견 달린 기록만 있으면 '확인 중' 이지 0건이 아니다", sum(["deck"], [b("deck", "disputed", 2)]).roles[0]!.underReview, true);
+  check("확인 대기가 있으면 '확인 중' 을 따로 말하지 않는다", sum(["deck"], [b("deck", "pending", 1), b("deck", "disputed", 2)]).roles[0]!.underReview, false);
+  check("역할이 없는 기록은 존재만 알린다", [sum(["deck"], [b(null, "ok", 3)]).hasUnlinked, sum(["deck"], [b(null, "ok", 3)]).others], [true, 0]);
+  check("지워진 역할의 기록도 연결되지 않은 기록이다", sum([], [b("r-gone0000", "ok", 1)]), { roles: [], others: 0, hasUnlinked: true });
+  check("기록이 하나도 없으면 전부 비어 있다", sum(["deck"], [])?.hasUnlinked, false);
+  check("맡았는데 기록이 없으면 줄은 있다", sum(["deck", "research"], []).roles.map((r) => [r.key, r.confirmed, r.pending]), [["research", 0, 0], ["deck", 0, 0]]);
+  check("줄 순서는 역할 목록 순서다(기록 수가 아니다)", sum(["deck", "research"], [b("deck", "ok", 9), b("research", "ok", 1)]).roles.map((r) => r.key), ["research", "deck"]);
+
+  // 문구 — 비어 보이는 이유를 구분해 말한다.
+  const role = (o: Partial<ReturnType<typeof sum>["roles"][number]> = {}) => ({ key: "deck", name: "PPT 제작", kind: "core" as const, confirmed: 0, pending: 0, underReview: false, ...o });
+  const lines = {
+    counts: workLineOf(role({ confirmed: 2, pending: 1 }), false),
+    pendingOnly: workLineOf(role({ pending: 3 }), false),
+    review: workLineOf(role({ underReview: true }), false),
+    unlinked: workLineOf(role(), true),
+    none: workLineOf(role(), false),
+  };
+  check("확인된 기록과 확인 대기를 구분한다", lines.counts, "확인된 기록 2건 · 확인 대기 1건");
+  check("대기만 있으면 확인된 기록을 말하지 않는다", lines.pendingOnly, "확인 대기 3건");
+  check("빈 상태 세 가지가 서로 다른 말이다", new Set([lines.review, lines.unlinked, lines.none]).size, 3);
+  check("의견 차이만 있으면 없다고 말하지 않는다", /없/.test(lines.review), false);
+  check("연결되지 않은 기록이 있으면 그 사실을 말한다", lines.unlinked.includes("연결되지 않은 기록"), true);
+  check("다른 역할 줄은 0이면 만들지 않는다", [othersLineOf(0), othersLineOf(2)], [null, "다른 역할로 수행한 기록 2건"]);
+  const allText = Object.values(lines).join(" ") + WORK_CAPTION;
+  truthy("문구에 의견 차이·평가어·비율이 없다", /의견 차이|분쟁|부족|우수|성실|%|점수|순위/.test(allText.replace("성실도를 따지는 숫자가 아니에요", "")) === false);
+  truthy("안내 문구가 평가가 아님을 밝힌다", WORK_CAPTION.includes("성실도를 따지는 숫자가 아니에요"));
+
+  // 원칙을 소스에서 고정한다.
+  const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const rolesSrc = readCode("../src/server/actions/roles.ts");
+  const balanceFn = rolesSrc.slice(rolesSrc.indexOf("export async function proposeBalancedRoles"), rolesSrc.indexOf("/* ── 역할 편집"));
+  truthy("균형 추천은 기여 기록·수행 요약을 읽지 않는다", /contribRecord|role-work|work-buckets|workSummary/i.test(strip(balanceFn)) === false);
+  truthy("균형 추천 모델은 수행 기록을 읽지 않는다", /contrib|role-work|work-buckets/i.test(strip(readCode("../src/features/roles/balance-model.ts"))) === false);
+  truthy("추첨 후보는 수행 기록을 읽지 않는다", /contribRecord|work-buckets/i.test(strip(rolesSrc.slice(rolesSrc.indexOf("async function candidatesFor"), rolesSrc.indexOf("export type DrawResult")))) === false);
+  truthy("탭 배지는 수행 기록 조회를 하지 않는다", /role-work|work-buckets/.test(readCode("../src/server/nav/badges.ts")) === false);
+  const panelSrc = strip(readCode("../src/features/roles/workload-panel.tsx"));
+  truthy("부담 패널은 기록 수로 사람을 정렬하지 않는다", /\.sort\(|toSorted\(/.test(panelSrc) === false);
+  truthy("수행 요약은 비율·점수를 만들지 않는다", /ratio|percent|score|rank|\* 100/i.test(strip(readCode("../src/data/role-work.ts")).replace(/OVERLOAD_RATIO/g, "")) === false);
+}
+
 /* ── 표에 잘못 들어온 값 ──────────────────────────────────── */
 
 console.log("\n값 검증");
 {
-  check("역할 키는 대조", isRoleKey("research"), true);
-  check("모르는 역할 키는 거절", isRoleKey("__proto__"), false);
-  check("모르는 역할 값은 미정으로", toRoleKey("__proto__"), null);
-  check("비었으면 미정으로", toRoleKey(null), null);
-  check("진짜 역할은 읽는다", toRoleKey("present"), "present");
+  const known = roleKeySet(ROLES);
+  check("역할 키는 대조", isRoleKey("research", known), true);
+  check("모르는 역할 키는 거절", isRoleKey("__proto__", known), false);
+  check("모르는 역할 값은 미정으로", toRoleKey("__proto__", known), null);
+  check("비었으면 미정으로", toRoleKey(null, known), null);
+  check("진짜 역할은 읽는다", toRoleKey("present", known), "present");
+  // 팀마다 역할이 다르다 — 같은 키가 이 팀에는 있고 저 팀에는 없다.
+  const custom = roleKeySet([{ key: "r-abc12345" }, { key: "research" }]);
+  check("팀이 더한 역할은 그 팀에서만 통한다", [isRoleKey("r-abc12345", custom), isRoleKey("r-abc12345", known)], [true, false]);
+  check("팀이 지운 역할은 그 팀에서 미정이다", [toRoleKey("present", custom), toRoleKey("present", known)], [null, "present"]);
 }
 
 /* ── 04 성향 체크: 문항 저장소와 계산 ──────────────────────── */
@@ -1626,6 +1892,36 @@ console.log("\n누가 하지");
     const b = await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { menuPick: true } });
     check("팀에 하나만 저장된다", a.menuPick, b.menuPick);
     await db.team.update({ where: { id: team.id }, data: { menuPick: before } });
+
+    // 팀별 추첨 후보 — 같은 팀에 같은 이름은 하나로 센다.
+    await db.drawOption.createMany({
+      data: [
+        { teamId: team.id, label: "갑", position: 0 },
+        { teamId: team.id, label: "을", position: 1 },
+      ],
+    });
+    const opts = await db.drawOption.findMany({
+      where: { teamId: team.id },
+      orderBy: { position: "asc" },
+    });
+    check("후보가 순서대로 나온다", opts.map((o) => o.label), ["갑", "을"]);
+    let dupBlocked = false;
+    await db.drawOption
+      .create({ data: { teamId: team.id, label: "갑", position: 2 } })
+      .catch(() => {
+        dupBlocked = true;
+      });
+    check("같은 팀에 같은 후보는 두 번 넣지 못한다", dupBlocked, true);
+    await db.drawOption.deleteMany({ where: { teamId: team.id } });
+
+    // 주사위 게임 기록 자리 — 룰렛·제비·사다리는 비워 둔다.
+    await db.team.update({
+      where: { id: team.id },
+      data: { menuDetail: JSON.stringify({ rounds: [{ rolls: [{ name: "김", value: 6 }] }], winner: "김" }) },
+    });
+    const detail = await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { menuDetail: true } });
+    check("주사위 기록이 남는다", JSON.parse(detail.menuDetail ?? "{}").winner, "김");
+    await db.team.update({ where: { id: team.id }, data: { menuDetail: null } });
   }
 }
 
@@ -2620,6 +2916,18 @@ console.log("\n읽기 순화: id 기반 계약");
 
   check("거절 문구를 알아본다", [isRefusal("User Safety: unsafe"), isRefusal("Sorry, I can't help"), isRefusal(" 抱歉，我无法协助")], [true, true, true]);
   check("순화문은 거절이 아니다", isRefusal('{"items":[{"id":"m1","text":"다듬은 말"}]}'), false);
+
+  // 안전 라벨 — **쿠션 번역기의 실패 모드다**(2026-10-10: 배포가 무료 라우터로 떨어져
+  // 가드 모델이 `User Safety: safe` 를 돌려줬고, 그 라벨이 "다듬은 말" 로 보였다).
+  check(
+    "안전 분류 라벨을 알아본다",
+    [isSafetyLabel("User Safety: safe"), isSafetyLabel("User Safety: unsafe (Profanity)"), isSafetyLabel("unsafe\nS1"), isSafetyLabel("safe")],
+    [true, true, true, true],
+  );
+  check("다듬은 말은 라벨이 아니다", isSafetyLabel("내일까지 자료 주시면 좋겠어요"), false);
+  // ⚠️ **`isRefusal` 을 그대로 쓰면 이 자리가 오탐이다.** 사과로 시작하는 다듬은 말은
+  // 정상적인 사용이다 — 라벨 검사는 그걸 걸러서는 안 된다.
+  check("사과로 시작하는 다듬은 말을 라벨로 보지 않는다", [isSafetyLabel("Sorry, 내일은 어려울 것 같아요"), isRefusal("Sorry, 내일은 어려울 것 같아요")], [false, true]);
 }
 
 console.log("\n읽기 순화: 항목별 판정 (묶음 전체를 버리지 않는다)");
@@ -3159,7 +3467,7 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
   check("회의 제안은 밖으로 부른다", pushPolicy("meeting"), "push");
 
   // 2. **이미 끝난 일은 부르지 않는다.** 지금 알았어도 아무것도 달라지지 않는다.
-  for (const kind of ["drive", "contrib-participation", "icebreak", "who-does-it"] as const) {
+  for (const kind of ["drive", "contrib-participation", "icebreak", "who-does-it", "role-edit"] as const) {
     check(`정보성 ${kind} 는 앱 안에만 남긴다`, pushPolicy(kind), "in-app-only");
   }
   check("회의 확정은 앱 안에만 남긴다", pushPolicy("meeting", { settled: true }), "in-app-only");
@@ -3170,7 +3478,7 @@ console.log("\n푸시 정책 (무엇을 밖으로 내보내는지 한 곳에서 
   // 이 표가 어긋나면 어느 종류가 화면 밖으로 샜는지 알 수 없다. 종류를 빠뜨리지 않게 세운다.
   const kinds: NotifyKind[] = [
     "poke", "task-assigned", "meeting", "schedule-ask", "contrib-dispute", "contrib-confirm",
-    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "role-consent", "drive",
+    "contrib-participation", "join-request", "rejoin-request", "icebreak", "who-does-it", "role-consent", "role-edit", "drive",
   ];
   check("종류 하나도 판정 밖으로 새지 않는다", kinds.filter((k) => pushPolicy(k) === undefined).length, 0);
 

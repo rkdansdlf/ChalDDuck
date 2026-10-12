@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ROLES } from "@/data/catalog";
+import { rolesOf } from "@/data/team-roles";
 import type { RoleKey } from "@/lib/types";
 import { effectiveStage } from "@/features/schedule/meeting-model";
 import { isUnresolvedClash } from "@/features/roles/roster-model";
@@ -103,7 +103,7 @@ async function countRoleConsents(teamId: string, meId: string): Promise<number> 
  * 팀 몫이지 내 할 일이 아니기 때문이다.
  */
 async function countRoleClashes(teamId: string, meId: string): Promise<number> {
-  const [wanters, accepted, consents] = await Promise.all([
+  const [wanters, accepted, consents, teamRoleList] = await Promise.all([
     db.member.groupBy({
       by: ["wantRole"],
       where: { teamId, leftAt: null, wantRole: { not: null } },
@@ -114,6 +114,7 @@ async function countRoleClashes(teamId: string, meId: string): Promise<number> {
       where: { teamId, respondBy: { gt: new Date() } },
       select: { role: true, responses: { where: { memberId: meId, agree: true }, select: { id: true } } },
     }),
+    rolesOf(db, teamId),
   ]);
 
   const acceptedRoles = new Set(accepted.map((d) => d.role));
@@ -122,7 +123,7 @@ async function countRoleClashes(teamId: string, meId: string): Promise<number> {
     consents.filter((c) => c.responses.length === 0).map((c) => c.role as RoleKey),
   );
 
-  return ROLES.filter((role) =>
+  return teamRoleList.filter((role) =>
     isUnresolvedClash(countOf.get(role.key) ?? 0, acceptedRoles.has(role.key), mine.has(role.key)),
   ).length;
 }

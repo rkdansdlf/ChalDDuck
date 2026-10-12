@@ -9,13 +9,30 @@ import type { MbtiType } from "./mbti";
  * 계약(contract)이 되고, `src/data/` 의 목 구현만 교체하면 된다.
  */
 
-/** 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다. */
-export type RoleKey = "research" | "deck" | "script" | "present" | "manage";
+/**
+ * 역할 식별자 — 드라이브 제출함·기여 기록이 모두 이 키로 묶인다.
+ *
+ * **팀마다 역할이 다르므로 닫힌 목록이 아니다.** 기본 역할은 예전 키(`research` …)를 그대로 쓰고, 팀이
+ * 더한 역할은 `r-` 로 시작하는 임의의 키를 받는다(`TeamRole`). 그래서 타입이 모르는 값을 막아 주지
+ * 않는다 — **서버 액션은 받은 값을 그 팀의 역할 목록으로 검사**한다(`rolesOf`).
+ */
+export type RoleKey = string;
+
+/**
+ * 역할의 **무게.** 핵심 = 결과물을 직접 만드는 일, 운영 = 팀이 굴러가게 하는 일,
+ * 보조 = 남이 만든 것을 다듬는 일. 보조가 핵심을 대신하지 않는다 — 그래서 "핵심 업무를
+ * 맡았는가" 는 `core` 만 센다.
+ *
+ * 이 분류는 **기본값**이다. 긴 프로젝트에서는 운영이 핵심만큼 무거울 수 있어 팀이 고칠 수
+ * 있어야 하지만, 고치는 길(프로젝트별 역할 편집)은 아직 없다 — 역할이 코드의 닫힌 목록이라서다.
+ */
+export type RoleKind = "core" | "ops" | "support";
 
 export type Role = {
   key: RoleKey;
   name: string;
   note: string;
+  kind: RoleKind;
 };
 
 export type Team = {
@@ -45,6 +62,8 @@ export type Member = {
   mbti: MbtiType | null;
   /** 1순위 희망 역할. */
   want: RoleKey | null;
+  /** 두 번째 희망 역할 — 선택. 균형 추천에서만 쓰이고 추첨 후보에는 들어가지 않는다. */
+  want2: RoleKey | null;
   /** 이번엔 피하고 싶은 역할. */
   veto: RoleKey | null;
 };
@@ -231,7 +250,7 @@ export type OnboardingDraft = {
 /** 앱 안 알림 한 줄. 같은 알림이 푸시로도 나가지만(푸시가 없으면 이것만 남는다), 형태는 같다. */
 export type AppNotification = {
   id: string;
-  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "drive";
+  kind: "poke" | "task-assigned" | "meeting" | "schedule-ask" | "contrib-dispute" | "contrib-confirm" | "join-request" | "rejoin-request" | "icebreak" | "who-does-it" | "role-consent" | "role-edit" | "drive";
   title: string;
   body: string;
   href: string | null;
@@ -702,6 +721,11 @@ export type ContribRecord = {
   detail: string;
   when: string;
   source: "auto" | "self";
+  /**
+   * 이 기록이 쌓인 **역할 이름**. 출처(할 일의 역할·올린 제출함의 역할)에서 물려받고, 없으면 어느
+   * 역할에도 묶이지 않은 기록이다. 지워진 역할이면 비운다 — 없는 이름을 지어내지 않는다.
+   */
+  role: string | null;
   /** `disputed` = 팀원이 사실과 다르다고 적은 것. 본인이 알아야 한다 — 접으면 숨겨진다. */
   state: "ok" | "pending" | "disputed";
   evidence: ContribEvidence | null;
@@ -864,6 +888,58 @@ export type ContribReportRow = {
   unresolved: number;
   /** 확인된 주요 활동 항목 요약 (최대 3건) */
   highlights?: string[];
+  /**
+   * **역할별** 기여 기록 — 맡은 역할과 그 역할로 쌓인 기록을 나란히 둔다(`data/role-work.ts`).
+   * 역할을 맡았다는 사실과 실제로 한 일을 구분하기 위해서다. 비율·순위는 만들지 않는다.
+   */
+  work: RoleWork[];
+};
+
+/**
+ * 한 사람의 **맡은 역할** 하나와 그 역할로 쌓인 기여 기록 수 — `ContribReportRow.work` 의 한 줄.
+ * 계산은 `data/role-work.ts`(`roleWorkOf`) 한 곳에 있다.
+ */
+export type RoleWork = {
+  key: RoleKey;
+  name: string;
+  kind: RoleKind;
+  /** 이 사람이 그 역할을 맡았는가 — 확정된 배정이다(받기까지 끝난 것). */
+  held: boolean;
+  confirmed: number;
+  pending: number;
+  disputed: number;
+};
+
+/**
+ * 07 에 보이는 **한 사람의 수행 기록 요약** — 확정된 역할마다 한 줄과 나머지 두 값.
+ *
+ * 역할 재분배를 협의할 때 보는 **참고 자료**이지 성실도를 판정하는 근거가 아니다. 그래서 의견 차이는
+ * 상세로 싣지 않고(`underReview` 가 "확인 중" 이라는 사실만 말한다), 기록 수로 사람을 정렬하거나 비율을
+ * 만들지 않는다. 계산은 `data/role-work.ts` 의 `workSummaryOf` 한 곳에 있다.
+ */
+export type MemberWorkSummary = {
+  /** **확정된** 역할만 — 받기 대기·희망은 아직 그 사람의 일이 아니다. */
+  roles: {
+    key: RoleKey;
+    name: string;
+    kind: RoleKind;
+    /** 팀원이 확인한 기록. */
+    confirmed: number;
+    /** 팀원 확인을 기다리는 기록. 확인된 것과 구분해 보인다. */
+    pending: number;
+    /**
+     * 의견이 달려 **확인 중인 기록이 있다** — 그 사실만. 건수·내용은 07 에 싣지 않는다(17·18 에서 본다).
+     * 확인됐거나 대기 중인 기록이 하나라도 있으면 쓰이지 않는다.
+     */
+    underReview: boolean;
+  }[];
+  /** 맡지 않은 다른 역할로 쌓은 기록(확인됨 + 대기). 어느 역할인지·누구 몫인지는 밝히지 않는다. */
+  others: number;
+  /**
+   * 어느 역할에도 연결되지 않은 기록이 있다(회의 참석·직접 추가·역할이 지워진 기록 등).
+   * "기록이 없다" 와 "연결된 기록이 없다" 를 구분하려고 둔다 — 건수는 싣지 않는다.
+   */
+  hasUnlinked: boolean;
 };
 
 /** 외부 공개용 기여 기록 리포트 묶음 데이터 */
@@ -897,6 +973,11 @@ export type Task = {
   id: string;
   title: string;
   kind: TaskKindKey;
+  /**
+   * 이 할 일이 묶인 역할(`TeamRole.key`). 선택이라 비어 있을 수 있다. 완료하면 생기는 기여 기록이 이
+   * 값을 물려받아 리포트가 "맡은 역할" 과 "그 역할로 한 일" 을 나란히 보여 준다.
+   */
+  role: RoleKey | null;
   /** 담당자. 아직 정해지지 않았으면 null — 비워 두는 것이 임의 배정보다 낫다. */
   assignee: string | null;
   mbti: MbtiType | null;
@@ -1137,6 +1218,16 @@ export type RoleNegotiation = {
    * `consentViewOf`(roster-model)가 `respondBy` 와 **now** 를 보고 정한다.
    */
   consents: Partial<Record<RoleKey, RoleDrawConsentView>>;
+  /**
+   * 역할별 예상 작업 시간(시간). **없으면 팀이 아직 안 적은 것**이다 — 0 이나 평균으로 메우지 않는다.
+   * 부담 비교(`workloadOf`)는 이 값이 있는 역할만 합친다.
+   */
+  estimates: Partial<Record<RoleKey, number>>;
+  /**
+   * 팀원별 수행 기록 요약(사람 id → 요약). **모든 팀원에게 같은 값이 내려간다** — 모두가 같은 정보를
+   * 가지고 역할을 협의해야 하기 때문이다. 추첨·균형 추천에는 쓰이지 않는다(`proposeBalancedRoles` 는 읽지 않는다).
+   */
+  work: Record<string, MemberWorkSummary>;
 };
 
 /** 07 추첨 동의 제안 — 팀 화면이 읽는 모양. */

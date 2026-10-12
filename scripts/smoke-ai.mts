@@ -1,7 +1,8 @@
-import { check, finish, readCode } from "./db-test-base.mjs";
+import { check, finish, readCode, truthy } from "./db-test-base.mjs";
 import { extractJsonObject, missingRequired } from "../src/lib/ai-json.js";
 import { detectAiAnomalies } from "../src/server/ai/call-stats.js";
 import { withFallback } from "../src/server/ai/model.js";
+import { isSafetyLabel } from "../src/lib/read-cushion.js";
 import { estimateSpeechSeconds, formatSpeechSeconds, getSpeechPacingInfo } from "../src/lib/present-pacing.js";
 import { shapePresentDraft } from "../src/lib/ai-draft-shape.js";
 
@@ -88,6 +89,58 @@ async function main() {
     }
     check("429 같은 비일시적 오류는 폴백 없이 즉시 중단", calls, ["model-a"]);
     check("429 예외 유지", caught?.message, "429 Too Many Requests");
+  }
+
+  // 3-1. 결과로 쓸 수 없는 응답 — 안전 라벨 가드.
+  //
+  // 실측(2026-10-10): 무료 라우터가 고른 가드 모델이 `User Safety: safe` 를 돌려줬고,
+  // 그 라벨이 그대로 "다듬은 말" 로 보였다. 라벨은 답이 아니므로 **실패로 돌려 폴백을 돈다.**
+  {
+    const calls: string[] = [];
+    const res = await withFallback(
+      "cushion",
+      "model-a",
+      "model-b",
+      async (m) => {
+        calls.push(m);
+        return m === "model-a" ? "User Safety: safe" : "내일까지 자료 주실 수 있을까요?";
+      },
+      (text) => !isSafetyLabel(text),
+    );
+    check("라벨은 폴백을 돌린다", res, "내일까지 자료 주실 수 있을까요?");
+    check("폴백이 실제로 불린다", calls, ["model-a", "model-b"]);
+  }
+  {
+    const calls: string[] = [];
+    let caught: Error | null = null;
+    try {
+      await withFallback(
+        "cushion",
+        "model-a",
+        "model-b",
+        async (m) => {
+          calls.push(m);
+          return "User Safety: safe";
+        },
+        (text) => !isSafetyLabel(text),
+      );
+    } catch (e) {
+      caught = e as Error;
+    }
+    // **`빈 응답` 으로 뭉개면 안 된다** — 로그에서 "라벨을 받았다"와 "답이 비었다"는 다른 답이다.
+    check("둘 다 라벨이면 쓸 수 없는 응답으로 실패", caught?.name, "UnusableOutputError");
+    check("라벨도 두 번에서 멈춘다", calls, ["model-a", "model-b"]);
+  }
+  {
+    // 라우터가 답했을 때 **실제 답한 모델**을 적기 위한 통로가 코드에 있는지.
+    // (여기서 실행하면 세션이 없어 조용히 넘어가므로 구조로 고정한다.)
+    const model = readCode("../src/server/ai/model.ts");
+    truthy("라우터가 답한 모델을 기록한다", model.includes("note(completion.model)"));
+    truthy("스트리밍도 조각이 알려 준 모델을 기록한다", model.includes("served = chunk.model"));
+    truthy("스트리밍은 기록 전에 결과를 거른다", model.includes("if (input.usable && !input.usable(trimmed)) throw new UnusableOutputError(input.tool);"));
+    const tools = readCode("../src/server/ai/tools.ts");
+    truthy("쿠션 번역기가 라벨 가드를 건다", tools.includes("usable: (rewritten) => !isSafetyLabel(rewritten)"));
+    truthy("문장 변환도 라벨 가드를 건다", tools.includes("usable: (converted) => !isSafetyLabel(converted)"));
   }
 
   // 4. Draft Redo vs Restore quota contract

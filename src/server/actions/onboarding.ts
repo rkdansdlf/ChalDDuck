@@ -3,7 +3,9 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { isRoleKey, normalizeName } from "@/features/roles/roster-model";
+import { DEFAULT_ROLES } from "@/data/catalog";
+import { rolesOf } from "@/data/team-roles";
+import { isRoleKey, normalizeName, roleKeySet } from "@/features/roles/roster-model";
 import { issueRejoinCode } from "@/server/auth/issue";
 import { db } from "@/server/db";
 import { rebuildMeetingCandidates } from "@/server/meetings/candidates";
@@ -19,7 +21,7 @@ import {
 } from "@/server/session";
 import { isMbtiType } from "@/lib/mbti";
 import { parseBirth } from "@/lib/saju/input";
-import type { OnboardingDraft, Team } from "@/lib/types";
+import type { OnboardingDraft, Role, Team } from "@/lib/types";
 
 /**
  * 온보딩 서버 액션.
@@ -133,6 +135,22 @@ export async function findMemberByName(
     select: { name: true },
   });
   return member;
+}
+
+/**
+ * 입장하려는 팀의 **역할 목록** — 초대 코드로 읽는다(06 희망 역할 화면).
+ *
+ * 그 화면은 아직 팀원이 아니라 세션이 없고, 팀을 아는 것은 브라우저에 든 초대 코드뿐이다. 코드를 가진
+ * 사람은 이미 팀 이름과 팀원 이름을 본다(`getTeamTeammatePreview`) — 역할 이름은 그보다 덜 민감하다.
+ * 코드가 틀리면 기본 역할을 돌려준다(코드가 맞는지 알려 주지 않는다).
+ */
+export async function getJoinRoles(teamCode: string): Promise<Role[]> {
+  if (typeof teamCode !== "string") return DEFAULT_ROLES;
+  const team = await db.team.findUnique({
+    where: { code: teamCode.trim().toUpperCase() },
+    select: { id: true },
+  });
+  return team ? rolesOf(db, team.id) : DEFAULT_ROLES;
 }
 
 /** 팀원 목록 미리보기를 위해 팀의 기존 팀원 중 한 명을 조회한다(없으면 null). */
@@ -287,9 +305,12 @@ export async function joinTeam(
   const name = normalizeName(draft.name);
   if (name.length < MIN_NAME) return { status: "invalid", reason: "short-name" };
   if (name.length > MAX_NAME) return { status: "invalid", reason: "long-name" };
-  if (!isRoleKey(draft.want)) return { status: "invalid", reason: "no-want" };
 
   const team = await db.team.findUnique({ where: { code: teamCode.trim().toUpperCase() } });
+  // 희망 역할은 **들어가려는 팀의** 역할이어야 한다 — 팀이 역할을 고쳤을 수 있다(`TeamRole`).
+  // 팀을 못 찾았어도 "희망이 없다" 가 먼저 말해지도록(예전 순서) 기본 역할로 검사한다.
+  const roleKeys = roleKeySet(team ? await rolesOf(db, team.id) : DEFAULT_ROLES);
+  if (!isRoleKey(draft.want, roleKeys)) return { status: "invalid", reason: "no-want" };
   if (!team) return { status: "invalid", reason: "no-code" };
 
   // **이 게이트가 동명이인 작업 2단계에서 열린다.** 지금은 같은 이름이 한 팀에 둘일 수
@@ -318,10 +339,10 @@ export async function joinTeam(
     mbtiFromQuiz: draft.mbtiFromQuiz,
     birthDate: birth.birthDate,
     birthTime: birth.birthTime,
-    wantRole: isRoleKey(draft.want) ? draft.want : null,
+    wantRole: isRoleKey(draft.want, roleKeys) ? draft.want : null,
     // 같은 역할을 희망하면서 동시에 피할 수는 없다 — 화면에서 잠근다. 그래도 서버도
     // 본다: 서버 액션은 화면을 거치지 않고 POST 로 바로 불릴 수 있다.
-    vetoRole: isRoleKey(draft.veto) && draft.veto !== draft.want ? draft.veto : null,
+    vetoRole: isRoleKey(draft.veto, roleKeys) && draft.veto !== draft.want ? draft.veto : null,
   };
 
   // 팀을 만든 브라우저가 첫 팀장이다. 쿠키가 없어졌으면(다른 기기로 들어옴) 팀에

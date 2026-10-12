@@ -238,6 +238,32 @@ export function isTransient(error: unknown): boolean {
 }
 
 /**
+ * 모델이 돌려줬지만 **결과로 쓸 수 없는** 응답 — 요청한 일을 하지 않은 글.
+ *
+ * 실측(2026-10-10): 무료 라우터가 고른 가드 모델이 `User Safety: safe` 를 돌려줬고,
+ * 그 라벨이 그대로 "다듬은 말" 로 보였다. 라벨은 **답이 아니다.**
+ *
+ * ## 왜 일시 실패와 같이 보는가
+ *
+ * 같은 입력에 다른 모델은 제대로 답한다(무료 라우터는 고른 모델이 나쁠 뿐 요청이 나쁘지
+ * 않다). 그래서 폴백을 돌린다. `isTransient` 가 이 오류를 재시도 대상으로 보는 이유는
+ * **상태 코드가 없는 오류는 재시도 가치가 있다**는 기존 규칙 그대로다 — 여기서 새 규칙을
+ * 만들면 두 규칙이 언젠가 어긋난다.
+ *
+ * ## 그런데 왜 별도 이름인가
+ *
+ * 로그에서 "왜 실패했나" 를 물을 때 **"안전 라벨을 받았다"와 "시간이 초과됐다"는 다른
+ * 답**이다. `Error: 빈 응답` 으로 뭉개면 라우터가 어떤 모델을 골랐을 때 이 일이 나는지를
+ * 영영 모른다.
+ */
+export class UnusableOutputError extends Error {
+  constructor(tool: AiToolKey) {
+    super(`${tool}: 결과로 쓸 수 없는 응답`);
+    this.name = "UnusableOutputError";
+  }
+}
+
+/**
  * 한 번만 다시 시도한다 — **다른 모델로.**
  *
  * ## 왜 모델 층에서 하나 (`runTool` 이 아니라)
@@ -246,6 +272,14 @@ export function isTransient(error: unknown): boolean {
  * `runTool` 이 재시도하면 실패가 두 번으로 보여 한도 환불(0단계 1번)도 두 번 일어나고,
  * 화면에 "다시 시도 중" 도 없이 한참 서 있게 된다. 여기서 한 번에 끝내면 `runTool` 이 보는
  * 것은 "답을 받았거나, 못 받았다" 둘뿐이라 환불 규칙이 그대로 맞는다.
+ *
+ * ## 어느 모델이 답했는가 — `note`
+ *
+ * `modelFor` 는 **요청할 슬러그**를 정한다. 그런데 `openrouter/free` 같은 라우터는 요청받은
+ * 슬러그와 **다른 모델이 답한다**(라우터가 요청마다 무료 모델을 고른다). 그래서 실행부가
+ * 응답에서 본 실제 모델을 `note` 로 알려 주면 `AiCall` 에 그 값을 남긴다 — 스키마 주석이
+ * "실제로 응답한 모델의 슬러그"라고 약속한 값이다. 라우터가 고른 모델을 모르면
+ * "이 기능이 나쁘다"와 "라우터가 나쁜 모델을 골랐다"를 가를 수 없다.
  *
  * ## 한 번만
  *
@@ -262,16 +296,25 @@ export async function withFallback<T>(
   tool: AiToolKey,
   primary: string,
   fallback: string | null,
-  run: (model: string) => Promise<T>,
+  run: (model: string, note: (actual: string) => void) => Promise<T>,
+  /** 결과로 쓸 수 있는가. `false` 면 그 시도를 실패로 돌려 **폴백이 돈다**(안전 라벨 등). */
+  usable?: (value: T) => boolean,
 ): Promise<T> {
   const attempt = async (model: string, retried: boolean): Promise<T> => {
     const startedAt = Date.now();
+    // 응답이 알려 준 실제 모델. 알려 주기 전에 실패하면 **요청한 슬러그**가 남는다 —
+    // 그것도 사실이다("이 슬러그에 물었고, 답을 받기 전에 실패했다").
+    let served = model;
+    const note = (actual: string) => {
+      if (actual) served = actual;
+    };
     try {
-      const value = await run(model);
-      await recordCall({ tool, model, outcome: "ok", latencyMs: Date.now() - startedAt, retried });
+      const value = await run(model, note);
+      if (usable && !usable(value)) throw new UnusableOutputError(tool);
+      await recordCall({ tool, model: served, outcome: "ok", latencyMs: Date.now() - startedAt, retried });
       return value;
     } catch (error: unknown) {
-      await recordCall({ tool, model, outcome: "failed", latencyMs: Date.now() - startedAt, retried });
+      await recordCall({ tool, model: served, outcome: "failed", latencyMs: Date.now() - startedAt, retried });
       throw error;
     }
   };
@@ -366,26 +409,37 @@ export async function askText(input: {
   maxTokens?: number;
   /** 이 호출만 다른 모델로 부른다(벤치). 없으면 `modelFor(tool)`. */
   model?: string;
+  /** 결과로 쓸 수 있는가. `false` 면 폴백이 돈다 — 쿠션 번역기의 안전 라벨 가드가 쓴다. */
+  usable?: (text: string) => boolean;
 }): Promise<string> {
   const { primary, fallback } = routeOf(input.tool, input.model);
   try {
-    return await withFallback(input.tool, primary, fallback, async (model) => {
-      const completion = await client().chat.completions.create(
-        {
-          model,
-          max_tokens: input.maxTokens ?? 1024,
-          messages: [
-            { role: "system", content: input.system },
-            { role: "user", content: clampInput(input.user) },
-          ],
-        },
-        deadline(),
-      );
+    return await withFallback(
+      input.tool,
+      primary,
+      fallback,
+      async (model, note) => {
+        const completion = await client().chat.completions.create(
+          {
+            model,
+            max_tokens: input.maxTokens ?? 1024,
+            messages: [
+              { role: "system", content: input.system },
+              { role: "user", content: clampInput(input.user) },
+            ],
+          },
+          deadline(),
+        );
 
-      const text = completion.choices[0]?.message?.content?.trim();
-      if (!text) throw new Error("빈 응답");
-      return text;
-    });
+        // 라우터가 답했으면 **실제로 답한 모델**을 기록한다.
+        note(completion.model);
+
+        const text = completion.choices[0]?.message?.content?.trim();
+        if (!text) throw new Error("빈 응답");
+        return text;
+      },
+      input.usable,
+    );
   } catch (error) {
     return fail("askText", error);
   }
@@ -419,12 +473,22 @@ export async function askTextStreaming(input: {
   model?: string;
   /** 조각이 올 때마다 부른다. 화면에 곧바로 보이게 하려는 통로. */
   onDelta: (delta: string) => void;
+  /**
+   * 결과로 쓸 수 있는가. `false` 면 폴백이 돈다.
+   *
+   * ⚠️ **끝에서만 검사한다.** 라벨이라고 중간에 판정할 수 없고(글자가 조각으로 온다),
+   * 이미 보낸 조각은 되돌릴 수 없다 — 그래도 **최종 글자를 바꾸는 것**이 화면에 라벨을
+   * 남기는 것보다 낫다(`useAiDraft` 가 마지막 값으로 덮어쓴다).
+   */
+  usable?: (text: string) => boolean;
 }): Promise<string> {
   const { primary, fallback } = routeOf(input.tool, input.model);
 
   const attempt = async (model: string, retried: boolean): Promise<string> => {
     const startedAt = Date.now();
     let text = "";
+    // 조각마다 `model` 이 실려 온다. 라우터가 답했어도 **실제 답한 모델**이 여기 있다.
+    let served = model;
     try {
       const stream = await client().chat.completions.create(
         {
@@ -440,6 +504,7 @@ export async function askTextStreaming(input: {
       );
 
       for await (const chunk of stream) {
+        if (chunk.model) served = chunk.model;
         // **빈 조각을 그대로 넘기지 않는다.** 화면이 조각마다 상태를 갱신하므로, 내용이 없는
         // 조각(마지막에 자주 온다)이 수백 번 상태를 바꾸면 "다듬는 중" 표시가 떨린다.
         const delta = chunk.choices[0]?.delta?.content;
@@ -450,10 +515,11 @@ export async function askTextStreaming(input: {
 
       const trimmed = text.trim();
       if (!trimmed) throw new Error("빈 응답");
-      await recordCall({ tool: input.tool, model, outcome: "ok", latencyMs: Date.now() - startedAt, retried });
+      if (input.usable && !input.usable(trimmed)) throw new UnusableOutputError(input.tool);
+      await recordCall({ tool: input.tool, model: served, outcome: "ok", latencyMs: Date.now() - startedAt, retried });
       return trimmed;
     } catch (error: unknown) {
-      await recordCall({ tool: input.tool, model, outcome: "failed", latencyMs: Date.now() - startedAt, retried });
+      await recordCall({ tool: input.tool, model: served, outcome: "failed", latencyMs: Date.now() - startedAt, retried });
       throw error;
     }
   };
@@ -494,7 +560,7 @@ export async function askShape<T>(input: {
 }): Promise<T> {
   const { primary, fallback } = routeOf(input.tool, input.model);
   try {
-    return await withFallback(input.tool, primary, fallback, async (model) => {
+    return await withFallback(input.tool, primary, fallback, async (model, note) => {
       const completion = await client().chat.completions.create(
         {
           model,
@@ -518,6 +584,7 @@ export async function askShape<T>(input: {
         deadline(),
       );
 
+      note(completion.model);
       const message = completion.choices[0]?.message;
       const call = message?.tool_calls?.[0];
       const args = call && "function" in call ? call.function.arguments : null;
@@ -586,7 +653,7 @@ export async function askWithSearch(input: {
 }): Promise<SearchedAnswer> {
   const { primary, fallback } = routeOf(input.tool, input.model);
   try {
-    return await withFallback(input.tool, primary, fallback, async (model) => {
+    return await withFallback(input.tool, primary, fallback, async (model, note) => {
       const completion = await client().chat.completions.create(
         {
           model,
@@ -603,6 +670,7 @@ export async function askWithSearch(input: {
         deadline(),
       );
 
+      note(completion.model);
       const message = completion.choices[0]?.message;
       const annotations = (message as { annotations?: UrlCitation[] } | undefined)?.annotations ?? [];
 

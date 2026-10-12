@@ -11,6 +11,10 @@ import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
 import { lastMessagePerThread } from "./last-message";
 import { acceptedRoleAssignments } from "./accepted-roles";
+import { isRoleKey, roleKeySet } from "@/features/roles/roster-model";
+import { rolesOf } from "./team-roles";
+import { workSummaryOf } from "./role-work";
+import { readWorkBuckets } from "@/server/contrib/work-buckets";
 import { formatDeadline, formatDue, formatWhen, toKstInputValue } from "@/lib/when";
 import { TEAM_CAP_BYTES, isLateVersion } from "@/features/drive/file-rules";
 import { teamUsedBytes } from "@/server/drive/usage";
@@ -98,7 +102,6 @@ import {
   RANDOM_TOOLS,
   RESEARCH_SAMPLE_QUERY,
   RESEARCH_SAMPLE_RESULTS,
-  ROLES,
   SCHEDULE_DAYS,
   SCHEDULE_HOURS,
   SENTENCE_MODES,
@@ -183,6 +186,7 @@ export async function getRoster(teamId: string): Promise<Member[]> {
     isMe: m.id === session?.id,
     mbti: toMbti(m.mbti),
     want: toRole(m.wantRole),
+    want2: toRole(m.wantRole2),
     veto: toRole(m.vetoRole),
   }));
 }
@@ -190,8 +194,13 @@ export async function getRoster(teamId: string): Promise<Member[]> {
 
 /* ── 제품 설정 (팀마다 달라지지 않는 값) ───────────────────── */
 
-export async function getRoles(): Promise<Role[]> {
-  return ROLES;
+/**
+ * **그 팀의** 역할 목록 — 팀이 고치지 않았다면 기본 다섯 개(`rolesOf`).
+ *
+ * 예전에는 팀과 상관없는 고정 목록이었다. 팀마다 달라지므로 팀을 받는다.
+ */
+export async function getRoles(teamId: string): Promise<Role[]> {
+  return rolesOf(db, teamId);
 }
 export async function getQuiz(): Promise<QuizQuestion[]> {
   return QUIZ_QUESTIONS;
@@ -329,12 +338,13 @@ export async function getScheduleOptions(): Promise<{
 export async function getAcceptedRoleAssignments(
   teamId: string,
 ): Promise<Map<string, RoleKey[]>> {
-  return acceptedRoleAssignments(db, teamId, ROLES.map((r) => r.key as string));
+  const roles = await rolesOf(db, teamId);
+  return acceptedRoleAssignments(db, teamId, roles.map((r) => r.key));
 }
 
 /** 팀의 역할 추첨 현황. 07 화면과 탭 배지가 같은 값을 본다. */
 export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiation> {
-  const [draws, rejections, consents, members, session] = await Promise.all([
+  const [draws, rejections, consents, members, session, estimateRows, teamRoleList, workBuckets] = await Promise.all([
     db.roleDraw.findMany({
       where: { teamId },
       include: { winner: { select: { id: true, name: true, leftAt: true } } },
@@ -356,9 +366,13 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
     db.member.findMany({ where: { teamId, leftAt: null }, select: { id: true } }),
     // **내가 동의했는지** — 화면이 자기 응답 버튼을 숨기려면 판정자가 있어야 한다.
     getSessionMember(),
+    db.roleEstimate.findMany({ where: { teamId }, select: { role: true, hours: true } }),
+    rolesOf(db, teamId),
+    readWorkBuckets(teamId),
   ]);
+  const knownRoles = roleKeySet(teamRoleList);
 
-  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {} };
+  const result: RoleNegotiation = { draws: {}, rejected: {}, consents: {}, estimates: {}, work: {} };
 
   for (const d of draws) {
     result.draws[d.role as RoleKey] = {
@@ -391,6 +405,22 @@ export async function getRoleNegotiation(teamId: string): Promise<RoleNegotiatio
       respondBy: formatDeadline(c.respondBy),
       iAgreed: session ? c.responses.some((r) => r.memberId === session.id && r.agree) : false,
     };
+  }
+
+  // 모르는 역할 값이 들어 있으면 조용히 뺀다 — 없는 이름을 지어내지 않는다.
+  for (const e of estimateRows) {
+    if (isRoleKey(e.role, knownRoles)) result.estimates[e.role] = e.hours;
+  }
+
+  // 수행 기록 요약 — **확정된** 역할을 가진 현재 팀원마다. 받기 대기·희망은 아직 그 사람의 일이 아니다.
+  // 추첨·균형 추천은 이 값을 읽지 않는다(`proposeBalancedRoles` 는 `ContribRecord` 를 건드리지 않는다).
+  const heldBy = new Map<string, RoleKey[]>();
+  for (const d of draws) {
+    if (!d.accepted || !knownRoles.has(d.role)) continue;
+    heldBy.set(d.winnerId, [...(heldBy.get(d.winnerId) ?? []), d.role]);
+  }
+  for (const m of members) {
+    result.work[m.id] = workSummaryOf(teamRoleList, heldBy.get(m.id) ?? [], workBuckets.get(m.id) ?? []);
   }
 
   return result;
@@ -460,17 +490,20 @@ export async function getJoinRequests(
   const session = await getSessionMember();
   if (!session || !session.isLeader) return { rows: [], capped: false };
 
-  const rows = await db.joinRequest.findMany({
-    where: { teamId, status: "pending" },
-    orderBy: { createdAt: "desc" },
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.joinRequest.findMany({
+      where: { teamId, status: "pending" },
+      orderBy: { createdAt: "desc" },
+    }),
+    rolesOf(db, teamId),
+  ]);
 
   return {
     capped: isJoinCapped(await countUnresolved(teamId)),
     rows: rows.map((r) => ({
       id: r.id,
       name: r.name,
-      want: ROLES.find((role) => role.key === r.wantRole)?.name ?? "미정",
+      want: teamRoleList.find((role) => role.key === r.wantRole)?.name ?? "미정",
       device: r.label ?? "알 수 없는 기기",
       when: formatDeadline(r.createdAt),
     })),
@@ -1114,7 +1147,7 @@ export async function getTeamToolContext(teamId: string): Promise<TeamToolContex
     team: { name: team.name, dday: team.dday },
     currentMember: { id: session.id, name: session.name },
     members: roster,
-    roles: ROLES.map((r) => ({ key: r.key, name: r.name })),
+    roles: (await rolesOf(db, teamId)).map((r) => ({ key: r.key, name: r.name })),
     tasks: openTasks.map((t) => ({
       id: t.id,
       title: t.title,
@@ -1662,15 +1695,18 @@ export async function getDmThread(teamId: string, threadId: string): Promise<DmT
 
 /* ── 16 / 17 / 18 / 23 기여 기록 ───────────────────────────────── */
 
-export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
+export async function getMyContrib(teamId: string): Promise<ContribRecord[]> {
   const session = await getSessionMember();
   if (!session) return [];
 
-  const rows = await db.contribRecord.findMany({
-    where: { memberId: session.id },
-    // 같은 초에 들어간 행이 있으면 정렬이 흔들려 목록 순서가 조회마다 달라진다.
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.contribRecord.findMany({
+      where: { memberId: session.id },
+      // 같은 초에 들어간 행이 있으면 정렬이 흔들려 목록 순서가 조회마다 달라진다.
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    rolesOf(db, teamId),
+  ]);
 
   return rows.map((r) => ({
     id: r.id,
@@ -1680,6 +1716,7 @@ export async function getMyContrib(_teamId: string): Promise<ContribRecord[]> {
     // 사람이 적을 설명이 있으면 그것을, 없으면 실제로 추가한 시각을 보여 준다.
     when: r.whenLabel ?? formatWhen(r.createdAt),
     source: r.source as ContribRecord["source"],
+    role: teamRoleList.find((role) => role.key === r.roleKey)?.name ?? null,
     // **`disputed` 를 `pending` 으로 접지 않는다.** 접으면 팀원이 내 기록에 반박했는데
     // 내 화면에는 "팀원 확인을 거칩니다" 라고만 떠, 반대된 사실이 감춰진다. 본인은
     // 알림 말고 여기서 알아야 한다.
@@ -1725,16 +1762,22 @@ export async function getTasks(teamId: string): Promise<Task[]> {
   // 담당자가 나인지 알아야 한다 — 내 업무를 나에게 찌를 수는 없고(서버가 막는다),
   // 화면에 그 버튼이 떠 있으면 실패만 눌러 보게 된다.
   const session = await getSessionMember();
-  const rows = await db.task.findMany({
-    where: { teamId },
-    include: { assignee: { select: { id: true, name: true, mbti: true, leftAt: true } } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, teamRoleList] = await Promise.all([
+    db.task.findMany({
+      where: { teamId },
+      include: { assignee: { select: { id: true, name: true, mbti: true, leftAt: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+    rolesOf(db, teamId),
+  ]);
+  const knownRoles = roleKeySet(teamRoleList);
 
   return rows.map((t) => ({
     id: t.id,
     title: t.title,
     kind: t.kind as Task["kind"],
+    // 지워진 역할의 키가 남아 있어도 어느 역할로도 읽지 않는다.
+    role: t.role !== null && knownRoles.has(t.role) ? t.role : null,
     assignee: t.assignee?.name ?? null,
     mbti: toMbti(t.assignee?.mbti),
     // 팀을 나간 담당자도 이름은 남는다 — 기록은 남겨야 하되, 알림은 갈 수 없다.

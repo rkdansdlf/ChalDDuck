@@ -1,6 +1,5 @@
-import { ROLES } from "@/data/catalog";
 import type { MbtiType } from "@/lib/mbti";
-import type { Member, Role, RoleDrawResult, RoleKey } from "@/lib/types";
+import type { Member, Role, RoleDrawResult, RoleKey, RoleKind } from "@/lib/types";
 
 /**
  * 역할 조율의 계산 규칙.
@@ -10,22 +9,27 @@ import type { Member, Role, RoleDrawResult, RoleKey } from "@/lib/types";
  * 부수 효과 없는 순수 함수라 서버·클라이언트 어디서든 쓸 수 있다.
  */
 
-const ROLE_KEY_SET = new Set<string>(ROLES.map((r) => r.key));
+/**
+ * 역할 키 집합 — **그 팀의** 역할 목록에서 만든다.
+ *
+ * 예전에는 코드의 고정 목록 하나를 봤지만, 팀마다 역할이 달라서 검사하는 쪽이 목록을 들고 와야 한다.
+ */
+export const roleKeySet = (roles: readonly { key: string }[]): ReadonlySet<string> =>
+  new Set(roles.map((r) => r.key));
 
 /**
  * DB 에 저장된 역할 값을 `RoleKey` 로 읽는다.
  *
- * 스키마가 `String` 이라 형식이 보장되지 않는다(서버 액션은 POST 로 바로 불릴 수 있다).
- * 모르는 값은 `null` 로 떨어뜨려야 규칙이 조용히 틀리지 않는다 — `Veto` 비교도,
- * 역할 이름 찾기도, 알지 못하는 문자열이면 그냥 "선택 안 함"이 맞다.
+ * 스키마가 `String` 이라 형식이 보장되지 않는다(서버 액션은 POST 로 바로 불릴 수 있다). 팀의 역할에
+ * 없는 값 — 지워진 역할, 다른 팀의 키 — 은 `null` 로 떨어뜨려야 규칙이 조용히 틀리지 않는다.
  */
-export function toRoleKey(value: string | null): RoleKey | null {
-  return value !== null && ROLE_KEY_SET.has(value) ? (value as RoleKey) : null;
+export function toRoleKey(value: string | null, known: ReadonlySet<string>): RoleKey | null {
+  return value !== null && known.has(value) ? value : null;
 }
 
-/** 서버 액션은 POST 로 바로 불릴 수 있다 — 넘어온 값이 실제 역할인지 여기서 본다. */
-export function isRoleKey(value: unknown): value is RoleKey {
-  return typeof value === "string" && ROLE_KEY_SET.has(value);
+/** 서버 액션은 POST 로 바로 불릴 수 있다 — 넘어온 값이 **그 팀의** 실제 역할인지 여기서 본다. */
+export function isRoleKey(value: unknown, known: ReadonlySet<string>): value is RoleKey {
+  return typeof value === "string" && known.has(value);
 }
 
 /**
@@ -353,4 +357,138 @@ export function negotiatingRoles(
         consentViewOf(consents[role.key], now),
       ).kind === "negotiating",
   );
+}
+
+/* ── 팀원별 부담 ─────────────────────────────────────────────── */
+
+/** 역할 무게의 화면 이름. */
+export const ROLE_KIND_LABEL: Record<RoleKind, string> = {
+  core: "핵심",
+  ops: "운영",
+  support: "보조",
+};
+
+/** 한 역할에 적을 수 있는 예상 시간의 범위. 0 은 "없음" 과 "미정" 을 헷갈리게 해서 뺀다. */
+export const MIN_ESTIMATE_HOURS = 1;
+export const MAX_ESTIMATE_HOURS = 99;
+
+/** 서버 액션은 POST 로 바로 불린다 — 넘어온 값이 적을 수 있는 시간인지 여기서 본다. */
+export function isEstimateHours(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_ESTIMATE_HOURS &&
+    value <= MAX_ESTIMATE_HOURS
+  );
+}
+
+/**
+ * 한 사람이 목표(평균)의 몇 배를 넘으면 "몰려 있다" 고 말할지.
+ *
+ * ⚠️ **기획안에 없는 값이다.** 1.5 는 임시로 둔 것이다 — 화면에 `<Undecided>` 를 남기면 "화면의 미결은
+ * 0건" 불변식(`smoke.mts`)이 깨져 상자를 두지 않았다. 팀이 기준을 정하면 이 상수만 고친다.
+ * 값을 바꾸면 `smoke.mts` 의 부담 검사가 경계를 함께 본다.
+ */
+export const OVERLOAD_RATIO = 1.5;
+
+/** 한 팀원의 지금 부담. **확정된 역할만** 센다 — 받기 대기나 희망은 아직 그 사람의 일이 아니다. */
+export type MemberLoad = {
+  id: string;
+  name: string;
+  isMe: boolean;
+  /** 확정된 역할들 (역할 목록의 순서). */
+  roles: Role[];
+  /** 그중 핵심 업무 수 — 보조가 핵심을 대신하지 않으므로 `kind === "core"` 만 센다. */
+  coreCount: number;
+  /** 예상 시간이 적힌 확정 역할의 시간 합. 아무것도 안 적혔으면 0 이고 `unestimated` 가 말해 준다. */
+  hours: number;
+  /** 확정됐지만 예상 시간이 아직 없는 역할 — 합계에 들어가지 않았다는 뜻이다. */
+  unestimated: Role[];
+};
+
+export type Workload = {
+  members: MemberLoad[];
+  /** 확정된 핵심 업무가 하나도 없는 팀원. */
+  withoutCore: MemberLoad[];
+  /** 핵심 업무를 맡은 팀원 수. */
+  coreCovered: number;
+  /** 정해지는 중인 역할 수 — 희망이 겹쳤거나 추첨·받기·동의 단계에 있다. */
+  pending: Role[];
+  /** 담당이 비어 있는 역할 — 아무도 원하지 않았거나, 확정된 담당자가 팀을 떠났다. */
+  gaps: Role[];
+  /**
+   * 한 사람당 목표 시간. **모든 역할에 예상 시간이 있을 때만** 값이 있다 — 일부만 적힌 합을
+   * 인원으로 나누면 실제보다 낮은 목표가 되어, 정상인 사람이 몰린 사람으로 보인다.
+   */
+  target: number | null;
+  /** 목표의 `OVERLOAD_RATIO` 배를 넘은 팀원. `target` 이 없으면 비교할 수 없어 비어 있다. */
+  overloaded: MemberLoad[];
+};
+
+/**
+ * 07 의 "팀원별 부담" — 확정된 역할과 팀이 적은 예상 시간으로 계산한다.
+ *
+ * **추첨 후보를 고르는 데 쓰지 않는다.** 추첨은 희망·Veto 만 본다(`drawPoolOf`). 부담은 사람이
+ * 협의할 때 보는 재료이고, 값이 없으면 없다고 말한다(0 이나 평균으로 메우지 않는다).
+ */
+export function workloadOf(
+  roles: Role[],
+  members: Member[],
+  draws: Partial<Record<RoleKey, RoleDrawResult>>,
+  estimates: Partial<Record<RoleKey, number>>,
+  consents: Partial<Record<RoleKey, DrawConsent>> = {},
+  now: Date = new Date(),
+): Workload {
+  const memberIds = new Set(members.map((m) => m.id));
+  const ownerOf = new Map<RoleKey, string>();
+  const pending: Role[] = [];
+  const gaps: Role[] = [];
+
+  for (const role of roles) {
+    const draw = draws[role.key] ?? null;
+    const view = roleViewOf(
+      wantersOf(members, role.key).length,
+      draw,
+      consentViewOf(consents[role.key], now),
+    );
+    if (view.kind === "confirmed") {
+      // 확정된 담당자가 팀을 떠났으면(명단에 없음) 담당 공백이다. 배정 이력은 지우지 않는다.
+      if (draw && memberIds.has(draw.winnerId)) ownerOf.set(role.key, draw.winnerId);
+      else gaps.push(role);
+    } else if (view.kind === "empty") {
+      gaps.push(role);
+    } else {
+      pending.push(role);
+    }
+  }
+
+  const loads: MemberLoad[] = members.map((m) => {
+    const mine = roles.filter((r) => ownerOf.get(r.key) === m.id);
+    const estimated = mine.filter((r) => estimates[r.key] !== undefined);
+    return {
+      id: m.id,
+      name: m.name,
+      isMe: m.isMe,
+      roles: mine,
+      coreCount: mine.filter((r) => r.kind === "core").length,
+      hours: estimated.reduce((sum, r) => sum + (estimates[r.key] ?? 0), 0),
+      unestimated: mine.filter((r) => estimates[r.key] === undefined),
+    };
+  });
+
+  const allEstimated = roles.length > 0 && roles.every((r) => estimates[r.key] !== undefined);
+  const target =
+    allEstimated && members.length > 0
+      ? roles.reduce((sum, r) => sum + (estimates[r.key] ?? 0), 0) / members.length
+      : null;
+
+  return {
+    members: loads,
+    withoutCore: loads.filter((l) => l.coreCount === 0),
+    coreCovered: loads.filter((l) => l.coreCount > 0).length,
+    pending,
+    gaps,
+    target,
+    overloaded: target === null ? [] : loads.filter((l) => l.hours > target * OVERLOAD_RATIO),
+  };
 }

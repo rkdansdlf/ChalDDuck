@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePoll } from "@/lib/use-poll";
 import {
   AppBar,
@@ -14,9 +14,10 @@ import {
   Note,
   Panel,
   Progress,
+  Skeleton,
   Toast,
 } from "@/components/ui";
-import { checkJoinApproval, joinTeam, type JoinBlock } from "@/server/actions/onboarding";
+import { checkJoinApproval, getJoinRoles, joinTeam, type JoinBlock } from "@/server/actions/onboarding";
 import { updateMemberEmail } from "@/server/actions/email-auth";
 import { useAction } from "@/lib/use-action";
 import { cn } from "@/lib/cn";
@@ -31,9 +32,35 @@ import { useOnboardingGate } from "./use-onboarding-gate";
  * 역할은 **희망·Veto·경험·가능한 시간**으로만 조율한다. MBTI 유형은 배정 계산에 들어가지 않는다.
  * 같은 역할을 희망이면서 동시에 피할 수는 없으므로, 한쪽에서 고른 역할은 다른 쪽에서 잠근다.
  */
-export function RoleScreen({ roles }: { roles: Role[] }) {
+export function RoleScreen() {
   const router = useRouter();
   const { teamCode, want, veto } = useOnboarding();
+
+  /**
+   * **들어가려는 팀의** 역할. 팀장이 역할을 고쳤을 수 있어(`TeamRole`) 고정 목록을 쓸 수 없고,
+   * 이 화면은 아직 세션이 없어 팀을 아는 것이 브라우저에 든 초대 코드뿐이다 — 그래서 코드로 읽는다.
+   * 오기 전에는 `null`(스켈레톤), 읽지 못했으면 `failed` — 기본 역할로 대신 채우지 않는다: 고친 팀에
+   * 없는 역할을 골라 서버에서 막히기 때문이다.
+   */
+  const [roles, setRoles] = useState<Role[] | null>(null);
+  const [rolesFailed, setRolesFailed] = useState(false);
+  const [reloadRoles, setReloadRoles] = useState(0);
+  useEffect(() => {
+    if (!teamCode) return;
+    let live = true;
+    getJoinRoles(teamCode)
+      .then((list) => {
+        if (!live) return;
+        setRoles(list);
+        setRolesFailed(false);
+      })
+      .catch(() => {
+        if (live) setRolesFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [teamCode, reloadRoles]);
 
   const [blocked, setBlocked] = useState<JoinBlock | null>(null);
   const { toast, busy, run } = useAction();
@@ -102,8 +129,8 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
   if (stopped) return <JoinStoppedPanel reason={stopped} onRetry={() => setStopped(null)} />;
   if (waiting) return <WaitingPanel name={toDraft().name} onIssued={setIssued} />;
 
-  const wantRole = roles.find((r) => r.key === want);
-  const vetoRole = roles.find((r) => r.key === veto);
+  const wantRole = roles?.find((r) => r.key === want);
+  const vetoRole = roles?.find((r) => r.key === veto);
 
   return (
     <AppFrame label="06 희망 역할 · Veto">
@@ -116,8 +143,28 @@ export function RoleScreen({ roles }: { roles: Role[] }) {
           맡을 일은 꼭 하나, 피할 일은 하나까지 골라요.
         </p>
 
-        <div className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden">
-          {roles.map((role) => {
+        {roles === null ? (
+          rolesFailed ? (
+            <Note tone="warn" icon="circle-alert" title="역할을 불러오지 못했어요">
+              잠시 뒤 다시 시도해 주세요.{" "}
+              <button type="button" className="font-bold underline" onClick={() => setReloadRoles((n) => n + 1)}>
+                다시 불러오기
+              </button>
+            </Note>
+          ) : (
+            <div aria-busy="true" aria-label="역할을 불러오는 중">
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+            </div>
+          )
+        ) : null}
+
+        <div
+          hidden={roles === null}
+          className="divide-y divide-line/60 rounded-[18px] border border-line bg-card overflow-hidden"
+        >
+          {(roles ?? []).map((role) => {
             const isWant = want === role.key;
             const isVeto = veto === role.key;
 

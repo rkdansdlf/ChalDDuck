@@ -257,6 +257,158 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("없는 이름은 담당자 미정(null)으로 남는다", clerkTasks[1]?.assigneeId, null);
     check("확인한 팀장이 만든 사람(createdById)으로 등록된다", clerkTasks[0]?.createdById, T2.leader.id);
 
+    /* ── 6) 역할 연결: 할 일 → 기여 기록 → 리포트 ───────────────── */
+    console.log("\n역할 연결: 할 일의 역할이 완료 기록과 리포트로 이어진다");
+    const { getContribReport } = await import("../../src/server/contrib/report.js");
+    const { recordDriveVersionContrib } = await import("../../src/server/contrib/auto-record.js");
+    const T3 = await makeTeam("역할연결");
+    await db.roleDraw.create({
+      data: { teamId: T3.team.id, role: "research", tool: "담당", winnerId: T3.mateA.id, accepted: true },
+    });
+    await db.roleDraw.create({
+      data: { teamId: T3.team.id, role: "deck", tool: "담당", winnerId: T3.mateA.id, accepted: true },
+    });
+
+    await as(T3.leaderToken, () => tasks.addTask("team", "자료 모으기", { assignee: T3.mateA.name, role: "research" }));
+    await as(T3.leaderToken, () => tasks.addTask("team", "없는 역할 할 일", { assignee: T3.mateA.name, role: "없는역할" }));
+    const withRole = await db.task.findFirstOrThrow({ where: { teamId: T3.team.id, title: "자료 모으기" } });
+    const withUnknown = await db.task.findFirstOrThrow({ where: { teamId: T3.team.id, title: "없는 역할 할 일" } });
+    check("역할이 저장된다", withRole.role, "research");
+    check("그 팀에 없는 역할은 비워 둔다", withUnknown.role, null);
+
+    await as(T3.leaderToken, () => tasks.cycleTaskStatus(withRole.id)); // todo → doing
+    await as(T3.leaderToken, () => tasks.cycleTaskStatus(withRole.id)); // doing → done
+    const record = await db.contribRecord.findFirst({ where: { originType: "task", originId: withRole.id } });
+    check("완료하면 기록이 할 일의 역할을 물려받는다", record?.roleKey, "research");
+
+    console.log("\n리포트는 맡은 역할과 그 역할로 쌓인 기록을 나란히 둔다");
+    const rowOf = async (who: string) => (await getContribReport(T3.team.id)).find((r) => r.who === who)!;
+    const mateARow = await rowOf(T3.mateA.name);
+    check(
+      "맡은 역할마다 줄이 있고, 기록이 있으면 센다",
+      mateARow.work.map((w) => [w.key, w.held, w.confirmed, w.pending, w.disputed]),
+      [["research", true, 0, 1, 0], ["deck", true, 0, 0, 0]],
+    );
+    check("맡았는데 기록이 없으면 0건으로 남는다(없다고 말한다)", mateARow.work.find((w) => w.key === "deck")?.pending, 0);
+    check("역할 없는 기록은 역할별 줄에 들어가지 않는다", (await rowOf(T3.mateB.name)).work, []);
+
+    // 맡지 않은 역할의 일을 한 사람 — 줄이 생기되 held 는 false.
+    await db.contribRecord.create({
+      data: {
+        memberId: T3.mateB.id, kind: "task", title: "대신 한 일", detail: "", source: "auto",
+        state: "ok", roleKey: "research", originType: "task", originId: `fake-${suffix}`,
+      },
+    });
+    check(
+      "맡지 않은 역할로 쌓은 기록도 보인다",
+      (await rowOf(T3.mateB.name)).work.map((w) => [w.key, w.held, w.confirmed]),
+      [["research", false, 1]],
+    );
+    check("합계(확인된 실적)는 역할과 상관없이 그대로다", (await rowOf(T3.mateB.name)).confirmed, 1);
+
+    console.log("\n역할을 고치면 이미 생긴 기록도 따라간다");
+    await as(T3.leaderToken, () =>
+      tasks.updateTask(withRole.id, { title: "자료 모으기", assignee: T3.mateA.name, role: "deck" }),
+    );
+    check("기록의 역할이 바뀐다", (await db.contribRecord.findFirstOrThrow({ where: { originType: "task", originId: withRole.id } })).roleKey, "deck");
+    await as(T3.leaderToken, () => tasks.updateTask(withRole.id, { title: "자료 모으기 2", assignee: T3.mateA.name }));
+    check("역할을 안 보내면 있던 역할을 지우지 않는다", (await db.task.findUniqueOrThrow({ where: { id: withRole.id } })).role, "deck");
+    await as(T3.leaderToken, () => tasks.updateTask(withRole.id, { title: "자료 모으기 2", assignee: T3.mateA.name, role: null }));
+    check("null 로 보내면 역할이 비워진다", (await db.task.findUniqueOrThrow({ where: { id: withRole.id } })).role, null);
+    check("기록의 역할도 비워진다", (await db.contribRecord.findFirstOrThrow({ where: { originType: "task", originId: withRole.id } })).roleKey, null);
+
+    console.log("\n드라이브 기록은 올린 제출함의 역할을 물려받는다");
+    const box = await db.submissionBox.create({ data: { teamId: T3.team.id, role: "script", name: "대본", due: "10/1" } });
+    const file = await db.submittedFile.create({ data: { boxId: box.id, name: "대본.pdf", kind: "pdf" } });
+    const version = await db.fileVersion.create({
+      data: { fileId: file.id, label: "v1", authorId: T3.mateA.id, note: "", size: "1KB", kind: "pdf" },
+    });
+    await db.$transaction((tx) =>
+      recordDriveVersionContrib(tx, { versionId: version.id, fileName: "대본.pdf", versionLabel: "v1", authorId: T3.mateA.id, bytes: 1024 }),
+    );
+    const driveRecord = () => db.contribRecord.findFirstOrThrow({ where: { originType: "drive_version", originId: version.id } });
+    check("올린 제출함의 역할이 기록에 남는다", (await driveRecord()).roleKey, "script");
+
+    // 이미 쌓인 기록(역할 칸이 생기기 전)을 마이그레이션이 채우는지 — 같은 SQL 을 그대로 돌린다.
+    await db.contribRecord.update({ where: { id: (await driveRecord()).id }, data: { roleKey: null } });
+    const { readFileSync } = await import("node:fs");
+    const migration = readFileSync(
+      new URL("../../prisma/migrations/20261012100000_contrib_role_link/migration.sql", import.meta.url),
+      "utf8",
+    );
+    await db.$executeRawUnsafe(migration.slice(migration.indexOf("UPDATE")));
+    check("백필 SQL 이 옛 기록에 제출함의 역할을 채운다", (await driveRecord()).roleKey, "script");
+
+    /* ── 7) 07 수행 기록 요약 ─────────────────────────────────── */
+    console.log("\n07 수행 기록: 확정된 역할에만 붙고, 덜 말하되 없다고 오인시키지 않는다");
+    const api = await import("../../src/data/api.js");
+    const rolesActions = await import("../../src/server/actions/roles.js");
+    const T4 = await makeTeam("수행기록07");
+    let seq = 0;
+    const rec = (memberId: string, roleKey: string | null, state: string) =>
+      db.contribRecord.create({
+        data: {
+          memberId, kind: "task", title: "기록", detail: "", source: "auto", state, roleKey,
+          originType: "task", originId: `w7-${suffix}-${seq++}`,
+        },
+      });
+    const draw = (memberId: string, role: string, accepted: boolean) =>
+      db.roleDraw.create({ data: { teamId: T4.team.id, role, tool: "담당", winnerId: memberId, accepted } });
+    const workOf = async (token: string) => (await as(token, () => api.getRoleNegotiation(T4.team.id))).work;
+
+    // mateA: 자료조사를 맡았고, 확인 2 · 대기 1 · 의견 차이 1. 맡지 않은 PPT 제작으로 확인 1 · 대기 1 · 의견 차이 1.
+    await draw(T4.mateA.id, "research", true);
+    for (const st of ["ok", "ok", "pending", "disputed"]) await rec(T4.mateA.id, "research", st);
+    for (const st of ["ok", "pending", "disputed"]) await rec(T4.mateA.id, "deck", st);
+    // mateB: 발표 대본을 받기 대기(아직 수락 전) — 그 역할의 기록 1건.
+    await draw(T4.mateB.id, "script", false);
+    await rec(T4.mateB.id, "script", "ok");
+    // 팀장: 발표를 맡았는데 의견 달린 기록만 있고, 역할 없는 기록도 하나 있다.
+    await draw(T4.leader.id, "present", true);
+    await rec(T4.leader.id, "present", "disputed");
+    await rec(T4.leader.id, null, "ok");
+
+    const w = await workOf(T4.mateAToken);
+    const a = w[T4.mateA.id]!;
+    check("맡은 역할의 확인된·대기 건수를 센다", [a.roles[0]?.key, a.roles[0]?.confirmed, a.roles[0]?.pending], ["research", 2, 1]);
+    check("의견 차이는 확인·대기가 있으면 어디에도 싣지 않는다", [a.roles[0]?.underReview, JSON.stringify(a).includes("disputed")], [false, false]);
+    check("맡지 않은 역할의 기록은 합쳐서 '다른 역할 N건' 만 준다(의견 차이 제외)", a.others, 2);
+    check("맡은 역할 목록에 맡지 않은 역할이 끼지 않는다", a.roles.map((r) => r.key), ["research"]);
+    check("연결되지 않은 기록이 없으면 hasUnlinked 는 false", a.hasUnlinked, false);
+
+    const b = w[T4.mateB.id]!;
+    check("역할 수락 전 기록은 확정된 역할의 실적으로 보이지 않는다", b.roles, []);
+    check("수락 전 기록도 누락되지 않고 '다른 역할' 에 들어간다", b.others, 1);
+
+    const lead = w[T4.leader.id]!;
+    check("의견 차이 기록만 있으면 '확인 중' 이라고만 말한다(0건이라 하지 않는다)", [lead.roles[0]?.confirmed, lead.roles[0]?.pending, lead.roles[0]?.underReview], [0, 0, true]);
+    check("역할 미연결 기록은 어느 역할에도 붙지 않고 존재만 알린다", [lead.hasUnlinked, lead.others], [true, 0]);
+
+    check("모든 팀원에게 같은 값이 내려간다", JSON.stringify(await workOf(T4.mateBToken)), JSON.stringify(w));
+    const recordCount = await db.contribRecord.count({ where: { member: { teamId: T4.team.id } } });
+    const counted = Object.values(w).reduce(
+      (sum, m) => sum + m.roles.reduce((n, r) => n + r.confirmed + r.pending, 0) + m.others,
+      0,
+    );
+    // 전체 10건 중 07 이 세는 것: 의견 차이 3건과 역할 없는 1건을 뺀 6건 — 한 건을 두 번 세지 않는다.
+    check("한 기록을 여러 번 세지 않는다", [recordCount, counted], [10, 6]);
+
+    console.log("\n07 과 18 은 같은 역할별 수치를 보여 준다");
+    const report = (await getContribReport(T4.team.id)).find((r) => r.memberId === T4.mateA.id)!;
+    const reportResearch = report.work.find((x) => x.key === "research")!;
+    check("확인된·대기 건수가 같다", [reportResearch.confirmed, reportResearch.pending], [a.roles[0]!.confirmed, a.roles[0]!.pending]);
+    check("18 은 의견 차이를 따로 센다(07 이 덜 말할 뿐 같은 데이터다)", reportResearch.disputed, 1);
+
+    console.log("\n역할이 지워져도 기록이 엉뚱한 역할로 귀속되지 않는다");
+    const added = await as(T4.leaderToken, () => rolesActions.addTeamRole({ name: "설문 설계", note: "", kind: "core" }));
+    const customKey = added.status === "ok" ? added.key : "";
+    await rec(T4.mateB.id, customKey, "ok");
+    check("새 역할의 기록은 맡지 않은 역할로 센다", (await workOf(T4.mateBToken))[T4.mateB.id]!.others, 2);
+    check("그 역할을 지울 수 있다", (await as(T4.leaderToken, () => rolesActions.removeTeamRole(customKey))).status, "ok");
+    const afterRemove = (await workOf(T4.mateBToken))[T4.mateB.id]!;
+    check("지운 뒤에는 어느 역할로도 세지 않고 연결되지 않은 기록으로 남는다", [afterRemove.others, afterRemove.hasUnlinked], [1, true]);
+    check("기록 자체는 지워지지 않는다", await db.contribRecord.count({ where: { memberId: T4.mateB.id, roleKey: customKey } }), 1);
+
     console.log(`\n모두 통과 — ${passed}건 통과, ${failed}건 실패\n`);
     return failed === 0;
   } finally {

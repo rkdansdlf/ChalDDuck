@@ -13,7 +13,8 @@ import { parseDueText } from "@/lib/due";
 import { db } from "@/server/db";
 import { notify } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
-import { recordTaskDoneContrib, unrecordTaskContrib } from "@/server/contrib/auto-record";
+import { recordTaskDoneContrib, relabelTaskContribRole, unrecordTaskContrib } from "@/server/contrib/auto-record";
+import { rolesOf } from "@/data/team-roles";
 
 /**
  * 21 / 24 할 일 · 콕 찌르기 서버 액션.
@@ -61,7 +62,7 @@ export async function cycleTaskStatus(taskId: string): Promise<void> {
   const task = await db.task.findFirst({
     where: { id: taskId, teamId: me.teamId },
     // `recordTaskDoneContrib` 에 넘길 값도 여기서 읽는다 — 같은 행을 두 번 읽지 않는다.
-    select: { id: true, status: true, createdById: true, title: true, assigneeId: true, due: true },
+    select: { id: true, status: true, createdById: true, title: true, assigneeId: true, due: true, role: true },
   });
   if (!task) throw new Error("할 일을 찾을 수 없습니다.");
 
@@ -90,6 +91,7 @@ export async function cycleTaskStatus(taskId: string): Promise<void> {
         title: task.title,
         assigneeId: task.assigneeId,
         due: task.due,
+        role: task.role,
       });
     } else if (current === "done") {
       await unrecordTaskContrib(tx, task.id);
@@ -109,7 +111,7 @@ export async function cycleTaskStatus(taskId: string): Promise<void> {
 export async function addTask(
   kind: TaskKindKey,
   title: string,
-  fields: { assignee?: string | null; due?: string | null } = {},
+  fields: { assignee?: string | null; due?: string | null; role?: string | null } = {},
 ): Promise<void> {
   const me = await requireSessionMember();
 
@@ -125,6 +127,7 @@ export async function addTask(
       title: trimmed,
       kind,
       assigneeId: await assigneeIdOf(me.teamId, fields.assignee),
+      role: await roleKeyOf(me.teamId, fields.role),
       due: dueOf(fields.due),
       dueAt: dueAtOf(fields.due, todayInSeoul()),
       status: "todo",
@@ -161,13 +164,13 @@ export async function addTask(
  */
 export async function updateTask(
   taskId: string,
-  fields: { title: string; assignee?: string | null; due?: string | null },
+  fields: { title: string; assignee?: string | null; due?: string | null; role?: string | null },
 ): Promise<void> {
   const me = await requireSessionMember();
 
   const task = await db.task.findFirst({
     where: { id: taskId, teamId: me.teamId },
-    select: { id: true, createdById: true },
+    select: { id: true, createdById: true, role: true },
   });
   if (!task) throw new Error("할 일을 찾을 수 없습니다.");
   // **같은 막힘에 같은 말을 한다.** 화면은 서버가 계산해 보낸 `editBlockedBecause` 로 "넣기 전에
@@ -190,24 +193,32 @@ export async function updateTask(
   // **누가 누구에게** 배정했는지 — 알림 문장에 들어간다(아래).
   const beforeAssigneeId = await db.task.findUnique({ where: { id: task.id }, select: { assigneeId: true } });
 
-  await db.task.update({
-    where: { id: task.id },
-    data: {
-      title,
-      assigneeId: nextAssigneeId,
-      due: dueOf(fields.due),
-      // ⚠️ **마감 문구를 고치면 정규값도 함께 고쳐야 한다.** 여기서 빠뜨리면 `dueAt` 이 옛
-      // 값을 남아 "마감이 3일 뒤" 같은 말이 **거짓말**이 된다 — 사람이 고친 값과 화면이
-      // 말하는 값이 어긋난다. 그래서 **한 곳에서 둘을 같이 만든다.**
-      dueAt: dueAtOf(fields.due, todayInSeoul()),
-      // **주인이 없던 업무는 지금 고치는 사람이 주인이 된다**(2026-09-28).
-      //
-      // 넣기 전에 있던 할 일이라 주인이 `null` 이고, 팀장만 고칠 수 있었다. 그런데 그 상태로
-      // 두면 팀장이 한 번 고친 뒤에도 계속 팀장만 고칠 수 있게 남아, "왜 이 사람만 되나" 가
-      // 영영 풀리지 않는다. 팀장이 **내가 맡은 것**으로 확인한 것이니 그 사람이 주인이 되는
-      // 것이 사실과 맞다.
-      createdById: task.createdById ?? me.id,
-    },
+  // `undefined` 는 "건드리지 않는다" — 역할을 모르는 호출(옛 화면)이 있던 역할을 지우지 않는다.
+  const nextRole = fields.role === undefined ? task.role : await roleKeyOf(me.teamId, fields.role);
+
+  await db.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: task.id },
+      data: {
+        title,
+        role: nextRole,
+        assigneeId: nextAssigneeId,
+        due: dueOf(fields.due),
+        // ⚠️ **마감 문구를 고치면 정규값도 함께 고쳐야 한다.** 여기서 빠뜨리면 `dueAt` 이 옛
+        // 값을 남아 "마감이 3일 뒤" 같은 말이 **거짓말**이 된다 — 사람이 고친 값과 화면이
+        // 말하는 값이 어긋난다. 그래서 **한 곳에서 둘을 같이 만든다.**
+        dueAt: dueAtOf(fields.due, todayInSeoul()),
+        // **주인이 없던 업무는 지금 고치는 사람이 주인이 된다**(2026-09-28).
+        //
+        // 넣기 전에 있던 할 일이라 주인이 `null` 이고, 팀장만 고칠 수 있었다. 그런데 그 상태로
+        // 두면 팀장이 한 번 고친 뒤에도 계속 팀장만 고칠 수 있게 남아, "왜 이 사람만 되나" 가
+        // 영영 풀리지 않는다. 팀장이 **내가 맡은 것**으로 확인한 것이니 그 사람이 주인이 되는
+        // 것이 사실과 맞다.
+        createdById: task.createdById ?? me.id,
+      },
+    });
+    // 이미 완료돼 기록이 생긴 할 일이면 그 기록의 역할도 따라 바꾼다.
+    if (nextRole !== task.role) await relabelTaskContribRole(tx, task.id, nextRole);
   });
 
   await notifyAssignee(me, task.id, nextAssigneeId, beforeAssigneeId?.assigneeId ?? null);
@@ -261,6 +272,18 @@ async function assigneeIdOf(teamId: string, name: string | null | undefined) {
     select: { id: true },
   });
   return member?.id ?? null;
+}
+
+/**
+ * 할 일이 묶일 **역할 키**. 그 팀의 역할이 아니면 `null` — 없는 역할에 묶어 두지 않는다.
+ *
+ * 담당자와 같은 이유다(`assigneeIdOf`): 모르는 값을 지어내서 저장하지 않고 비워 둔다. 역할은 선택이라
+ * 비워도 아무것도 막히지 않는다.
+ */
+async function roleKeyOf(teamId: string, role: string | null | undefined): Promise<string | null> {
+  if (typeof role !== "string" || role === "") return null;
+  const roles = await rolesOf(db, teamId);
+  return roles.some((r) => r.key === role) ? role : null;
 }
 
 /** 기한. 빈칸이면 미정. 길이는 목록 한 칸에 들어갈 만큼만. */

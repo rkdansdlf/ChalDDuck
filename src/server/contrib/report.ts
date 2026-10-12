@@ -2,14 +2,16 @@ import "server-only";
 
 import { db } from "@/server/db";
 import { RESOLUTION_WAYS } from "@/features/contrib/resolution";
-import { ROLES } from "@/data/catalog";
+import { rolesOf } from "@/data/team-roles";
 import { contribTotals } from "@/data/contrib-report-totals";
 import { acceptedRoleAssignments } from "@/data/accepted-roles";
+import { roleWorkOf, type RoleStateBucket } from "@/data/role-work";
 import type { ContribReportRow, PublicReportData } from "@/lib/types";
 
 /** 18 리포트의 줄. 확인·미확인·의견 차이를 모두 같은 표에서 센다. */
 export async function getContribReport(teamId: string): Promise<ContribReportRow[]> {
-  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords] = await Promise.all([
+  const teamRoleList = await rolesOf(db, teamId);
+  const [members, stateCounts, shownPerRecord, unresolvedRows, acceptedRoles, okRecords, roleCounts] = await Promise.all([
     db.member.findMany({
       where: { teamId },
       select: { id: true, name: true, leftAt: true },
@@ -32,13 +34,27 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       where: { member: { teamId }, dispute: { not: null }, resolution: RESOLUTION_WAYS.noAgreement },
       _count: { _all: true },
     }),
-    acceptedRoleAssignments(db, teamId, ROLES.map((r) => r.key as string)),
+    acceptedRoleAssignments(db, teamId, teamRoleList.map((r) => r.key)),
     db.contribRecord.findMany({
       where: { member: { teamId }, state: "ok" },
       select: { memberId: true, title: true },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     }),
+    // 역할에 묶인 기록만 — 묶이지 않은 기록(회의 참석·직접 추가)은 위 합계에만 들어간다.
+    db.contribRecord.groupBy({
+      by: ["memberId", "roleKey", "state"],
+      where: { member: { teamId }, roleKey: { not: null } },
+      _count: { _all: true },
+    }),
   ]);
+
+  const roleBucketsByMember = new Map<string, RoleStateBucket[]>();
+  for (const r of roleCounts) {
+    if (r.roleKey === null) continue;
+    const list = roleBucketsByMember.get(r.memberId) ?? [];
+    list.push({ roleKey: r.roleKey, state: r.state, n: r._count._all });
+    roleBucketsByMember.set(r.memberId, list);
+  }
 
   const totals = contribTotals({
     states: stateCounts.map((r) => ({ memberId: r.memberId, state: r.state, n: r._count._all })),
@@ -62,13 +78,14 @@ export async function getContribReport(teamId: string): Promise<ContribReportRow
       memberId: m.id,
       who: m.name,
       left: m.leftAt !== null,
-      role: roles.length > 0 ? roles.map((r) => ROLES.find((x) => x.key === r)?.name).join(" · ") : "미정",
+      role: roles.length > 0 ? roles.map((r) => teamRoleList.find((x) => x.key === r)?.name).join(" · ") : "미정",
       confirmed: bucket?.confirmed ?? 0,
       pending: bucket?.pending ?? 0,
       disputed: bucket?.disputed ?? 0,
       participations: bucket?.participations ?? 0,
       unresolved: bucket?.unresolved ?? 0,
       highlights: highlightsByMember.get(m.id) ?? [],
+      work: roleWorkOf(teamRoleList, roles, roleBucketsByMember.get(m.id) ?? []),
     };
   });
 }

@@ -26,7 +26,15 @@ import { cn } from "@/lib/cn";
 import { useAction } from "@/lib/use-action";
 import { useOnboarding } from "@/features/onboarding/onboarding-state";
 import { createInviteLink, disableInviteLink } from "@/server/actions/invite";
-import { acceptRoleDraw, claimSoleRole, drawForRole, proposeRoleDraw, rejectRoleDraw, respondRoleDraw } from "@/server/actions/roles";
+import {
+  acceptRoleDraw,
+  claimSoleRole,
+  drawForRole,
+  proposeBalancedRoles,
+  proposeRoleDraw,
+  rejectRoleDraw,
+  respondRoleDraw,
+} from "@/server/actions/roles";
 import { unhideDmThread } from "@/server/actions/dm";
 import { EXPIRY_CHOICES, USE_CHOICES } from "@/server/invite/choices";
 import {
@@ -39,9 +47,15 @@ import {
   negotiatingRoles,
   roleViewOf,
   wantersOf,
+  workloadOf,
   type ConsentView,
   type RoleView,
 } from "./roster-model";
+import { BalancePanel } from "./balance-panel";
+import { ChoicesSheet } from "./choices-sheet";
+import { RoleEditSheet } from "./role-edit-sheet";
+import { balancePlan } from "./balance-model";
+import { EstimateSheet, WorkloadPanel } from "./workload-panel";
 
 /**
  * 기한을 사람이 읽을 이름으로.
@@ -107,12 +121,15 @@ export function RosterScreen({
 }) {
   const router = useRouter();
   const onboarding = useOnboarding();
-  const { draws, rejected, consents } = negotiation;
+  const { draws, rejected, consents, estimates } = negotiation;
   const { toast, busy, flash, run } = useAction();
 
   /** 추첨 도구를 고르는 중인 역할. */
   const [drawingFor, setDrawingFor] = useState<RoleKey | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [estimateOpen, setEstimateOpen] = useState(false);
+  const [choicesOpen, setChoicesOpen] = useState(false);
+  const [rolesEditOpen, setRolesEditOpen] = useState(false);
   /**
    * 시트 안에서 **고른 도구.** 누르는 즉시 뽑지 않고 고른 뒤 무엇을 할지 고른다 —
    * "지금 뽑기"와 "팀에 제안" 두 길이 있으므로 탭이 곧 실행이면 실수로 바로 뽑힌다.
@@ -313,6 +330,18 @@ export function RosterScreen({
   const clashRoles = negotiatingRoles(roles, members, draws, consents, now);
   const heroRole =
     clashRoles.find((r) => wantersOf(members, r.key).some((m) => m.isMe)) ?? clashRoles[0] ?? null;
+  const workload = workloadOf(roles, members, draws, estimates, consents, now);
+
+  // 균형 추천 미리보기 — 서버(`proposeBalancedRoles`)가 같은 함수로 다시 계산한다.
+  const balanceSuggestions = balancePlan({
+    roles,
+    members: members.map((m) => ({ id: m.id, name: m.name, want: m.want, want2: m.want2, veto: m.veto })),
+    draws,
+    liveConsent: new Set(roles.filter((r) => consentFor(r.key).kind === "waiting").map((r) => r.key)),
+    rejected: Object.fromEntries(roles.map((r) => [r.key, new Set(excludedIdsOf(r.key))])),
+    estimates,
+  });
+  const me = members.find((m) => m.isMe) ?? null;
   const heroWanters = heroRole ? wantersOf(members, heroRole.key) : [];
   const otherHeroMember = heroWanters.find((m) => !m.isMe);
 
@@ -332,7 +361,19 @@ export function RosterScreen({
             <span className="font-bold text-txt-strong">
               역할 {roles.length}개 중 {confirmedCount}개 정해짐
             </span>
-            <span className="font-medium text-txt-muted">중간발표 D-12</span>
+            <div className="flex items-center gap-2">
+              {isLeader ? (
+                <button
+                  type="button"
+                  onClick={() => setRolesEditOpen(true)}
+                  className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-line bg-card px-2.5 text-[12.5px] font-semibold text-txt-strong hover:bg-fill cursor-pointer"
+                >
+                  <Icon name="pencil" size={12} />
+                  역할 편집
+                </button>
+              ) : null}
+              <span className="font-medium text-txt-muted">중간발표 D-12</span>
+            </div>
           </div>
           <div className="flex gap-1.5">
             {roles.map((r) => {
@@ -697,7 +738,61 @@ export function RosterScreen({
             <Icon name="chevron-right" size={16} className="text-txt-muted" />
           </button>
         </div>
+
+        <WorkloadPanel
+          workload={workload}
+          memberCount={members.length}
+          work={negotiation.work}
+          onEdit={() => setEstimateOpen(true)}
+        />
+
+        <BalancePanel
+          roles={roles}
+          suggestions={balanceSuggestions}
+          myId={myId}
+          my={me ? { want: me.want, want2: me.want2, veto: me.veto } : null}
+          busy={{ propose: Boolean(busy.balance) }}
+          onPropose={() =>
+            void run(
+              "balance",
+              async () => {
+                const result = await proposeBalancedRoles();
+                router.refresh();
+                return result.status === "ok"
+                  ? `${result.proposed.length}개 역할을 추천했습니다 — 각자 받기·안 받기로 답해요`
+                  : "새로 추천할 역할이 없습니다";
+              },
+              "추천을 올리지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+            )
+          }
+          onEditChoices={() => setChoicesOpen(true)}
+        />
       </Body>
+
+      <RoleEditSheet
+        open={rolesEditOpen}
+        roles={roles}
+        run={run}
+        onClose={() => setRolesEditOpen(false)}
+      />
+
+      {me ? (
+        <ChoicesSheet
+          open={choicesOpen}
+          roles={roles}
+          current={{ want: me.want, want2: me.want2, veto: me.veto }}
+          run={run}
+          onClose={() => setChoicesOpen(false)}
+        />
+      ) : null}
+
+      <EstimateSheet
+        open={estimateOpen}
+        roles={roles}
+        estimates={estimates}
+        run={run}
+        onClose={() => setEstimateOpen(false)}
+      />
 
       <Sheet
         open={drawingFor !== null}

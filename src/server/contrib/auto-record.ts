@@ -26,6 +26,8 @@ export async function recordTaskDoneContrib(
     title: string;
     assigneeId: string | null;
     due?: string | null;
+    /** 할 일이 묶인 역할. 기록이 물려받는다 — 비어 있으면 어느 역할에도 묶이지 않는다. */
+    role?: string | null;
   },
 ): Promise<void> {
   if (!task.assigneeId) return;
@@ -54,7 +56,22 @@ export async function recordTaskDoneContrib(
       state: "pending",
       originType: "task",
       originId: task.id,
+      roleKey: task.role ?? null,
     },
+  });
+}
+
+/**
+ * 할 일의 역할이 바뀌었을 때 이미 만들어진 기록의 역할도 따라 바꾼다.
+ *
+ * 역할은 **분류**이지 팀원이 확인하는 사실이 아니다 — 확인·의견이 붙은 기록도 바꾼다(한 사람이 실제로 한
+ * 일은 그대로고, 어느 역할로 세느냐만 달라진다). 그렇지 않으면 완료 뒤에 역할을 고친 할 일이 옛 역할로
+ * 남아 리포트가 어긋난다.
+ */
+export async function relabelTaskContribRole(tx: Tx, taskId: string, role: string | null): Promise<void> {
+  await tx.contribRecord.updateMany({
+    where: { originType: "task", originId: taskId },
+    data: { roleKey: role },
   });
 }
 
@@ -112,6 +129,13 @@ export async function recordDriveVersionContrib(
 
   if (existing) return;
 
+  // 올린 제출함의 역할을 물려받는다 — 호출하는 세 곳이 각자 찾지 않게 여기서 한 번 읽는다.
+  // 버전이 없으면(이론상) 역할 없이 기록한다.
+  const box = await tx.fileVersion.findUnique({
+    where: { id: input.versionId },
+    select: { file: { select: { box: { select: { role: true } } } } },
+  });
+
   await tx.contribRecord.create({
     data: {
       memberId: input.authorId,
@@ -122,6 +146,7 @@ export async function recordDriveVersionContrib(
       state: "pending",
       originType: "drive_version",
       originId: input.versionId,
+      roleKey: box?.file.box.role ?? null,
       evidencePath: input.storagePath ?? null,
       evidenceName: input.fileName,
       evidenceBytes: input.bytes,

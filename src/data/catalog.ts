@@ -30,12 +30,16 @@ import { MAFIA_MAX_PLAYERS, MAFIA_MIN_PLAYERS } from "@/lib/mafia-rules";
  * `api.ts` 의 해당 함수와 함께 사라진다.
  */
 
-export const ROLES: Role[] = [
-  { key: "research", name: "자료조사", note: "논문·기사·통계 수집과 정리" },
-  { key: "deck", name: "PPT 제작", note: "템플릿 구성과 슬라이드 작업" },
-  { key: "script", name: "발표 대본", note: "대본 작성과 발표 연습" },
-  { key: "present", name: "발표", note: "청중 앞 발표와 질의 응답" },
-  { key: "manage", name: "일정 관리", note: "마감 관리와 회의 소집" },
+/**
+ * 기본 역할 다섯 개. **`TeamRole` 행이 하나도 없는 팀의 역할이 이것이다**(`data/team-roles.ts`).
+ * 팀이 고치면 그 팀의 행이 이 목록을 대신한다 — 이 상수를 고쳐도 이미 고친 팀은 바뀌지 않는다.
+ */
+export const DEFAULT_ROLES: Role[] = [
+  { key: "research", name: "자료조사", note: "논문·기사·통계 수집과 정리", kind: "core" },
+  { key: "deck", name: "PPT 제작", note: "템플릿 구성과 슬라이드 작업", kind: "core" },
+  { key: "script", name: "발표 대본", note: "대본 작성과 발표 연습", kind: "core" },
+  { key: "present", name: "발표", note: "청중 앞 발표와 질의 응답", kind: "core" },
+  { key: "manage", name: "일정 관리", note: "마감 관리와 회의 소집", kind: "ops" },
 ];
 
 /**
