@@ -77,14 +77,14 @@ export const RANDOM_TOOLS: RandomTool[] = [
 export const AI_TOOLS: AiTool[] = [
   {
     key: "cushion",
-    name: "쿠션 번역기",
+    name: "말투 고쳐 쓰기",
     icon: "message-square-heart",
     note: "하고 싶은 말의 말투만 부드럽게 바꿔 줍니다",
     href: "/tools/cushion",
   },
   {
     key: "clerk",
-    name: "AI 서기",
+    name: "회의록 정리",
     icon: "notebook-pen",
     note: "회의 내용을 할 일 카드로 정리합니다",
     href: "/tools/clerk",

@@ -23,7 +23,7 @@
 
 import { CUSHION_DEFAULT_MODE, CUSHION_TONES } from "@/data/catalog";
 import { AI_INPUT_LIMIT } from "@/lib/ai-limit";
-import type { ChatMessage, CushionLevelKey } from "@/lib/types";
+import type { ChatMessage, ChatPurified, CushionLevelKey } from "@/lib/types";
 
 /* ── 상태와 이유 ─────────────────────────────────────────────── */
 
@@ -32,12 +32,47 @@ import type { ChatMessage, CushionLevelKey } from "@/lib/types";
  *
  * `PURIFIED` / `FALLBACK` 만 **끝**이고, 나머지는 같은 설정으로는 다시 시도하지 않는다.
  */
-export const CUSHION_STATUS = ["PENDING", "PURIFIED", "FALLBACK", "REJECTED", "FAILED"] as const;
+export const CUSHION_STATUS = ["PENDING", "PURIFIED", "FALLBACK", "UNCHANGED", "REJECTED", "FAILED"] as const;
 export type CushionStatus = (typeof CUSHION_STATUS)[number];
 
-/** 끝난 상태 — 다시 부르지 않는다. 화면은 이때 다듬은 말(또는 가림본)을 그린다. */
+/**
+ * 끝난 상태 — 다시 부르지 않는다. 화면은 이때 다듬은 말(또는 가림본)을 그린다.
+ *
+ * `UNCHANGED` 도 끝이다: 다듬을 필요가 없다고 **규칙이 판정한** 말이다. 그릴 글은 없고(원문이 보인다),
+ * 이 상태가 있어야 매번 다시 후보가 되지 않는다.
+ */
 export function isCushionDone(status: CushionStatus): boolean {
-  return status === "PURIFIED" || status === "FALLBACK";
+  return status === "PURIFIED" || status === "FALLBACK" || status === "UNCHANGED";
+}
+
+/** 저장된 행 한 줄 — 서버 액션과 읽기 경로가 **같은 값으로** 화면 상태를 만든다. */
+export type StoredPurification = {
+  status: string;
+  text: string | null;
+  source: string | null;
+  reason: string | null;
+  retryAfter: Date | null;
+};
+
+/**
+ * 저장된 읽기 도움 행을 화면 값으로 옮긴다.
+ *
+ * 액션(`softenThreadMessages`)과 조회(`data/api`)가 각자 만들던 것을 하나로 모았다 — 두 곳이 따로
+ * 판단하면 한쪽에만 새 상태가 생겨, 같은 말이 화면을 새로 열 때와 다듬는 중일 때 다르게 보인다.
+ */
+export function toPurifiedView(row: StoredPurification): ChatPurified {
+  if (row.text && (row.status === "PURIFIED" || row.status === "FALLBACK")) {
+    return { status: row.status, text: row.text, kind: row.source === "mask" ? "mask" : "ai", reason: null, retryAfter: null };
+  }
+  if (row.status === "UNCHANGED") {
+    return { status: "UNCHANGED", text: null, kind: null, reason: null, retryAfter: null };
+  }
+  // 실패 상태는 글 없이 상태만 남는다 — 화면이 그 말은 **원문**으로 그린다.
+  // 모르는 status(옛 데이터·손으로 넣은 값)는 실패로 본다. 모르는 상태를 "읽기 도움됨"으로
+  // 그리는 일은 없어야 한다.
+  const status: "PENDING" | "REJECTED" | "FAILED" =
+    row.status === "PENDING" || row.status === "REJECTED" ? row.status : "FAILED";
+  return { status, text: null, kind: null, reason: row.reason, retryAfter: row.retryAfter ? row.retryAfter.toISOString() : null };
 }
 
 /**
@@ -78,6 +113,23 @@ export const CUSHION_REASON = {
    */
   LANGUAGE_DRIFT: "LANGUAGE_DRIFT",
   /**
+   * 모델을 불렀지만 **답을 못 받았다**(시간 초과·연결·5xx·빈 응답). 거절이 아니다.
+   *
+   * 예전에는 한도가 아닌 모든 묶음 실패를 `MODEL_REFUSAL` 로 적었다. 그러면 "모델을 바꿔야 하는
+   * 거절"과 "잠깐 안 된 것"이 한 숫자로 섞여, 시간 초과가 나는 모델을 거절하는 모델로 읽었다.
+   */
+  MODEL_ERROR: "MODEL_ERROR",
+  /**
+   * 글이 **깨져 있다** — 제어 문자·대체 문자(U+FFFD), 원문에 없던 문자 반복, 같은 말이 맴도는 출력.
+   * 언어가 바뀐 것(`LANGUAGE_DRIFT`)과 따로 센다: 모델의 출력 장애와 모델의 언어 선택은 고칠 곳이 다르다.
+   */
+  GARBLED: "GARBLED",
+  /**
+   * 낱말은 남았는데 **뜻이 바뀌었다** — 기한·숫자가 달라졌거나, 거절·금지가 긍정으로 뒤집혔거나,
+   * 책임이 반대편으로 옮겨 갔거나, 꼭 해야 한다는 요구가 사라졌다. `INFO_LOST` 는 "없어진 것", 이쪽은 "바뀐 것".
+   */
+  MEANING_CHANGED: "MEANING_CHANGED",
+  /**
    * 고치는 대신 **되물었다.** ("왜 그러세요? 좀비 같아 보여요.")
    *
    * 읽기 도움의 대상은 "고쳐서 보여 줄 문장" 이지 상대에게 할 말이다. 되물은 결과는 원문의
@@ -100,10 +152,10 @@ const REFUSAL_MARKS =
  * 낡은 정보가 된다 — `PARSE_FAILED` 나 `TOXICITY_REMAINED` 가 프롬프트 때문에 났을 수 있기
  * 때문이다. 버전을 올리면 실패가 자동으로 다시 열린다(몇 달 뒤 재생성이 되는 근거).
  */
-export const PROMPT_VERSION = "p2";
+export const PROMPT_VERSION = "p3";
 
 /** 검사 버전. 규칙을 손보면 올린다(위와 같은 이유로 실패가 다시 열린다). */
-export const VALIDATOR_VERSION = "v2";
+export const VALIDATOR_VERSION = "v3";
 
 /** 같은 설정으로는 몇 번까지 시도할지. 이 값을 넘으면 **포기 상태**로 고정한다. */
 export const MAX_ATTEMPTS = 2;
@@ -122,8 +174,12 @@ export const FAILURE_BACKOFF_MS = 30 * 60 * 1000;
  * 이 시간 안에 아무도 갱신하지 않은 `PENDING` 은 **사라진 요청**이다(브라우저를 닫았거나
  * 서버가 죽었거나). 시간이 지나면 다음 사람이 선점을 가져갈 수 있다 — 안 그러면 그 말은
  * 영영 "처리 중"으로 남아 다듬은 말을 영영 못 받는다.
+ *
+ * **모델 호출이 끝나는 데 걸리는 최대 시간보다 길어야 한다.** 모델 층은 첫 모델이 실패하면 다른
+ * 모델로 한 번 더 부르는데(각각 `OPENROUTER_TIMEOUT_MS`, 기본 60초), 선점이 그 120초 안에
+ * 만료되면 **아직 일하는 요청의 말을 다른 요청이 가져가** 같은 말에 모델을 두 번 부른다.
  */
-export const CLAIM_TTL_MS = 90 * 1000;
+export const CLAIM_TTL_MS = 150 * 1000;
 
 /** 한 번에 묶어서 부르는 말의 수. */
 /**
@@ -142,6 +198,32 @@ export const PURIFY_CONTEXT_MESSAGES = 2;
 
 export const PURIFY_BATCH_LIMIT = 10;
 
+/**
+ * 모델이 한 번에 돌려줄 수 있는 출력 토큰. `cushion-provider` 가 같은 값을 `maxTokens` 로 건다.
+ *
+ * 묶음을 짜는 쪽(`packPurifyItems`)과 호출하는 쪽이 **같은 숫자**를 봐야 한다. 10개를 보내 놓고
+ * 출력이 1200 토큰에서 잘리면 JSON 이 끊겨 **묶음 전체가 `PARSE_FAILED`** 가 된다.
+ */
+export const PURIFY_OUTPUT_TOKENS = 1200;
+
+/** 출력 예산에서 실제로 쓰는 몫. 나머지는 모델이 JSON 앞뒤에 붙이는 말과 어림의 오차 몫이다. */
+const OUTPUT_BUDGET_SHARE = 0.8;
+/** 항목 하나의 JSON 틀(`{"id":"…","text":""}`)이 먹는 토큰 어림. id 는 cuid 라 25자쯤 된다. */
+const OUTPUT_ITEM_OVERHEAD = 20;
+/** 한글 한 글자가 먹는 토큰의 보수적 어림 — 다듬은 말이 조금 길어지는 몫을 포함한다. */
+const OUTPUT_TOKENS_PER_CHAR = 1.2;
+
+/** 앞 문맥 한 줄의 최대 글자 수 — 긴 말 하나가 묶음 전체의 입력을 먹지 않게 한다. */
+export const PURIFY_CONTEXT_MAX_CHARS = 300;
+
+/**
+ * 읽기 도움 대상 말의 최대 글자 수.
+ *
+ * **혼자서도 한 묶음에 들어가는 길이**여야 한다. 이 값을 넘는 말이 대상이면 묶음의 맨 앞에서
+ * 영영 안 들어가 `remaining` 이 줄지 않고(화면은 계속 부른다), 뒤의 말들까지 막는다. 그래서
+ * 길이 판단은 서버와 화면이 같이 쓰는 `isPurifiableText` 안에 둔다.
+ */
+export const PURIFY_MAX_TEXT_CHARS = 700;
 type StoredRow = {
   status: CushionStatus;
   reason: CushionReason | null;
@@ -152,6 +234,20 @@ type StoredRow = {
   createdAt?: string | Date;
   updatedAt?: string | Date;
 };
+
+/**
+ * `PENDING` 선점이 **언제까지 유효한가**(ms).
+ *
+ * 선점은 `retryAfter` 에 자기 만료 시각을 적는다. **행을 처음 만든 시각(`createdAt`)을 기준으로
+ * 삼으면 안 된다** — 만료된 선점을 다른 요청이 가져가도 `createdAt` 은 그대로라 그 즉시 또
+ * 만료된 것으로 보이고, 세 번째 요청이 방금 가져간 선점을 다시 뺏는다. 가져갈 때마다 새로 쓰는
+ * `retryAfter` 가 이 선점의 나이를 정확히 말한다.
+ */
+export function claimExpiresAt(row: { retryAfter: string | Date | null; createdAt?: string | Date; updatedAt?: string | Date }): number {
+  if (row.retryAfter) return new Date(row.retryAfter).getTime();
+  const born = row.updatedAt ?? row.createdAt;
+  return (born ? new Date(born).getTime() : 0) + CLAIM_TTL_MS;
+}
 
 /**
  * 이 말을 **지금 다시 AI 로 부를 수 있는가.**
@@ -174,8 +270,9 @@ export function canRetry(
 
   // 누군가 부르는 중인가 — 선점 유효 시간 안에서는 건드리지 않는다.
   if (row.status === "PENDING") {
-    const at = row.createdAt ? new Date(row.createdAt).getTime() : 0;
-    return now.at - at > CLAIM_TTL_MS;
+    if (now.at <= claimExpiresAt(row)) return false;
+    // 선점을 가져갈 때마다 시도 횟수가 오른다. 서버가 계속 죽는 말을 영영 다시 부르지 않게 한다.
+    return row.attemptCount < MAX_ATTEMPTS;
   }
 
   if (row.attemptCount >= MAX_ATTEMPTS) return false;
@@ -223,7 +320,8 @@ const MIN_TEXT_LENGTH = 2;
  * 말(내 말, 파일만 보낸 말)에 대한 AI 호출이 생기고, 그 결과가 저장이 된다.
  */
 export function isPurifiableText(text: string): boolean {
-  return text.trim().length >= MIN_TEXT_LENGTH;
+  const length = text.trim().length;
+  return length >= MIN_TEXT_LENGTH && length <= PURIFY_MAX_TEXT_CHARS;
 }
 
 /** 이 말을 읽기 도움으로 다듬어도 되는가. */
@@ -231,6 +329,54 @@ export function canPurify(message: ChatMessage): boolean {
   if (message.isMine) return false;
   if (message.status !== "sent") return false;
   return isPurifiableText(message.text);
+}
+
+/* ── AI 를 부르기 전의 사전 판정 ──────────────────────────────── */
+
+/**
+ * 모델이 필요 없는 **명백히 자연스러운** 말인가.
+ *
+ * `확인했습니다`·`감사합니다`·`넵` 같은 말까지 모델에 보내면 무료 호출만 줄고 얻는 것이 없다. 하지만
+ * **위험 낱말이 없다고 안전한 것은 아니다** — 조용한 비꼼과 압박은 낱말표에 걸리지 않는다. 그래서 이
+ * 판정은 거꾸로다: 낱말이 없는 말이 아니라 **알려진 안전한 모양**만 통과시키고, 나머지는 전부 모델로
+ * 보낸다(애매하면 보낸다).
+ *
+ * 통과시키는 모양은 둘뿐이다.
+ * 1. 짧은 응답·인사 — "넵", "알겠습니다", "확인했어요 감사합니다". 이 낱말들만으로 이루어진 말.
+ * 2. 내가 하겠다는 약속 — "이번 자료는 제가 정리할게요". 1인칭 주어 + 한 줄 + 약속 어미, 부정·2인칭·"다/혼자/전부" 없음.
+ *
+ * 기준을 바꾸면 이미 `UNCHANGED` 로 저장된 말은 그대로 남는다. 넓히려면 `VALIDATOR_VERSION` 을 함께 올려
+ * 새 지문으로 다시 판정하게 한다.
+ */
+const ACK_TOKENS = [
+  "네+", "넵+", "넹+", "예", "옙", "알겠습니다", "알겠어요", "알겠어", "확인했습니다", "확인했어요", "확인했어",
+  "확인할게요", "확인해볼게요", "확인해보겠습니다", "감사합니다", "감사해요", "고마워요", "고맙습니다", "고마워",
+  "수고하셨습니다", "수고하셨어요", "수고했어요", "수고했어", "좋습니다", "좋아요", "좋아", "오케이", "ok", "okay",
+  "굿", "ㅇㅋ", "ㅇㅇ", "ㄱㅅ", "축하해요", "축하합니다", "죄송합니다", "미안해요", "미안해", "잠시만요", "잠깐만요",
+  "이해했습니다", "이해했어요",
+];
+const ACK_ONLY = new RegExp(`^(?:${ACK_TOKENS.join("|")})+$`, "i");
+const FIRST_PERSON_PROMISE =
+  /^(?:\S+\s){0,3}?(?:제가|저는|저도|내가|나는|나도)\s[^?]{1,30}?(?:할게요|할게|하겠습니다|올릴게요|올릴게|정리할게요|정리할게|보낼게요|보낼게|맡을게요|맡을게|해볼게요|해볼게|드릴게요|드릴게)[.!~\s]*$/;
+/** 비꼼·압박으로 읽힐 수 있는 단서 — 하나라도 있으면 사전 판정에서 빠지고 모델로 간다. */
+const NATURAL_BLOCKERS =
+  /안\s|않|못\s|없|아니|싫|모르|몰라|짜증|화나|열받|죽겠|미치|다\s|혼자|전부|어차피|그냥|ㅋ|ㅡㅡ|ㅗ|\?|;|\.\.\./;
+
+export function isClearlyNatural(text: string): boolean {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (t.length === 0 || t.length > 60) return false;
+  if (PERSON_CUE.test(t)) return false;
+  // 가장 센 단계의 위험 낱말과 욕설 패턴이 하나라도 있으면 아니다.
+  if (LEVEL_PROFILES.STRONG.banned.some((word) => t.includes(word))) return false;
+  if (LEVEL_PROFILES.STRONG.mask.some((pattern) => new RegExp(pattern.source, "").test(t))) return false;
+
+  // 1) 응답·인사 — 문장부호·물결·ㅎㅎ·이모지를 걷어 내고 낱말만 남겨 본다.
+  const bare = t.replace(/[\s.!~,^]+|ㅎ+|[\u{1F300}-\u{1FAFF}☀-➿]/gu, "");
+  if (bare.length > 0 && ACK_ONLY.test(bare)) return true;
+
+  // 2) 내가 하겠다는 약속.
+  if (NATURAL_BLOCKERS.test(t)) return false;
+  return FIRST_PERSON_PROMISE.test(t);
 }
 
 /* ── AI 입출력 계약 (id 기반) ──────────────────────────────── */
@@ -291,19 +437,45 @@ export function buildPurifyRequest(items: Array<PurifyItem & { before?: PurifyCo
 }
 
 /**
+ * 이 항목이 모델에 들어가는 **입력** 크기(글자). 말만이 아니라 앞 문맥까지 센다 — 요청에 실제로
+ * 실리는 것이 그것이다.
+ */
+function purifyInputCost(item: PurifyItem & { before?: PurifyContext[] }): number {
+  const context = (item.before ?? []).reduce((sum, ctx) => sum + ctx.text.length + 12, 0);
+  return item.id.length + item.text.length + context + 24;
+}
+
+/** 이 항목의 답이 먹을 **출력 토큰** 어림. */
+function purifyOutputCost(item: PurifyItem): number {
+  return OUTPUT_ITEM_OVERHEAD + Math.ceil(item.text.length * OUTPUT_TOKENS_PER_CHAR);
+}
+
+/**
  * 묶음을 상한에 맞춰 **줄인다** — 자르지 않는다.
+ *
+ * 세 가지를 함께 본다: 항목 수(`PURIFY_BATCH_LIMIT`), 입력 크기(`AI_INPUT_LIMIT`, 앞 문맥 포함),
+ * 출력 예산(`PURIFY_OUTPUT_TOKENS`). 짧은 말은 열 개까지, 긴 말은 두세 개로 끊긴다.
  *
  * `model.ts` 의 `clampInput` 이 조용히 자르면 잘린 말은 다듬어지지 않은 채 남아, 화면에는
  * "다 읽기 도움됐다" 고 보이지만 실제로는 원문인 말이 섞인다. 그래서 묶음을 줄인다.
+ *
+ * **반드시 선점하기 전에 부른다.** 선점은 여기서 남은 항목에만 해야 한다 — 먼저 열 개를 선점하고
+ * 네 개만 보내면 나머지 여섯은 처리되지 않은 채 `PENDING` 으로 묶인다.
  */
-export function packPurifyItems(items: PurifyItem[]): PurifyItem[] {
-  const kept: PurifyItem[] = [];
-  let used = 0;
+export function packPurifyItems<T extends PurifyItem & { before?: PurifyContext[] }>(items: T[]): T[] {
+  const kept: T[] = [];
+  let usedInput = 0;
+  let usedOutput = 0;
+  const outputBudget = PURIFY_OUTPUT_TOKENS * OUTPUT_BUDGET_SHARE;
   for (const item of items) {
-    const cost = item.id.length + item.text.length + 24;
-    if (used + cost > AI_INPUT_LIMIT) break;
+    if (kept.length >= PURIFY_BATCH_LIMIT) break;
+    const input = purifyInputCost(item);
+    const output = purifyOutputCost(item);
+    if (usedInput + input > AI_INPUT_LIMIT) break;
+    if (usedOutput + output > outputBudget) break;
     kept.push(item);
-    used += cost;
+    usedInput += input;
+    usedOutput += output;
   }
   return kept;
 }
@@ -492,7 +664,8 @@ const INSULT: RegExp[] = [
   // "너 때문에" — 실측에서 **실제로 살아남았던** 책임 전가 표현. 인과를 상대에게 돌리는
   // 가장 흔한 형태인데 목록에 없었다(코퍼스가 찾았다).
   /너 때문에|니가 때문에|네가 때문에/g,
-  /ㅋㅋ+/g, /대충이네|대충이야|대충인데/g,
+  // `ㅋㅋ` 는 여기 없다 — 친근한 웃음일 수도 있어 문맥을 보고 정한다(`contextualWeak`).
+  /대충이네|대충이야|대충인데/g,
 ];
 const ACCUSE: RegExp[] = [
   /처음부터 다 버려라|버려라/g, /닥쳐|조용히 해|그만해/g,
@@ -518,8 +691,32 @@ const INSULT_WORDS = [
   "니 탓", "네 탓", "다 니 탓", "다 네 탓", "다 니가", "다 네가",
   // 인과를 상대에게 돌리는 표현 — 실측에서 실제로 남았던 "너 때문에" 포함.
   "너 때문에", "니가 때문에", "네가 때문에",
-  "ㅋㅋ", "대충이네", "대충이야", "대충인데", "재미없네", "맘에 안 드", "실망이다",
+  "대충이네", "대충이야", "대충인데",
 ];
+
+/**
+ * **문맥을 봐야 위험한 표현.** 낱말표는 위험의 *후보*를 찾는 데 쓰고, 정말 걸러야 하는지는 원문의 문맥이 정한다.
+ *
+ * - `ㅋㅋ`: 비꼬는 웃음일 수도, "ㅋㅋ 고마워!" 같은 친근한 반응일 수도 있다. 감사·사과·축하가 함께
+ *   있고 다른 위험이 없으면 친근한 것으로 본다. 판단이 애매하면(비꼼으로 읽힐 여지) 예전처럼 걸러 낸다.
+ * - `실망이다`·`재미없네`·`맘에 안 드`: 일(발표·자료)에 대한 감정이면 감정 표현이라 지우지 않는다.
+ *   **사람을 가리키는 말(너·니가·네가…)과 함께 올 때만** 인신공격으로 본다.
+ */
+const LAUGH_MARK = "ㅋㅋ";
+const JUDGEMENT_WORDS = ["재미없네", "맘에 안 드", "실망이다"];
+const FRIENDLY_CUE = /고마워|고맙|감사|수고|축하|미안|죄송|화이팅|파이팅|ㅎㅎ/;
+/** 사람을 가리키는 말. "너무" 의 "너" 에 걸리지 않도록 조사/띄어쓰기로 끝나는 모양만 본다. */
+const PERSON_CUE = /니가|네가|너는|너가|너희|너네|니는|당신|걔가|쟤가|(?:^|[\s,.!?])너(?=$|[\s,.!?])/;
+
+/** 이 원문에서 **지금 켜지는** 문맥 의존 위험 표현. */
+function contextualWeak(original: string, level: CushionLevelKey): { laugh: boolean; judgement: boolean } {
+  if (level === "LIGHT") return { laugh: false, judgement: false };
+  const strong = LEVEL_PROFILES[level].banned.some((word) => original.includes(word));
+  return {
+    laugh: strong || !FRIENDLY_CUE.test(original),
+    judgement: strong || PERSON_CUE.test(original),
+  };
+}
 
 /** STRONG 에서까지 남으면 버린다 — 책임 추궁과 구제 명령. */
 const ACCUSE_WORDS = [...INSULT_WORDS, "버려라", "닥쳐", "조용히 해", "그만해", "너는 진짜", "너 진짜"];
@@ -558,6 +755,96 @@ const ASKS_BACK = /왜\s*(그러|그래|합|해|하|했)|어떻게\s*(했|하|�
 /** 위험 표현을 **가릴** 자리표. 문장을 새로 쓰지 않고 그 자리만 대체한다. */
 const REDACTION = "••";
 
+/* ── 언어·깨짐·의미 검사 ───────────────────────────────────── */
+
+/** 라틴 문자가 아닌 외국 문자(가나·한자·키릴·태국·아랍). 원문에 없던 것이 나오면 번역/오염이다. */
+const FOREIGN_SCRIPT = /[぀-ヿ㐀-鿿Ѐ-ӿ฀-๿؀-ۿ]/g;
+
+/**
+ * 결과에 **원문에 없던 외국어**가 섞였는가.
+ *
+ * 영문 비율로 거절하면 "API 배포 확인했어" 같은 정상적인 개발 대화가 막힌다. 그래서 비율이 아니라
+ * **원문과의 차이**를 본다 — 원문에 있던 낱말(PPT·GitHub·deploy)은 그대로 허용하고, 원문에 없던
+ * 영어 낱말("Please")이 새로 생긴 경우만 잡는다. 대문자 약어(2~5자)는 업무 용어라 허용한다.
+ */
+function introducedForeign(original: string, text: string): boolean {
+  const known = new Set((original.match(/[A-Za-z]{2,}/g) ?? []).map((w) => w.toLowerCase()));
+  for (const word of text.match(/[A-Za-z]{3,}/g) ?? []) {
+    if (word === word.toUpperCase() && word.length <= 5) continue;
+    const lower = word.toLowerCase();
+    // 복수형·활용(API → APIs, deploy → deployed)은 같은 낱말로 본다.
+    const related = [...known].some((k) => k.length >= 3 && (lower.startsWith(k) || k.startsWith(lower)));
+    if (!related) return true;
+  }
+  const seen = new Set(original.match(FOREIGN_SCRIPT) ?? []);
+  return (text.match(FOREIGN_SCRIPT) ?? []).some((ch) => !seen.has(ch));
+}
+
+/** 깨진 출력의 모양 — 제어·대체·보이지 않는 문자. */
+const BROKEN_CHARS = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F\\uFFFD\\u200B-\\u200F\\u2028\\u2029\\uFEFF]");
+
+function longestRun(text: string): number {
+  let best = 0;
+  let run = 0;
+  let prev = "";
+  for (const ch of text) {
+    run = ch === prev ? run + 1 : 1;
+    prev = ch;
+    if (run > best) best = run;
+  }
+  return best;
+}
+
+/** 원문에는 없던 **깨짐**: 제어 문자, 같은 글자의 비정상 반복, 같은 말이 맴도는 출력. */
+function looksGarbled(original: string, text: string): boolean {
+  if (BROKEN_CHARS.test(text) && !BROKEN_CHARS.test(original)) return true;
+  if (longestRun(text) >= Math.max(6, longestRun(original) + 3)) return true;
+  const loop = /(.{2,8}?)\1{3,}/;
+  return loop.test(text) && !loop.test(original);
+}
+
+const DAY_ALIASES: Record<string, string[]> = {
+  내일: ["내일", "낼", "담날", "다음날"],
+  오늘: ["오늘", "금일", "당일"],
+  모레: ["모레"],
+  어제: ["어제", "엊그제"],
+};
+/** "세 시", "두 명" 처럼 한글로 쓴 수. 원문이 이렇게 쓰였으면 결과의 아라비아 숫자는 같은 수일 수 있다. */
+const HANGUL_NUMBER = /[한두세네다섯여섯일곱여덟아홉열스물]\s*(?:시|명|개|분|번|일|주|달)/;
+const REFUSAL_IN_ORIGINAL = /하지\s*마|하지\s*말|안\s*돼|안돼|안\s*된|안\s*되|못\s*해|못해|못\s*하|못\s*가|못\s*와|싫어|안\s*할|안할|안\s*갈|안\s*가|불가/;
+const NEGATION_OR_REFUSAL = /안\s|안되|안돼|않|못\s|못해|없|아니|말[아고]|마세요|마요|어려|어렵|힘들|힘드|곤란|불가|별로|아쉽|싫|그만|멈추|삼가|지양|자제/;
+const SECOND_PERSON = /니가|네가|너는|너가|너희|너네|니 탓|네 탓|너 때문|당신|(?:^|\s)너(?=$|[\s,.!?])/;
+const SELF_BLAME_RESULT = /(?:제가|내가|제|내)\s*(?:잘못|부족|실수|탓|책임)/;
+const SELF_BLAME_ORIGINAL = /(?:제가|내가|제|내)\s*(?:잘못|부족|실수|탓|책임)|죄송|미안/;
+const BLAME_OTHER_RESULT = /(?:니가|네가|너|니|네|당신|상대)\s*(?:의\s*)?(?:탓|잘못|책임|때문)/;
+
+/**
+ * 낱말은 남아 있는데 **뜻이 바뀐** 결과인가. 문자열 검사로 모든 의미 오류를 잡을 수는 없다 —
+ * 여기서는 **명백한 왜곡**만 좁게 잡고, 애매한 것은 통과시킨다(버려진 결과는 원문으로 읽히므로 손해가 더 크다).
+ */
+function meaningChanged(original: string, text: string): boolean {
+  // 1) 기한이 달라졌다 — 원문에 없던 날짜 낱말, 원문에 없던 숫자.
+  for (const [day, aliases] of Object.entries(DAY_ALIASES)) {
+    if (text.includes(day) && !aliases.some((alias) => original.includes(alias))) return true;
+  }
+  if (!HANGUL_NUMBER.test(original)) {
+    const had = new Set(original.match(/\d+/g) ?? []);
+    if ((text.match(/\d+/g) ?? []).some((n) => !had.has(n))) return true;
+  }
+  // 2) "까지" 로 못 박은 기한이 기한이 아닌 말로 바뀌었다("내일 3시까지" → "내일 3시에").
+  if (original.includes("까지") && /\d|내일|낼|오늘|모레|마감|요일|주말/.test(original) && !/까지|전에|이전|안에|내로|이내/.test(text)) {
+    return true;
+  }
+  // 3) 꼭 해야 한다는 요구가 사라졌다.
+  if (/꼭|반드시|무조건|필수/.test(original) && !/꼭|반드시|무조건|필수|해야|필요/.test(text)) return true;
+  // 4) 거절·금지가 긍정으로 뒤집혔다. 거절을 다른 말로 바꾼 것(어렵다·별로다)은 뒤집힌 것이 아니다.
+  if (REFUSAL_IN_ORIGINAL.test(original) && !NEGATION_OR_REFUSAL.test(text)) return true;
+  // 5) 책임이 반대편으로 옮겨 갔다 — 상대를 탓한 말이 내 탓이 되거나, 내가 사과한 말이 상대 탓이 됐다.
+  if (SECOND_PERSON.test(original) && !SELF_BLAME_ORIGINAL.test(original) && SELF_BLAME_RESULT.test(text)) return true;
+  if (SELF_BLAME_ORIGINAL.test(original) && !SECOND_PERSON.test(original) && BLAME_OTHER_RESULT.test(text)) return true;
+  return false;
+}
+
 /**
  * 이 다듬은 말을 **버려야 하는가** — 2단계 검사의 두 번째 단계(의미·안전).
  *
@@ -580,11 +867,19 @@ export function rejectsPurified(
   const text = purified.trim();
   if (text.length === 0) return CUSHION_REASON.EMPTY_OUTPUT;
   if (profile.banned.some((word) => text.includes(word))) return CUSHION_REASON.TOXICITY_REMAINED;
+  // 문맥 의존 표현은 **원문이 어떤 말이었는지**에 따라 켜진다.
+  const weak = contextualWeak(original, level);
+  if (weak.laugh && text.includes(LAUGH_MARK)) return CUSHION_REASON.TOXICITY_REMAINED;
+  if (weak.judgement && JUDGEMENT_WORDS.some((word) => text.includes(word))) return CUSHION_REASON.TOXICITY_REMAINED;
+
+  if (looksGarbled(original, text)) return CUSHION_REASON.GARBLED;
 
   // **언어와 방향은 나머지 검사보다 먼저 본다.** 길이·마무리·정보 검사는 모두 한국어라고
   // 가정하고 있는데, 영어로 돌아온 결과에 그 검사들을 적용하면 "INFO_LOST" 라는 **엉뚱한
   // 이유**로 남는다(실측: 영어 응답이 INFO_LOST 로 기록됐다). 원인이 드러는 자리가 없다.
   if (HANGUL.test(original) && !HANGUL.test(text)) return CUSHION_REASON.LANGUAGE_DRIFT;
+  // 일부만 바뀐 경우("Please 내일까지 …")도 번역이다. 원문에 있던 업무 용어는 허용한다.
+  if (HANGUL.test(original) && introducedForeign(original, text)) return CUSHION_REASON.LANGUAGE_DRIFT;
   if (ASKS_BACK.test(text) && !ASKS_BACK.test(original)) return CUSHION_REASON.REPLY_INSTEAD_OF_REWRITE;
 
   if (text.length > original.trim().length * MAX_GROWTH_RATIO + MAX_GROWTH_CHARS) {
@@ -596,6 +891,9 @@ export function rejectsPurified(
 
   const lost = mustKeepTokens(original).filter((token) => !text.includes(token));
   if (lost.length > 0) return CUSHION_REASON.INFO_LOST;
+
+  // 낱말은 다 있는데 뜻이 바뀐 것 — 마지막에 본다(앞의 검사가 더 구체적인 이유를 남기도록).
+  if (meaningChanged(original, text)) return CUSHION_REASON.MEANING_CHANGED;
 
   return null;
 }
@@ -693,7 +991,10 @@ export function maskRiskyParts(
 ): { text: string; masked: number } {
   // **가릴 범위도 단계마다 다르다.** `LEVEL_PROFILES` 와 같은 표에서 나온다 — 검사만
   // 단계에 따라 가리는 범위가 그대로면, 약한 단계에서 걸러 낼 것을 약하게 읽는 사람이 버린다.
-  const patterns: RegExp[] = LEVEL_PROFILES[level].mask;
+  const patterns: RegExp[] = [...LEVEL_PROFILES[level].mask];
+  // 문맥 의존 표현은 검사(`rejectsPurified`)와 **같은 판정**으로 켠다 — 검사는 걸러 내는데
+  // 가림은 두고 가는 어긋남이 없도록. 친근한 "ㅋㅋ 고마워!" 는 가리지 않는다.
+  if (contextualWeak(text, level).laugh) patterns.push(/ㅋㅋ+/g);
 
   let masked = 0;
   let out = text;
@@ -706,16 +1007,33 @@ export function maskRiskyParts(
 
   // 가린 자리가 남으면 문장이 어색해진다("너는 진짜 ••야"). 그럴 땐 가림을 취소한다 —
   // 깨진 문장은 원문보다 나쁘다. 대신 **FALLBACK 을 만들지 않는다**(아래에서 알린다).
-  out = out.replace(/\s{2,}/g, " ").trim();
+  // 가림이 이웃하면 하나로 합친다("•• ••" → "••"). 개수(`masked`)는 실제로 가린 만큼 그대로 둔다.
+  out = out.replace(/(?:••\s*){2,}/g, "•• ").replace(/\s{2,}/g, " ").trim();
   if (masked > 0 && isBrokenAfterMask(out)) return { text, masked: 0 };
   return { text: out, masked };
 }
 
-/** 가린 뒤 문장이 부서졌는지 — 조사가 남거나 낱말이 줄줄이 이어지면 깨진 것이다. */
+/** 가림 뒤에 남은 **조사·어미뿐인** 꼬리. "••야", "••이에요" 처럼 가린 자리에 붙은 말이다. */
+const ONLY_ENDINGS = /^(?:이에요|이예요|입니다|이야|이네|이다|이라고|이라|인데|이고|이고요|야|예요|에요|은|는|이|가|을|를|도|만|의|라고|라|네|다|요)[.!?~\s]*$/;
+
+/**
+ * 가린 뒤 문장이 부서졌는지.
+ *
+ * 예전에는 가림 표시(••)가 있으면 곧바로 "안 깨졌다" 를 돌려줬다. 가림 결과에는 거의 항상 ••가
+ * 있으므로 **아래 검사가 한 번도 돌지 않았다.** 이제는 가림 표시를 걷어 낸 **남은 말**을 본다.
+ *
+ * 부서진 것으로 보는 경우:
+ * 1. 남은 말이 한 글자 이하 — 사실상 전부를 가렸다.
+ * 2. 남은 말이 조사·어미뿐 — "••야", "•• 이에요".
+ * 3. 앞 12자에 읽을 글자가 하나도 없다.
+ */
 function isBrokenAfterMask(text: string): boolean {
-  if (text.includes("••")) return false;
-  // 가린 자리가 하나도 없는데 바뀌었다면 규칙이 문장을 뜯어낸 것이다.
-  return !/[가-힣A-Za-z0-9]/.test(text.slice(0, 12));
+  if (!/[가-힣A-Za-z0-9]/.test(text.slice(0, 12))) return true;
+  const rest = text.replace(/••/g, " ").replace(/\s+/g, " ").trim();
+  const letters = rest.replace(/[^가-힣A-Za-z0-9]/g, "");
+  if (letters.length < 2) return true;
+  if (ONLY_ENDINGS.test(rest)) return true;
+  return false;
 }
 
 /** 규칙으로 가릴 수 있는 표현이 남아 있는가 — 즉 이 방에 fallback 이 필요한가. */
@@ -732,7 +1050,7 @@ export function needsMask(original: string, level: CushionLevelKey = CUSHION_DEF
  * 다음 결정을 내릴 수 있는 크기여야 한다: 모델을 바꿀까, 프롬프트를 고칠까, 검사를
  * 느슨하게 할까.
  */
-export type CushionBucket = "done" | "masked" | "refused" | "rejected" | "failed" | "pending";
+export type CushionBucket = "done" | "masked" | "unchanged" | "refused" | "rejected" | "failed" | "pending";
 
 export function cushionBucketOf(row: {
   status: CushionStatus;
@@ -742,14 +1060,28 @@ export function cushionBucketOf(row: {
   if (row.status === "PENDING") return "pending";
   if (row.status === "PURIFIED") return "done";
   if (row.status === "FALLBACK") return "masked";
+  // 다듬을 필요가 없다고 판정된 말 — 아래 두 비율의 분모에서 뺀다(할 일이 없었으므로).
+  if (row.status === "UNCHANGED") return "unchanged";
   // 거절·한도는 **모델 문제**고, 검사로 버린 것은 **검사(또는 프롬프트) 문제**다.
   if (row.reason === CUSHION_REASON.MODEL_REFUSAL || row.reason === CUSHION_REASON.RATE_LIMITED) {
     return "refused";
   }
-  if (row.reason === CUSHION_REASON.NO_MODEL || row.reason === CUSHION_REASON.EMPTY_RESPONSE) {
+  if (
+    row.reason === CUSHION_REASON.NO_MODEL ||
+    row.reason === CUSHION_REASON.EMPTY_RESPONSE ||
+    row.reason === CUSHION_REASON.MODEL_ERROR
+  ) {
     return "failed";
   }
   return "rejected";
+}
+
+/**
+ * 두 비율의 분모 — **손을 대야 했던 말**만 센다. 다듬을 필요 없는 말(`unchanged`)을 넣으면 인사말이
+ * 많은 방에서 AI 비율이 저절로 내려가 "모델이 못 한다" 로 읽힌다.
+ */
+function handledTotal(counts: Record<CushionBucket, number>): number {
+  return Object.entries(counts).reduce((sum, [bucket, n]) => (bucket === "unchanged" ? sum : sum + n), 0);
 }
 
 /**
@@ -765,7 +1097,7 @@ export function cushionBucketOf(row: {
  * "모델을 바꿀지" 를 판단할 수 있다 — 커버리지만 높으면 기능은 돌아가고 있는 것이다.
  */
 export function purificationCoverage(counts: Record<CushionBucket, number>): number {
-  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const total = handledTotal(counts);
   if (total === 0) return 0;
   const safe = counts.done + counts.masked;
   return Math.round((safe / total) * 1000) / 1000;
@@ -773,7 +1105,7 @@ export function purificationCoverage(counts: Record<CushionBucket, number>): num
 
 /** AI 가 실제로 일을 한 비율(PURIFIED ÷ 전체). 커버리지와 함께 본다. */
 export function purificationAiShare(counts: Record<CushionBucket, number>): number {
-  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const total = handledTotal(counts);
   if (total === 0) return 0;
   return Math.round((counts.done / total) * 1000) / 1000;
 }

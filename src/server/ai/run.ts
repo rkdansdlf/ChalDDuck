@@ -2,7 +2,7 @@ import "server-only";
 
 import type { AiResult } from "@/lib/types";
 import { withAiCaller } from "@/server/ai/call-context";
-import { isAiConfigured } from "@/server/ai/model";
+import { AiUnavailableError, isAiConfigured } from "@/server/ai/model";
 import { recordAiUsage, refundAiUsage, type AiToolKey } from "@/server/ai/limit";
 import { requireSessionMember } from "@/server/session";
 
@@ -68,6 +68,7 @@ export async function runTool<T>(tool: AiToolKey, call: () => Promise<T>): Promi
 
     const detail =
       process.env.NODE_ENV !== "production" && cause instanceof Error ? ` (${cause.message})` : "";
-    return { ok: false, message: `AI 응답을 받지 못했습니다.${detail}` };
+    const code = cause instanceof AiUnavailableError && cause.kind === "timeout" ? "TIMEOUT" : "ERROR";
+    return { ok: false, message: `AI 응답을 받지 못했습니다.${detail}`, code };
   }
 }

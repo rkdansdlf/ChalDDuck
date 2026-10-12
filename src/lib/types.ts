@@ -317,7 +317,17 @@ export type AiPolicy = {
  */
 export type AiResult<T> =
   | { ok: true; value: T; source: AiAnswerSource }
-  | { ok: false; message: string };
+  | { ok: false; message: string; code?: AiFailureCode };
+
+/**
+ * 실패가 **어떤 종류**인지. 문구(`message`)를 검사해서 종류를 알아내지 않는다 — 문구는 고쳐지고,
+ * 고쳐지는 순간 분기가 조용히 다른 쪽으로 빠진다(읽기 도움이 "한도" 라는 글자를 찾던 자리가 그랬다).
+ *
+ * - `LIMIT`   : 우리가 정한 하루 한도·폭주 차단에 걸렸다. 모델은 부르지 않았다.
+ * - `TIMEOUT` : 모델이 제한 시간 안에 답하지 못했다.
+ * - `ERROR`   : 그 밖에 답을 받지 못했다(연결·5xx·빈 응답).
+ */
+export type AiFailureCode = "LIMIT" | "TIMEOUT" | "ERROR";
 
 /**
  * `ok: true` 로 돌아온 값이 **모델이 만든 것인지, 미리 적어 둔 예시인지**.
@@ -580,6 +590,17 @@ export type ChatPurified =
       text: string;
       /** 누가 썼나: `ai`(모델) / `mask`(규칙 가림). 라벨이 다르다. */
       kind: "ai" | "mask";
+      reason: null;
+      retryAfter: null;
+    }
+  | {
+      /**
+       * 다듬을 필요가 없는 말로 **판정되어 끝났다**(`UNCHANGED`). 원문이 그대로 보이고, 칩도 붙지 않는다 —
+       * AI 가 다듬은 것처럼 보이면 안 된다. 상태가 있는 이유는 **다시 후보가 되지 않게** 하려는 것뿐이다.
+       */
+      status: "UNCHANGED";
+      text: null;
+      kind: null;
       reason: null;
       retryAfter: null;
     }

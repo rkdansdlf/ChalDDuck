@@ -79,6 +79,18 @@ export const CUSHION_CORPUS: CorpusCase[] = [
   { id: "hv-3", level: "NORMAL", text: "진짜 한심해, 너네가 뭘 한 건지도 모르겠어", keep: [], drop: ["한심"], maskable: true },
   { id: "hv-4", level: "STRONG", text: "조용히 해 닥쳐, 네가 말할 자격이 있어?", keep: [], drop: ["닥쳐", "조용히 해"], maskable: true },
 
+  /* ── 문맥을 봐야 하는 말: 낱말표만으로는 틀린다 ───────────────
+     위험 낱말처럼 보이지만 그 자체로는 공격이 아닌 말(과잉 거절 방지)과, 고쳐 쓰다가 뜻이 바뀌기 쉬운 말.
+     `keep` 은 기한·요구·대상이다 — 부드러워지면서 사라지거나 약해지면 안 된다. */
+  { id: "ctx-1", level: "NORMAL", text: "ㅋㅋ 고마워!", keep: [], drop: [], maskable: true },
+  { id: "ctx-2", level: "NORMAL", text: "이번 발표는 실망이다", keep: ["발표"], drop: [], maskable: true },
+  { id: "ctx-3", level: "NORMAL", text: "API 배포 확인했어", keep: ["API", "배포"], drop: [], maskable: true },
+  { id: "ctx-4", level: "NORMAL", text: "넵 감사합니다", keep: [], drop: [], maskable: true },
+  { id: "ctx-5", level: "NORMAL", text: "내일 PPT 수정해서 보내줘", keep: ["내일", "PPT"], drop: [], maskable: true },
+  { id: "ctx-6", level: "NORMAL", text: "내일 3시까지 보내", keep: ["내일", "3시", "까지"], drop: [], maskable: true },
+  { id: "ctx-7", level: "NORMAL", text: "너 때문에 발표 망했잖아", keep: ["발표"], drop: ["너 때문에"], maskable: true },
+  { id: "ctx-8", level: "STRONG", text: "꼭 오늘까지 자료 올려 바보야", keep: ["오늘", "자료", "까지"], drop: ["바보"], maskable: true },
+
   /* ── 가림으로 덮이지 않는 조용한 공격 ────────────────────────
      욕설이 없어 **규칙 가림이 걸리지 않는다**(`maskable: false`). 순화가 실패하면
      원문이 그대로 보인다 — 그래서 AI 가 일을 해야 하는 자리다. */

@@ -70,7 +70,7 @@ const TONE_GUIDE: Record<string, string> = {
 function cushionPrompt(tone: string): string {
   return `${BASE}
 
-너는 쿠션 번역기다. 팀원에게 하려던 말을 **말투만** 바꿔 다시 적는다.
+너는 말투를 고쳐 쓰는 도구다. 팀원에게 하려던 말을 **말투만** 바꿔 다시 적는다.
 
 지켜야 할 것:
 - 요구하는 내용을 그대로 유지한다. 무엇이 필요한지, 언제까지인지를 빼거나 늦추지 않는다.
@@ -115,6 +115,7 @@ export async function rewriteWithCushionStreaming(
   text: string,
   tone: string,
   onDelta: (delta: string) => void,
+  onReset?: () => void,
 ): Promise<string> {
   if (!isAiConfigured()) {
     const sample = CUSHION_SAMPLE_OUTPUT[tone] ?? CUSHION_SAMPLE_OUTPUT.soft;
@@ -128,6 +129,7 @@ export async function rewriteWithCushionStreaming(
     user: text,
     maxTokens: 512,
     onDelta,
+    onReset,
     usable: (rewritten) => !isSafetyLabel(rewritten),
   });
 }
@@ -195,13 +197,18 @@ export async function softenIncoming(
 
 ${hasContext ? BEFORE_GUIDE : NO_CONTEXT_GUIDE}
 
-# 반드시 지킬 것
+# 반드시 지킬 것 (모든 강도에 똑같이 적용된다)
 1. **인칭을 바꾸지 마라.** 원문의 "나/저" 는 그대로, "너/니/네" 는 그대로. 내가 한 말을
-   남이 한 말처럼 바꾸는 건 거짓말이다.
-2. **욕설·비꼼·조롱·"니 탓/다 네 탓" 을 남기지 마라.** 욕을 지우되 **문장 구조는 지켜라.**
-3. **요구·마감·시각·이름·숫자를 지우지 마라.** 새로 만드는 정보는 0.
+   남이 한 말처럼 바꾸는 건 거짓말이다. 누구의 책임이라는 말을 **반대편으로 옮기지 마라**
+   (남을 탓한 말을 내 탓으로, 내 사과를 남의 탓으로).
+2. **요구·마감·시각·이름·숫자를 지우거나 바꾸지 마라.** 새로 만드는 정보·약속·요구는 0.
+   "까지" 로 정한 기한은 기한으로, "꼭/반드시" 로 한 요구는 요구로 남긴다. 거절·금지를 긍정으로 뒤집지 마라.
+3. **한국어로만 적는다.** 원문에 없던 영어·한자 낱말을 넣지 마라. 원문에 있던 PPT·API 같은 업무 용어는 그대로 둔다.
 4. **요청한 id 를 그대로 써서, 빠짐없이, 각각 한 문장으로** 돌려준다.
-5. 이미 순화된 말은 그대로 통과시켜도 좋다.
+5. 이미 자연스러운 말은 **그대로 통과시켜도 좋다.**
+
+**무엇을 얼마나 고칠지는 아래 "이번 읽기 강도" 만 정한다.** 거기에 적히지 않은 표현은
+건드리지 않는다. 고친 문장은 구조가 자연스러워야 한다.
 
 # 이번 읽기 강도 (읽는 사람이 고른 단계)
 - ${levelGuide(level)}
@@ -247,7 +254,7 @@ ${hasContext ? BEFORE_GUIDE : NO_CONTEXT_GUIDE}
 function clerkPrompt(context?: TeamToolContext): string {
   const head = `${BASE}
 
-너는 AI 서기다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
+너는 회의록을 정리하는 도구다. 회의 메모에서 요약 한 문단과 할 일 후보를 뽑는다.
 
 지켜야 할 것:
 - summary 는 두 문장을 넘기지 않는다. 메모에 없는 결론을 덧붙이지 않는다.
@@ -657,6 +664,7 @@ export async function convertSentenceStreaming(
   text: string,
   mode: string,
   onDelta: (delta: string) => void,
+  onReset?: () => void,
 ): Promise<string> {
   if (!isAiConfigured()) {
     const sample = SENTENCE_SAMPLE_OUTPUT[mode] ?? "";
@@ -670,6 +678,7 @@ export async function convertSentenceStreaming(
     user: text,
     maxTokens: 1024,
     onDelta,
+    onReset,
     usable: (converted) => !isSafetyLabel(converted),
   });
 }

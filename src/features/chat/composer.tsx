@@ -110,8 +110,8 @@ export function Composer({
           <button
             type="button"
             onClick={() => onCushion(text)}
-            aria-label="쿠션 번역기로 다듬기"
-            title={hasDraft ? "작성 중인 말을 쿠션어로 다듬기" : "쿠션 번역기 열기"}
+            aria-label="말투 고쳐 쓰기"
+            title={hasDraft ? "작성 중인 말을 말투 고쳐 쓰기" : "말투 고쳐 쓰기 열기"}
             className={cn(
               "grid size-11 cursor-pointer place-items-center rounded-full border-none select-none transition-all duration-200 active:scale-90",
               hasDraft

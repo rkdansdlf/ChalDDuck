@@ -62,7 +62,7 @@ export function DmScreen({
   const cushionUsage = useCushionUsageToday(cushion.enabled);
 
 
-  const { messages, setCushions, send, retry, discard, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, retryPurify } =
+  const { messages, setCushions, send, retry, discard, hasMore, isLoadingMore, loadOlder, purifyWorking, purifyNotice, purifyPartial, retryPurify } =
     useChatThread(thread.id, fromServer, initialCursor, me, cushion);
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -213,6 +213,12 @@ export function DmScreen({
           >
             다시 시도
           </button>
+        </div>
+      ) : null}
+
+      {!purifyNotice && purifyPartial ? (
+        <div className="mx-4 mt-2 rounded-xl bg-fill px-3 py-1.5 text-[12px] text-txt-muted">
+          일부 메시지는 다듬지 못해 원문으로 표시됩니다
         </div>
       ) : null}
 

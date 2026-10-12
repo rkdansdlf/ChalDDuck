@@ -2,7 +2,7 @@ import "./load-env.mjs";
 
 import { providerById } from "../src/server/ai/cushion-provider.js";
 import { softenIncoming } from "../src/server/ai/tools.js";
-import { judgeAll, parsePurifyResponse } from "../src/lib/read-cushion.js";
+import { judgeAll, packPurifyItems, parsePurifyResponse } from "../src/lib/read-cushion.js";
 import type { CushionLevelKey } from "../src/lib/types.js";
 import { CUSHION_CORPUS, type CorpusCase } from "./cushion-corpus.mjs";
 
@@ -64,7 +64,26 @@ type Row = {
   /** 앞 문맥을 **답으로 지어냈는지** — 문맥이 있는 경우에만 의미가 있다. */
   leaked: number;
   seconds: number;
+  /** 검사에서 버려진 이유(`CUSHION_REASON`). 통과했거나 호출이 실패했으면 비어 있다. */
+  reason: string | null;
 };
+
+/**
+ * 무료 모델은 **공유 풀**이라 429(`temporarily rate-limited upstream`)가 자주 난다. 한 번 실패한 것을 그 모델의
+ * 점수로 치면 비교가 아니라 "그 시각의 혼잡도" 를 재게 된다. 그래서 벤치에서는 기다렸다가 몇 번 더 부른다
+ * (운영 경로의 재시도 규칙은 건드리지 않는다).
+ */
+async function withRetry<T>(call: () => Promise<T>, tries = 4, waitMs = 20_000): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      if (attempt >= tries) throw error;
+      console.error(`    … 실패, ${waitMs / 1000}초 뒤 다시 (${attempt}/${tries - 1})`);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+}
 
 async function runProvider(id: string, cases: CorpusCase[], useContext: boolean): Promise<Row[]> {
   const provider = providerById(id);
@@ -79,50 +98,63 @@ async function runProvider(id: string, cases: CorpusCase[], useContext: boolean)
     byLevel.set(item.level, list);
   }
 
-  for (const [level, group] of byLevel) {
-    const started = Date.now();
-    let result: { raw: string; refused: boolean };
-    try {
-      result = await softenIncoming(
-        // 문맥을 켜면 "이 말 앞에서 오간 대화" 를 붙인다. 코퍼스의 `keep` 이 곧 그 문맥의
-        // 내용이라, 앞말의 요구가 본문에 섞여 들어가는지 볼 수 있다.
-        group.map((c) => ({
-          id: c.id,
-          text: c.text,
-          ...(useContext && c.keep.length > 0 ? { before: [{ text: `앞에서 이렇게 말했다: ${c.keep.join(", ")}` }] } : {}),
-        })),
-        tone,
+  // **운영과 같은 묶음으로 부른다** — `packPurifyItems` 가 항목 수·입력·출력 예산에 맞춰 끊는다.
+  // 단계 전체를 한 번에 보내면 운영에서는 일어나지 않는 긴 출력이 되어, 모델이 아니라 묶음 크기가 실패한다.
+  for (const [level, all] of byLevel) {
+    let rest = all.map((c) => ({
+      c,
+      id: c.id,
+      text: c.text,
+      // 문맥을 켜면 "이 말 앞에서 오간 대화" 를 붙인다. 코퍼스의 `keep` 이 곧 그 문맥의
+      // 내용이라, 앞말의 요구가 본문에 섞여 들어가는지 볼 수 있다.
+      ...(useContext && c.keep.length > 0 ? { before: [{ text: `앞에서 이렇게 말했다: ${c.keep.join(", ")}` }] } : {}),
+    }));
+    while (rest.length > 0) {
+      const batch = packPurifyItems(rest);
+      if (batch.length === 0) break;
+      rest = rest.slice(batch.length);
+      const group = batch.map((b) => b.c);
+      const started = Date.now();
+      let result: { raw: string; refused: boolean };
+      try {
+        result = await withRetry(() =>
+          softenIncoming(
+            batch.map(({ id, text, before }) => ({ id, text, ...(before ? { before } : {}) })),
+            tone,
+            level,
+            provider,
+          ),
+        );
+      } catch (error) {
+        // 한 묶음이 통째로 실패하면 그 묶음은 전부 실패로 친다 — 숨기지 않는다.
+        const seconds = (Date.now() - started) / 1000;
+        for (const c of group) rows.push({ id: c.id, refused: true, valid: 0, toxic: 0, lost: 0, leaked: 0, seconds, reason: null });
+        console.error(`  (${id} · ${level}) 호출 실패: ${(error as Error).message}`);
+        continue;
+      }
+      const seconds = (Date.now() - started) / 1000 / group.length;
+      const parsed = parsePurifyResponse(result.raw);
+      const judged = judgeAll(
+        group.map((c) => ({ id: c.id, text: c.text })),
+        parsed,
         level,
-        provider,
       );
-    } catch (error) {
-      // 한 묶음이 통째로 실패하면 그 단계는 전부 실패로 친다 — 숨기지 않는다.
-      const seconds = (Date.now() - started) / 1000;
-      for (const c of group) rows.push({ id: c.id, refused: true, valid: 0, toxic: 0, lost: 0, leaked: 0, seconds });
-      console.error(`  (${id} · ${level}) 호출 실패: ${(error as Error).message}`);
-      continue;
-    }
-    const seconds = (Date.now() - started) / 1000 / group.length;
-    const parsed = parsePurifyResponse(result.raw);
-    const judged = judgeAll(
-      group.map((c) => ({ id: c.id, text: c.text })),
-      parsed,
-      level,
-    );
-    for (const item of group) {
-      const verdict = judged.find((j) => j.id === item.id);
-      const text = verdict?.status === "PURIFIED" ? (verdict.text ?? "") : "";
-      rows.push({
-        id: item.id,
-        refused: result.refused,
-        valid: verdict?.status === "PURIFIED" ? 1 : 0,
-        toxic: text ? item.drop.filter((w) => text.includes(w)).length : 0,
-        lost: text ? item.keep.filter((k) => !text.includes(k)).length : 0,
-        // **문맥을 본문으로 끌어왔다** — 앞말의 낱말이 출력에 새로 생겼다.
-        // 실측에서 모델이 "인사한 말 뒤에 답을 지어내는" 일이 있었고, 그게 이 값이다.
-        leaked: text ? item.keep.filter((k) => !item.text.includes(k) && text.includes(k)).length : 0,
-        seconds,
-      });
+      for (const item of group) {
+        const verdict = judged.find((j) => j.id === item.id);
+        const text = verdict?.status === "PURIFIED" ? (verdict.text ?? "") : "";
+        rows.push({
+          id: item.id,
+          refused: result.refused,
+          valid: verdict?.status === "PURIFIED" ? 1 : 0,
+          toxic: text ? item.drop.filter((w) => text.includes(w)).length : 0,
+          lost: text ? item.keep.filter((k) => !text.includes(k)).length : 0,
+          // **문맥을 본문으로 끌어왔다** — 앞말의 낱말이 출력에 새로 생겼다.
+          // 실측에서 모델이 "인사한 말 뒤에 답을 지어내는" 일이 있었고, 그게 이 값이다.
+          leaked: text ? item.keep.filter((k) => !item.text.includes(k) && text.includes(k)).length : 0,
+          seconds,
+          reason: verdict?.status === "REJECTED" ? (verdict.reason ?? null) : null,
+        });
+      }
     }
   }
   return rows;
@@ -153,6 +185,10 @@ for (const model of models) {
   console.log(`— ${model} 부르는 중…`);
   const rows = await runProvider(model, cases, context);
   table.push(summarize(model, rows));
+
+  const reasons: Record<string, number> = {};
+  for (const row of rows) if (row.reason) reasons[row.reason] = (reasons[row.reason] ?? 0) + 1;
+  if (Object.keys(reasons).length > 0) console.log(`    버려진 이유 ${JSON.stringify(reasons)}`);
 
   // 문제가 있는 항목은 **몇 개만** 찍는다 — 100개짜리를 다 찍으면 읽을 수 없다.
   const bad = rows.filter((r) => r.toxic > 0 || r.lost > 0 || r.leaked > 0);

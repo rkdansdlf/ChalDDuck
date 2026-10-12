@@ -284,7 +284,7 @@ export function suggestTools(input: {
       key: "cushion",
       because: `남에게 알려 줄 일 ${poke.length}건`,
       toolKey: "cushion",
-      toolName: "쿠션 번역기",
+      toolName: "말투 고쳐 쓰기",
       icon: "message-square-heart",
       href: "/home/tasks/poke",
     });

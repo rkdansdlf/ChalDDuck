@@ -128,7 +128,7 @@ export async function aiUsageToday(me: SessionMember): Promise<AiUsageToday> {
 export async function recordAiUsage(
   me: SessionMember,
   tool: AiToolKey,
-): Promise<{ ok: true; usageId: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; usageId: string } | { ok: false; message: string; code: "LIMIT" }> {
   const day = todayInSeoul();
   // 읽기 도움은 자기 장부에만 적는다 — 본 장부에 함께 세면 두 번으로 세게 된다.
   const isCushion = tool === "read-cushion";
@@ -137,7 +137,7 @@ export async function recordAiUsage(
     : { tool: { not: "read-cushion" as const } };
 
   return db.$transaction(async (tx): Promise<
-    { ok: true; usageId: string } | { ok: false; message: string }
+    { ok: true; usageId: string } | { ok: false; message: string; code: "LIMIT" }
   > => {
     // 읽기 도움 폭주 판정은 팀의 하루 총량을 본다 — 판단과 기록을 한 잠금 안에서 함께 한다.
     await tx.$queryRaw`SELECT 1 FROM "Team" WHERE "id" = ${me.teamId} FOR UPDATE`;
@@ -149,6 +149,7 @@ export async function recordAiUsage(
         return {
           ok: false,
           message: "읽는 순화가 오늘 지나치게 많이 돌아갑니다. 원문은 그대로 보입니다.",
+          code: "LIMIT",
         };
       }
     }

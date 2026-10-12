@@ -149,12 +149,13 @@ function applyLine(
     return;
   }
 
-  const { delta, phase, source, value, error } = frame as {
+  const { delta, phase, source, value, error, reset } = frame as {
     delta?: unknown;
     phase?: unknown;
     source?: unknown;
     value?: unknown;
     error?: unknown;
+    reset?: unknown;
   };
 
   // 실패는 **서버가 환불까지 끝낸 뒤** 보낸다. 여기서 던지면 화면은 그 문구를 그대로 보여 준다.
@@ -162,6 +163,15 @@ function applyLine(
 
   if (value !== undefined && (source === "ai" || source === "sample")) {
     state.settled = { value, source };
+    return;
+  }
+
+  // 첫 시도의 조각을 버린다 — 다음 시도의 조각이 그 뒤에 이어 붙도록.
+  if (reset === true) {
+    if (!state.settled) {
+      state.partial = "";
+      handlers.onDelta?.("");
+    }
     return;
   }
 

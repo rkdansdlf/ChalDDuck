@@ -66,7 +66,7 @@ export function MeetingNoteSheet({
           <Icon name="file-text" size={32} className="mx-auto text-txt-muted mb-2 opacity-50" />
           <p className="t-body font-bold text-txt-strong">저장된 회의록이 없습니다</p>
           <p className="t-cap text-txt-muted mt-1">
-            AI 서기를 통해 회의 요약 및 할 일을 등록하면 여기에 아카이브됩니다.
+            회의록 정리를 통해 회의 요약 및 할 일을 등록하면 여기에 아카이브됩니다.
           </p>
         </div>
       ) : (

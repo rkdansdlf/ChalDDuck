@@ -231,7 +231,7 @@ export function TasksScreen({
                     <StatusBadge status={task.status} />
                     {task.source === "clerk" ? (
                       <Chip tone="y" icon="notebook-pen">
-                        AI 서기
+                        회의록 정리
                       </Chip>
                     ) : null}
                   </div>
