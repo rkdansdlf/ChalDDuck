@@ -839,6 +839,8 @@ export async function getMeetingWeek(teamId: string): Promise<MeetingWeek> {
     db.meetingSlot.findMany({
       where: { teamId, weekKey: "this" },
       orderBy: [{ available: "desc" }, { id: "asc" }],
+      // 확정된 회의가 묶인 후보 행은 날짜를 제안할 때 고정해 둔 값을 쓴다(아래 `date`).
+      include: { proposals: { select: { date: true } } },
     }),
     db.member.count({ where: { teamId, ...ACTIVE } }),
     // "시간표를 냈다"는 표시가 따로 없어서 안 되는 시간을 하나라도 적은 사람으로 센다.
@@ -856,6 +858,12 @@ export async function getMeetingWeek(teamId: string): Promise<MeetingWeek> {
     slots: slots.map((s) => ({
       id: s.id,
       day: s.day,
+      // 후보 행에는 요일만 남는다. 날짜는 후보 기간(오늘부터 7일)에서 요일로 되짚는다 — 7일 안에
+      // 요일이 하나씩이라 하나로 정해진다. 단 묶인 제안이 있는 행은 되짚지 않는다: 그 행은 이미
+      // 정해진 회의라 날짜를 모르면 모른다고 해야지, 다음 주 같은 요일을 가리키면 거짓말이 된다.
+      date: s.proposals.length > 0
+        ? (s.proposals.find((p) => p.date)?.date ?? null)
+        : (candidateDateOf(s.day)?.date ?? null),
       time: s.time,
       available: s.available,
       total: s.total,
