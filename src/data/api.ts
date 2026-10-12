@@ -5,7 +5,7 @@ import type { MbtiType } from "@/lib/mbti";
 import { isMbtiType } from "@/lib/mbti";
 import { calculateSaju, elementCountsOf, type Element, type SajuChart } from "@/lib/saju/engine";
 import { birthInputFromStored } from "@/lib/saju/input";
-import { BALANCE_QUESTIONS, type BalanceChoice } from "@/lib/saju/balance";
+import { BALANCE_QUESTIONS, MIN_BALANCE_VOTERS, type BalanceChoice } from "@/lib/saju/balance";
 import type { QuizQuestion } from "@/lib/mbti-quiz";
 import { QUIZ_QUESTIONS } from "@/lib/mbti-quiz";
 import { resolveReadPolicy } from "@/server/ai/purify-policy";
@@ -722,10 +722,14 @@ export async function getMeetingSaju(meetingId: string): Promise<TeamSaju | null
  * **내가 투표한 질문의 결과만 내려보낸다**(`counts` 가 `null` 이면 아직 못 본다). 남의 표를 먼저 보고 고르면
  * 놀이가 아니라 눈치가 된다. 이 함수는 화면을 거치지 않고도 불리므로 가림은 여기서 한다.
  * 사람 수만 내려가고 누가 무엇을 골랐는지는 내려가지 않는다. 팀에 남아 있는 사람의 표만 센다.
+ * 고른 사람이 `MIN_BALANCE_VOTERS` 명에 못 미치면 사람 수도 가린다(두 명이면 집계가 곧 상대의 선택이다).
  */
 export type BalanceResult = {
   questionId: string;
   mine: BalanceChoice | null;
+  /** 이 질문에 고른 사람 수(나 포함). 내가 고르기 전에는 `null`. */
+  voters: number | null;
+  /** 팀의 선택 — 고른 뒤에, 그리고 `MIN_BALANCE_VOTERS` 명 이상이 골랐을 때만. 아니면 `null`. */
   counts: { a: number; b: number } | null;
 };
 
@@ -742,12 +746,15 @@ export async function getBalanceResults(): Promise<BalanceResult[]> {
     const rows = votes.filter((v) => v.questionId === q.id);
     const mine = rows.find((v) => v.memberId === session.id)?.choice;
     const myChoice: BalanceChoice | null = mine === "a" || mine === "b" ? mine : null;
+    const voters = myChoice ? rows.length : null;
     return {
       questionId: q.id,
       mine: myChoice,
-      counts: myChoice
-        ? { a: rows.filter((v) => v.choice === "a").length, b: rows.filter((v) => v.choice === "b").length }
-        : null,
+      voters,
+      counts:
+        myChoice && rows.length >= MIN_BALANCE_VOTERS
+          ? { a: rows.filter((v) => v.choice === "a").length, b: rows.filter((v) => v.choice === "b").length }
+          : null,
     };
   });
 }

@@ -70,6 +70,15 @@ export const BALANCE_QUESTIONS: readonly BalanceQuestion[] = [
   },
 ];
 
+/**
+ * 팀의 선택(사람 수)을 보여 주는 최소 투표 인원.
+ *
+ * 두 사람이 고른 질문의 집계는 "가 1 · 나 1" 처럼 **상대의 선택을 그대로 알려 준다**(내 것을 빼면 남는 한 표).
+ * 그래서 이 수에 못 미치면 사람 수를 내려보내지 않고, 몇 명이 골랐는지만 알린다. 혼자서도 놀 수 있게 내 선택과
+ * 키워드는 그대로 보인다.
+ */
+export const MIN_BALANCE_VOTERS = 3;
+
 const IDS = new Set(BALANCE_QUESTIONS.map((q) => q.id));
 
 export const isBalanceQuestion = (id: unknown): id is string => typeof id === "string" && IDS.has(id);

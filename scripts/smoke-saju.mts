@@ -15,7 +15,7 @@ import { chemistryOf, type Relation } from "../src/lib/saju/chemistry.js";
 import { summarizeTeam } from "../src/lib/saju/team.js";
 import { buildTodayFlow, dayStemOfDate } from "../src/lib/saju/today.js";
 import { MAX_GUESS_ROUNDS, buildGuessRounds, dailyPartner, hashString, pairingKindOf, seededOrder, todayPairing } from "../src/lib/saju/play.js";
-import { BALANCE_QUESTIONS, isBalanceChoice, isBalanceQuestion } from "../src/lib/saju/balance.js";
+import { BALANCE_QUESTIONS, MIN_BALANCE_VOTERS, isBalanceChoice, isBalanceQuestion } from "../src/lib/saju/balance.js";
 import { MAX_MEETING_MINUTES, MIN_MEETING_MINUTES, meetingFlowText, planMeetingFlow } from "../src/lib/saju/meeting-flow.js";
 import { PAIR_TITLE, RELATION_COPY, MEETING_TIP, MISSION_DUE_SOON, MISSION_MEETING_CLOSER, TODAY_COPY, TODAY_TITLE_OTHER, MEETING_FLOW_STEPS } from "../src/lib/saju/copy.js";
 
@@ -330,13 +330,20 @@ async function main() {
   truthy("오늘의 짝은 후보 안에서 나온다", people.some((p) => p.id === dailyPartner(people, "m1", "2026-10-10")?.id));
   truthy("날짜가 바뀌면 짝이 바뀐다(30일 중 둘 이상)", new Set(Array.from({ length: 30 }, (_, i) => dailyPartner(people, "m1", `2026-10-${String(i + 1).padStart(2, "0")}`)?.id)).size > 1);
 
-  const mem = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `u${i + 1}` }));
+  const el = (n: number) => ({ wood: n, fire: 0, earth: 0, metal: 0, water: 0 });
+  const mem = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `u${i + 1}`, elements: el(i + 1) }));
   check("세 명 미만이면 맞히기 문제가 없다(보기가 하나뿐인 문제를 만들지 않는다)", [buildGuessRounds(mem(1), "u1", "2026-10-10").length, buildGuessRounds(mem(2), "u1", "2026-10-10").length], [0, 0]);
   const gr = buildGuessRounds(mem(4), "u1", "2026-10-10");
   check("네 명이면 나를 뺀 셋이 모두 문제로 나온다", gr.map((r) => r.targetId).sort(), ["u2", "u3", "u4"]);
   truthy("보기는 나를 뺀 모두이고 정답이 들어 있다", gr.every((r) => r.optionIds.length === 3 && !r.optionIds.includes("u1") && r.optionIds.includes(r.targetId)));
   check("같은 날·같은 사람이면 같은 문제", JSON.stringify(gr), JSON.stringify(buildGuessRounds([...mem(4)].reverse(), "u1", "2026-10-10")));
   check("문제는 최대 상한까지", buildGuessRounds(mem(12), "u1", "2026-10-10").length, MAX_GUESS_ROUNDS);
+  // 오행 수가 같은 두 사람은 단서로 가릴 수 없다 — 문제로 내지 않고, 보기로만 남는다.
+  const twins = [{ id: "u1", elements: el(1) }, { id: "u2", elements: el(2) }, { id: "u3", elements: el(3) }, { id: "u4", elements: el(3) }];
+  const tw = buildGuessRounds(twins, "u1", "2026-10-10");
+  check("오행 수가 같은 팀원은 문제로 내지 않는다", tw.map((r) => r.targetId), ["u2"]);
+  check("같은 오행 수의 팀원도 보기에는 남는다", [...tw[0]!.optionIds].sort(), ["u2", "u3", "u4"]);
+  check("모두 오행 수가 같으면 문제가 없다", buildGuessRounds([{ id: "u1", elements: el(1) }, { id: "u2", elements: el(2) }, { id: "u3", elements: el(2) }], "u1", "2026-10-10"), []);
   truthy("정답이 한 사람에게 중복되지 않는다", new Set(buildGuessRounds(mem(12), "u1", "2026-10-10").map((r) => r.targetId)).size === MAX_GUESS_ROUNDS);
 
   console.log("\n[밸런스 게임] 질문 목록");
@@ -408,6 +415,7 @@ async function main() {
   truthy("투표 액션이 질문 번호와 선택을 서버에서 다시 본다", /isBalanceQuestion\(questionId\)/.test(balanceAction) && /isBalanceChoice\(choice\)/.test(balanceAction));
   truthy("투표의 팀은 세션에서 정한다(클라이언트가 팀 번호를 보내지 않는다)", /teamId:\s*session\.teamId/.test(balanceAction) && !/teamId\s*:\s*string|teamId\)/.test(balanceAction.split("export async function")[1]!.split("{")[0]!));
   truthy("결과는 내가 투표한 질문만 내려보낸다(counts 가 내 선택에 달려 있다)", /counts:\s*myChoice/.test(api));
+  truthy("사람 수는 최소 인원 이상이 골랐을 때만 내려간다(두 명이면 집계가 곧 상대의 선택이다)", /myChoice\s*&&\s*rows\.length\s*>=\s*MIN_BALANCE_VOTERS/.test(api) && MIN_BALANCE_VOTERS >= 3);
   truthy("결과 집계는 팀에 남아 있는 사람의 표만 센다", /sajuBalanceVote\.findMany\([\s\S]*?member:\s*\{\s*leftAt:\s*null\s*\}/.test(api));
   const flowAction = readCode("../src/server/actions/meeting-flow.ts");
   truthy("저장 액션은 회의 번호만 받는다 — 클라이언트가 글을 보내지 않는다", /export async function saveMeetingFlow\(meetingId: string\)/.test(flowAction));

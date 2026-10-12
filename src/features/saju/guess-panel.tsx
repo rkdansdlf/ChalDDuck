@@ -3,9 +3,29 @@
 import { useMemo, useState } from "react";
 import { Btn, Icon, Panel, Rows } from "@/components/ui";
 import type { TeamSajuMember } from "@/data/api";
-import { DAY_MASTER_COPY, GUESS_INTRO, GUESS_NEED_MORE } from "@/lib/saju/copy";
+import {
+  DAY_MASTER_COPY,
+  GUESS_INTRO,
+  GUESS_NEED_MORE_NOW,
+  GUESS_NO_ROUND,
+  GUESS_PREVIEW_CAPTION,
+} from "@/lib/saju/copy";
 import { ELEMENTS, ELEMENT_KO } from "@/lib/saju/engine";
-import { buildGuessRounds } from "@/lib/saju/play";
+import { MIN_GUESS_PLAYERS, buildGuessRounds } from "@/lib/saju/play";
+
+/** 연·월·일 여섯 글자의 오행 수 다섯 칸. 문제와 미리 보기가 같은 모양을 쓴다. */
+function ElementCounts({ elements }: { elements: TeamSajuMember["elements"] }) {
+  return (
+    <ul className="m-0 mt-2.5 grid list-none grid-cols-5 gap-1.5 p-0" aria-label="연·월·일 여섯 글자의 오행 수">
+      {ELEMENTS.map((e) => (
+        <li key={e} className="rounded-xl bg-fill px-1 py-2 text-center">
+          <div className="t-cap text-txt-muted">{ELEMENT_KO[e]}</div>
+          <div className="t-title text-txt-strong">{elements[e]}</div>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /**
  * 사주 맞히기 — 한 팀원의 연·월·일 **오행 수만** 보고 누구인지 맞힌다.
@@ -13,6 +33,9 @@ import { buildGuessRounds } from "@/lib/saju/play";
  * 문제는 오늘 날짜로 정해진다(같은 날·같은 사람이면 새로고침해도 같다). 보기는 나를 뺀 등록한 팀원 전부다.
  * 힌트로 일간을 볼 수 있다. 정답과 일간은 이미 팀 사주 화면이 보여 주는 값이라 이 놀이가 새로 드러내는
  * 정보는 없다. 혼자 하는 놀이라 서버에 아무것도 남기지 않는다.
+ *
+ * 등록한 팀원이 모자라 문제를 못 내는 동안에는 **내 오행 수로 문제가 어떻게 생겼는지** 미리 보여 준다 —
+ * 혼자일 때 빈 안내문만 보이지 않게 한다. 내 값이라 새로 드러나는 것도 없다.
  */
 export function GuessPanel({
   members,
@@ -32,9 +55,14 @@ export function GuessPanel({
   const [hint, setHint] = useState(false);
 
   if (rounds.length === 0) {
+    const enough = members.length >= MIN_GUESS_PLAYERS;
     return (
       <Panel s="cream" pad={16} className="mb-4">
-        <p className="text-pretty-keep m-0 t-card text-txt">{GUESS_NEED_MORE}</p>
+        <p className="text-pretty-keep m-0 t-card text-txt">
+          {enough ? GUESS_NO_ROUND : GUESS_NEED_MORE_NOW(members.length)}
+        </p>
+        <ElementCounts elements={me.elements} />
+        <p className="t-cap text-pretty-keep m-0 mt-2 text-txt-muted">{GUESS_PREVIEW_CAPTION}</p>
       </Panel>
     );
   }
@@ -89,14 +117,7 @@ export function GuessPanel({
       </div>
       <div className="mt-1 t-sec text-txt-strong">이 오행 수는 누구의 사주일까요?</div>
 
-      <ul className="m-0 mt-2.5 grid list-none grid-cols-5 gap-1.5 p-0" aria-label="연·월·일 여섯 글자의 오행 수">
-        {ELEMENTS.map((e) => (
-          <li key={e} className="rounded-xl bg-fill px-1 py-2 text-center">
-            <div className="t-cap text-txt-muted">{ELEMENT_KO[e]}</div>
-            <div className="t-title text-txt-strong">{target.elements[e]}</div>
-          </li>
-        ))}
-      </ul>
+      <ElementCounts elements={target.elements} />
 
       {hint || answered ? (
         <p className="t-cap mt-2 mb-0 text-txt-muted">

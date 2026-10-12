@@ -6,14 +6,15 @@ import { Btn, Icon, Panel } from "@/components/ui";
 import type { BalanceResult } from "@/data/api";
 import { BALANCE_QUESTIONS, type BalanceChoice } from "@/lib/saju/balance";
 import { ELEMENT_KO } from "@/lib/saju/engine";
-import { ELEMENT_WORD } from "@/lib/saju/copy";
+import { BALANCE_WAITING, ELEMENT_WORD } from "@/lib/saju/copy";
 import { voteBalance } from "@/server/actions/saju-balance";
 
 /**
  * 사주 밸런스 게임 — 두 선택지 중 하나를 고르고, 고른 뒤에 팀의 선택을 본다.
  *
  * **고르기 전에는 결과가 내려오지 않는다**(`getBalanceResults`). 남의 표를 먼저 보고 고르면 놀이가 눈치가 된다.
- * 사람 수만 보이고 누가 무엇을 골랐는지는 알 수 없다. 다시 누르면 바뀐다. 선택지의 오행 키워드는 고른
+ * 사람 수만 보이고 누가 무엇을 골랐는지는 알 수 없다. 고른 사람이 적으면(`MIN_BALANCE_VOTERS` 미만) 사람 수도
+ * 가려서, 혼자일 때는 내 선택과 키워드만 보인다. 다시 누르면 바뀐다. 선택지의 오행 키워드는 고른
  * 뒤에 보이는 재미 표시일 뿐이고, 고른 것으로 그 사람을 말하지 않는다.
  */
 export function BalancePanel({ results }: { results: BalanceResult[] }) {
@@ -47,6 +48,7 @@ export function BalancePanel({ results }: { results: BalanceResult[] }) {
         const r = byId.get(q.id);
         const mine = r?.mine ?? null;
         const counts = r?.counts ?? null;
+        const voters = r?.voters ?? null;
         return (
           <Panel key={q.id} s="card" pad={14}>
             <div className="t-cap-strong mb-2 text-txt-muted">{q.prompt}</div>
@@ -75,9 +77,10 @@ export function BalancePanel({ results }: { results: BalanceResult[] }) {
                 );
               })}
             </div>
-            {mine && counts ? (
+            {mine ? (
               <p className="t-cap m-0 mt-2 text-txt-muted">
                 내 선택의 키워드 · {ELEMENT_KO[q[mine].element]} {ELEMENT_WORD[q[mine].element].keyword}
+                {!counts && voters !== null ? ` · ${BALANCE_WAITING(voters)}` : ""}
               </p>
             ) : null}
           </Panel>

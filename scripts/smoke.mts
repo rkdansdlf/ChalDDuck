@@ -1092,6 +1092,16 @@ console.log("\n균형 추천");
   truthy("균형 추천은 MBTI 를 읽지 않는다", /mbti/i.test(balanceSrc) === false);
   truthy("균형 추천은 가능한 시간(BusyBlock)을 읽지 않는다", /busy/i.test(balanceSrc) === false);
   truthy("균형 추천은 사주를 읽지 않는다", /saju|birth/i.test(balanceSrc) === false);
+
+  // 화면은 MBTI 를 **소통 팁으로만** 쓴다 — 추천 이유(`REASON_TEXT`)에 끼우거나 유형 글자를 그리면
+  // 유형이 역할의 이유처럼 읽힌다.
+  const panelSrc = readCode("../src/features/roles/balance-panel.tsx");
+  truthy("균형 추천 화면은 소통 팁만 읽는다", /communicationTip\.good/.test(panelSrc));
+  truthy("균형 추천 화면은 유형 글자를 그리지 않는다", /\.type\b|\.characterName|\.keywords/.test(panelSrc) === false);
+  truthy(
+    "균형 추천 이유 목록에 MBTI 가 없다",
+    /REASON_TEXT[^}]*mbti/i.test(panelSrc.slice(panelSrc.indexOf("REASON_TEXT"), panelSrc.indexOf("};", panelSrc.indexOf("REASON_TEXT")))) === false,
+  );
 }
 
 /* ── 18 역할별 기여 기록 ──────────────────────────────────── */

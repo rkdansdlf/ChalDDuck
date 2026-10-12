@@ -341,8 +341,14 @@ export const PAIRING_COPY: Record<"start" | "care" | "easy" | "own", PairingCopy
   },
 };
 
-export const PAIRING_NEED_OTHERS = "나 말고도 사주를 등록한 팀원이 있어야 볼 수 있어요.";
+export const PAIRING_SOLO_NOTE = "팀원이 사주를 등록하면 둘이 같이 일하는 오늘의 궁합도 볼 수 있어요.";
+export const BALANCE_WAITING = (voters: number) =>
+  `지금 ${voters}명이 골랐어요. 세 명 이상 고르면 팀의 선택을 볼 수 있어요.`;
 export const GUESS_NEED_MORE = "세 명 이상(나 포함)이 사주를 등록하면 할 수 있어요.";
+export const GUESS_NEED_MORE_NOW = (registered: number) =>
+  `지금 ${registered}명이 등록했어요. 세 명 이상(나 포함)이 등록하면 이 숫자로 문제가 나와요.`;
+export const GUESS_NO_ROUND = "오행 수가 같은 팀원이 많아서 낼 수 있는 문제가 없어요. 팀원이 더 등록하면 열려요.";
+export const GUESS_PREVIEW_CAPTION = "내 연·월·일 오행 수예요. 이런 숫자만 보고 누구의 사주인지 맞히는 놀이예요.";
 export const GUESS_INTRO = "연·월·일 여섯 글자의 오행 수만 보고, 누구의 사주인지 맞혀 보세요.";
 
 /* ── 진행 방식 저장 ───────────────────────────────────────── */

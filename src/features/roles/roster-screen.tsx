@@ -79,7 +79,8 @@ const EXPIRY_LABELS: Record<(typeof EXPIRY_CHOICES)[number], string> = {
  * 협의 → 추첨 → 당사자 수락 순서로 풀어 나간다.
  *
  * MBTI 배지를 일부러 넣지 않는다 — 역할 조율 화면에서 유형이 보이면
- * 배정에 영향을 주는 것처럼 읽히기 때문이다.
+ * 배정에 영향을 주는 것처럼 읽히기 때문이다. 균형 추천 카드의 "이야기할 때" 한 줄만 예외인데,
+ * 유형 글자 없이 소통 팁만 보이고 추천 계산은 읽지 않는다(`BalancePanel` 주석).
  */
 export function RosterScreen({
   team,
@@ -783,6 +784,7 @@ export function RosterScreen({
         <BalancePanel
           roles={roles}
           suggestions={balanceSuggestions}
+          mbtiOf={Object.fromEntries(members.map((m) => [m.id, m.mbti]))}
           myId={myId}
           my={me ? { want: me.want, want2: me.want2, veto: me.veto } : null}
           busy={{ propose: Boolean(busy.balance) }}

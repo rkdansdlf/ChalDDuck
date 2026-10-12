@@ -57,7 +57,7 @@ export function SajuPlayScreen({
         <SecTitle note="오행 수만 보고 누구의 사주인지 맞혀 보세요">사주 맞히기</SecTitle>
         {me ? <GuessPanel members={saju.members} me={me} today={today} /> : needMine}
 
-        <SecTitle note="고르면 우리 팀의 선택을 볼 수 있어요">사주 밸런스 게임</SecTitle>
+        <SecTitle note="고르면 내 선택의 키워드를, 세 명 이상 고르면 팀의 선택을 볼 수 있어요">사주 밸런스 게임</SecTitle>
         <BalancePanel results={balance} />
       </Body>
 

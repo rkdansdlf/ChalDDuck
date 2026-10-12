@@ -326,17 +326,18 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("잘못된 요청은 아무 행도 만들지 않는다", await db.sajuBalanceVote.count({ where: { teamId: team.id } }), 0);
 
     const before = row(await results(asMe), q1);
-    check("고르기 전에는 결과(counts)가 내려오지 않는다", [before?.mine, before?.counts], [null, null]);
+    check("고르기 전에는 결과(counts·voters)가 내려오지 않는다", [before?.mine, before?.counts, before?.voters], [null, null, null]);
 
     check("투표한다", await as(asMe, () => balanceAction.voteBalance(q1, "a")), "ok");
     check("행의 팀은 세션에서 정해진다", (await votesOf(q1)).map((v) => [v.teamId, v.memberId, v.choice]), [[team.id, me.id, "a"]]);
     check("다시 누르면 바뀐다(한 사람 한 표)", [await as(asMe, () => balanceAction.voteBalance(q1, "b")), (await votesOf(q1)).map((v) => v.choice)], ["ok", ["b"]]);
-    check("고른 뒤에는 결과가 내려온다", row(await results(asMe), q1), { questionId: q1, mine: "b", counts: { a: 0, b: 1 } });
+    check("혼자 골랐으면 내 선택만 보이고 사람 수는 가려진다", row(await results(asMe), q1), { questionId: q1, mine: "b", voters: 1, counts: null });
     check("다른 질문은 여전히 가려져 있다", row(await results(asMe), q2)?.counts, null);
 
     await as(asOther, () => balanceAction.voteBalance(q1, "a"));
+    check("둘이 골랐어도 사람 수는 가려진다(집계가 곧 상대의 선택이라서)", row(await results(asMe), q1), { questionId: q1, mine: "b", voters: 2, counts: null });
     await as(asThird, () => balanceAction.voteBalance(q1, "b"));
-    check("팀원들의 표가 사람 수로 집계된다", row(await results(asMe), q1)?.counts, { a: 1, b: 2 });
+    check("세 명이 고르면 사람 수로 집계된다", row(await results(asMe), q1), { questionId: q1, mine: "b", voters: 3, counts: { a: 1, b: 2 } });
     const wire2 = JSON.stringify(await results(asMe));
     check("누가 골랐는지는 응답에 없다(사람 번호·이름이 없다)", ["memberId", me.id, other.id, third.id, `김민준${suffix}`, `이서연${suffix}`].filter((x) => wire2.includes(x)), []);
 
@@ -349,7 +350,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       await db.sajuBalanceVote.create({ data: { teamId: teamB.id, memberId: mB.id, questionId: q1, choice: "a" } });
       check("나간 사람과 다른 팀의 표는 세지 않는다", row(await results(asMe), q1)?.counts, { a: 1, b: 2 });
       const asB = await token(mB.id);
-      check("다른 팀 사람이 보는 결과에 우리 팀 표가 섞이지 않는다", row(await results(asB), q1), { questionId: q1, mine: "a", counts: { a: 1, b: 0 } });
+      check("다른 팀 사람이 보는 결과에 우리 팀 표가 섞이지 않는다", row(await results(asB), q1), { questionId: q1, mine: "a", voters: 1, counts: null });
     } finally {
       await db.member.deleteMany({ where: { teamId: teamB.id } });
       await db.team.delete({ where: { id: teamB.id } }).catch(() => {});

@@ -1,5 +1,6 @@
 import { chemistryOf, type Relation } from "./chemistry";
 import { PAIRING_COPY, TODAY_COPY, TODAY_TITLE_OTHER, type PairingCopy } from "./copy";
+import { ELEMENTS, type Element } from "./engine";
 import { dayStemOfDate } from "./today";
 
 /**
@@ -122,11 +123,22 @@ export const MIN_GUESS_PLAYERS = 3;
 /**
  * 오늘의 사주 맞히기 문제. 나를 뺀 등록한 팀원이 둘 미만이면 빈 배열 — 보기가 하나뿐인 문제를 만들지 않는다.
  * 같은 날·같은 사람이면 문제와 보기 순서가 같다.
+ *
+ * **오행 수가 다른 팀원과 똑같은 사람은 문제로 내지 않는다.** 단서가 연·월·일 오행 수뿐이라, 같은 수를 가진
+ * 두 사람 중 누가 정답인지는 가릴 방법이 없다(맞혀도 운, 틀려도 운). 그 사람들은 보기로는 남는다.
  */
-export function buildGuessRounds(members: readonly { id: string }[], meId: string, today: string): GuessRound[] {
+export function buildGuessRounds(
+  members: readonly { id: string; elements: Record<Element, number> }[],
+  meId: string,
+  today: string,
+): GuessRound[] {
   const others = members.filter((m) => m.id !== meId);
   if (others.length < MIN_GUESS_PLAYERS - 1) return [];
-  const targets = seededOrder(others, `${today}:${meId}:targets`, (m) => m.id).slice(0, MAX_GUESS_ROUNDS);
+  const shape = (m: { elements: Record<Element, number> }) => ELEMENTS.map((e) => m.elements[e]).join(",");
+  const seen = new Map<string, number>();
+  for (const m of others) seen.set(shape(m), (seen.get(shape(m)) ?? 0) + 1);
+  const askable = others.filter((m) => seen.get(shape(m)) === 1);
+  const targets = seededOrder(askable, `${today}:${meId}:targets`, (m) => m.id).slice(0, MAX_GUESS_ROUNDS);
   return targets.map((t) => ({
     targetId: t.id,
     optionIds: seededOrder(others, `${today}:${meId}:${t.id}`, (m) => m.id).map((m) => m.id),
