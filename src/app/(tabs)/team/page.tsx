@@ -7,11 +7,12 @@ import {
   getRoles,
   getRoster,
   getTeamInvites,
+  getTeamCheck,
 } from "@/data/api";
 import { RosterScreen } from "@/features/roles/roster-screen";
 import { getSessionMember } from "@/server/session";
 
-/** 팀 탭 — 07 팀 역할 조율. */
+/** 팀 탭 — 07 팀 역할 조율 및 팀 메뉴. */
 export default async function TeamPage() {
   const team = await getCurrentTeam();
   const session = await getSessionMember();
@@ -22,7 +23,7 @@ export default async function TeamPage() {
   // 휴대폰에서 QR을 찍을 수 있어야 초대가 통한다 — localhost 링크는 휴대폰에서 안 열리므로
   // 운영/LAN 주소(APP_URL)를 초대 링크의 기점으로 쓴다. 없으면 지금 주소가 그대로 쓰인다.
   const inviteOrigin = process.env.APP_URL?.replace(/\/$/, "") || undefined;
-  const [roles, roster, tools, negotiation, rejoinRequests, joinRequests, invites] =
+  const [roles, roster, tools, negotiation, rejoinRequests, joinRequests, invites, teamCheck] =
     await Promise.all([
       getRoles(team.id),
       getRoster(team.id),
@@ -31,7 +32,12 @@ export default async function TeamPage() {
       getRejoinRequests(team.id),
       getJoinRequests(team.id),
       getTeamInvites(team.id),
+      getTeamCheck(team.id).catch(() => []),
     ]);
+
+  const awaitingMyConfirm = teamCheck.filter(
+    (r) => !r.isMine && r.state === "pending" && !r.iConfirmed,
+  ).length;
 
   return (
     <RosterScreen
@@ -42,6 +48,7 @@ export default async function TeamPage() {
       negotiation={negotiation}
       now={now}
       rejoinPending={rejoinRequests.length + joinRequests.rows.length}
+      awaitingMyConfirm={awaitingMyConfirm}
       /** 초대 관리는 팀장만 한다. `getTeamInvites` 도 팀장만 읽지만, 화면을 그리기 전에
           클라이언트도 알아야 해서 여기도 본다 — 못 보면 버튼을 아예 띄우지 않는다. */
       invites={session?.isLeader ? invites : []}
