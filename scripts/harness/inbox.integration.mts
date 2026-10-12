@@ -171,6 +171,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     console.log("\n밥 모 결정은 팀에 하나다");
     const C = await makeTeam("밥");
     const tool = RANDOM_TOOLS[0]!.name;
+    await as(C.asLeader, () => social.saveDrawOptions(["국밥", "마라탕"]));
     const picked = await as(C.asLeader, () => social.spinMenu(tool));
     check("정해진다", typeof picked === "string" && picked.length > 0, true);
     const team1 = await db.team.findUnique({ where: { id: C.id } });

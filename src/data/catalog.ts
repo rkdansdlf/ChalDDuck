@@ -481,4 +481,3 @@ export const ICE_GAMES: IceGame[] = [
  * 되어 판정이 뒤집힌다. 제시어만 있는 표가 그 문제를 같이 품고 있어서, 데이터도 그쪽으로
  * 옮겼다(`rules.ts` 의 `deal` 이 여기서 읽는다).
  */
-export const MENU_OPTIONS = ["국밥", "마라탕", "돈까스", "김밥천국", "파스타", "떡볶이", "라멘"];

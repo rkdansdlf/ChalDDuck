@@ -32,7 +32,6 @@ import {
   CUSHION_LEVELS,
   AI_TOOLS,
   ICE_GAMES,
-  MENU_OPTIONS,
   RANDOM_TOOLS,
   ROLES,
   SCHEDULE_DAYS,
@@ -1619,7 +1618,6 @@ console.log("\n도구와 게임: 전부 열려 있다 (비활성화 상태는 �
 
 console.log("\n누가 하지");
 {
-  truthy("메뉴가 하나 이상 있다", MENU_OPTIONS.length > 0);
   const { team } = await makeIsolatedTeam("누가 하지");
   if (team) {
     const before = team.menuPick;
