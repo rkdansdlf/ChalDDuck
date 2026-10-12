@@ -22,7 +22,7 @@ export default function NamePage() {
 
   const [existing, setExisting] = useState<{ name: string } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [teammateName, setTeammateName] = useState<string>("이서연");
+  const [teammateName, setTeammateName] = useState<string>("홍길동");
 
   const trimmed = name.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_NAME;
@@ -110,10 +110,10 @@ export default function NamePage() {
         <div className="mt-7">
           <div className="t-sec mb-2.5 text-txt-strong">팀원 목록에는 이렇게 보여요</div>
           <div className="rounded-[18px] border border-line bg-card p-2 divide-y divide-line/60">
-            {/* 기존 팀원 (예: 이서연) */}
+            {/* 기존 팀원 (예: 홍길동) */}
             <div className="flex items-center gap-3 px-3 py-2.5">
               <div className="grid size-9 flex-none place-items-center rounded-full bg-yellow-100 text-yellow-800 font-bold text-[14px]">
-                {teammateName.charAt(0) || "이"}
+                {teammateName.charAt(0) || "홍"}
               </div>
               <span className="font-semibold text-[15px] text-txt-strong">
                 {teammateName}
@@ -123,11 +123,11 @@ export default function NamePage() {
             {/* 본인 미리보기 */}
             <div className="flex items-center gap-3 px-3 py-2.5">
               <div className="grid size-9 flex-none place-items-center rounded-full border-2 border-dashed border-line-strong bg-card font-bold text-[14px] text-txt-strong">
-                {trimmed.length > 0 ? trimmed.charAt(0) : "민"}
+                {trimmed.length > 0 ? trimmed.charAt(0) : "길"}
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-[15px] text-txt-strong">
-                  {trimmed.length > 0 ? trimmed : "민준"}
+                  {trimmed.length > 0 ? trimmed : "길동"}
                 </span>
                 <span className="t-cap-strong text-yellow-700">나</span>
               </div>

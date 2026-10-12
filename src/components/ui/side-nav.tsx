@@ -4,8 +4,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
+import type { MbtiType } from "@/lib/mbti";
+import { useOnboarding } from "@/features/onboarding/onboarding-state";
+import { Avatar } from "./avatar";
 import { Icon } from "./icon";
 import { TABS, type TabPending } from "./tab-bar";
+
+export type NavUser = {
+  name: string;
+  mbti?: MbtiType | null;
+};
 
 /**
  * 넓은 화면의 세로 내비게이션.
@@ -15,8 +23,17 @@ import { TABS, type TabPending } from "./tab-bar";
  *
  * 같은 `TABS` 목록을 쓰므로 탭이 늘거나 순서가 바뀌면 두 곳이 함께 따라온다.
  */
-export function SideNav({ pending = {} }: { pending?: TabPending }) {
+export function SideNav({
+  pending = {},
+  me,
+}: {
+  pending?: TabPending;
+  me?: NavUser | null;
+}) {
   const pathname = usePathname();
+  const onboarding = useOnboarding();
+  const displayName = onboarding.name.trim() || me?.name || "내 계정";
+  const displayMbti = onboarding.effectiveMbti ?? me?.mbti ?? null;
 
   return (
     <nav
@@ -68,8 +85,8 @@ export function SideNav({ pending = {} }: { pending?: TabPending }) {
               : "text-txt-muted hover:bg-cr-50 hover:text-txt-strong",
           )}
         >
-          <Icon name="lock" size={19} />
-          <span className="flex-1">계정과 기기</span>
+          <Avatar name={displayName} mbti={displayMbti} size={28} />
+          <span className="min-w-0 flex-1 truncate">{displayName}</span>
         </Link>
       </div>
     </nav>

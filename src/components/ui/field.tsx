@@ -85,10 +85,19 @@ export type InputProps = {
   "aria-label"?: string;
 };
 
-export function Input({ value, onChange, error, mono, className, ...rest }: InputProps & { className?: string }) {
+export function Input({ value, onChange, error, mono, className, autoFocus, ...rest }: InputProps & { className?: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (autoFocus) {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  }, [autoFocus]);
+
   return (
     <input
       {...rest}
+      ref={inputRef}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={cn(

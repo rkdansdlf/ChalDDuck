@@ -3,6 +3,7 @@
 import { SideNav, TabBar } from "@/components/ui";
 import { useEffect } from "react";
 import { usePoll } from "@/lib/use-poll";
+import type { MbtiType } from "@/lib/mbti";
 import { pollNavBadges } from "@/server/actions/nav";
 import type { NavBadges } from "@/server/nav/badges";
 import { setNavBadges, useNavBadges } from "./nav-badges-store";
@@ -29,10 +30,12 @@ const BADGE_POLL_MS = 30_000;
 export function AppNav({
   as,
   initial,
+  me,
 }: {
   as: "tabs" | "side";
   /** 탭 셸이 서버에서 세어 준 첫 숫자. 다시 세어 온 값이 있으면 그쪽이 최신이다. */
   initial: NavBadges;
+  me?: { name: string; mbti?: MbtiType | null } | null;
 }) {
   // 묻는 쪽은 하나뿐이다. 둘 다 물으면 같은 숫자에 요청이 두 배로 나간다.
   usePoll(
@@ -63,5 +66,5 @@ export function AppNav({
     drive: badges.drive || undefined,
   };
 
-  return as === "side" ? <SideNav pending={pending} /> : <TabBar pending={pending} />;
+  return as === "side" ? <SideNav pending={pending} me={me} /> : <TabBar pending={pending} />;
 }

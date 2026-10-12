@@ -16,6 +16,9 @@ const FOCUSABLE =
  * - 열릴 때 포커스가 시트 안으로 들어간다
  * - 닫힐 때도 뚝 끊기지 않고 아래로 스르륵 내려간다(퇴장 애니메이션)
  */
+/** 지금 열린 시트들을 여는 순서대로 담는다. 맨 뒤가 화면 맨 위에 있는 시트다. */
+const openSheets: object[] = [];
+
 export function Sheet({
   open,
   title,
@@ -36,6 +39,7 @@ export function Sheet({
   const panelRef = useRef<HTMLDivElement>(null);
   /** 시트를 연 순간의 포커스. 닫을 때 그 자리로 돌려보낸다 — 아니면 포커스가 `body` 로 사라진다. */
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const [token] = useState(() => ({}));
   const [rendered, setRendered] = useState(open);
   const [prevOpen, setPrevOpen] = useState(open);
 
@@ -58,10 +62,13 @@ export function Sheet({
     const panel = panelRef.current;
     returnFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // 열린 시트들의 순서. Esc 는 맨 위 시트만 닫는다 — 시트 위에 시트가 뜨면 아래 것까지
+    // 같이 닫히던 것을 막는다.
+    openSheets.push(token);
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        closeOnEscape();
+        if (openSheets[openSheets.length - 1] === token) closeOnEscape();
         return;
       }
       // 배경은 시트에 가려져 있어도 Tab 으로는 닿는다. 시트 가장자리에서 안쪽으로 되돌린다.
@@ -90,9 +97,11 @@ export function Sheet({
     panel?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
+      const at = openSheets.indexOf(token);
+      if (at !== -1) openSheets.splice(at, 1);
       returnFocusRef.current?.focus();
     };
-  }, [open]);
+  }, [open, token]);
 
   if (!rendered) return null;
 
@@ -103,7 +112,7 @@ export function Sheet({
         if (e.target === e.currentTarget && closing) setRendered(false);
       }}
       className={cn(
-        "absolute inset-0 z-30 flex items-end",
+        "absolute inset-0 z-30 flex items-end overscroll-contain touch-none",
         closing ? "animate-fade-out" : "animate-fade-in",
       )}
       style={{ background: "rgba(36,28,20,.38)" }}
@@ -120,7 +129,7 @@ export function Sheet({
           if (closing) setRendered(false);
         }}
         className={cn(
-          "max-h-[86%] w-full overflow-y-auto rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none",
+          "max-h-[86%] w-full overflow-y-auto overscroll-contain rounded-t-sheet bg-card px-5 pt-2 shadow-lg outline-none",
           closing ? "animate-sheet-down" : "animate-sheet-up",
         )}
       >
