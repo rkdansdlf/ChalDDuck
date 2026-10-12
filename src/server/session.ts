@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
+import { isMbtiType, type MbtiType } from "@/lib/mbti";
 import { db } from "./db";
 
 /**
@@ -32,6 +33,7 @@ export type SessionMember = {
   name: string;
   /** 팀을 만든 사람. 새 기기 재입장 요청을 승인할 수 있다. */
   isLeader: boolean;
+  mbti?: MbtiType | null;
 };
 
 /** 기기 목록에 보일 짧은 설명. 정확할 필요는 없고 "내 것"인지 알아볼 정도면 된다. */
@@ -84,7 +86,7 @@ export const getSessionMember = cache(async (): Promise<SessionMember | null> =>
     select: {
       expiresAt: true,
       lastSeenAt: true,
-      member: { select: { id: true, teamId: true, name: true, isLeader: true, leftAt: true } },
+      member: { select: { id: true, teamId: true, name: true, isLeader: true, leftAt: true, mbti: true } },
     },
   });
   if (!session) return null;
@@ -105,8 +107,11 @@ export const getSessionMember = cache(async (): Promise<SessionMember | null> =>
     await db.session.update({ where: { token }, data: { lastSeenAt: new Date() } });
   }
 
-  const { leftAt: _leftAt, ...member } = session.member;
-  return member;
+  const { leftAt: _leftAt, mbti, ...member } = session.member;
+  return {
+    ...member,
+    mbti: isMbtiType(mbti) ? mbti : null,
+  };
 });
 
 /**
