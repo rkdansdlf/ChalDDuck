@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
     remotePatterns: [{ protocol: "https", hostname: "*.supabase.co", pathname: "/storage/v1/**" }],
   },
   /**
+   * `/team/roulette` → `/team/draw`. 화면 이름이 "팀 추첨"이 되며 경로를 옮겼다.
+   * 알림 행은 만들 때의 `href` 를 그대로 저장하므로, 이미 쌓인 알림이 옛 경로를 가리킨다.
+   */
+  async redirects() {
+    return [{ source: "/team/roulette", destination: "/team/draw", permanent: false }];
+  },
+  /**
    * 리서처의 "드라이브에 저장" 이 PDF 에 넣는 한글 글꼴(`server/drive/research-pdf.ts`).
    *
    * 코드는 `fs.readFile(path.join(process.cwd(), ...))` 로 읽는데, Next 의 자동 추적은 이

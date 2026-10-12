@@ -1896,9 +1896,9 @@ console.log("\n도구와 게임: 전부 열려 있다 (비활성화 상태는 �
   check("게임에 '실행까지 연결됐다' 플래그가 없다", /\n\s*playable: boolean;/.test(types), false);
 }
 
-console.log("\n누가 하지");
+console.log("\n팀 추첨");
 {
-  const { team } = await makeIsolatedTeam("누가 하지");
+  const { team } = await makeIsolatedTeam("팀 추첨");
   if (team) {
     const before = team.menuPick;
     await db.team.update({ where: { id: team.id }, data: { menuPick: "라멘" } });
@@ -1939,9 +1939,9 @@ console.log("\n누가 하지");
   }
 }
 
-/* ── 29 누가 하지: 도구와 결과는 짝이다 ─────────────────────── */
+/* ── 29 팀 추첨: 도구와 결과는 짝이다 ─────────────────────── */
 
-console.log("\n누가 하지 · 추첨 도구");
+console.log("\n팀 추첨 · 추첨 도구");
 {
   const read = readCode;
 
@@ -1954,7 +1954,7 @@ console.log("\n누가 하지 · 추첨 도구");
 
   // 이름이 겹치면 서버의 `RANDOM_TOOLS` 검색이 어느 쪽을 골랐는지 몰라 "무엇으로 정했는지"가
   // 팀마다 갈린다 — 도구는 결과의 짝이라 이름이 곧 값이다.
-  const { team } = await makeIsolatedTeam("누가 하지 · 추첨 도구");
+  const { team } = await makeIsolatedTeam("팀 추첨 · 추첨 도구");
   if (team) {
     const before = await db.team.findUniqueOrThrow({
       where: { id: team.id },
@@ -1977,7 +1977,7 @@ console.log("\n누가 하지 · 추첨 도구");
 
   // 여기 뽑히는 건 사람이 아니라 밥이다. 공용 `DrawGame` 을 쓰면 사람 전용 당첨자 카드
   //(`Avatar` + MBTI)가 같이 떠서, 이름도 MBTI 도 없는 밥에 프로필이 얹힌다.
-  const screen = read("../src/features/social/roulette-screen.tsx");
+  const screen = read("../src/features/social/draw-screen.tsx");
   check("연출만 빌린다", /<DrawStage/.test(screen), true);
   check("사람 전용 당첨자 카드를 쓰지 않는다", /\bDrawGame\b/.test(screen), false);
 }
