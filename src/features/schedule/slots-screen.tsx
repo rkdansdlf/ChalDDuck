@@ -632,7 +632,7 @@ export function SlotsScreen({
             )
           ) : (
             <Btn full size="lg" disabled={!picked} onClick={propose} icon="calendar-check">
-              {picked ? `${picked.day} ${picked.time} 로 제안` : "시간을 골라 주세요"}
+              {picked ? `${whenText(picked.date ?? null, picked.day, picked.time)} 로 제안` : "시간을 골라 주세요"}
             </Btn>
           )}
         </Dock>
@@ -699,7 +699,7 @@ function SlotOption({
 
       <span className="min-w-0 flex-1">
         <span className="block font-mono font-bold text-[16px] leading-[1.35] text-txt-strong">
-          {slot.time}
+          {whenText(slot.date ?? null, slot.day, slot.time)}
         </span>
         <span className="mt-[5px] flex flex-wrap gap-[5px]">
           <Chip tone={everyone ? "ok" : "warn"} icon={everyone ? "check" : "user-minus"}>

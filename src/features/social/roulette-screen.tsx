@@ -142,9 +142,9 @@ export function RouletteScreen({
     });
   };
 
-  /** 후보 지우기 — 둘은 남긴다. 실패하면 화면도 되돌린다. */
+  /** 후보 지우기 — 다 지우면 빈 목록이다. 실패하면 화면도 되돌린다. */
   const handleRemoveCandidate = (name: string) => {
-    if (spinning || list.length <= 2) return;
+    if (spinning) return;
     const prev = list;
     const next = prev.filter((item) => item !== name);
     setList(next);
@@ -163,7 +163,6 @@ export function RouletteScreen({
   const spinMenuPick = () => {
     if (fired.current || !chosen || spinning) return;
     if (chosen.key === "dice") {
-      if (members.length < 2) return;
       const toolToUse = chosen;
       fired.current = true;
       setSpin({ at: "waiting" });
@@ -338,11 +337,6 @@ export function RouletteScreen({
               버튼을 누르면 <b>전원이 한 번씩 굴리고</b>, 눈이 가장 높은 사람이 이깁니다. 동점이면
               동점자끼리 다시 굴립니다.
             </Note>
-            {members.length < 2 ? (
-              <p className="mt-2 text-center text-xs font-semibold text-coral-600">
-                주사위 게임은 팀원이 두 명부터 할 수 있습니다.
-              </p>
-            ) : null}
           </div>
         ) : (
           <>
@@ -381,7 +375,7 @@ export function RouletteScreen({
                       <button
                         type="button"
                         onClick={() => handleRemoveCandidate(item)}
-                        disabled={spinning || Boolean(busy.edit) || list.length <= 2}
+                        disabled={spinning || Boolean(busy.edit)}
                         aria-label={`${item} 지우기`}
                         className="ml-0.5 cursor-pointer rounded-full p-1 text-txt-faint hover:text-txt disabled:cursor-default disabled:opacity-40"
                       >
@@ -422,9 +416,7 @@ export function RouletteScreen({
           size="lg"
           icon={(chosen?.icon ?? "dices") as IconName}
           onClick={spinMenuPick}
-          disabled={
-            busy.spin || spinning || !chosen || (isDiceMode ? members.length < 2 : activeCandidates.length < 2)
-          }
+          disabled={busy.spin || spinning || !chosen || (!isDiceMode && activeCandidates.length < 2)}
         >
           {spinning
             ? isDiceMode

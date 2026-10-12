@@ -51,9 +51,14 @@ function cleanDrawLabels(labels: string[]): string[] {
   return cleaned;
 }
 
-/** 후보 목록이 추첨에 쓸 수 있는 모양인지. 아니면 화면에 그대로 보일 말을 돌려준다. */
+/**
+ * 후보 목록이 저장할 수 있는 모양인지. 아니면 화면에 그대로 보일 말을 돌려준다.
+ *
+ * **개수는 세지 않는다.** 하나씩 적어 두는 저장을 막으면 빈 목록에 첫 후보를
+ * 영영 넣지 못한다(하나를 넣자마자 "두 개 이상"에 걸려 되돌아가므로). 돌릴 수
+ * 있는지는 돌리는 자리(`spinMenu`)에서 센다.
+ */
 function drawLabelsError(labels: string[]): string | null {
-  if (labels.length < DRAW_OPTION_MIN) return "후보를 두 개 이상 적어 주세요.";
   if (labels.length > DRAW_OPTION_MAX) return "후보는 스무 개까지 정할 수 있습니다.";
   if (labels.some((label) => label.length > DRAW_OPTION_LABEL_MAX))
     return "긴 후보가 있습니다. 스무 자 안으로 적어 주세요.";
@@ -83,11 +88,11 @@ export async function saveDrawOptions(labels: string[]): Promise<void> {
   const error = drawLabelsError(cleaned);
   if (error) throw new Error(error);
 
+  const data = cleaned.map((label, position) => ({ teamId: me.teamId, label, position }));
   await db.$transaction([
     db.drawOption.deleteMany({ where: { teamId: me.teamId } }),
-    db.drawOption.createMany({
-      data: cleaned.map((label, position) => ({ teamId: me.teamId, label, position })),
-    }),
+    // 다 지우는 것도 저장이다 — 빈 목록을 막으면 후보를 전부 지우지 못한다.
+    ...(data.length > 0 ? [db.drawOption.createMany({ data })] : []),
   ]);
 
   revalidatePath("/team", "layout");
@@ -114,6 +119,9 @@ export async function spinMenu(toolName: string, labels?: string[]): Promise<str
    */
   if (tool.key === "dice") throw new Error("주사위 게임은 전원 굴리기로 정해 주세요.");
   const options = labels ? cleanDrawLabels(labels) : await drawOptionsOf(me.teamId);
+  // 돌리기는 두 개부터다. 하나면 추첨이 아니라 지명이라 버튼을 눌렀는데 결과가
+  // "정해졌다"가 되면 팀이 속는다. 적어 두기는 하나부터 된다(`saveDrawOptions`).
+  if (options.length < DRAW_OPTION_MIN) throw new Error("후보를 두 개 이상 적어 주세요.");
   const error = drawLabelsError(options);
   if (error) throw new Error(error);
 
@@ -160,6 +168,9 @@ export async function spinMenu(toolName: string, labels?: string[]): Promise<str
  *
  * 동점이면 동점자끼리 다시 굴린다. 마지막까지 동점이면(사실상 없음, `DICE_MAX_ROUNDS` 가
  * 묶는다) 그중 한 명을 뽑는다 — 판을 끝내지 않는 것보다 정직하다.
+ *
+ * 혼자 굴리면 혼자가 이긴다. 게임으로는 의미가 없지만, 막으면 1인 팀의 주사위 버튼이
+ * 영영 잠긴다 — "고장"으로 보인다. 결과는 정직하게 그대로 둔다.
  */
 export async function rollDiceClash(): Promise<{ winner: string; rounds: DiceClashRound[] }> {
   const me = await requireSessionMember();
@@ -171,7 +182,8 @@ export async function rollDiceClash(): Promise<{ winner: string; rounds: DiceCla
     select: { name: true },
     orderBy: { name: "asc" },
   });
-  if (members.length < 2) throw new Error("주사위 게임은 두 명부터 할 수 있습니다.");
+  // 부르는 사람이 팀원이므로 비는 일은 없다 — 빈 채로 굴리면 승자가 `undefined` 가 된다.
+  if (members.length === 0) throw new Error("팀원이 없습니다.");
 
   const rounds: DiceClashRound[] = [];
   let contenders = members.map((m) => m.name);

@@ -135,6 +135,11 @@ export type MeetingSlot = {
   id: string;
   /** 요일 한 글자("수"). */
   day: string;
+  /**
+   * 이 후보가 가리키는 날 — "2026-10-14". 요일만으로는 어느 수요일인지 알 수 없어서 화면이
+   * 날짜를 함께 보여 준다. 모르면 null.
+   */
+  date?: string | null;
   /** "16:00 – 18:00" */
   time: string;
   /** 참석 가능 인원. */

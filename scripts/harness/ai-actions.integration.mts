@@ -370,10 +370,11 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       "주사위 게임은 전원 굴리기로 정해 주세요.",
     );
 
-    // 후보는 팀이 정한다 — 저장한 값이 다음 돌림부터 쓰인다.
+    // 후보는 하나씩 적어 둘 수 있다 — 돌리기는 두 개부터다.
+    await as(I.asLeader, () => social.saveDrawOptions(["혼자"]));
     check(
-      "후보 하나로는 저장하지 않는다",
-      await blocked(() => as(I.asLeader, () => social.saveDrawOptions(["혼자"]))),
+      "하나로는 돌리지 못한다",
+      await blocked(() => as(I.asMate, () => social.spinMenu("룰렛"))),
       "후보를 두 개 이상 적어 주세요.",
     );
     await as(I.asLeader, () => social.saveDrawOptions(["갑", "을"]));
@@ -406,6 +407,18 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
       (finalRow.menuTool === "룰렛" && finalRow.menuDrawnBy === K.leader.id && finalRow.menuPick === raceA) ||
       (finalRow.menuTool === "제비뽑기" && finalRow.menuDrawnBy === K.mate.id && finalRow.menuPick === raceB);
     check("동시에 돌려도 결과·도구·정한 사람이 섞이지 않는다", consistent, true);
+
+    // 혼자 굴리면 혼자가 이긴다 — 게임은 아니지만 버튼이 영영 잠기지는 않는다.
+    session.reset();
+    const soloTeam = await db.team.create({
+      data: { name: `AI 액션 혼자 ${suffix}`, course: "검증", code: `CD-${randomUUID().slice(0, 6).toUpperCase()}` },
+    });
+    teamIds.push(soloTeam.id);
+    const solo = await db.member.create({ data: { teamId: soloTeam.id, name: `혼자${suffix}` } });
+    const soloToken = randomUUID();
+    await db.session.create({ data: { token: soloToken, memberId: solo.id, expiresAt: new Date(Date.now() + 3600_000) } });
+    const soloClash = await as(soloToken, () => social.rollDiceClash());
+    check("혼자 굴리면 본인이 이긴다", soloClash.winner, solo.name);
   } finally {
     if (savedKey === undefined) delete process.env.OPENROUTER_KEY;
     else process.env.OPENROUTER_KEY = savedKey;
