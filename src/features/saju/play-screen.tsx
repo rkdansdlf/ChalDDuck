@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { AppBar, Body, Btn, Note, Panel, SecTitle } from "@/components/ui";
 import type { BalanceResult, TeamSaju } from "@/data/api";
 import { PLAY_NOTICE, TEAM_NEED_MINE } from "@/lib/saju/copy";
 import { BalancePanel } from "./balance-panel";
+import { BirthSheet } from "./birth-sheet";
 import { GuessPanel } from "./guess-panel";
 import { PairingPanel } from "./pairing-panel";
 
@@ -28,12 +30,13 @@ export function SajuPlayScreen({
   today: string;
 }) {
   const router = useRouter();
+  const [showBirthSheet, setShowBirthSheet] = useState(false);
   const me = saju.members.find((m) => m.isMe) ?? null;
 
   const needMine = (
     <Panel s="cream" pad={16} className="mb-4">
       <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
-      <Btn full v="outline" onClick={() => router.push("/team/access")}>
+      <Btn full v="outline" onClick={() => setShowBirthSheet(true)}>
         내 사주 등록하기
       </Btn>
     </Panel>
@@ -57,6 +60,8 @@ export function SajuPlayScreen({
         <SecTitle note="고르면 우리 팀의 선택을 볼 수 있어요">사주 밸런스 게임</SecTitle>
         <BalancePanel results={balance} />
       </Body>
+
+      {showBirthSheet ? <BirthSheet onClose={() => setShowBirthSheet(false)} /> : null}
     </>
   );
 }

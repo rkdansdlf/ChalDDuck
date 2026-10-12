@@ -18,6 +18,7 @@ import {
 } from "@/lib/saju/copy";
 import { ELEMENTS, ELEMENT_KO, elementOfStem } from "@/lib/saju/engine";
 import { summarizeTeam } from "@/lib/saju/team";
+import { BirthSheet } from "./birth-sheet";
 import { ElementBar } from "./element-bar";
 
 /**
@@ -37,6 +38,7 @@ import { ElementBar } from "./element-bar";
 export function TeamSajuScreen({ data }: { data: TeamSaju }) {
   const router = useRouter();
   const [pick, setPick] = useState<TeamSajuMember | null>(null);
+  const [showBirthSheet, setShowBirthSheet] = useState(false);
 
   const me = data.members.find((m) => m.isMe) ?? null;
   const summary = summarizeTeam(data.members);
@@ -55,7 +57,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
           <Panel s="cream" pad={18} className="mb-4">
             <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
             <p className="t-cap mb-3 text-txt-muted">지금 {data.registeredCount}명이 등록했어요.</p>
-            <Btn full onClick={() => router.push("/team/access")}>
+            <Btn full onClick={() => setShowBirthSheet(true)}>
               내 사주 등록하기
             </Btn>
           </Panel>
@@ -168,6 +170,7 @@ export function TeamSajuScreen({ data }: { data: TeamSaju }) {
       </Body>
 
       {pick && me ? <ChemistrySheet me={me} other={pick} onClose={() => setPick(null)} /> : null}
+      {showBirthSheet ? <BirthSheet onClose={() => setShowBirthSheet(false)} /> : null}
     </>
   );
 }

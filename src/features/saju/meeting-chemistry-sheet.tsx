@@ -23,6 +23,7 @@ import { meetingFlowText, planMeetingFlow } from "@/lib/saju/meeting-flow";
 import { summarizeTeam } from "@/lib/saju/team";
 import { clearMeetingFlow, saveMeetingFlow } from "@/server/actions/meeting-flow";
 import { getMeetingChemistry } from "@/server/actions/saju";
+import { BirthSheet } from "./birth-sheet";
 import { ElementBar } from "./element-bar";
 
 /**
@@ -58,6 +59,7 @@ export function MeetingChemistrySheet({
   const [loaded, setLoaded] = useState<{ id: string | null; data: TeamSaju | null }>({ id: null, data: null });
   const [copyNote, setCopyNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showBirthSheet, setShowBirthSheet] = useState(false);
 
   const loading = Boolean(open && meetingId && loaded.id !== meetingId);
   const data = open && meetingId && loaded.id === meetingId ? loaded.data : null;
@@ -110,112 +112,125 @@ export function MeetingChemistrySheet({
   };
 
   return (
-    <Sheet
-      open={open}
-      title="회의 케미"
-      onClose={() => {
-        setCopyNote(null);
-        onClose();
-      }}
-      footer={
-        ready ? (
-          <div className="flex flex-col gap-2">
-            {savedFlow ? <p className="t-cap-strong m-0 text-center text-txt-muted">{MEETING_FLOW_SAVED_NOTE}</p> : null}
-            {/* 채운 버튼은 하나 — 아직 저장하지 않았다면 저장이 주 동작이고, 저장한 뒤에는 지우기·복사가 둘 다 보조다. */}
-            {savedFlow ? (
-              <Btn full v="outline" disabled={saving} onClick={toggleSaved}>
-                저장된 진행 방식 지우기
+    <>
+      <Sheet
+        open={open}
+        title="회의 케미"
+        onClose={() => {
+          setCopyNote(null);
+          onClose();
+        }}
+        footer={
+          ready ? (
+            <div className="flex flex-col gap-2">
+              {savedFlow ? <p className="t-cap-strong m-0 text-center text-txt-muted">{MEETING_FLOW_SAVED_NOTE}</p> : null}
+              {/* 채운 버튼은 하나 — 아직 저장하지 않았다면 저장이 주 동작이고, 저장한 뒤에는 지우기·복사가 둘 다 보조다. */}
+              {savedFlow ? (
+                <Btn full v="outline" disabled={saving} onClick={toggleSaved}>
+                  저장된 진행 방식 지우기
+                </Btn>
+              ) : (
+                <Btn full disabled={saving} onClick={toggleSaved}>
+                  {saving ? "저장 중…" : "회의에 저장하기"}
+                </Btn>
+              )}
+              <Btn full v="outline" onClick={copy}>
+                진행 방식 복사하기
               </Btn>
-            ) : (
-              <Btn full disabled={saving} onClick={toggleSaved}>
-                {saving ? "저장 중…" : "회의에 저장하기"}
-              </Btn>
-            )}
-            <Btn full v="outline" onClick={copy}>
-              진행 방식 복사하기
+              {copyNote ? (
+                <p role="status" className="t-cap m-0 text-center text-txt-muted">
+                  {copyNote}
+                </p>
+              ) : (
+                <p className="t-cap m-0 text-center text-txt-muted">{MEETING_FLOW_SAVE_CAPTION}</p>
+              )}
+            </div>
+          ) : undefined
+        }
+      >
+        <p className="text-pretty-keep m-0 mb-3.5 text-[13.5px] leading-[1.6] text-txt-muted">
+          {MEETING_CHEMISTRY_NOTICE}
+        </p>
+
+        {loading ? (
+          <p className="t-body py-8 text-center text-txt-muted">불러오는 중…</p>
+        ) : !data ? (
+          <Note tone="warn" icon="circle-alert">
+            회의 케미를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.
+          </Note>
+        ) : !data.meRegistered ? (
+          <Panel s="cream" pad={16}>
+            <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
+            <Btn full v="outline" onClick={() => setShowBirthSheet(true)}>
+              내 사주 등록하기
             </Btn>
-            {copyNote ? (
-              <p role="status" className="t-cap m-0 text-center text-txt-muted">
-                {copyNote}
-              </p>
-            ) : (
-              <p className="t-cap m-0 text-center text-txt-muted">{MEETING_FLOW_SAVE_CAPTION}</p>
-            )}
-          </div>
-        ) : undefined
-      }
-    >
-      <p className="text-pretty-keep m-0 mb-3.5 text-[13.5px] leading-[1.6] text-txt-muted">
-        {MEETING_CHEMISTRY_NOTICE}
-      </p>
-
-      {loading ? (
-        <p className="t-body py-8 text-center text-txt-muted">불러오는 중…</p>
-      ) : !data ? (
-        <Note tone="warn" icon="circle-alert">
-          회의 케미를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.
-        </Note>
-      ) : !data.meRegistered ? (
-        <Panel s="cream" pad={16}>
-          <p className="text-pretty-keep m-0 mb-3 text-[14.5px] leading-[1.6] text-txt">{TEAM_NEED_MINE}</p>
-          <Btn full v="outline" onClick={() => router.push("/team/access")}>
-            내 사주 등록하기
-          </Btn>
-        </Panel>
-      ) : data.members.length < 2 || !summary ? (
-        <Panel s="cream" pad={16}>
-          <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">
-            {MEETING_ATTENDEE_WORD} {data.activeCount}명 중 사주를 등록한 사람이 {data.registeredCount}명이에요. 두 명
-            이상 등록하면 볼 수 있어요.
-          </p>
-        </Panel>
-      ) : (
-        <>
-          <SecTitle note={`${MEETING_ATTENDEE_WORD} ${data.activeCount}명 중 ${data.registeredCount}명이 사주를 등록했어요`}>
-            {MEETING_ATTENDEE_WORD}자 오행 분포
-          </SecTitle>
-          <Panel s="card" pad={16} className="mb-4 flex flex-col gap-2.5">
-            {ELEMENTS.map((e) => (
-              <ElementBar
-                key={e}
-                element={e}
-                count={summary.counts[e]}
-                percent={summary.percent[e]}
-                top={summary.dominant.includes(e)}
-              />
-            ))}
           </Panel>
-
-          <SecTitle note={`${plan.total}분 기준이에요`}>추천 진행</SecTitle>
-          <Panel s="card" pad={16} className="mb-4 flex flex-col gap-3">
-            {plan.steps.map((s) => (
-              <div key={s.n}>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[15px] font-bold text-txt-strong">
-                    {String(s.n).padStart(2, "0")} {s.title}
-                  </span>
-                  <span className="t-cap flex-none text-txt-muted">{s.minutes}분</span>
-                </div>
-                <p className="text-pretty-keep m-0 mt-0.5 text-[14px] leading-[1.55] text-txt">{s.desc}</p>
-              </div>
-            ))}
+        ) : data.members.length < 2 || !summary ? (
+          <Panel s="cream" pad={16}>
+            <p className="text-pretty-keep m-0 text-[14.5px] leading-[1.6] text-txt">
+              {MEETING_ATTENDEE_WORD} {data.activeCount}명 중 사주를 등록한 사람이 {data.registeredCount}명이에요. 두 명
+              이상 등록하면 볼 수 있어요.
+            </p>
           </Panel>
+        ) : (
+          <>
+            <SecTitle note={`${MEETING_ATTENDEE_WORD} ${data.activeCount}명 중 ${data.registeredCount}명이 사주를 등록했어요`}>
+              {MEETING_ATTENDEE_WORD}자 오행 분포
+            </SecTitle>
+            <Panel s="card" pad={16} className="mb-4 flex flex-col gap-2.5">
+              {ELEMENTS.map((e) => (
+                <ElementBar
+                  key={e}
+                  element={e}
+                  count={summary.counts[e]}
+                  percent={summary.percent[e]}
+                  top={summary.dominant.includes(e)}
+                />
+              ))}
+            </Panel>
 
-          {summary.lowest.length > 0 ? (
-            <>
-              <SecTitle note="가장 적게 센 오행의 키워드를 일부러 챙겨 보는 제안이에요">챙겨 볼 것</SecTitle>
-              <Panel s="card" pad={16} className="mb-2 flex flex-col gap-2.5">
-                {summary.lowest.slice(0, 2).map((e) => (
-                  <div key={e}>
-                    <div className="t-cap-strong text-txt-muted">가장 적게 센 오행 · {ELEMENT_KO[e]}</div>
-                    <p className="text-pretty-keep m-0 mt-0.5 text-[14.5px] leading-[1.6] text-txt">{MEETING_TIP[e]}</p>
+            <SecTitle note={`${plan.total}분 기준이에요`}>추천 진행</SecTitle>
+            <Panel s="card" pad={16} className="mb-4 flex flex-col gap-3">
+              {plan.steps.map((s) => (
+                <div key={s.n}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[15px] font-bold text-txt-strong">
+                      {String(s.n).padStart(2, "0")} {s.title}
+                    </span>
+                    <span className="t-cap flex-none text-txt-muted">{s.minutes}분</span>
                   </div>
-                ))}
-              </Panel>
-            </>
-          ) : null}
-        </>
-      )}
-    </Sheet>
+                  <p className="text-pretty-keep m-0 mt-0.5 text-[14px] leading-[1.55] text-txt">{s.desc}</p>
+                </div>
+              ))}
+            </Panel>
+
+            {summary.lowest.length > 0 ? (
+              <>
+                <SecTitle note="가장 적게 센 오행의 키워드를 일부러 챙겨 보는 제안이에요">챙겨 볼 것</SecTitle>
+                <Panel s="card" pad={16} className="mb-2 flex flex-col gap-2.5">
+                  {summary.lowest.slice(0, 2).map((e) => (
+                    <div key={e}>
+                      <div className="t-cap-strong text-txt-muted">가장 적게 센 오행 · {ELEMENT_KO[e]}</div>
+                      <p className="text-pretty-keep m-0 mt-0.5 text-[14.5px] leading-[1.6] text-txt">{MEETING_TIP[e]}</p>
+                    </div>
+                  ))}
+                </Panel>
+              </>
+            ) : null}
+          </>
+        )}
+      </Sheet>
+
+      {showBirthSheet ? (
+        <BirthSheet
+          onClose={() => setShowBirthSheet(false)}
+          onSuccess={() => {
+            if (meetingId) {
+              getMeetingChemistry(meetingId).then((res) => setLoaded({ id: meetingId, data: res }));
+            }
+          }}
+        />
+      ) : null}
+    </>
   );
 }

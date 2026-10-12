@@ -1,8 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Btn, Field, Input, Note, Panel, SecTitle, Sheet } from "@/components/ui";
+import { Btn, Note, Panel, SecTitle, Sheet } from "@/components/ui";
 import type { MySaju } from "@/data/api";
 import { cn } from "@/lib/cn";
 import {
@@ -21,11 +20,9 @@ import {
   LATE_NIGHT_NOTICE,
   NO_TIME_NOTICE,
   SAJU_NOTICE,
-  SAJU_PRIVACY,
   TEN_GOD_MEANING,
 } from "@/lib/saju/copy";
-import { BIRTH_BLOCK_MESSAGE } from "@/lib/saju/input";
-import { clearMyBirth, saveMyBirth } from "@/server/actions/saju";
+import { BirthSheet } from "./birth-sheet";
 import { ElementBar } from "./element-bar";
 
 /**
@@ -43,7 +40,13 @@ import { ElementBar } from "./element-bar";
  * 센 수만 그린다 — 부족한 오행이 있다고 해서 무엇이 모자란다고 말하지 않는다.
  */
 export function MySajuCard({ saju }: { saju: MySaju | null }) {
-  const [sheet, setSheet] = useState<"form" | "detail" | null>(null);
+  const [sheet, setSheet] = useState<"form" | "detail" | null>(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.has("registerSaju") || sp.get("saju") === "register") return "form";
+    }
+    return null;
+  });
 
   const master = saju ? DAY_MASTER_COPY[saju.chart.dayMaster.stem] : null;
 
@@ -80,88 +83,6 @@ export function MySajuCard({ saju }: { saju: MySaju | null }) {
       {sheet === "form" ? <BirthSheet saju={saju} onClose={() => setSheet(null)} /> : null}
       {sheet === "detail" && saju ? <DetailSheet saju={saju} onClose={() => setSheet(null)} /> : null}
     </>
-  );
-}
-
-/* ── 등록 ──────────────────────────────────────────────────── */
-
-function BirthSheet({ saju, onClose }: { saju: MySaju | null; onClose: () => void }) {
-  const router = useRouter();
-  const [date, setDate] = useState(saju?.birthDate ?? "");
-  const [time, setTime] = useState(saju?.birthTime ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const result = await saveMyBirth(date, time === "" ? null : time);
-      if (result === "ok") {
-        onClose();
-        router.refresh();
-      } else if (result === "invalid") {
-        setError("로그인이 풀렸어요. 다시 들어온 뒤 시도해 주세요.");
-      } else {
-        setError(BIRTH_BLOCK_MESSAGE[result]);
-      }
-    } catch {
-      setError("저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const clear = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await clearMyBirth();
-      onClose();
-      router.refresh();
-    } catch {
-      setError("지우지 못했어요. 잠시 뒤 다시 시도해 주세요.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Sheet
-      open
-      title={saju ? "내 사주 변경" : "내 사주 등록"}
-      onClose={onClose}
-      footer={
-        <div className="flex gap-2">
-          <Btn full v="outline" disabled={saving} onClick={onClose}>
-            취소
-          </Btn>
-          <Btn full disabled={saving || date === ""} onClick={save}>
-            {saving ? "저장 중…" : "저장"}
-          </Btn>
-        </div>
-      }
-    >
-      <p className="text-pretty-keep m-0 mb-3.5 text-[14.5px] leading-[1.6] text-txt">{SAJU_PRIVACY}</p>
-
-      <Field label="생년월일" required error={error}>
-        {(props) => <Input {...props} type="date" value={date} onChange={setDate} error={Boolean(error)} />}
-      </Field>
-      <Field label="태어난 시각" hint="모르면 비워 두세요. 시주만 빼고 계산해요.">
-        {(props) => <Input {...props} type="time" value={time} onChange={setTime} />}
-      </Field>
-
-      {saju ? (
-        <button
-          type="button"
-          disabled={saving}
-          onClick={clear}
-          className="t-cap-strong mb-1 cursor-pointer border-none bg-transparent p-0 text-txt-muted underline underline-offset-2"
-        >
-          등록한 생년월일 지우기
-        </button>
-      ) : null}
-    </Sheet>
   );
 }
 
