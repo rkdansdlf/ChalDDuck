@@ -64,7 +64,7 @@ export type NotifyKind =
   | "join-request"
   | "rejoin-request"
   | "icebreak"
-  /** 누가 하지(29)에서 팀의 정한 하나가 바뀌었다. 아이스브레이킹과 알림함이 섞이지 않게 따로 둔다. */
+  /** 팀 추첨(29)에서 팀의 정한 하나가 바뀌었다. 아이스브레이킹과 알림함이 섞이지 않게 따로 둔다. */
   | "who-does-it"
   /** 07 역할 추첨을 시작해도 된다고 팀이 응답해야 한다. */
   | "role-consent"

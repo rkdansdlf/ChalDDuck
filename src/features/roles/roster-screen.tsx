@@ -450,10 +450,10 @@ export function RosterScreen({
             <Icon name="chevron-right" size={16} className="text-txt-muted flex-none pl-2" />
           </button>
 
-          {/* 메뉴 룰렛 */}
+          {/* 팀 추첨 */}
           <button
             type="button"
-            onClick={() => router.push("/team/roulette")}
+            onClick={() => router.push("/team/draw")}
             className="flex min-h-[58px] w-full items-center justify-between px-4 py-3 text-left hover:bg-fill/60 active:scale-[0.99] transition-all cursor-pointer select-none"
           >
             <div className="flex items-center gap-3 min-w-0">
@@ -461,8 +461,8 @@ export function RosterScreen({
                 <Icon name="disc-3" size={18} />
               </span>
               <div className="min-w-0 flex flex-col">
-                <span className="font-bold text-[15px] text-txt-strong leading-snug">메뉴 룰렛</span>
-                <span className="text-[12px] text-txt-muted truncate">식사 메뉴 정하기 및 팀 추첨</span>
+                <span className="font-bold text-[15px] text-txt-strong leading-snug">팀 추첨</span>
+                <span className="text-[12px] text-txt-muted truncate">식사 메뉴를 정하고 팀에 하나로 맞추기</span>
               </div>
             </div>
             <Icon name="chevron-right" size={16} className="text-txt-muted flex-none pl-2" />

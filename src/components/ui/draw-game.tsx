@@ -30,7 +30,7 @@ import {
 export type DrawCandidate = { name: string; mbti: MbtiType | null };
 
 /**
- * 이름만 필요한 후보 — 29 누가 하지처럼 **사람이 아니라 값을** 뽑을 때 쓴다.
+ * 이름만 필요한 후보 — 29 팀 추첨처럼 **사람이 아니라 값을** 뽑을 때 쓴다.
  * 바퀴·제비·사다리는 이름만 읽고, MBTI 는 오직 `WinnerCard` 만 쓴다.
  */
 type DrawName = { name: string };

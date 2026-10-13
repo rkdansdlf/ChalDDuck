@@ -1,8 +1,8 @@
 import { getCurrentTeam, getMenuDraw, getMenuOptions, getRandomTools, getRoster } from "@/data/api";
-import { RouletteScreen } from "@/features/social/roulette-screen";
+import { DrawScreen } from "@/features/social/draw-screen";
 
-/** 29 친목 · 누가 하지. */
-export default async function RoulettePage() {
+/** 29 친목 · 팀 추첨. */
+export default async function DrawPage() {
   const team = await getCurrentTeam();
   // 정해진 밥은 팀에 하나다 — 폰마다 따로 돌리지 않는다. 도구도 결과의 짝이므로 같이 내려받는다.
   const [options, tools, draw, roster] = await Promise.all([
@@ -11,5 +11,5 @@ export default async function RoulettePage() {
     getMenuDraw(team.id),
     getRoster(team.id),
   ]);
-  return <RouletteScreen options={options} tools={tools} tool={draw.tool} members={roster.map((m) => m.name)} />;
+  return <DrawScreen options={options} tools={tools} tool={draw.tool} members={roster.map((m) => m.name)} />;
 }

@@ -1,5 +1,5 @@
 /**
- * AI 액션·누가 하지 검사 — 화면이 부르는 **문**이 규칙대로 열리고 닫히는지 서버 액션 경계를 통과해서 본다.
+ * AI 액션·팀 추첨 검사 — 화면이 부르는 **문**이 규칙대로 열리고 닫히는지 서버 액션 경계를 통과해서 본다.
  *
  * ## 왜 이게 필요한가
  *
@@ -17,7 +17,7 @@
  * - **내역·요약은 내 팀 것만.** 남의 팀 이름·시각이 섞이면 안 되고, 요약에는 개인이 없다. CSV 는 이름에
  *   쉼표·따옴표가 들어가도 칸이 밀리지 않아야 하고 엑셀이 한글을 깨뜨리지 않도록 BOM 이 있어야 한다.
  * - **오늘 쓴 횟수는 읽기만 한다.** 보려고 부른 것이 기록이 되면 안 된다. 읽기 도움은 따로 센다.
- * - **누가 하지는 팀에 하나다.** 목록에 없는 도구 이름은 저장하지 않고, 동시에 돌려도 결과·도구·정한 사람이
+ * - **팀 추첨는 팀에 하나다.** 목록에 없는 도구 이름은 저장하지 않고, 동시에 돌려도 결과·도구·정한 사람이
  *   **한 번의 돌림에서 나온 한 벌**이어야 한다.
  *
  * ## 검사하지 않는 것
@@ -307,8 +307,8 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("요약에는 개인을 가리키는 값이 없다", Object.keys(summary).some((k) => /member|name|user|who/i.test(k)), false);
     check("다른 팀의 실패는 섞이지 않는다", (await as(H.asLeader, () => aiActions.getTeamAiSummary())).totalCalls, 2);
 
-    /* ── 6) 누가 하지 ──────────────────────────────────────── */
-    console.log("\n누가 하지 — 팀에 하나, 목록에 있는 도구만");
+    /* ── 6) 팀 추첨 ──────────────────────────────────────── */
+    console.log("\n팀 추첨 — 팀에 하나, 목록에 있는 도구만");
     const I = await makeTeam("메뉴");
     const J = await makeTeam("이웃메뉴");
     const toolNames = RANDOM_TOOLS.map((t) => t.name);
@@ -350,7 +350,7 @@ export async function run({ session }: { session: Session }): Promise<boolean> {
     check("팀원에게 알려진다", first.length, 1);
     check("제목에 정한 사람이 있다", first[0]?.title, `${I.mate.name}님이 정했습니다`);
     check("처음 정한 거라면 도구와 결과만 말한다", first[0]?.body, `${toolNames[0]} · ${picked}`);
-    check("알림이 팀 룰렛 화면으로 간다", first[0]?.href, "/team/roulette");
+    check("알림이 팀 추첨 화면으로 간다", first[0]?.href, "/team/draw");
     check("정한 사람 자신에게는 가지 않는다", (await noticeFor(I.mate.id)).length, 0);
     check("다른 팀은 영향을 받지 않는다", [(await teamRow(J.id)).menuPick, (await noticeFor(J.leader.id)).length], [null, 0]);
 

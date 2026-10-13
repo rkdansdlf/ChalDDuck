@@ -32,7 +32,7 @@ type Spin =
   | { at: "done"; tool: RandomTool; pick: string; rounds?: DiceClashRound[] };
 
 /**
- * 29 친목 · 누가 하지.
+ * 29 친목 · 팀 추첨.
  *
  * **결정은 팀에 하나다.** 서버가 한 번 뽑아 저장하고 모두가 그 값을 본다.
  *
@@ -41,7 +41,7 @@ type Spin =
  * 도구는 룰렛·주사위·제비뽑기·사다리타기 네 가지인데, 주사위만 후보 뽑기가 아니라
  * 팀원 전원이 굴려 눈이 가장 높은 사람이 이기는 게임이다.
  */
-export function RouletteScreen({
+export function DrawScreen({
   options,
   tools,
   tool,
@@ -231,7 +231,7 @@ export function RouletteScreen({
 
   return (
     <>
-      <AppBar title="누가 하지" sub={isDiceMode ? "주사위 게임" : "팀 추첨"} onBack={() => router.push("/team")} />
+      <AppBar title="팀 추첨" sub={isDiceMode ? "주사위 게임" : "식사 메뉴 정하기"} onBack={() => router.push("/team")} />
 
       <Body dense className="flex flex-col">
         <p className="text-pretty-keep mt-1 mb-[18px] text-[14.5px] leading-[1.62] text-txt">

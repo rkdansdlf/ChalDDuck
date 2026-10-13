@@ -9,7 +9,7 @@ import { notify, teamMemberIds } from "@/server/notify/create";
 import { requireSessionMember } from "@/server/session";
 
 /**
- * 29 누가 하지 — 팀 추첨.
+ * 29 팀 추첨.
  *
  * **결과는 팀에 하나다.** 예전에는 폰마다 `Math.random()` 으로 따로 돌렸고 서버를 부르지도
  * 않았다. 팀원 네 명이 각자 다른 메뉴를 보고 무엇을 먹을지 합의가 되지 않았고, 새로고침하면
@@ -152,7 +152,7 @@ export async function spinMenu(toolName: string, labels?: string[]): Promise<str
     body: replaced?.menuPick
       ? `${tool.name} · ${replaced.menuPick} 대신 → ${picked}`
       : `${tool.name} · ${picked}`,
-    href: "/team/roulette",
+    href: "/team/draw",
     actorId: me.id,
   });
 
@@ -216,7 +216,7 @@ export async function rollDiceClash(): Promise<{ winner: string; rounds: DiceCla
       rounds.length > 1
         ? `${tool.name} · ${members.length}명 ${rounds.length}번 굴려 ${winner}님이 이겼습니다`
         : `${tool.name} · ${winner}님이 가장 높습니다`,
-    href: "/team/roulette",
+    href: "/team/draw",
     actorId: me.id,
   });
 
@@ -243,7 +243,7 @@ export async function shareDrawToChat(input: {
     }).format(new Date());
 
     const lines = [
-      `🎲 [${input.title || "누가 하지"} 추첨 결과]`,
+      `🎲 [${input.title || "팀 추첨"} 추첨 결과]`,
       `• 당첨: ✨ ${input.pick}`,
       `• 추첨 도구: ${input.toolName}`,
       `• 후보: ${input.candidates.slice(0, 10).join(", ")}${input.candidates.length > 10 ? ` 외 ${input.candidates.length - 10}개` : ""}`,
